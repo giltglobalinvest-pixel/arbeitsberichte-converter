@@ -216,6 +216,26 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .toast{display:flex;align-items:center;gap:9px;padding:11px 15px;border-radius:var(--r);font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.2);max-width:320px;animation:tin .25s ease-out;background:var(--navy-d);color:#fff}
 .toast.ok{background:var(--ok)}.toast.err{background:var(--err)}.toast.warn{background:var(--warn)}
 @keyframes tin{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
+.ct-row{display:flex;align-items:flex-start;gap:10px;padding:7px 0;border-bottom:1px solid var(--bdr)}
+.ct-row:last-child{border-bottom:none}
+.ct-dot{font-size:16px;flex-shrink:0;line-height:1.4;width:18px;text-align:center}
+.ct-dot.ok{color:var(--ok)}.ct-dot.err{color:var(--err)}.ct-dot.spin{animation:spin .7s linear infinite;display:inline-block}
+.ct-info{display:flex;flex-direction:column;gap:2px;min-width:0}
+.ct-label{font-size:12px;font-weight:600;color:var(--txt)}
+.ct-detail{font-size:11px;color:var(--txt2);word-break:break-all}
+.ct-detail.ok{color:var(--ok)}.ct-detail.err{color:var(--err)}
+.ab-item{display:flex;align-items:center;gap:5px;padding:0 10px;height:32px;cursor:pointer;transition:background .15s;color:rgba(255,255,255,.55)}
+.ab-item:hover{background:rgba(255,255,255,.07);color:#fff}
+.ab-sep{color:rgba(255,255,255,.15);padding:0 2px}
+.ab-dot{font-size:8px}
+.ab-dot.ok{color:#22c55e}.ab-dot.err{color:#ef4444}.ab-dot.warn{color:#f59e0b}.ab-dot.idle{color:#6b7280}.ab-dot.spin{animation:spin .8s linear infinite;display:inline-block}
+.ap-section{margin-bottom:16px}
+.ap-title{font-size:10px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:rgba(255,255,255,.35);margin-bottom:8px}
+.ap-row{display:flex;align-items:flex-start;gap:10px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.ap-row:last-child{border-bottom:none}
+.ap-label{font-size:12px;color:rgba(255,255,255,.6);flex-shrink:0;width:140px}
+.ap-value{font-size:12px;color:rgba(255,255,255,.85);word-break:break-all;font-family:monospace}
+.ap-value.ok{color:#22c55e}.ap-value.err{color:#ef4444}.ap-value.warn{color:#f59e0b}
 ::-webkit-scrollbar{width:5px}::-webkit-scrollbar-thumb{background:rgba(0,0,0,.15);border-radius:99px}
 .mt8{margin-top:8px}.mt12{margin-top:12px}.mt16{margin-top:16px}
 </style>
@@ -232,19 +252,73 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <div class="login-title">Berichts-Konverter</div>
       <div class="login-sub">Aufzugservice · Bitte einloggen</div>
     </div>
+
     <div class="login-field">
       <label class="login-label">Persönlicher Zugangscode</label>
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
     <div class="login-version">Berichts-Konverter v2.0</div>
+
+    <!-- CONNECTION TEST -->
+    <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
+      <button onclick="runConnectionTest()" id="test-btn"
+        style="width:100%;background:none;border:1.5px solid var(--bdr);border-radius:var(--rs);padding:9px;font-size:12px;font-weight:600;color:var(--txt2);cursor:pointer;font-family:inherit;letter-spacing:.3px;text-transform:uppercase;transition:all .2s">
+        🔌 Verbindung testen
+      </button>
+      <div id="test-results" style="display:none;margin-top:12px;display:none">
+        <div style="font-size:11px;font-weight:600;color:var(--txt3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Testergebnisse</div>
+
+        <div class="ct-row" id="ct-token">
+          <span class="ct-dot" id="ct-token-dot">○</span>
+          <div class="ct-info">
+            <span class="ct-label">Read-Token</span>
+            <span class="ct-detail" id="ct-token-detail">–</span>
+          </div>
+        </div>
+
+        <div class="ct-row" id="ct-appbase">
+          <span class="ct-dot" id="ct-appbase-dot">○</span>
+          <div class="ct-info">
+            <span class="ct-label">App-Base (<code>appcnSj…</code>)</span>
+            <span class="ct-detail" id="ct-appbase-detail">–</span>
+          </div>
+        </div>
+
+        <div class="ct-row" id="ct-usertable">
+          <span class="ct-dot" id="ct-usertable-dot">○</span>
+          <div class="ct-info">
+            <span class="ct-label">Tabelle "User"</span>
+            <span class="ct-detail" id="ct-usertable-detail">–</span>
+          </div>
+        </div>
+
+        <div class="ct-row" id="ct-masterbase">
+          <span class="ct-dot" id="ct-masterbase-dot">○</span>
+          <div class="ct-info">
+            <span class="ct-label">Master-Base (<code>appzhNr…</code>)</span>
+            <span class="ct-detail" id="ct-masterbase-detail">–</span>
+          </div>
+        </div>
+
+        <div class="ct-row" id="ct-keystable">
+          <span class="ct-dot" id="ct-keystable-dot">○</span>
+          <div class="ct-info">
+            <span class="ct-label">Tabelle "Keys"</span>
+            <span class="ct-detail" id="ct-keystable-detail">–</span>
+          </div>
+        </div>
+
+        <div id="ct-summary" style="margin-top:12px;padding:10px 12px;border-radius:6px;font-size:12px;font-weight:500;display:none"></div>
+      </div>
+    </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════════════════════════════
      MAIN APP
      ═══════════════════════════════════════════════════════ -->
-<div class="app" id="app">
+<div class="app" id="app" style="">
 
 <!-- TOPBAR -->
 <header class="topbar">
@@ -459,6 +533,53 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
 </div>
 
+<!-- ADMIN STATUS BAR (nur für role=admin) -->
+<div id="admin-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:500;
+  background:#1a1a2e;border-top:1px solid rgba(255,255,255,.1);
+  padding:0 16px;height:32px;display:none;align-items:center;gap:0;font-size:11px;font-family:monospace">
+
+  <!-- Indicators -->
+  <div class="ab-item" id="ab-read" onclick="showAdminPanel('read')" title="Airtable Read">
+    <span class="ab-dot" id="ab-read-dot">●</span>
+    <span id="ab-read-txt">AT Read</span>
+  </div>
+  <div class="ab-sep">│</div>
+  <div class="ab-item" id="ab-write" onclick="showAdminPanel('write')" title="Airtable Write">
+    <span class="ab-dot" id="ab-write-dot">●</span>
+    <span id="ab-write-txt">AT Write</span>
+  </div>
+  <div class="ab-sep">│</div>
+  <div class="ab-item" id="ab-ai" onclick="showAdminPanel('ai')" title="Anthropic API">
+    <span class="ab-dot" id="ab-ai-dot">●</span>
+    <span id="ab-ai-txt">Anthropic</span>
+  </div>
+  <div class="ab-sep">│</div>
+  <div class="ab-item" style="cursor:default">
+    <span style="color:rgba(255,255,255,.35)">📁</span>
+    <span id="ab-storage-txt" style="color:rgba(255,255,255,.5)">–</span>
+  </div>
+  <div style="flex:1"></div>
+  <div class="ab-item" style="cursor:default;color:rgba(255,255,255,.3)">
+    <span id="ab-user-txt"></span>
+  </div>
+  <div class="ab-sep">│</div>
+  <div class="ab-item" onclick="showAdminPanel('all')" title="Details">
+    <span style="color:rgba(255,255,255,.4)">⚙ Admin</span>
+  </div>
+</div>
+
+<!-- ADMIN DETAIL PANEL -->
+<div id="admin-panel" style="display:none;position:fixed;bottom:32px;right:0;width:480px;
+  background:#1a1a2e;border:1px solid rgba(255,255,255,.15);border-radius:8px 0 0 0;
+  z-index:501;max-height:70vh;overflow-y:auto;box-shadow:-4px -4px 20px rgba(0,0,0,.4)">
+  <div style="padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.1);display:flex;align-items:center;gap:10px">
+    <span style="color:#fff;font-size:13px;font-weight:600;flex:1">⚙ Admin – Verbindungsdetails</span>
+    <button onclick="runPostLoginTests()" style="background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:11px;font-family:inherit">↺ Neu testen</button>
+    <button onclick="document.getElementById('admin-panel').style.display='none'" style="background:none;border:none;color:rgba(255,255,255,.5);cursor:pointer;font-size:16px">✕</button>
+  </div>
+  <div id="admin-panel-content" style="padding:16px"></div>
+</div>
+
 <div id="toasts"></div>
 
 <script>
@@ -525,6 +646,8 @@ const S = {
 };
 
 let srcBlobUrl = null, outBlobUrl = null;
+// Edit mode: when loading an existing report for correction
+let editMode = { active: false, recId: null, num: null };
 
 /* ════════════════════════════════════════════════════════════
    AIRTABLE HELPERS
@@ -686,29 +809,67 @@ async function saveSettings() {
    LOGIN
    ════════════════════════════════════════════════════════════ */
 async function loginWithUserKey(userKey) {
-  const headers = { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY };
+  const token = APP_CONFIG.AIRTABLE_READ_KEY;
+  const headers = { 'Authorization':'Bearer '+token };
+
+  // Debug: log token prefix (never log full token)
+  console.log('[Login] Token prefix:', token.substring(0,12)+'…');
+  console.log('[Login] App-Base:', APP_CONFIG.APP_BASE_ID);
+  console.log('[Login] Master-Base:', APP_CONFIG.MASTER_BASE_ID);
+
+  // Step 1: User lookup
   const formula = "AND({api_key}='" + userKey + "',{status}='aktiv')";
-  const userRes = await fetch('https://api.airtable.com/v0/'+APP_CONFIG.APP_BASE_ID+'/User?filterByFormula='+encodeURIComponent(formula), { headers });
+  const userUrl = 'https://api.airtable.com/v0/'+APP_CONFIG.APP_BASE_ID+'/User?filterByFormula='+encodeURIComponent(formula);
+  console.log('[Login] User-URL:', userUrl);
+  const userRes = await fetch(userUrl, { headers });
+  console.log('[Login] User-Status:', userRes.status);
+
+  if (!userRes.ok) {
+    const errBody = await userRes.text();
+    console.error('[Login] User-Fehler:', errBody);
+    if (userRes.status === 403) throw new Error('Zugriff verweigert (403) – Read-Token hat keinen Zugriff auf die App-Base oder Tabelle "User"');
+    if (userRes.status === 404) throw new Error('Tabelle "User" nicht gefunden in Base '+APP_CONFIG.APP_BASE_ID);
+    throw new Error('Airtable Fehler '+userRes.status+': '+errBody.substring(0,100));
+  }
+
   const userData = await userRes.json();
+  console.log('[Login] User-Records:', userData.records?.length ?? 0);
   if (!userData.records || !userData.records.length) throw new Error('Ungültiger oder inaktiver Key');
   APP_KEYS.user = userData.records[0].fields;
 
-  const projRes = await fetch('https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys?filterByFormula='+encodeURIComponent("{project_id}='"+APP_CONFIG.PROJECT_ID+"'"), { headers });
+  // Step 2: Project Keys
+  const projUrl = 'https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys?filterByFormula='+encodeURIComponent("{project_id}='"+APP_CONFIG.PROJECT_ID+"'");
+  console.log('[Login] Keys-URL:', projUrl);
+  const projRes = await fetch(projUrl, { headers });
+  console.log('[Login] Keys-Status:', projRes.status);
+
+  if (!projRes.ok) {
+    const errBody = await projRes.text();
+    console.error('[Login] Keys-Fehler:', errBody);
+    if (projRes.status === 403) throw new Error('Zugriff verweigert (403) – Read-Token hat keinen Zugriff auf Master-Base oder Tabelle "Keys"');
+    throw new Error('Keys Fehler '+projRes.status+': '+errBody.substring(0,100));
+  }
+
   const projData = await projRes.json();
+  console.log('[Login] Projekt-Keys gefunden:', projData.records?.length ?? 0);
   (projData.records||[]).forEach(rec => {
     if (rec.fields.key_name==='anthropicKey')    APP_KEYS.anthropicKey    = rec.fields.key_value;
     if (rec.fields.key_name==='airtableWriteKey')APP_KEYS.airtableWriteKey= rec.fields.key_value;
     if (rec.fields.key_name==='airtableBaseId')  APP_KEYS.appBaseId       = rec.fields.key_value;
   });
 
+  // Step 3: Global fallback keys
   if (!APP_KEYS.anthropicKey) {
+    console.log('[Login] Kein projektspezifischer Anthropic-Key, lade GLOBAL…');
     const globRes = await fetch('https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+"/Keys?filterByFormula="+encodeURIComponent("{project_id}='GLOBAL'"), { headers });
+    console.log('[Login] Global-Keys-Status:', globRes.status);
     const globData = await globRes.json();
     (globData.records||[]).forEach(rec => {
       if (rec.fields.key_name==='anthropicKey') APP_KEYS.anthropicKey = rec.fields.key_value;
     });
   }
 
+  console.log('[Login] ✅ Erfolgreich. anthropicKey:', APP_KEYS.anthropicKey?'✓':'✗', 'writeKey:', APP_KEYS.airtableWriteKey?'✓':'✗');
   localStorage.setItem('user_key_'+APP_CONFIG.PROJECT_ID, userKey);
   return APP_KEYS.user;
 }
@@ -750,6 +911,11 @@ async function showApp() {
   try { await loadSettings(); } catch(e) { console.warn('loadSettings:', e); }
   try { await loadHistory(); } catch(e) { console.warn('loadHistory:', e); }
   toast('✅ Willkommen, '+(APP_KEYS.user?.name||'')+'!', 'ok');
+  // Admin: show status bar and run connection tests
+  if (isAdmin()) {
+    showAdminBar();
+    runPostLoginTests();
+  }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -1151,48 +1317,227 @@ function doDownload() {
 
 async function doSave() {
   if(!S.blob)return;
-  const fname=document.getElementById('s-name').value;
-  const data=collectForm();const num=S.counter;
+  const data=collectForm();
   const btn=document.getElementById('btn-save');
-  btn.disabled=true;btn.textContent='☁ Speichere…';
+
+  // ── Edit mode: ask user what to do ───────────────────────
+  if (editMode.active) {
+    showSaveChoiceDialog(data);
+    return;
+  }
+
+  await doSaveAs(data, S.counter, true);
+}
+
+function showSaveChoiceDialog(data) {
+  // Remove any existing dialog
+  const existing = document.getElementById('save-choice-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'save-choice-modal';
+  modal.style.cssText = `position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:800;
+    display:flex;align-items:center;justify-content:center;padding:20px`;
+  modal.innerHTML = `
+    <div style="background:var(--surf);border-radius:var(--r);box-shadow:0 12px 40px rgba(0,0,0,.25);
+      padding:28px;max-width:440px;width:100%">
+      <div style="font-size:17px;font-weight:700;color:var(--navy);margin-bottom:6px">
+        Bericht speichern
+      </div>
+      <div style="font-size:13px;color:var(--txt2);margin-bottom:20px">
+        Sie haben Bericht <strong>Nr. ${editMode.num}</strong> bearbeitet.
+        Wie soll gespeichert werden?
+      </div>
+
+      <div id="sch-opt-overwrite" onclick="selectSaveChoice('overwrite')"
+        style="border:2px solid var(--bdr);border-radius:var(--r);padding:14px 16px;
+          margin-bottom:10px;cursor:pointer;transition:all .15s">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">♻️</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--navy)">
+              Bestehenden Bericht überschreiben
+            </div>
+            <div style="font-size:12px;color:var(--txt2);margin-top:2px">
+              Nr. ${editMode.num} bleibt gleich · Daten &amp; PDF werden ersetzt ·
+              Zähler bleibt unverändert
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="sch-opt-new" onclick="selectSaveChoice('new')"
+        style="border:2px solid var(--bdr);border-radius:var(--r);padding:14px 16px;
+          margin-bottom:20px;cursor:pointer;transition:all .15s">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:20px">📄</span>
+          <div>
+            <div style="font-size:13px;font-weight:600;color:var(--navy)">
+              Als neuen Bericht speichern
+            </div>
+            <div style="font-size:12px;color:var(--txt2);margin-top:2px">
+              Neue Nr. ${S.counter} · Original Nr. ${editMode.num} bleibt unberührt ·
+              Zähler wird erhöht
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('save-choice-modal').remove()"
+          style="padding:9px 18px;border-radius:var(--rs);border:1px solid var(--bdr);
+            background:var(--surf);font-size:13px;cursor:pointer;font-family:inherit">
+          Abbrechen
+        </button>
+        <button id="sch-confirm" onclick="confirmSaveChoice()" disabled
+          style="padding:9px 18px;border-radius:var(--rs);border:none;
+            background:var(--navy);color:#fff;font-size:13px;cursor:pointer;
+            font-family:inherit;font-weight:500;opacity:.4">
+          Speichern
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  window._pendingSaveData = data;
+  window._pendingSaveChoice = null;
+}
+
+function selectSaveChoice(choice) {
+  window._pendingSaveChoice = choice;
+  ['overwrite','new'].forEach(opt => {
+    const el = document.getElementById('sch-opt-'+opt);
+    if (el) el.style.borderColor = opt===choice ? 'var(--navy)' : 'var(--bdr)';
+    if (el) el.style.background  = opt===choice ? 'rgba(26,51,83,.04)' : '';
+  });
+  const btn = document.getElementById('sch-confirm');
+  if (btn) { btn.disabled=false; btn.style.opacity='1'; }
+}
+
+async function confirmSaveChoice() {
+  const choice = window._pendingSaveChoice;
+  const data   = window._pendingSaveData;
+  if (!choice || !data) return;
+  document.getElementById('save-choice-modal').remove();
+
+  if (choice === 'overwrite') {
+    await doSaveOverwrite(data);
+  } else {
+    await doSaveAs(data, S.counter, true);
+  }
+}
+
+async function doSaveOverwrite(data) {
+  if (!editMode.recId) return toast('Fehler: Keine Record-ID für Überschreiben.', 'err');
+  const btn = document.getElementById('btn-save');
+  btn.disabled=true; btn.textContent='☁ Überschreibe…';
+  const fname = document.getElementById('s-name').value;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+
   try {
-    // 1. Bericht-Record anlegen
-    const rec = await atWrite('Berichte', {
-      api_key:       APP_KEYS.user.api_key,
-      bericht_num:   num,
-      tmpl:          S.tmpl,
-      datum:         data.datum||'',
-      standort:      data.standort||'',
-      fabriknummer:  data.fabriknummer||'',
-      techniker:     data.durchgefuehrt_von||'',
-      fname:         fname,
-      subfolder:     SUBFOLDERS[S.tmpl]||'Sonstige',
-      data_json:     JSON.stringify(data),
-      created:       new Date().toISOString(),
+    // Update existing record metadata + data
+    btn.textContent='☁ Aktualisiere Daten…';
+    await atUpdate('Berichte', editMode.recId, {
+      datum:       data.datum||'',
+      standort:    data.standort||'',
+      fabriknummer:data.fabriknummer||'',
+      techniker:   data.durchgefuehrt_von||'',
+      fname:       fname,
+      data_json:   JSON.stringify(data),
     });
 
-    // 2. Ergebnis-PDF hochladen
-    toast('⬆ Lade PDF hoch…', '');
-    await atBlobUpload(rec.id, 'out_pdf', S.blob, fname, 'application/pdf');
+    // Replace out_pdf: upload new PDF
+    btn.textContent='☁ Lade neues PDF hoch…';
+    toast('⬆ Lade korrigiertes PDF hoch…','');
+    await atBlobUpload(editMode.recId, 'out_pdf', S.blob, fname, 'application/pdf');
 
-    // 3. Quell-PDF hochladen (falls vorhanden und < 5MB)
-    if(S.file && S.file.size < 5*1024*1024) {
-      await atBlobUpload(rec.id, 'src_pdf', S.file, S.file.name, 'application/pdf');
-    }
-
-    // 4. Korrekturen speichern & Zähler erhöhen
     learnFromEdits(data);
-    S.counter++;
     await saveSettings();
 
-    toast('✅ Bericht Nr. '+num+' in Airtable gespeichert!','ok');
+    toast('✅ Bericht Nr. '+editMode.num+' aktualisiert!','ok');
     await loadHistory();
     setTimeout(resetApp, 1600);
   } catch(err) {
-    toast('Fehler: '+err.message,'err');
-    console.error(err);
+    toast('Fehler: '+err.message,'err'); console.error(err);
   } finally {
-    btn.disabled=false;btn.textContent='☁ In Airtable speichern';
+    btn.disabled=false; btn.textContent='☁ In Airtable speichern';
+  }
+}
+
+async function doSaveAs(data, num, incrementCounter) {
+  const btn = document.getElementById('btn-save');
+  const fname = document.getElementById('s-name').value;
+  btn.disabled=true; btn.textContent='☁ Speichere…';
+  try {
+    btn.textContent='☁ Lege Record an…';
+    const rec = await atWrite('Berichte', {
+      api_key:     APP_KEYS.user.api_key,
+      bericht_num: num,
+      tmpl:        S.tmpl,
+      datum:       data.datum||'',
+      standort:    data.standort||'',
+      fabriknummer:data.fabriknummer||'',
+      techniker:   data.durchgefuehrt_von||'',
+      fname:       fname,
+      subfolder:   SUBFOLDERS[S.tmpl]||'Sonstige',
+      data_json:   JSON.stringify(data),
+      created:     new Date().toISOString(),
+    });
+
+    btn.textContent='☁ Lade Ergebnis-PDF…';
+    toast('⬆ Lade Ergebnis-PDF hoch…','');
+    await atBlobUpload(rec.id, 'out_pdf', S.blob, fname, 'application/pdf');
+
+    // ── Quell-PDF speichern ──────────────────────────────────
+    if(S._srcPdfUrl) {
+      // Editing mode: source PDF already in Airtable – copy via URL
+      // Airtable accepts attachment URLs directly in PATCH/update
+      btn.textContent='☁ Kopiere Quell-PDF…';
+      toast('⬆ Kopiere Quell-PDF in neuen Bericht…','');
+      try {
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        const srcFname = S._srcPdfName || 'quell.pdf';
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+rec.id, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': 'Bearer '+APP_KEYS.airtableWriteKey,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ fields: {
+            src_pdf: [{ url: S._srcPdfUrl, filename: srcFname }]
+          }})
+        });
+        console.log('[Save] Quell-PDF per URL kopiert:', srcFname);
+      } catch(e) {
+        console.warn('[Save] Quell-PDF Kopie fehlgeschlagen:', e.message);
+        toast('⚠ Quell-PDF konnte nicht kopiert werden: '+e.message,'warn');
+      }
+    } else if(S.file) {
+      if(S.file.size > 5*1024*1024) {
+        toast('⚠ Quell-PDF zu groß (>5MB) – wird nicht gespeichert','warn');
+      } else {
+        btn.textContent='☁ Lade Quell-PDF…';
+        toast('⬆ Lade Quell-PDF hoch…','');
+        try {
+          await atBlobUpload(rec.id, 'src_pdf', S.file, S.file.name, 'application/pdf');
+        } catch(e) {
+          toast('⚠ Quell-PDF nicht gespeichert: '+e.message,'warn');
+        }
+      }
+    } else {
+      console.warn('[Save] Kein Quell-PDF verfügbar');
+    }
+
+    learnFromEdits(data);
+    if(incrementCounter) { S.counter++; }
+    await saveSettings();
+
+    toast('✅ Bericht Nr. '+num+' gespeichert!','ok');
+    await loadHistory();
+    setTimeout(resetApp, 1600);
+  } catch(err) {
+    toast('Fehler: '+err.message,'err'); console.error(err);
+  } finally {
+    btn.disabled=false; btn.textContent='☁ In Airtable speichern';
   }
 }
 
@@ -1212,6 +1557,7 @@ function resetApp() {
   document.getElementById('btn-start').disabled=true;
   document.getElementById('form-area').innerHTML='';
   document.getElementById('ctr-val').textContent=S.counter;
+  editMode = { active: false, recId: null, num: null };
   goTo(1);toast('Bereit für den nächsten Bericht.','ok');
 }
 
@@ -1256,6 +1602,7 @@ async function renderOverview() {
         </div>
         <div class="ov-actions">
           <button class="btn" style="font-size:12px;padding:6px 12px" onclick="openOvModal('${r.id}')">🔍 Vorschau</button>
+          <button class="btn prim" style="font-size:12px;padding:6px 12px" onclick="loadReportForEditing('${r.id}')">✏ Bearbeiten</button>
           <button class="btn" style="font-size:12px;padding:6px 12px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteOvRecord('${r.id}',${r.fields.bericht_num})">🗑</button>
         </div>
       </div>`).join('');
@@ -1347,6 +1694,7 @@ function renderOvData(f) {
         <div style="font-size:12px;color:var(--txt2);margin-top:2px">${tmplLabel} · ${f.subfolder||''}</div>
       </div>
       <div style="display:flex;gap:8px">
+        <button class="btn prim" onclick="loadReportForEditing(_currentOvRec?.id)">✏ Bearbeiten</button>
         <button class="btn" onclick="dlOvPdf('out')">⬇ Ergebnis-PDF</button>
         ${(f.src_pdf||[]).length?`<button class="btn" onclick="dlOvPdf('src')">⬇ Quell-PDF</button>`:''}
       </div>
@@ -1382,20 +1730,10 @@ async function dlOvPdf(type) {
   const files=_currentOvRec.fields[type==='out'?'out_pdf':'src_pdf']||[];
   if(!files.length){toast('Keine PDF verfügbar.','warn');return;}
   const file=files[0];
-  try{
-    // Fetch with auth header to bypass expiry issues
-    const r=await fetch(file.url,{headers:{'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY}});
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    const blob=await r.blob();
-    const url=URL.createObjectURL(blob);
-    const a=document.createElement('a');a.href=url;a.download=file.filename||'bericht.pdf';
-    document.body.appendChild(a);a.click();a.remove();
-    URL.revokeObjectURL(url);
-    toast('PDF heruntergeladen.','ok');
-  }catch(e){
-    // Fallback: direct link
-    window.open(file.url,'_blank');
-  }
+  // Open directly in new tab – fetch from null origin blocked by CORS
+  // The URL is time-limited but valid for hours; direct navigation works fine
+  window.open(file.url, '_blank');
+  toast('PDF wird in neuem Tab geöffnet.','ok');
 }
 
 function closeOvModal() {
@@ -1495,8 +1833,466 @@ document.addEventListener('DOMContentLoaded',()=>{
   });
   // Login enter key
   document.getElementById('login-key').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
+
   init();
 });
+
+/* ════════════════════════════════════════════════════════════
+   CONNECTION TEST
+   ════════════════════════════════════════════════════════════ */
+async function runConnectionTest() {
+  const btn = document.getElementById('test-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Teste…';
+
+  const results = document.getElementById('test-results');
+  results.style.display = 'block';
+  document.getElementById('ct-summary').style.display = 'none';
+
+  // Reset all rows
+  ['ct-token','ct-appbase','ct-usertable','ct-masterbase','ct-keystable'].forEach(id => {
+    setCtRow(id, 'spin', '◌', 'Prüfe…', '');
+  });
+
+  const token = APP_CONFIG.AIRTABLE_READ_KEY;
+  const headers = { 'Authorization': 'Bearer ' + token };
+  let allOk = true;
+
+  // ── 1. Token-Format ──────────────────────────────────────
+  await delay(200);
+  const tokenOk = token && token.startsWith('pat') && token.includes('.');
+  if (tokenOk) {
+    setCtRow('ct-token','ok','✓', 'Format korrekt', 'Beginnt mit "pat", enthält Punkt');
+  } else {
+    setCtRow('ct-token','err','✗', 'Ungültiges Format', token ? 'Erwartet: pat….…' : 'Leer!');
+    allOk = false;
+  }
+
+  // ── 2. App-Base erreichbar ────────────────────────────────
+  setCtRow('ct-appbase','spin','◌','Verbinde…','');
+  try {
+    const t0 = Date.now();
+    const r = await fetch(
+      'https://api.airtable.com/v0/meta/bases/'+APP_CONFIG.APP_BASE_ID+'/tables',
+      { headers }
+    );
+    const ms = Date.now()-t0;
+    if (r.ok) {
+      const d = await r.json();
+      const tables = (d.tables||[]).map(t=>t.name);
+      setCtRow('ct-appbase','ok','✓','Erreichbar ('+ms+'ms)','Tabellen: '+tables.join(', '));
+
+      // ── 3. Tabelle "User" ──────────────────────────────
+      setCtRow('ct-usertable','spin','◌','Prüfe…','');
+      await delay(100);
+      const userTable = (d.tables||[]).find(t=>t.name==='User');
+      if (userTable) {
+        const fields = userTable.fields.map(f=>f.name).join(', ');
+        setCtRow('ct-usertable','ok','✓','Gefunden','Felder: '+fields);
+      } else {
+        setCtRow('ct-usertable','err','✗','Nicht gefunden','Vorhandene Tabellen: '+tables.join(', '));
+        allOk = false;
+      }
+    } else {
+      const body = await r.text();
+      let msg = 'Status '+r.status;
+      if (r.status===403) msg='403 – Token hat keinen Zugriff auf diese Base';
+      if (r.status===404) msg='404 – Base-ID nicht gefunden';
+      setCtRow('ct-appbase','err','✗',msg,APP_CONFIG.APP_BASE_ID);
+      setCtRow('ct-usertable','err','✗','Nicht prüfbar (Base nicht erreichbar)','');
+      allOk = false;
+    }
+  } catch(e) {
+    setCtRow('ct-appbase','err','✗','Netzwerkfehler',e.message);
+    setCtRow('ct-usertable','err','✗','Nicht prüfbar','');
+    allOk = false;
+  }
+
+  // ── 4. Master-Base erreichbar ─────────────────────────────
+  setCtRow('ct-masterbase','spin','◌','Verbinde…','');
+  try {
+    const t0 = Date.now();
+    const r = await fetch(
+      'https://api.airtable.com/v0/meta/bases/'+APP_CONFIG.MASTER_BASE_ID+'/tables',
+      { headers }
+    );
+    const ms = Date.now()-t0;
+    if (r.ok) {
+      const d = await r.json();
+      const tables = (d.tables||[]).map(t=>t.name);
+      setCtRow('ct-masterbase','ok','✓','Erreichbar ('+ms+'ms)','Tabellen: '+tables.join(', '));
+
+      // ── 5. Tabelle "Keys" ──────────────────────────────
+      setCtRow('ct-keystable','spin','◌','Prüfe…','');
+      await delay(100);
+      const keysTable = (d.tables||[]).find(t=>t.name==='Keys');
+      if (keysTable) {
+        // Try to actually read keys for this project
+        const kr = await fetch(
+          'https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys?filterByFormula='+
+          encodeURIComponent("{project_id}='"+APP_CONFIG.PROJECT_ID+"'"),
+          { headers }
+        );
+        if (kr.ok) {
+          const kd = await kr.json();
+          const keyNames = (kd.records||[]).map(r=>r.fields.key_name).join(', ');
+          if (kd.records && kd.records.length > 0) {
+            setCtRow('ct-keystable','ok','✓','Gefunden ('+kd.records.length+' Keys)',
+              'Keys: '+(keyNames||'(keine key_name Felder)'));
+          } else {
+            setCtRow('ct-keystable','err','✗','Keine Keys für project_id='+APP_CONFIG.PROJECT_ID,
+              'Tabelle existiert aber keine passenden Einträge');
+            allOk = false;
+          }
+        } else {
+          setCtRow('ct-keystable','err','✗','Lesefehler '+kr.status,'Keys-Tabelle nicht lesbar');
+          allOk = false;
+        }
+      } else {
+        setCtRow('ct-keystable','err','✗','Tabelle "Keys" nicht gefunden',
+          'Vorhandene Tabellen: '+tables.join(', '));
+        allOk = false;
+      }
+    } else {
+      let msg = 'Status '+r.status;
+      if (r.status===403) msg='403 – Token hat keinen Zugriff auf Master-Base';
+      if (r.status===404) msg='404 – Master-Base-ID nicht gefunden';
+      setCtRow('ct-masterbase','err','✗',msg,APP_CONFIG.MASTER_BASE_ID);
+      setCtRow('ct-keystable','err','✗','Nicht prüfbar','');
+      allOk = false;
+    }
+  } catch(e) {
+    setCtRow('ct-masterbase','err','✗','Netzwerkfehler',e.message);
+    setCtRow('ct-keystable','err','✗','Nicht prüfbar','');
+    allOk = false;
+  }
+
+  // ── Summary ───────────────────────────────────────────────
+  const sum = document.getElementById('ct-summary');
+  sum.style.display = 'block';
+  if (allOk) {
+    sum.style.background = 'rgba(5,150,105,.08)';
+    sum.style.border = '1px solid rgba(5,150,105,.3)';
+    sum.style.color = 'var(--ok)';
+    sum.textContent = '✅ Alle Verbindungen OK – Login sollte funktionieren';
+  } else {
+    sum.style.background = 'rgba(220,38,38,.06)';
+    sum.style.border = '1px solid rgba(220,38,38,.25)';
+    sum.style.color = 'var(--err)';
+    sum.textContent = '❌ Verbindungsprobleme gefunden – Login wird fehlschlagen';
+  }
+
+  btn.disabled = false;
+  btn.textContent = '🔄 Erneut testen';
+}
+
+function setCtRow(rowId, status, dot, label, detail) {
+  const dotEl = document.getElementById(rowId+'-dot');
+  const detEl = document.getElementById(rowId+'-detail');
+  dotEl.textContent = dot;
+  dotEl.className = 'ct-dot ' + (status==='ok'?'ok':status==='err'?'err':status==='spin'?'spin':'');
+  detEl.textContent = detail;
+  detEl.className = 'ct-detail ' + (status==='ok'?'ok':status==='err'?'err':'');
+  // Update main label
+  const rows = document.querySelectorAll('.ct-label');
+  rows.forEach(r => { if(r.closest('.ct-row')?.id===rowId) r.textContent=label; });
+}
+
+function delay(ms) { return new Promise(r=>setTimeout(r,ms)); }
+
+
+/* ════════════════════════════════════════════════════════════
+   ADMIN STATUS BAR & POST-LOGIN TESTS
+   ════════════════════════════════════════════════════════════ */
+
+function isAdmin() {
+  return APP_KEYS.user && APP_KEYS.user.role === 'admin';
+}
+
+function showAdminBar() {
+  if (!isAdmin()) return;
+  const bar = document.getElementById('admin-bar');
+  bar.style.display = 'flex';
+  // Push app content up so bar doesn't overlap
+  document.getElementById('app').style.paddingBottom = '32px';
+  document.getElementById('ab-user-txt').textContent =
+    '👤 ' + (APP_KEYS.user.name||'Admin') + ' · admin';
+  document.getElementById('ab-storage-txt').textContent =
+    'Base: ' + (APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID).slice(0,10) + '…';
+}
+
+// Dot + text helpers
+function abSet(key, status, txt) {
+  const dot = document.getElementById('ab-'+key+'-dot');
+  const label = document.getElementById('ab-'+key+'-txt');
+  dot.className = 'ab-dot ' + status;
+  dot.textContent = status === 'spin' ? '◌' : '●';
+  if (label) label.textContent = txt;
+}
+
+async function runPostLoginTests() {
+  if (!isAdmin()) return;
+  showAdminBar();
+
+  // Reset all to spinning
+  abSet('read',  'spin', 'AT Read…');
+  abSet('write', 'spin', 'AT Write…');
+  abSet('ai',    'spin', 'Anthropic…');
+
+  const results = { read: null, write: null, ai: null };
+
+  // ── 1. READ TEST: list tables in App-Base ─────────────────
+  try {
+    const r = await fetch(
+      'https://api.airtable.com/v0/meta/bases/' + APP_CONFIG.APP_BASE_ID + '/tables',
+      { headers: { 'Authorization': 'Bearer ' + APP_CONFIG.AIRTABLE_READ_KEY } }
+    );
+    if (r.ok) {
+      const d = await r.json();
+      const tables = (d.tables||[]).map(t=>t.name);
+      results.read = { ok: true, tables, ms: 0 };
+      abSet('read', 'ok', 'AT Read ✓');
+    } else {
+      results.read = { ok: false, status: r.status, msg: await r.text() };
+      abSet('read', 'err', 'AT Read ✗ ' + r.status);
+    }
+  } catch(e) {
+    results.read = { ok: false, msg: e.message };
+    abSet('read', 'err', 'AT Read ✗');
+  }
+
+  // ── 2. WRITE TEST: write + delete a test record ───────────
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token geladen');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const writeHdr = {
+      'Authorization': 'Bearer ' + APP_KEYS.airtableWriteKey,
+      'Content-Type': 'application/json'
+    };
+    // Write test record to Einstellungen (safe, api_key based)
+    const t0 = Date.now();
+    const wr = await fetch('https://api.airtable.com/v0/' + baseId + '/Einstellungen', {
+      method: 'POST', headers: writeHdr,
+      body: JSON.stringify({ fields: {
+        api_key: '__connection_test__',
+        counter: 0,
+        corrections_json: '{}',
+        updated: new Date().toISOString()
+      }})
+    });
+    const ms = Date.now() - t0;
+    if (wr.ok) {
+      const wd = await wr.json();
+      const recId = wd.id;
+      // Delete test record immediately
+      await fetch('https://api.airtable.com/v0/' + baseId + '/Einstellungen/' + recId, {
+        method: 'DELETE', headers: { 'Authorization': 'Bearer ' + APP_KEYS.airtableWriteKey }
+      });
+      results.write = { ok: true, ms, baseId, recId };
+      abSet('write', 'ok', 'AT Write ✓');
+    } else {
+      const body = await wr.text();
+      results.write = { ok: false, status: wr.status, msg: body };
+      abSet('write', 'err', 'AT Write ✗ ' + wr.status);
+    }
+  } catch(e) {
+    results.write = { ok: false, msg: e.message };
+    abSet('write', 'err', 'AT Write ✗');
+  }
+
+  // ── 3. ANTHROPIC TEST: minimal API call ───────────────────
+  try {
+    if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic Key geladen');
+    const t0 = Date.now();
+    const ar = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': APP_KEYS.anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'Hi' }]
+      })
+    });
+    const ms = Date.now() - t0;
+    if (ar.ok) {
+      results.ai = { ok: true, ms, model: 'claude-haiku-4-5-20251001' };
+      abSet('ai', 'ok', 'AI ✓ ' + ms + 'ms');
+    } else {
+      const body = await ar.text();
+      results.ai = { ok: false, status: ar.status, msg: body };
+      abSet('ai', 'err', 'AI ✗ ' + ar.status);
+    }
+  } catch(e) {
+    results.ai = { ok: false, msg: e.message };
+    abSet('ai', 'err', 'AI ✗');
+  }
+
+  // Store results for panel
+  window._adminTestResults = results;
+}
+
+function showAdminPanel(section) {
+  if (!isAdmin()) return;
+  const panel = document.getElementById('admin-panel');
+  const content = document.getElementById('admin-panel-content');
+  const r = window._adminTestResults || {};
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+
+  const row = (label, value, cls='') =>
+    `<div class="ap-row"><span class="ap-label">${label}</span><span class="ap-value ${cls}">${value}</span></div>`;
+
+  const statusBadge = (ok, okTxt, failTxt) =>
+    ok ? `<span class="ap-value ok">✓ ${okTxt}</span>` : `<span class="ap-value err">✗ ${failTxt}</span>`;
+
+  content.innerHTML = `
+    <div class="ap-section">
+      <div class="ap-title">🔑 Tokens & Keys</div>
+      ${row('Read-Token', APP_CONFIG.AIRTABLE_READ_KEY.substring(0,16)+'…'+(APP_CONFIG.AIRTABLE_READ_KEY.slice(-4)), '')}
+      ${row('Write-Token', APP_KEYS.airtableWriteKey ? APP_KEYS.airtableWriteKey.substring(0,16)+'…' : '— nicht geladen', APP_KEYS.airtableWriteKey?'ok':'err')}
+      ${row('Anthropic Key', APP_KEYS.anthropicKey ? APP_KEYS.anthropicKey.substring(0,16)+'…' : '— nicht geladen', APP_KEYS.anthropicKey?'ok':'err')}
+    </div>
+
+    <div class="ap-section">
+      <div class="ap-title">📁 Datenspeicherung</div>
+      ${row('App-Base ID', baseId)}
+      ${row('Master-Base ID', APP_CONFIG.MASTER_BASE_ID)}
+      ${row('Project ID', APP_CONFIG.PROJECT_ID)}
+      ${row('Tabelle Berichte', baseId + '/Berichte')}
+      ${row('Tabelle Einstellungen', baseId + '/Einstellungen')}
+      ${row('User', (APP_KEYS.user?.name||'–') + ' · ' + (APP_KEYS.user?.api_key||'–').substring(0,8)+'…')}
+    </div>
+
+    <div class="ap-section">
+      <div class="ap-title">🔌 Verbindungstest</div>
+      ${r.read ? row('Airtable Read',
+          r.read.ok
+            ? '✓ OK · Tabellen: ' + (r.read.tables||[]).join(', ')
+            : '✗ Fehler ' + (r.read.status||'') + ': ' + (r.read.msg||'').substring(0,60),
+          r.read.ok?'ok':'err') : row('Airtable Read','— nicht getestet','warn')}
+      ${r.write ? row('Airtable Write',
+          r.write.ok
+            ? '✓ OK · ' + r.write.ms + 'ms · Test-Record angelegt & gelöscht'
+            : '✗ ' + (r.write.status||'') + ': ' + (r.write.msg||'').substring(0,80),
+          r.write.ok?'ok':'err') : row('Airtable Write','— nicht getestet','warn')}
+      ${r.ai ? row('Anthropic API',
+          r.ai.ok
+            ? '✓ OK · ' + r.ai.ms + 'ms · Modell: ' + r.ai.model
+            : '✗ ' + (r.ai.status||'') + ': ' + (r.ai.msg||'').substring(0,80),
+          r.ai.ok?'ok':'err') : row('Anthropic API','— nicht getestet','warn')}
+    </div>
+
+    <div style="padding-top:8px;border-top:1px solid rgba(255,255,255,.08)">
+      <button onclick="runPostLoginTests()" style="width:100%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.7);padding:8px;border-radius:5px;cursor:pointer;font-size:12px;font-family:inherit">
+        ↺ Alle Tests neu ausführen
+      </button>
+    </div>`;
+
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+}
+
+
+/* ════════════════════════════════════════════════════════════
+   BERICHT ZUM BEARBEITEN LADEN
+   ════════════════════════════════════════════════════════════ */
+async function loadReportForEditing(recId) {
+  const rec = _ovRecords.find(r => r.id === recId);
+  if (!rec) return toast('Bericht nicht gefunden.', 'err');
+
+  const f = rec.fields;
+
+  // Confirm if something is already in progress
+  if (S.file || S.blob) {
+    if (!confirm('Aktueller Vorgang wird verworfen. Bericht Nr. ' + f.bericht_num + ' laden?')) return;
+    resetApp();
+    await new Promise(r => setTimeout(r, 200));
+  }
+
+  // Close overview
+  switchView('conv');
+
+  toast('⏳ Lade Bericht Nr. ' + f.bericht_num + '…', '');
+
+  // ── Activate edit mode ───────────────────────────────────
+  editMode = { active: true, recId: rec.id, num: f.bericht_num };
+
+  // ── Set template ──────────────────────────────────────────
+  S.tmpl = f.tmpl || 'aszendio-arbeit';
+  document.getElementById('tmpl-sel').value = S.tmpl;
+  updateTmplBadge();
+
+  // ── Restore form data from data_json ─────────────────────
+  let data = {};
+  try {
+    data = JSON.parse(f.data_json || '{}');
+  } catch(e) {
+    toast('Daten konnten nicht geladen werden.', 'err');
+    return;
+  }
+  const tmpl = T[S.tmpl];
+  S.extracted = { ...tmpl.schema(), ...data };
+  S.edited    = JSON.parse(JSON.stringify(S.extracted));
+
+  // ── Restore source PDF via direct URL (no fetch/CORS issue) ─
+  const srcFiles = f.src_pdf || [];
+  if (srcFiles.length > 0) {
+    // Direct URL → iframe can load it without CORS restriction
+    // fetch() would fail from file:// origin, but iframe src works fine
+    const srcUrl = srcFiles[0].url;
+    const srcName = srcFiles[0].filename || 'quell.pdf';
+
+    // Show in split panel via direct URL
+    if (srcBlobUrl) URL.revokeObjectURL(srcBlobUrl);
+    srcBlobUrl = srcUrl;  // store URL directly (not a blob, but works for iframe)
+
+    document.getElementById('upload-zone').className  = 'upload ready';
+    document.getElementById('up-ico').textContent     = '✅';
+    document.getElementById('up-title').textContent   = srcName + ' (aus Airtable)';
+    document.getElementById('up-sub').textContent     = 'Quell-PDF gespeichert · Klick auf "📄 Quell-PDF" zum Anzeigen';
+    document.getElementById('btn-src-preview').style.display = 'block';
+    document.getElementById('src-panel-title').textContent   = '📄 ' + srcName;
+
+    // Show directly in iframe – bypasses CORS (iframe is not subject to fetch CORS)
+    showSrcPanel();
+    document.getElementById('src-iframe').src = srcUrl;
+
+    // Also keep a direct-open link for fallback
+    S._srcPdfUrl = srcUrl;
+    S._srcPdfName = srcName;
+    toast('✅ Quell-PDF aus Airtable geladen.', 'ok');
+  } else {
+    toast('ℹ Kein Quell-PDF gespeichert – Formulardaten wurden geladen.', '');
+  }
+
+  // ── Show edit form ────────────────────────────────────────
+  document.getElementById('form-area').innerHTML = tmpl.form(S.edited);
+  document.getElementById('btn-start').disabled  = false;
+  document.getElementById('btn-reset').style.display = 'block';
+
+  // ── Alert: editing existing report ───────────────────────
+  const existingAlert = document.createElement('div');
+  existingAlert.className = 'alert warn';
+  existingAlert.style.marginBottom = '14px';
+  existingAlert.innerHTML = `<span>✏</span>
+    <div>
+      <strong>Bericht Nr. ${f.bericht_num} wird bearbeitet</strong> (${tmpl.label})<br>
+      <span style="font-size:12px">Ursprüngliches Datum: ${f.datum||'–'} · Standort: ${f.standort||'–'}</span><br>
+      <span style="font-size:12px;color:var(--err)">
+        ⚠ Nach der Korrektur wird ein <strong>neuer Bericht mit neuer Nummer</strong> gespeichert.
+        Der alte Bericht bleibt unverändert in der Übersicht.
+      </span>
+    </div>`;
+  const formArea = document.getElementById('form-area');
+  formArea.insertBefore(existingAlert, formArea.firstChild);
+
+  goTo(3);
+  toast('✅ Bericht Nr. ' + f.bericht_num + ' geladen – Daten bearbeiten und neu generieren.', 'ok');
+}
+
 </script>
 </body>
 </html>
