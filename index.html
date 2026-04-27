@@ -1214,9 +1214,22 @@ function updateLearnN() {
    ════════════════════════════════════════════════════════════ */
 async function loadHistory() {
   try {
-    const recs = await atRead('Berichte', "{api_key}='" + APP_KEYS.user.api_key + "'");
+    // Alle Berichte laden (nicht nach User filtern) für korrekte Nummernvergabe
+    const recs = await atRead('Berichte', null);
     recs.sort((a,b)=>b.fields.bericht_num-a.fields.bericht_num);
     S.history = recs.slice(0,8).map(r=>r.fields);
+
+    // Höchste Berichtsnummer ermitteln → Zähler setzen
+    if (recs.length > 0) {
+      const maxNum = Math.max(...recs.map(r => r.fields.bericht_num || 0));
+      if (maxNum >= S.counter) {
+        S.counter = maxNum + 1;
+        document.getElementById('ctr-val').textContent = S.counter;
+        // Einstellungen aktualisieren
+        saveSettings().catch(e => console.warn('saveSettings nach maxNum:', e));
+      }
+    }
+
     renderHistory();
   } catch(e) { console.warn('loadHistory:', e); }
 }
@@ -1468,6 +1481,25 @@ async function doSaveAs(data, num, incrementCounter) {
   const fname = document.getElementById('s-name').value;
   btn.disabled=true; btn.textContent='☁ Speichere…';
   try {
+    // Globale Maxnummer nochmals prüfen (anderer User könnte gespeichert haben)
+    btn.textContent='☁ Prüfe Berichtsnummer…';
+    try {
+      const allRecs = await atRead('Berichte', null);
+      if (allRecs.length > 0) {
+        const maxNum = Math.max(...allRecs.map(r => r.fields.bericht_num || 0));
+        if (maxNum >= num) {
+          const safeNum = maxNum + 1;
+          console.warn('[Save] Kollision! Geplant:', num, '→ verwende:', safeNum);
+          toast('⚠ Nr. '+num+' bereits vergeben → verwende Nr. '+safeNum, 'warn');
+          num = safeNum;
+          S.counter = safeNum;
+          document.getElementById('s-num').value = safeNum;
+          const newFname = safeNum + '_' + fname.split('_').slice(1).join('_');
+          document.getElementById('s-name').value = newFname;
+        }
+      }
+    } catch(e) { console.warn('[Save] Maxnum-Check fehlgeschlagen:', e); }
+
     btn.textContent='☁ Lege Record an…';
     const rec = await atWrite('Berichte', {
       api_key:     APP_KEYS.user.api_key,
@@ -1577,7 +1609,7 @@ async function renderOverview() {
   const list=document.getElementById('ov-list');
   list.innerHTML='<div class="hist-empty" style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Berichte…</div>';
   try {
-    let recs=await atRead('Berichte',"{api_key}='"+APP_KEYS.user.api_key+"'");
+    let recs=await atRead('Berichte', null); // Alle User-Berichte sichtbar
     recs.sort((a,b)=>b.fields.bericht_num-a.fields.bericht_num);
     _ovRecords=recs;
     const filtered=recs.filter(r=>{
@@ -1598,6 +1630,9 @@ async function renderOverview() {
             <span>👤 ${r.fields.techniker||'–'}</span>
             <span>🔧 ${r.fields.fabriknummer||'–'}</span>
             <span class="ov-tag">${T[r.fields.tmpl]?.label||r.fields.tmpl}</span>
+            ${r.fields.api_key && r.fields.api_key !== APP_KEYS.user.api_key
+              ? `<span style="color:var(--amber);font-size:10px">👥 anderer User</span>`
+              : ''}
           </div>
         </div>
         <div class="ov-actions">
