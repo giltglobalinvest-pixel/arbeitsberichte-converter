@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Arbeitsberichte Converter</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;}
+body{display:flex;align-items:center;justify-content:center;background:#0d0d0d;color:#fff;}
+.loader{text-align:center;padding:30px;max-width:420px;width:100%;}
+.icon{font-size:56px;margin-bottom:16px;}
+.title{font-size:22px;font-weight:700;margin-bottom:6px;}
+.sub{font-size:13px;color:#888;margin-bottom:20px;}
+.spinner{width:32px;height:32px;border:3px solid #333;border-top-color:#00e676;border-radius:50%;animation:spin 0.8s linear infinite;margin:0 auto 16px;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.status{font-family:monospace;font-size:11px;color:#666;}
+.err{color:#ff5252;background:#2a1010;padding:12px 16px;border-radius:8px;border:1px solid #5a2020;margin-top:12px;font-size:12px;text-align:left;line-height:1.5;}
+.btn{display:inline-block;margin:8px 4px 0;padding:8px 18px;background:#00e676;color:#0d0d0d;border:none;border-radius:8px;font-weight:700;cursor:pointer;text-decoration:none;font-size:13px;font-family:inherit;}
+.btn.gray{background:#888;color:#fff;}
+.vlist{max-height:50vh;overflow-y:auto;margin:8px 0;padding:4px;background:#161616;border:1px solid #222;border-radius:10px;}
+.vlist::-webkit-scrollbar{width:8px;}
+.vlist::-webkit-scrollbar-track{background:#0d0d0d;}
+.vlist::-webkit-scrollbar-thumb{background:#333;border-radius:4px;}
+.vbtn{display:block;width:100%;margin:4px 0;padding:12px 16px;background:#1f1f1f;color:#fff;border:1px solid #2a2a2a;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;font-family:inherit;text-align:left;transition:all 0.15s;}
+.vbtn:hover{background:#00e676;color:#0d0d0d;border-color:#00e676;}
+.vempty{padding:20px;color:#666;font-size:12px;}
+</style>
+</head>
+<body>
+<div class="loader" id="loader">
+<div class="icon">🔧</div>
+<div class="title">Arbeitsberichte Converter</div>
+<div class="sub">Wähle eine Version</div>
+<div id="content">
+<div class="spinner"></div>
+<div class="status" id="status">Lade Versionsliste...</div>
+</div>
+</div>
+<script>
+(async function(){
+var REPO='giltglobalinvest-pixel/arbeitsberichte-converter';
+var FILENAME='index.html';
+var POLL_MIN=5;
+var contentEl=document.getElementById('content');
+var statusEl=document.getElementById('status');
+function setStatus(msg){if(statusEl&&statusEl.parentNode)statusEl.textContent=msg;}
+function escHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+function showError(msg,hint,allowCached){
+var html='<div class="err">'+escHtml(msg)+(hint?'<br><br><strong>Tipp:</strong> '+escHtml(hint):'')+'</div>';
+html+='<button class="btn" onclick="location.reload()">Erneut versuchen</button>';
+if(allowCached&&window._cachedApp)html+='<button class="btn gray" onclick="loadCached()">Gecachte Version starten</button>';
+contentEl.innerHTML=html;
+}
+window.loadCached=function(){if(window._cachedApp){document.open();document.write(window._cachedApp);document.close();}};
+var cacheKey='app_cache_'+REPO;
+try{var c=localStorage.getItem(cacheKey);if(c)window._cachedApp=c;}catch(e){}
+function injectMonitor(html){
+var mon='<script>(function(){try{var R="'+REPO+'",F="'+FILENAME+'",CK="app_cache_"+R,P='+POLL_MIN+'*60*1000;'
++'function showUpdateBanner(){if(document.getElementById("__upd_banner"))return;var b=document.createElement("div");b.id="__upd_banner";b.style.cssText="position:fixed;top:0;left:0;right:0;background:#00e676;color:#000;padding:10px 14px;text-align:center;font-family:-apple-system,sans-serif;font-size:13px;z-index:999999;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);padding-top:calc(10px + env(safe-area-inset-top, 0px))";b.innerHTML="✨ Neue Version verfügbar – hier klicken zum Aktualisieren";b.onclick=function(){location.reload();};document.body.appendChild(b);}'
++'function chk(){fetch("https://raw.githubusercontent.com/"+R+"/main/"+F+"?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)return;return r.text();}).then(function(t){if(!t)return;var c=null;try{c=localStorage.getItem(CK);}catch(e){}if(c&&t!==c){showUpdateBanner();}}).catch(function(){});}'
++'setTimeout(chk,30000);setInterval(chk,P);'
++'document.addEventListener("visibilitychange",function(){if(!document.hidden)chk();});'
++'window.addEventListener("focus",chk);'
++'}catch(e){}})();<\/script>';
+var idx=html.toLowerCase().lastIndexOf('</body>');
+if(idx>=0)return html.slice(0,idx)+mon+html.slice(idx);
+return html+mon;
+}
+async function loadVersion(sha,label){
+contentEl.innerHTML='<div class="spinner"></div><div class="status">Lade Version '+escHtml(label)+'...</div>';
+try{
+var url='https://raw.githubusercontent.com/'+REPO+'/'+sha+'/'+FILENAME+'?t='+Date.now();
+var res=await fetch(url,{cache:'no-store'});
+if(!res.ok)throw new Error('HTTP '+res.status);
+var html=await res.text();
+if(!html||html.length<100)throw new Error('Datei leer oder ungueltig');
+try{localStorage.setItem(cacheKey,html);localStorage.setItem(cacheKey+'_at',new Date().toISOString());}catch(e){}
+var withMonitor=injectMonitor(html);
+setTimeout(function(){document.open();document.write(withMonitor);document.close();},150);
+}catch(err){
+console.error('loadVersion error:',err);
+showError('Konnte Version nicht laden: '+err.message,'Pruefe deine Internetverbindung.',true);
+}
+}
+window._loadVersion=loadVersion;
+try{
+var apiUrl='https://api.github.com/repos/'+REPO+'/commits?path='+FILENAME+'&per_page=100';
+var res=await fetch(apiUrl);
+if(!res.ok)throw new Error('GitHub API HTTP '+res.status);
+var commits=await res.json();
+if(!Array.isArray(commits)||!commits.length)throw new Error('Keine Versionen gefunden');
+var versions=commits.map(function(c){
+var msg=(c.commit&&c.commit.message)||'';
+var m=msg.match(/Deploy\s+(\S+)/i);
+return {sha:c.sha,version:m?m[1]:c.sha.substring(0,7)};
+});
+var html='<div class="vlist">';
+versions.forEach(function(v,i){
+html+='<button class="vbtn" data-sha="'+v.sha+'" data-label="'+escHtml(v.version)+'">'+escHtml(v.version)+'</button>';
+});
+html+='</div>';
+if(window._cachedApp)html+='<button class="btn gray" onclick="loadCached()">Letzte gecachte Version (offline)</button>';
+contentEl.innerHTML=html;
+contentEl.querySelectorAll('.vbtn').forEach(function(btn){
+btn.addEventListener('click',function(){loadVersion(btn.getAttribute('data-sha'),btn.getAttribute('data-label'));});
+});
+}catch(err){
+console.error('Loader error:',err);
+showError('Konnte Versionsliste nicht laden: '+err.message,'Pruefe deine Internetverbindung. Bei Erfolg ohne Internet starten kann die letzte gecachte Version geladen werden.',true);
+}
+})();
+</script>
+</body>
+</html>
