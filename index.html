@@ -625,11 +625,42 @@ body.has-modal .topbar{pointer-events:auto}
   .ov-actions .btn{flex:1;min-width:90px}
   .ov-meta{font-size:11px;gap:8px}
 
-  /* User-/Firmen-Verwaltung – horizontal scroll */
+  /* User-/Firmen-Verwaltung – Karten-Layout statt horizontaler Tabelle */
   .usr-hdr,.firma-hdr{padding:10px 14px;flex-wrap:wrap;gap:8px}
   .usr-hdr h2,.firma-hdr h2{font-size:14px;flex-basis:100%;margin-bottom:4px}
-  .usr-body,.firma-body{padding:12px;overflow-x:auto}
-  .usr-tbl,.firma-tbl{min-width:760px}
+  .usr-body,.firma-body{padding:12px}
+  .usr-tbl,.firma-tbl{min-width:0;width:100%;border:none;background:none;box-shadow:none}
+  .usr-tbl thead,.firma-tbl thead{display:none}
+  .usr-tbl tbody,.firma-tbl tbody{display:block}
+  .usr-tbl tr,.firma-tbl tr{display:block;background:var(--surf);border:1px solid var(--bdr) !important;border-radius:8px;margin-bottom:12px;padding:6px 12px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .usr-tbl tr.me{background:rgba(224,123,16,.05);border-color:rgba(224,123,16,.3) !important}
+  .usr-tbl td,.firma-tbl td{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--bdr);text-align:left !important}
+  .usr-tbl tr td:last-child,.firma-tbl tr td:last-child{border-bottom:none}
+  .usr-tbl td[data-label]::before,.firma-tbl td[data-label]::before{
+    content:attr(data-label);
+    font-size:10px;font-weight:700;color:var(--txt2);
+    text-transform:uppercase;letter-spacing:.4px;
+    flex:0 0 100px;line-height:1.2
+  }
+  /* Inputs/Selects volle Restbreite, NICHT mehr getruncated */
+  .usr-tbl .usr-inp:not([type="checkbox"]),
+  .firma-tbl .firma-inp:not([type="checkbox"]){
+    flex:1 1 auto;max-width:none !important;width:auto;min-width:0
+  }
+  /* Code-Block (api_key) lesbar wrappen */
+  .usr-tbl code{flex:1 1 auto;word-break:break-all;background:var(--bg);padding:6px 10px;border-radius:4px;font-size:12px;user-select:all;line-height:1.4}
+  /* Checkboxen größer für Touch */
+  .usr-tbl input[type="checkbox"],.firma-tbl input[type="checkbox"]{
+    flex:0 0 auto;transform:scale(1.3);transform-origin:left center;margin-left:2px
+  }
+  /* Action-Cell (Save-Button) → volle Breite, am unteren Karten-Ende */
+  .usr-tbl td.usr-action,.firma-tbl td.firma-action{
+    flex-direction:column;align-items:stretch;padding-top:10px;text-align:left !important
+  }
+  .usr-tbl td.usr-action::before,.firma-tbl td.firma-action::before{display:none}
+  .usr-tbl td.usr-action .btn,.firma-tbl td.firma-action .btn{
+    width:100% !important;padding:10px 14px !important;font-size:13px !important
+  }
 
   /* PDF-Modal (Übersicht) */
   .pdf-modal{padding:0}
@@ -706,7 +737,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.23</div>
+    <div class="login-version">Elevator Servicebox v2.24</div>
   </div>
 </div>
 
@@ -1329,7 +1360,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.23';
+const APP_VERSION = 'v2.24';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3127,27 +3158,27 @@ function userRowHtml(u, featCols) {
   const featCells = featCols.map(([k,fe]) => {
     const explicit = (k in perms);
     const checked = isUserAdmin ? true : (explicit ? !!perms[k] : !!fe.default);
-    return `<td style="text-align:center"><input type="checkbox" data-perm="${k}" ${checked?'checked':''} ${isUserAdmin?'disabled':''}></td>`;
+    return `<td data-label="${esc(fe.label||k)}" style="text-align:center"><input type="checkbox" data-perm="${k}" ${checked?'checked':''} ${isUserAdmin?'disabled':''}></td>`;
   }).join('');
   return `
     <tr data-rec="${u.id}" class="${isMe?'me':''}">
-      <td><input class="usr-inp" data-field="name" value="${esc(f.name)}"></td>
-      <td><code>${esc(f.api_key)}</code></td>
-      <td>
+      <td data-label="Name"><input class="usr-inp" data-field="name" value="${esc(f.name)}"></td>
+      <td data-label="Login-Code"><code>${esc(f.api_key)}</code></td>
+      <td data-label="Rolle">
         <select class="usr-inp" data-field="role" style="max-width:90px">
           <option value="user" ${f.role!=='admin'?'selected':''}>user</option>
           <option value="admin" ${f.role==='admin'?'selected':''}>admin</option>
         </select>
       </td>
-      <td>
+      <td data-label="Status">
         <select class="usr-inp" data-field="status" style="max-width:90px">
           <option value="aktiv" ${f.status==='aktiv'?'selected':''}>aktiv</option>
           <option value="inaktiv" ${f.status!=='aktiv'?'selected':''}>inaktiv</option>
         </select>
       </td>
-      <td style="text-align:center"><input type="checkbox" class="usr-inp" data-field="techniker" ${f.techniker?'checked':''}></td>
+      <td data-label="Techniker" style="text-align:center"><input type="checkbox" class="usr-inp" data-field="techniker" ${f.techniker?'checked':''}></td>
       ${featCells}
-      <td style="text-align:right;white-space:nowrap">
+      <td class="usr-action" style="text-align:right;white-space:nowrap">
         <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveUserRow('${u.id}')">💾 Speichern</button>
         ${isMe ? '<div style="font-size:10px;color:var(--txt3);margin-top:3px;text-align:right">eigener Account</div>' : ''}
       </td>
@@ -3406,20 +3437,20 @@ function firmaRowHtml(f) {
   const isDefault = fid && fid.startsWith('_default_');
   return `
     <tr data-fid="${fid}">
-      <td><input class="firma-inp" data-field="icon" value="${esc(fl.icon)}" style="max-width:60px;text-align:center;font-size:18px"></td>
-      <td><input class="firma-inp" data-field="name" value="${esc(fl.name)}"></td>
-      <td><input class="firma-inp" data-field="slug" value="${esc(fl.slug)}" ${isDefault?'':'readonly title="Slug nach Anlegen nicht mehr ändern"'} style="font-family:monospace;background:${isDefault?'white':'var(--bg)'}"></td>
-      <td>
+      <td data-label="Icon"><input class="firma-inp" data-field="icon" value="${esc(fl.icon)}" style="max-width:60px;text-align:center;font-size:18px"></td>
+      <td data-label="Name"><input class="firma-inp" data-field="name" value="${esc(fl.name)}"></td>
+      <td data-label="Slug"><input class="firma-inp" data-field="slug" value="${esc(fl.slug)}" ${isDefault?'':'readonly title="Slug nach Anlegen nicht mehr ändern"'} style="font-family:monospace;background:${isDefault?'white':'var(--bg)'}"></td>
+      <td data-label="Kalkulator-Typ">
         <select class="firma-inp" data-field="kalk_typ" style="max-width:120px">
           <option value="kone"   ${fl.kalk_typ==='kone'?'selected':''}>kone (KONE)</option>
           <option value="none"   ${fl.kalk_typ==='none'?'selected':''}>none (Platzhalter)</option>
           <option value="custom" ${fl.kalk_typ==='custom'?'selected':''}>custom</option>
         </select>
       </td>
-      <td><input type="number" class="firma-inp" data-field="start_num" value="${+fl.start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
-      <td><input type="number" class="firma-inp" data-field="auftrag_start_num" value="${+fl.auftrag_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
-      <td style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
-      <td style="text-align:right;white-space:nowrap">
+      <td data-label="Bericht-Start"><input type="number" class="firma-inp" data-field="start_num" value="${+fl.start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
+      <td data-label="Auftrag-Start"><input type="number" class="firma-inp" data-field="auftrag_start_num" value="${+fl.auftrag_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
+      <td data-label="Aktiv" style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
+      <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
           ? `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="createFirmaFromDefault('${fl.slug}')">💾 In DB anlegen</button>`
           : `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveFirmaRow('${fid}')">💾 Speichern</button>`}
