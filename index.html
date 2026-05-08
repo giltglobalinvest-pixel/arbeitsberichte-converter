@@ -506,6 +506,12 @@ body.has-modal .topbar{pointer-events:auto}
 .bf-view .ai-b{display:none}
 .bf-view .fi.aif,.bf-view .fta.aif{background:white;border-color:var(--bdr)}
 
+/* Bestehende-Unterschrift Vorschau (nur Edit-Modus) */
+.bf-existing-sig{margin-bottom:8px;padding:8px 10px;background:rgba(35,74,117,.05);border:1px solid rgba(35,74,117,.18);border-radius:5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.bf-existing-sig img{height:50px;background:white;border:1px solid var(--bdr);border-radius:4px;padding:2px}
+.bf-existing-sig .lbl{font-size:11px;color:var(--txt2);font-weight:500}
+.bf-existing-sig .hint{font-size:10px;color:var(--txt3);flex:1;min-width:120px}
+
 /* Unterschriftsfeld */
 .sig-wrap{position:relative;border:2px dashed var(--bdr);border-radius:var(--rs);background:#fafafa;height:160px;touch-action:none;user-select:none;overflow:hidden}
 .sig-wrap.signed{border-style:solid;border-color:var(--ok);background:white}
@@ -741,7 +747,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.27</div>
+    <div class="login-version">Elevator Servicebox v2.28</div>
   </div>
 </div>
 
@@ -1364,7 +1370,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.27';
+const APP_VERSION = 'v2.28';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2132,36 +2138,70 @@ function addSignaturesInline(doc, ml, cw, y, sigs, opts) {
   return y + 5;
 }
 
-/* Bilder als zusätzliche Seiten ans PDF-Doc anhängen */
+/* Hilfsfunktion: Bild auf Quadrat zentrieren-cropen, als JPEG-DataURL zurückgeben */
+async function squareCropDataUrl(srcDataUrl, outSize = 600, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = outSize;
+        canvas.height = outSize;
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, outSize, outSize);
+        const min = Math.min(img.width, img.height);
+        const sx = (img.width  - min) / 2;
+        const sy = (img.height - min) / 2;
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, outSize, outSize);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      } catch(e) { reject(e); }
+    };
+    img.onerror = reject;
+    img.src = srcDataUrl;
+  });
+}
+
+/* Bilder als zusätzliche Seiten ans PDF anhängen – maximal 6 pro Seite (3×2 Grid), quadratisch */
 async function appendImagesToPDF(doc, imageDataUrls) {
-  for (const url of imageDataUrls) {
-    let img;
+  if (!imageDataUrls || imageDataUrls.length === 0) return;
+  const PER_PAGE = 6, COLS = 3, ROWS = 2;
+  const PW = 210, PH = 297, ml = 14, mt = 14, gap = 5;
+  const cellW = (PW - 2*ml - (COLS-1)*gap) / COLS;   // ≈ 57.3 mm
+  const cellH = cellW;                                // quadratisch
+  const total = imageDataUrls.length;
+
+  for (let i = 0; i < total; i++) {
+    const onPage = i % PER_PAGE;
+    if (onPage === 0) {
+      doc.addPage();
+      doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(30);
+      const pageNum = Math.floor(i / PER_PAGE) + 1;
+      const totalPages = Math.ceil(total / PER_PAGE);
+      doc.text('Bilder zum Bericht'+(totalPages>1 ? ' – Seite '+pageNum+' / '+totalPages : ''), ml, mt);
+      // Footer
+      doc.setDrawColor(160);doc.setLineWidth(0.2);
+      doc.line(ml, PH-14, PW-ml, PH-14);
+      doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(100);
+      doc.text('Bild-Anhang', ml, PH-9);
+    }
+    const col = onPage % COLS;
+    const row = Math.floor(onPage / COLS);
+    const x = ml + col * (cellW + gap);
+    const y = mt + 6 + row * (cellH + gap);
+
+    // Auf Quadrat zentriert-cropen
+    let cropped;
+    try { cropped = await squareCropDataUrl(imageDataUrls[i], 700, 0.82); }
+    catch(e) { console.warn('crop failed:', e); cropped = imageDataUrls[i]; }
+
+    // Rahmen + Bild
+    doc.setDrawColor(180);doc.setLineWidth(0.3);
+    doc.rect(x, y, cellW, cellH);
     try {
-      img = await new Promise((res, rej) => {
-        const i = new Image();
-        i.onload = () => res(i);
-        i.onerror = rej;
-        i.src = url;
-      });
-    } catch(e) { console.warn('image load failed:', e); continue; }
-    doc.addPage();
-    const PW=210, PH=297, ml=14, mt=14;
-    const imgMaxW = PW - 2*ml;
-    const imgMaxH = PH - 2*mt - 14;
-    let w = imgMaxW, h = (img.height / img.width) * w;
-    if (h > imgMaxH) { h = imgMaxH; w = (img.width / img.height) * h; }
-    const x = ml + (imgMaxW - w) / 2;
-    const y = mt + 6;
-    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(30);
-    doc.text('Anhang Bild', ml, mt);
-    try {
-      // JPEG bevorzugt; falls PNG, jsPDF erkennt das anhand des Headers
-      doc.addImage(url, /^data:image\/png/i.test(url) ? 'PNG' : 'JPEG', x, y, w, h, undefined, 'FAST');
+      doc.addImage(cropped, 'JPEG', x, y, cellW, cellH, undefined, 'MEDIUM');
     } catch(e) { console.warn('image add failed:', e); }
-    doc.setDrawColor(160);doc.setLineWidth(0.2);
-    doc.line(ml, PH-14, PW-ml, PH-14);
-    doc.setFontSize(8);doc.setTextColor(100);
-    doc.text('Bild-Anhang', ml, PH-9);
   }
 }
 
@@ -3839,7 +3879,10 @@ function openAuftragDetail(recId) {
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Bericht erfassen</button>';
   }
   if (status === 'abgeschlossen' && f.bericht_id) {
-    html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Bericht ansehen</button>';
+    html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Ansehen</button>';
+    if (_isAssignedToMe(rec) || hasPermission('auftraege_edit')) {
+      html += '<button class="btn" onclick="openBerichtForm(\''+rec.id+'\',\''+f.bericht_id+'\')">✏ Bericht bearbeiten</button>';
+    }
   }
   foot.innerHTML = html;
 
@@ -4175,10 +4218,18 @@ let _sigKundePad = null;
 /* ──────────────────────────────────────────────────────────────
    BERICHT-FORMULAR (Mobile-first)
    ────────────────────────────────────────────────────────────── */
-function openBerichtForm(auftragId) {
+/* Edit-Mode State */
+let _bfMode = 'new';                 // 'new' | 'edit'
+let _bfEditBerichtId = null;         // recId des zu editierenden Berichts
+let _bfExistingSigTech = null;       // dataURL aus data_json
+let _bfExistingSigKunde = null;
+let _bfExistingKundeAbwesend = false;
+let _bfKeepBilder = [];              // [{id, url, filename, thumbnails}] – existing attachments to keep
+
+async function openBerichtForm(auftragId, berichtId) {
   const rec = _auftragCache.find(r => r.id === auftragId);
   if (!rec) return toast('Auftrag nicht gefunden.', 'err');
-  if (!_isAssignedToMe(rec) && !hasPermission('auftraege_view_all')) {
+  if (!_isAssignedToMe(rec) && !hasPermission('auftraege_view_all') && !hasPermission('auftraege_edit')) {
     return toast('🔒 Du bist diesem Auftrag nicht zugewiesen.', 'err');
   }
   _currentBerichtAuftragId = auftragId;
@@ -4188,13 +4239,19 @@ function openBerichtForm(auftragId) {
   if (!tmpl) return toast('Vorlage unbekannt: '+(f.tmpl||'(leer)'), 'err');
   const tmplLabel = tmpl.label || f.tmpl;
 
-  document.getElementById('bf-title').textContent = tmplLabel;
-  document.getElementById('bf-sub').textContent   = '#'+(f.auftrag_num||'')+' · '+(f.standort||'');
+  // Edit-Mode-State zurücksetzen
+  _bfMode = berichtId ? 'edit' : 'new';
+  _bfEditBerichtId = berichtId || null;
+  _bfExistingSigTech = null;
+  _bfExistingSigKunde = null;
+  _bfExistingKundeAbwesend = false;
+  _bfKeepBilder = [];
+  _bfImages = [];
 
   // Schema + Vorausfüllung aus Auftrag
   const today = new Date().toISOString().slice(0,10);
   const myName = APP_KEYS.user?.name || '';
-  const data = Object.assign({}, tmpl.schema(), {
+  let data = Object.assign({}, tmpl.schema(), {
     datum:             today,
     auftragsnummer:    String(f.auftrag_num || ''),
     standort:          f.standort     || '',
@@ -4202,6 +4259,41 @@ function openBerichtForm(auftragId) {
     durchgefuehrt_von: myName,
     beschreibung:      f.leistungsbeschreibung || '',  // bei Arbeitsbericht
   });
+
+  let editTechName = myName;
+  let editKundeName = (f.kontakt_name || (f.kontakt||'').split('\n')[0] || '');
+
+  // Im Edit-Mode: bestehenden Bericht laden + Werte überschreiben
+  if (_bfMode === 'edit') {
+    document.getElementById('bf-title').textContent = tmplLabel + ' (Bearbeiten)';
+    document.getElementById('bf-sub').textContent   = '#'+(f.auftrag_num||'')+' · '+(f.standort||'');
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+berichtId, {
+        headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message || 'Fehler');
+      const ef = d.fields || {};
+      let extData = {};
+      try { extData = JSON.parse(ef.data_json || '{}'); } catch(e) {}
+      data = Object.assign({}, data, extData);
+      _bfExistingSigTech       = extData.sig_tech || null;
+      _bfExistingSigKunde      = extData.sig_kunde || null;
+      _bfExistingKundeAbwesend = !!extData.kunde_abwesend;
+      editTechName  = extData.tech_name  || ef.techniker || editTechName;
+      editKundeName = extData.kunde_name || editKundeName;
+      _bfKeepBilder = (Array.isArray(ef.bilder) ? ef.bilder : []).map(b => ({
+        id: b.id, url: b.url, filename: b.filename || '', thumbnails: b.thumbnails || null
+      }));
+    } catch(e) {
+      toast('❌ Bericht konnte nicht geladen werden: '+e.message, 'err');
+      return;
+    }
+  } else {
+    document.getElementById('bf-title').textContent = tmplLabel;
+    document.getElementById('bf-sub').textContent   = '#'+(f.auftrag_num||'')+' · '+(f.standort||'');
+  }
 
   // Form aus Vorlage rendern (gleiche Felder + gleiche Klassen wie Konverter)
   const formHtml = tmpl.form(data);
@@ -4225,35 +4317,46 @@ function openBerichtForm(auftragId) {
     </div>
   `;
 
+  const techExistingPreview = (_bfMode === 'edit' && _bfExistingSigTech)
+    ? '<div class="bf-existing-sig"><div class="lbl">Aktuelle Unterschrift:</div><img src="'+_bfExistingSigTech+'" alt="aktuelle Unterschrift"><div class="hint">Wird beibehalten, falls du nicht neu unterschreibst.</div></div>'
+    : '';
+  const kundeExistingPreview = (_bfMode === 'edit' && _bfExistingSigKunde && !_bfExistingKundeAbwesend)
+    ? '<div class="bf-existing-sig"><div class="lbl">Aktuelle Unterschrift:</div><img src="'+_bfExistingSigKunde+'" alt="aktuelle Unterschrift"><div class="hint">Wird beibehalten, falls du nicht neu unterschreibst.</div></div>'
+    : '';
+  const kundeAbwesendCheck = _bfExistingKundeAbwesend ? 'checked' : '';
+  const kundeSecStyle = _bfExistingKundeAbwesend ? 'style="display:none"' : '';
+
   const signCards = `
     <div class="card">
       <div class="card-title">✍ Unterschrift Techniker</div>
       <div class="field"><div class="field-lbl">Name</div>
-        <input type="text" class="fi" id="bf-tech-name" value="${myName.replace(/"/g,'&quot;')}"></div>
+        <input type="text" class="fi" id="bf-tech-name" value="${editTechName.replace(/"/g,'&quot;')}"></div>
+      ${techExistingPreview}
       <div class="sig-wrap" id="bf-sig-tech-wrap" style="margin-top:8px">
         <canvas id="bf-sig-tech"></canvas>
         <div class="sig-placeholder">✍ Optional – mit Finger oder Stylus unterschreiben</div>
       </div>
       <div class="sig-actions">
-        <span style="color:var(--txt3)">Optional</span>
+        <span style="color:var(--txt3)">Optional${_bfMode==='edit'&&_bfExistingSigTech?' · neu signieren überschreibt':''}</span>
         <button type="button" class="sig-clear" onclick="_sigTechnikerPad?.clear()">↺ Zurücksetzen</button>
       </div>
     </div>
     <div class="card">
       <div class="card-title">✍ Unterschrift Kunde</div>
       <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--txt2);margin-bottom:10px;cursor:pointer;padding:8px 10px;background:var(--bg);border-radius:5px">
-        <input type="checkbox" id="bf-kunde-absent" onchange="_bfToggleKundeAbsent(this.checked)">
+        <input type="checkbox" id="bf-kunde-absent" ${kundeAbwesendCheck} onchange="_bfToggleKundeAbsent(this.checked)">
         <span><strong>Niemand war anwesend</strong> bei der Abnahme – keine Unterschrift erforderlich</span>
       </label>
-      <div id="bf-kunde-sig-section">
+      <div id="bf-kunde-sig-section" ${kundeSecStyle}>
         <div class="field"><div class="field-lbl">Name (Kunde / Hausverwaltung)</div>
-          <input type="text" class="fi" id="bf-kunde-name" value="${(f.kontakt_name || (f.kontakt||'').split('\n')[0] || '').replace(/"/g,'&quot;')}"></div>
+          <input type="text" class="fi" id="bf-kunde-name" value="${editKundeName.replace(/"/g,'&quot;')}"></div>
+        ${kundeExistingPreview}
         <div class="sig-wrap" id="bf-sig-kunde-wrap" style="margin-top:8px">
           <canvas id="bf-sig-kunde"></canvas>
           <div class="sig-placeholder">✍ Kunde unterschreibt hier</div>
         </div>
         <div class="sig-actions">
-          <span style="color:var(--txt3)">Pflichtfeld (außer wenn nicht anwesend)</span>
+          <span style="color:var(--txt3)">Pflichtfeld${_bfMode==='edit'&&_bfExistingSigKunde?' · neu signieren überschreibt':''}</span>
           <button type="button" class="sig-clear" onclick="_sigKundePad?.clear()">↺ Zurücksetzen</button>
         </div>
       </div>
@@ -4261,8 +4364,10 @@ function openBerichtForm(auftragId) {
   `;
 
   document.getElementById('bf-body').innerHTML = infoCard + formHtml + imageCard + signCards;
-  _bfImages = [];
   _bfRenderImageGrid();
+  // Save-Button-Text passend
+  const saveBtn = document.getElementById('bf-save-btn');
+  if (saveBtn) saveBtn.textContent = _bfMode==='edit' ? '💾 Bericht aktualisieren' : '💾 Abschließen & PDF';
 
   // Pads initialisieren (nach DOM-Insertion)
   setTimeout(() => {
@@ -4296,32 +4401,52 @@ function _bfToggleKundeAbsent(absent) {
 function _bfRenderImageGrid() {
   const el = document.getElementById('bf-img-grid');
   if (!el) return;
-  const thumbs = _bfImages.map((it, i) =>
+  // Existierende (nur Edit-Mode), dann neu hinzugefügte, dann +
+  const existingThumbs = (_bfKeepBilder||[]).map((b,i) =>
+    '<div class="auf-img-thumb" title="Tap zum Entfernen" onclick="_bfRemoveExisting('+i+')">'+
+      '<img src="'+(b.thumbnails && b.thumbnails.large ? b.thumbnails.large.url : b.url)+'" alt="">'+
+      '<button class="auf-img-del" style="display:flex" onclick="event.stopPropagation();_bfRemoveExisting('+i+')">✕</button>'+
+    '</div>'
+  ).join('');
+  const newThumbs = _bfImages.map((it, i) =>
     '<div class="auf-img-thumb" onclick="_bfRemoveImage('+i+')" title="Tap zum Entfernen">'+
       '<img src="'+it.dataUrl+'" alt="">'+
       '<button class="auf-img-del" style="display:flex" onclick="event.stopPropagation();_bfRemoveImage('+i+')">✕</button>'+
     '</div>'
   ).join('');
-  el.innerHTML = thumbs +
-    '<label class="auf-img-add" title="Foto hinzufügen">'+
+  el.innerHTML = existingThumbs + newThumbs +
+    '<label class="auf-img-add" title="Foto hinzufügen oder Kamera öffnen">'+
       '<input type="file" accept="image/*" capture="environment" multiple style="display:none" onchange="_bfPickImages(event)">+'+
     '</label>';
 }
-function _bfPickImages(ev) {
+function _bfRemoveExisting(idx) {
+  if (idx < 0 || idx >= _bfKeepBilder.length) return;
+  _bfKeepBilder.splice(idx, 1);
+  _bfRenderImageGrid();
+}
+async function _bfPickImages(ev) {
   const files = ev.target.files;
   if (!files || files.length === 0) return;
-  const arr = Array.from(files);
-  let pending = arr.length;
-  arr.forEach(file => {
-    if (!file.type.startsWith('image/')) { pending--; return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      _bfImages.push({ dataUrl: reader.result, file, name: file.name });
-      if (--pending === 0) _bfRenderImageGrid();
-    };
-    reader.onerror = () => { if (--pending === 0) _bfRenderImageGrid(); };
-    reader.readAsDataURL(file);
-  });
+  const arr = Array.from(files).filter(f => f.type.startsWith('image/'));
+  if (arr.length === 0) { ev.target.value = ''; return; }
+  toast('⏳ Verarbeite '+arr.length+' Bild'+(arr.length!==1?'er':'')+'…', '');
+  for (const file of arr) {
+    try {
+      const origUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = rej;
+        r.readAsDataURL(file);
+      });
+      // Auf Quadrat zentriert cropen (1000px → ausreichend für PDF + Thumbnail)
+      const cropped = await squareCropDataUrl(origUrl, 1000, 0.85);
+      // Ein File-Objekt aus dem cropped Blob bauen, damit Airtable-Upload das gleiche Bild kriegt
+      const croppedBlob = await (await fetch(cropped)).blob();
+      const croppedFile = new File([croppedBlob], file.name.replace(/\.(jpe?g|png|heic|webp)$/i,'')+'.jpg', { type:'image/jpeg' });
+      _bfImages.push({ dataUrl: cropped, file: croppedFile, name: croppedFile.name });
+    } catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e); }
+  }
+  _bfRenderImageGrid();
   ev.target.value = '';
 }
 function _bfRemoveImage(idx) {
@@ -4363,8 +4488,11 @@ async function saveBerichtFromForm() {
   // durchgefuehrt_von angleichen, falls leer
   if (!data.durchgefuehrt_von) data.durchgefuehrt_von = techName;
 
-  const sigTechURL  = (_sigTechnikerPad && !_sigTechnikerPad.isEmpty()) ? _sigTechnikerPad.toDataURL() : null;
-  const sigKundeURL = (kundeAbwesend || !_sigKundePad || _sigKundePad.isEmpty()) ? null : _sigKundePad.toDataURL();
+  // Sigs: Edit-Mode → Fallback auf existierende Sigs falls Pad leer
+  const newSigTech  = (_sigTechnikerPad && !_sigTechnikerPad.isEmpty()) ? _sigTechnikerPad.toDataURL() : null;
+  const newSigKunde = (_sigKundePad     && !_sigKundePad.isEmpty())     ? _sigKundePad.toDataURL()     : null;
+  const sigTechURL  = newSigTech  || (_bfMode==='edit' ? _bfExistingSigTech  : null);
+  const sigKundeURL = kundeAbwesend ? null : (newSigKunde || (_bfMode==='edit' ? _bfExistingSigKunde : null));
   const sigs = {
     techName,
     sigTechURL,
@@ -4373,80 +4501,159 @@ async function saveBerichtFromForm() {
     kundeAbwesend,
   };
 
+  // Edit-Mode Validierung der Kunde-Sig (nur wenn weder neu noch existierend)
+  if (_bfMode === 'edit' && !kundeAbwesend && !sigKundeURL) {
+    return toast('Bitte Kunden-Unterschrift leisten (oder "Niemand anwesend" anhaken).', 'err');
+  }
+
   const btn = document.getElementById('bf-save-btn');
-  btn.disabled = true; btn.textContent = '☁ Generiere PDF…';
+  btn.disabled = true;
+  const isEdit = _bfMode === 'edit';
+  btn.textContent = '☁ Generiere PDF…';
 
   try {
-    // Bericht-Nummer (firma-scoped)
-    const allBerichte = await atRead('Berichte', null);
     const firmaSlug = getCurrentFirmaSlug();
-    const fbRecs = allBerichte.filter(r => _firmaOfRec(r) === firmaSlug);
-    const startNum = +((getCurrentFirma()?.start_num) || 1);
-    const fbMax = fbRecs.length > 0 ? Math.max(...fbRecs.map(r => r.fields.bericht_num || 0)) : 0;
-    const berichtNum = Math.max(startNum, fbMax + 1);
+    const baseId   = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
 
-    // PDF aus Vorlage generieren – Unterschriften INLINE (unterhalb von "Sonstiges") + Bilder als Anhang-Seiten
-    const doc = tmpl.pdf(data, berichtNum, sigs);
-    if (_bfImages.length > 0) {
-      btn.textContent = '☁ Hänge Bilder an PDF an…';
-      await appendImagesToPDF(doc, _bfImages.map(it => it.dataUrl));
+    // Bericht-Nummer: bei NEU firma-scoped, bei EDIT bestehende behalten
+    let berichtNum;
+    let recId;
+    if (isEdit) {
+      recId = _bfEditBerichtId;
+      // bericht_num aus existierendem Record holen
+      const r0 = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
+        headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+      });
+      const d0 = await r0.json();
+      berichtNum = d0.fields?.bericht_num || af.bericht_num || 0;
+    } else {
+      const allBerichte = await atRead('Berichte', null);
+      const fbRecs = allBerichte.filter(r => _firmaOfRec(r) === firmaSlug);
+      const startNum = +((getCurrentFirma()?.start_num) || 1);
+      const fbMax = fbRecs.length > 0 ? Math.max(...fbRecs.map(r => r.fields.bericht_num || 0)) : 0;
+      berichtNum = Math.max(startNum, fbMax + 1);
     }
-    const pdfBlob = doc.output('blob');
 
-    btn.textContent = '☁ Speichere Bericht…';
-    const fname = berichtNum + '_' + (data.standort||'Bericht').replace(/[^a-zA-Z0-9]/g,'_').slice(0,40) + '.pdf';
-    const rec = await atWrite('Berichte', {
-      firma:        firmaSlug,
-      api_key:      APP_KEYS.user.api_key,
-      bericht_num:  berichtNum,
-      tmpl:         af.tmpl || '',
-      datum:        data.datum,
-      standort:     data.standort,
-      fabriknummer: data.fabriknummer,
-      techniker:    techName,
-      fname:        fname,
-      subfolder:    SUBFOLDERS[af.tmpl] || 'Sonstige',
-      data_json:    JSON.stringify(Object.assign({}, data, { tech_name: techName, kunde_name: sigs.kundeName, kunde_abwesend: kundeAbwesend, sig_tech: sigTechURL, sig_kunde: sigKundeURL })),
-      auftrag_id:   _currentBerichtAuftragId,
-      auftrag_num:  af.auftrag_num,
-      created:      new Date().toISOString(),
-    });
-
-    btn.textContent = '☁ Lade PDF hoch…';
-    await atBlobUpload(rec.id, 'out_pdf', pdfBlob, fname, 'application/pdf');
-
-    // Bilder als Attachments im Bericht speichern
-    if (_bfImages.length > 0) {
-      btn.textContent = '☁ Lade Bilder hoch ('+_bfImages.length+')…';
-      for (const it of _bfImages) {
-        try { await atUploadFile(rec.id, 'bilder', it.file); }
-        catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e.message); }
+    // PDF generieren (Vorlage + Inline-Sigs + Bilder als Anhang-Seiten)
+    const doc = tmpl.pdf(data, berichtNum, sigs);
+    // Bilder die im PDF auftauchen sollen: kept-existing (Airtable-URLs → blob → dataUrl) + newly added (dataUrls)
+    const pdfImageSources = [];
+    if (_bfKeepBilder.length > 0) {
+      btn.textContent = '☁ Lade bestehende Bilder…';
+      for (const b of _bfKeepBilder) {
+        try {
+          const resp = await fetch(b.url);
+          const blob = await resp.blob();
+          const url = await new Promise((res, rej) => {
+            const r = new FileReader();
+            r.onload = () => res(r.result);
+            r.onerror = rej;
+            r.readAsDataURL(blob);
+          });
+          pdfImageSources.push(url);
+        } catch(e) { console.warn('Bestehendes Bild konnte nicht geladen werden:', e.message); }
       }
     }
+    for (const it of _bfImages) pdfImageSources.push(it.dataUrl);
+    if (pdfImageSources.length > 0) {
+      btn.textContent = '☁ Hänge Bilder ans PDF an…';
+      await appendImagesToPDF(doc, pdfImageSources);
+    }
+    const pdfBlob = doc.output('blob');
+    const fname = berichtNum + '_' + (data.standort||'Bericht').replace(/[^a-zA-Z0-9]/g,'_').slice(0,40) + '.pdf';
+    const dataJsonStr = JSON.stringify(Object.assign({}, data, {
+      tech_name: techName, kunde_name: sigs.kundeName, kunde_abwesend: kundeAbwesend,
+      sig_tech: sigTechURL, sig_kunde: sigKundeURL
+    }));
 
-    // Auftrag-Status auf abgeschlossen
-    btn.textContent = '☁ Auftrag aktualisieren…';
-    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-    await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+_currentBerichtAuftragId, {
-      method: 'PATCH',
-      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-      body: JSON.stringify({ fields: {
-        status:       'abgeschlossen',
-        bericht_id:   rec.id,
+    if (isEdit) {
+      // ── EDIT: bestehenden Record patchen, Anhänge ersetzen ─────
+      btn.textContent = '☁ Aktualisiere Bericht…';
+      // Schritt 1: Felder + bilder-keep + out_pdf:[] (Anhang vorbereiten)
+      await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
+        method:'PATCH',
+        headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+        body: JSON.stringify({ fields: {
+          datum:        data.datum,
+          standort:     data.standort,
+          fabriknummer: data.fabriknummer,
+          techniker:    techName,
+          fname:        fname,
+          data_json:    dataJsonStr,
+          bilder:       _bfKeepBilder.map(b => ({ id: b.id })),
+          out_pdf:      [],
+        }}),
+      }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message||'PATCH-Fehler'); });
+
+      btn.textContent = '☁ Neues PDF hochladen…';
+      await atBlobUpload(recId, 'out_pdf', pdfBlob, fname, 'application/pdf');
+
+      if (_bfImages.length > 0) {
+        btn.textContent = '☁ Lade '+_bfImages.length+' Bild'+(_bfImages.length!==1?'er':'')+' hoch…';
+        for (const it of _bfImages) {
+          try { await atUploadFile(recId, 'bilder', it.file); }
+          catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e.message); }
+        }
+      }
+
+      trackEvent('auftraege', 'edit_bericht', { auftrag_num: af.auftrag_num, bericht_num: berichtNum });
+      toast('✅ Bericht Nr. '+berichtNum+' aktualisiert.', 'ok');
+    } else {
+      // ── NEU: Record + Auftrag abschließen ─────────────────────
+      btn.textContent = '☁ Speichere Bericht…';
+      const rec = await atWrite('Berichte', {
+        firma:        firmaSlug,
+        api_key:      APP_KEYS.user.api_key,
         bericht_num:  berichtNum,
-        completed_at: new Date().toISOString(),
-      }}),
-    });
+        tmpl:         af.tmpl || '',
+        datum:        data.datum,
+        standort:     data.standort,
+        fabriknummer: data.fabriknummer,
+        techniker:    techName,
+        fname:        fname,
+        subfolder:    SUBFOLDERS[af.tmpl] || 'Sonstige',
+        data_json:    dataJsonStr,
+        auftrag_id:   _currentBerichtAuftragId,
+        auftrag_num:  af.auftrag_num,
+        created:      new Date().toISOString(),
+      });
+      recId = rec.id;
 
-    trackEvent('auftraege', 'complete', { auftrag_num: af.auftrag_num, bericht_num: berichtNum });
-    toast('✅ Bericht Nr. '+berichtNum+' erstellt – Auftrag abgeschlossen.', 'ok');
+      btn.textContent = '☁ Lade PDF hoch…';
+      await atBlobUpload(recId, 'out_pdf', pdfBlob, fname, 'application/pdf');
+
+      if (_bfImages.length > 0) {
+        btn.textContent = '☁ Lade '+_bfImages.length+' Bild'+(_bfImages.length!==1?'er':'')+' hoch…';
+        for (const it of _bfImages) {
+          try { await atUploadFile(recId, 'bilder', it.file); }
+          catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e.message); }
+        }
+      }
+
+      btn.textContent = '☁ Auftrag aktualisieren…';
+      await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+_currentBerichtAuftragId, {
+        method:'PATCH',
+        headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+        body: JSON.stringify({ fields: {
+          status:       'abgeschlossen',
+          bericht_id:   recId,
+          bericht_num:  berichtNum,
+          completed_at: new Date().toISOString(),
+        }}),
+      });
+
+      trackEvent('auftraege', 'complete', { auftrag_num: af.auftrag_num, bericht_num: berichtNum });
+      toast('✅ Bericht Nr. '+berichtNum+' erstellt – Auftrag abgeschlossen.', 'ok');
+    }
+
     closeBerichtForm();
     await loadAuftraegeAndRender();
   } catch(e) {
     console.error('saveBerichtFromForm:', e);
     toast('❌ '+(e.message||e), 'err');
   } finally {
-    btn.disabled = false; btn.textContent = '💾 Abschließen & PDF';
+    btn.disabled = false;
+    btn.textContent = (_bfMode==='edit') ? '💾 Bericht aktualisieren' : '💾 Abschließen & PDF';
   }
 }
 
