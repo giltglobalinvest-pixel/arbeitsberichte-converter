@@ -706,7 +706,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.22</div>
+    <div class="login-version">Elevator Servicebox v2.23</div>
   </div>
 </div>
 
@@ -1329,7 +1329,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.22';
+const APP_VERSION = 'v2.23';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1753,14 +1753,12 @@ async function showApp() {
   try { await loadSettings(); } catch(e) { console.warn('loadSettings:', e); }
   try { await loadHistory(); } catch(e) { console.warn('loadHistory:', e); }
   toast('✅ Willkommen, '+(APP_KEYS.user?.name||'')+'!', 'ok');
-  // Admin: Schema-Migrationen + Status-Bar + Tests
+  // Admin: Schema-Migrationen still im Hintergrund laufen lassen, aber KEINE Status-Bar
   if (isAdmin()) {
     document.getElementById('tnav-users').style.display = '';
-    showAdminBar();
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
-    runPostLoginTests();
   } else {
     document.getElementById('tnav-users').style.display = 'none';
   }
@@ -4439,7 +4437,7 @@ function renderDashboard() {
     'Willkommen, ' + (APP_KEYS.user?.name || '') + '! · ' + (f?.icon||'') + ' ' + (f?.name||'');
   // Tools-Grid rendern
   const grid = document.getElementById('dash-tools');
-  grid.innerHTML = Object.entries(TOOLS).map(([key, t]) => {
+  let html = Object.entries(TOOLS).map(([key, t]) => {
     const allowed = hasPermission(t.permission);
     return `
       <button class="dash-tool" ${allowed ? '' : 'disabled'} onclick="launchTool('${key}')">
@@ -4451,9 +4449,27 @@ function renderDashboard() {
           : '<div class="dash-tool-locked">🔒 Keine Berechtigung</div>'}
       </button>
     `;
-  }).join('') + (Object.keys(TOOLS).length === 0
-    ? '<div style="color:var(--txt3);grid-column:1/-1;padding:20px;text-align:center">Noch keine Tools registriert.</div>'
-    : '');
+  }).join('');
+  // Admin-only Kacheln (Verwaltung)
+  if (isAdmin()) {
+    html += `
+      <button class="dash-tool" onclick="switchView('users')">
+        <div class="dash-tool-icon">👥</div>
+        <div class="dash-tool-label">User-Verwaltung</div>
+        <div class="dash-tool-desc">User anlegen, Berechtigungen vergeben, Techniker markieren.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+      <button class="dash-tool" onclick="switchView('firmen')">
+        <div class="dash-tool-icon">🏢</div>
+        <div class="dash-tool-label">Firmen-Verwaltung</div>
+        <div class="dash-tool-desc">Firmen anlegen, Nummernkreise und Kalkulator-Typ konfigurieren.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>`;
+  }
+  if (Object.keys(TOOLS).length === 0 && !isAdmin()) {
+    html = '<div style="color:var(--txt3);grid-column:1/-1;padding:20px;text-align:center">Noch keine Tools verfügbar.</div>';
+  }
+  grid.innerHTML = html;
   // Statistik laden
   loadDashboardStats();
 }
@@ -4711,15 +4727,10 @@ document.addEventListener('keydown', function(e) {
 });
 
 function showAdminBar() {
-  if (!isAdmin()) return;
+  // Bewusst deaktiviert: zeigte Connection-Details + Base-IDs am unteren Bildschirmrand.
+  // End-User (auch Admins beim Vorzeigen am Handy) sollen das nicht sehen.
   const bar = document.getElementById('admin-bar');
-  bar.style.display = 'flex';
-  // Push app content up so bar doesn't overlap
-  document.getElementById('app').style.paddingBottom = '32px';
-  document.getElementById('ab-user-txt').textContent =
-    '👤 ' + (APP_KEYS.user.name||'Admin') + ' · admin';
-  document.getElementById('ab-storage-txt').textContent =
-    'Base: ' + (APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID).slice(0,10) + '…';
+  if (bar) bar.style.display = 'none';
 }
 
 // Dot + text helpers
