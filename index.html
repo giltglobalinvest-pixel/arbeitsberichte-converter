@@ -261,6 +261,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .wkalk-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;background:var(--navy);border:3px solid #fff;border-radius:50%;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2)}
 .wkalk-slider::-moz-range-thumb{width:24px;height:24px;background:var(--navy);border:3px solid #fff;border-radius:50%;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2)}
 .wkalk-slider-val{font-family:monospace;font-size:32px;font-weight:700;color:var(--amber);text-align:center;margin:8px 0;line-height:1}
+.wk-num-wrap{display:flex;justify-content:center;align-items:baseline;gap:8px;margin:8px 0;flex-wrap:wrap}
+.wk-num-input{font-family:monospace;font-size:38px;font-weight:700;color:var(--amber);width:auto;border:none;background:transparent;text-align:right;outline:none;border-bottom:2px dashed transparent;max-width:260px;padding:2px 4px;line-height:1}
+.wk-num-input:hover{border-bottom-color:var(--bdr)}
+.wk-num-input:focus{border-bottom-color:var(--amber)}
+.wk-num-suffix{font-size:18px;color:var(--txt2);font-weight:500}
+.wk-auto-val{font-family:monospace;font-size:38px;font-weight:700;color:var(--ok);text-align:center;margin:8px 0;line-height:1.1}
+.wk-auto-val.warn{color:var(--err)}
 .wkalk-slider-bounds{display:flex;justify-content:space-between;font-size:11px;color:var(--txt3);margin-top:6px;font-family:monospace}
 .wkalk-hint{font-size:11px;color:var(--txt3);margin-top:10px;line-height:1.5;padding:8px 10px;background:var(--bg);border-radius:4px;border-left:3px solid var(--amber)}
 .wkalk-warn{background:rgba(217,119,6,.1);border:1px solid rgba(217,119,6,.3);color:var(--warn);padding:8px 12px;border-radius:4px;font-size:12px;margin-top:10px}
@@ -341,7 +348,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.10</div>
+    <div class="login-version">Elevator Servicebox v2.11</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -646,14 +653,29 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
   <div class="wkalk-body">
 
-    <div class="wkalk-grid">
-      <!-- Eingaben -->
-      <div class="wkalk-card">
-        <h3>📥 Eingaben</h3>
-        <div class="wkalk-field">
-          <label class="wkalk-label">Zielpreis Verkauf pro Jahr (€)</label>
-          <input type="number" class="wkalk-input" id="wk-zielpreis" value="2400" step="50" oninput="recalcWartung()">
+    <!-- 1. Zielpreis-Slider (prominent oben) -->
+    <div class="wkalk-card">
+      <h3>🎯 Zielpreis Verkauf pro Jahr</h3>
+      <div class="wk-num-wrap">
+        <input type="number" class="wk-num-input" id="wk-zielpreis" value="2400" step="50" oninput="onZielpreisInput()">
+        <span class="wk-num-suffix">€ / Jahr</span>
+      </div>
+      <div class="wkalk-slider-wrap">
+        <input type="range" class="wkalk-slider" id="wk-zielpreis-slider" min="0" max="5000" value="2400" oninput="onZielpreisSliderInput()">
+        <div class="wkalk-slider-bounds">
+          <span id="wk-ziel-min">Min: –</span>
+          <span id="wk-ziel-max">Max: –</span>
         </div>
+      </div>
+      <div class="wkalk-hint">
+        Schiebe den Verkaufspreis. Die einmaligen Kosten an den Kunden stellen sich automatisch ein – nur so hoch wie nötig, um Vorleistung im 1. Jahr zu vermeiden.
+      </div>
+    </div>
+
+    <!-- 2. Eingaben + Einkauf -->
+    <div class="wkalk-grid" style="margin-top:18px">
+      <div class="wkalk-card">
+        <h3>📥 Einkauf-Eingaben</h3>
         <div class="wkalk-field">
           <label class="wkalk-label">Anzahl Haltestellen</label>
           <input type="number" class="wkalk-input" id="wk-haltestellen" value="5" min="2" step="1" oninput="recalcWartung()">
@@ -672,7 +694,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
         </div>
       </div>
 
-      <!-- Einkaufskosten -->
       <div class="wkalk-card">
         <h3>💼 Einkaufskosten (Aszendio)</h3>
         <div class="wkalk-row"><span>Preis pro Wartung</span><span id="wk-out-preis">–</span></div>
@@ -684,20 +705,17 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       </div>
     </div>
 
-    <!-- Schieberegler -->
+    <!-- 3. Einmalige Kosten an Kunde (automatisch) -->
     <div class="wkalk-card" style="margin-top:18px">
-      <h3>🎚 Einmalige Kosten an Kunde (Verkauf)</h3>
-      <div class="wkalk-slider-val" id="wk-slider-val">–</div>
-      <div class="wkalk-slider-wrap">
-        <input type="range" class="wkalk-slider" id="wk-slider" min="0" max="1000" value="0" oninput="onWkSliderInput()">
-        <div class="wkalk-slider-bounds">
-          <span id="wk-slider-min">Min: –</span>
-          <span id="wk-slider-max">Max: –</span>
-        </div>
+      <h3>💰 Einmalige Kosten an Kunde <span style="font-weight:500;color:var(--txt3);font-size:11px;text-transform:none;letter-spacing:0;margin-left:4px">(automatisch)</span></h3>
+      <div class="wk-auto-val" id="wk-einmal-val">0,00 €</div>
+      <div class="wkalk-slider-bounds" style="justify-content:center;gap:18px">
+        <span>Bereich: 0 € bis <span id="wk-einmal-max">–</span></span>
       </div>
-      <div class="wkalk-hint" id="wk-slider-hint">
-        Der Slider startet bei dem niedrigsten Verkaufspreis, bei dem wir im 1. Jahr nicht in Vorleistung gehen. Höhere Werte = mehr Marge upfront.
+      <div class="wkalk-hint">
+        Der Wert steigt nur dann über 0 €, wenn der Zielpreis nicht ausreicht, um die jährlichen Einkaufskosten <em>plus</em> die einmalige Notrufmontage in Jahr 1 abzudecken. Maximum = Einkaufspreis der Notrufgerät-Montage.
       </div>
+      <div id="wk-einmal-warn" style="display:none" class="wkalk-warn"></div>
     </div>
 
     <!-- Übersichten -->
@@ -792,7 +810,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.10';
+const APP_VERSION = 'v2.11';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2674,11 +2692,11 @@ const _wkFmt = new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR',mi
 function _wkEur(n) { return _wkFmt.format(n || 0); }
 function _wkSet(id, txt) { const el = document.getElementById(id); if (el) el.textContent = txt; }
 
-let _wkSliderTouched = false;
+let _wkZielpreis = 2400;  // Single source of truth für den Zielpreis (synct Slider+Input)
 
 function _wkRead() {
   return {
-    zielpreis:    +(document.getElementById('wk-zielpreis').value || 0),
+    zielpreis:    _wkZielpreis,
     haltestellen: +(document.getElementById('wk-haltestellen').value || 0),
     wartungen:    +(document.getElementById('wk-wartungen').value || 0),
     notrufMo:     +(document.getElementById('wk-notruf').value || 0),
@@ -2692,10 +2710,24 @@ function _wkCalc(i) {
   const notrufJahr      = i.notrufMo * 12;
   const einkaufJahr     = wartungJahr + notrufJahr;
   const ueberschussJahr = i.zielpreis - einkaufJahr;
-  // Min Slider: niedrigster Einmalverkauf, bei dem Jahr 1 Saldo ≥ 0
-  const minSlider = Math.max(0, i.montageEK - ueberschussJahr);
-  const maxSlider = Math.max(i.montageEK * 2, minSlider + 100, 100);
-  return { ...i, preisProWart, wartungJahr, notrufJahr, einkaufJahr, ueberschussJahr, minSlider, maxSlider };
+
+  // Auto-Einmalverkauf an Kunde:
+  //   benötigt = max(0, MontageEK − Überschuss)  [um Jahr-1-Saldo ≥ 0 zu erreichen]
+  //   Range:    [0, MontageEK]  → wenn benötigt > MontageEK, wird gecappt (Vorleistung-Warnung)
+  const einmalNeeded = Math.max(0, i.montageEK - ueberschussJahr);
+  const einmalVK     = Math.min(einmalNeeded, i.montageEK);
+  const vorleistung  = Math.max(0, einmalNeeded - i.montageEK);  // Restdefizit, falls Cap nicht reicht
+
+  // Zielpreis-Slider Range
+  const zielMin = 100;  // sinnvoller Mindestwert (verhindert 0 €)
+  const zielMax = Math.max(einkaufJahr * 4 + i.montageEK, 5000);
+
+  return {
+    ...i,
+    preisProWart, wartungJahr, notrufJahr, einkaufJahr, ueberschussJahr,
+    einmalVK, einmalNeeded, vorleistung,
+    zielMin, zielMax,
+  };
 }
 
 function _wkRenderEinkauf(c) {
@@ -2718,23 +2750,40 @@ function _wkRenderEinkauf(c) {
   }
 }
 
-function _wkRenderSlider(c) {
-  const slider = document.getElementById('wk-slider');
-  slider.min = Math.round(c.minSlider);
-  slider.max = Math.round(c.maxSlider);
-  if (!_wkSliderTouched) {
-    slider.value = Math.round(c.minSlider);
+function _wkRenderZielpreisSlider(c) {
+  const slider = document.getElementById('wk-zielpreis-slider');
+  const num    = document.getElementById('wk-zielpreis');
+  slider.min = Math.round(c.zielMin);
+  slider.max = Math.round(c.zielMax);
+  // Aktuellen Wert clampen
+  _wkZielpreis = Math.min(Math.max(_wkZielpreis, c.zielMin), c.zielMax);
+  slider.value = Math.round(_wkZielpreis);
+  if (document.activeElement !== num) num.value = Math.round(_wkZielpreis);
+  _wkSet('wk-ziel-min', 'Min: ' + _wkEur(c.zielMin));
+  _wkSet('wk-ziel-max', 'Max: ' + _wkEur(c.zielMax));
+}
+
+function _wkRenderEinmalAuto(c) {
+  const el   = document.getElementById('wk-einmal-val');
+  const warn = document.getElementById('wk-einmal-warn');
+  el.textContent = _wkEur(c.einmalVK);
+  _wkSet('wk-einmal-max', _wkEur(c.montageEK));
+
+  if (c.vorleistung > 0.005) {
+    el.classList.add('warn');
+    warn.style.display = 'block';
+    warn.innerHTML =
+      '⚠ Vorleistung in Jahr 1: ' + _wkEur(c.vorleistung) + '. ' +
+      'Auch mit dem Maximum (' + _wkEur(c.montageEK) + ') Einmalkosten reicht der Zielpreis nicht. ' +
+      'Zielpreis um mindestens ' + _wkEur(c.vorleistung) + '/Jahr erhöhen.';
   } else {
-    const cur = +slider.value;
-    slider.value = Math.round(Math.min(Math.max(cur, c.minSlider), c.maxSlider));
+    el.classList.remove('warn');
+    warn.style.display = 'none';
   }
-  _wkSet('wk-slider-min', 'Min: ' + _wkEur(c.minSlider));
-  _wkSet('wk-slider-max', 'Max: ' + _wkEur(c.maxSlider));
-  _wkSet('wk-slider-val', _wkEur(+slider.value));
 }
 
 function _wkRenderJahre(c) {
-  const einmalVK = +document.getElementById('wk-slider').value;
+  const einmalVK = c.einmalVK;
 
   // Jahr 1
   const y1Saldo = (c.zielpreis + einmalVK) - (c.einkaufJahr + c.montageEK);
@@ -2763,19 +2812,22 @@ function _wkRenderJahre(c) {
 function recalcWartung() {
   const c = _wkCalc(_wkRead());
   _wkRenderEinkauf(c);
-  _wkRenderSlider(c);
+  _wkRenderZielpreisSlider(c);
+  _wkRenderEinmalAuto(c);
   _wkRenderJahre(c);
 }
 
-function onWkSliderInput() {
-  _wkSliderTouched = true;
-  _wkSet('wk-slider-val', _wkEur(+document.getElementById('wk-slider').value));
-  _wkRenderJahre(_wkCalc(_wkRead()));
+function onZielpreisInput() {
+  _wkZielpreis = +(document.getElementById('wk-zielpreis').value || 0);
+  recalcWartung();
+}
+
+function onZielpreisSliderInput() {
+  _wkZielpreis = +(document.getElementById('wk-zielpreis-slider').value || 0);
+  recalcWartung();
 }
 
 function renderWartungKalk() {
-  // Beim Eintritt ins Tool: Slider-Touched-Flag zurücksetzen, damit Min als Default gesetzt wird
-  _wkSliderTouched = false;
   recalcWartung();
 }
 
