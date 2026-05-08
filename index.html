@@ -209,6 +209,30 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .usr-tbl select.usr-inp{cursor:pointer}
 .usr-tbl code{background:var(--bg);padding:2px 6px;border-radius:3px;font-size:11px;color:var(--txt2)}
 
+/* ── Dashboard ── */
+.dash-view{display:none;position:fixed;inset:52px 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:auto}
+.dash-view.show{display:flex}
+.dash-hero{padding:24px 32px 18px;background:linear-gradient(135deg,var(--navy) 0%,var(--navy-l) 100%);color:#fff}
+.dash-hero h1{font-size:22px;font-weight:700;margin:0 0 4px}
+.dash-hero p{opacity:.75;font-size:13px;margin:0}
+.dash-section{padding:18px 32px}
+.dash-section-title{font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+.dash-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}
+.dash-stat-card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:16px 18px;box-shadow:0 1px 3px rgba(0,0,0,.06);position:relative;overflow:hidden}
+.dash-stat-icon{position:absolute;right:12px;top:12px;font-size:24px;opacity:.3}
+.dash-stat-num{font-family:monospace;font-size:30px;font-weight:700;color:var(--navy);line-height:1}
+.dash-stat-lbl{font-size:12px;color:var(--txt2);margin-top:6px;font-weight:500}
+.dash-stat-sub{font-size:11px;color:var(--txt3);margin-top:2px}
+.dash-tools{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.dash-tool{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:22px;box-shadow:0 1px 3px rgba(0,0,0,.06);cursor:pointer;transition:all .2s;display:flex;flex-direction:column;gap:8px;min-height:150px;text-align:left;font:inherit;color:inherit}
+.dash-tool:hover:not(:disabled){transform:translateY(-2px);box-shadow:0 6px 18px rgba(26,51,83,.15);border-color:var(--amber)}
+.dash-tool:disabled{cursor:not-allowed;opacity:.55}
+.dash-tool-icon{font-size:36px;line-height:1}
+.dash-tool-label{font-size:16px;font-weight:600;color:var(--navy)}
+.dash-tool-desc{font-size:12px;color:var(--txt2);line-height:1.45;flex:1}
+.dash-tool-locked{display:inline-block;background:rgba(220,38,38,.1);color:var(--err);font-size:10px;padding:2px 8px;border-radius:3px;margin-top:4px;font-weight:600;letter-spacing:.3px;align-self:flex-start}
+.dash-tool-stat{font-size:11px;color:var(--txt3);margin-top:auto;display:flex;align-items:center;gap:4px}
+
 /* ── PDF Modal ── */
 .pdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:none;flex-direction:column}
 .pdf-modal.show{display:flex}
@@ -285,7 +309,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.7</div>
+    <div class="login-version">Elevator Servicebox v2.8</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -354,7 +378,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
     <div><div class="logo-name">Elevator Servicebox</div><div class="logo-sub">Aszendio</div></div>
   </div>
   <div class="topbar-nav" style="margin-left:16px">
-    <button class="tnav active" id="tnav-conv" onclick="switchView('conv')">Konverter</button>
+    <button class="tnav active" id="tnav-dashboard" onclick="switchView('dashboard')">🏠 Dashboard</button>
+    <button class="tnav" id="tnav-conv" onclick="switchView('conv')">🔧 Konverter</button>
     <button class="tnav" id="tnav-overview" onclick="switchView('overview')">📋 Übersicht</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
   </div>
@@ -561,6 +586,24 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
 </div>
 
+<!-- DASHBOARD (Startseite nach Login) -->
+<div class="dash-view" id="dash-view">
+  <div class="dash-hero">
+    <h1 id="dash-greet">Willkommen!</h1>
+    <p>Wähle ein Tool aus, um zu starten.</p>
+  </div>
+  <div class="dash-section">
+    <div class="dash-section-title">📊 Statistik</div>
+    <div class="dash-stats" id="dash-stats">
+      <div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>
+    </div>
+  </div>
+  <div class="dash-section">
+    <div class="dash-section-title">🛠 Tools</div>
+    <div class="dash-tools" id="dash-tools"></div>
+  </div>
+</div>
+
 <!-- USER-VERWALTUNG (nur für role=admin) -->
 <div class="usr-view" id="usr-view">
   <div class="usr-hdr">
@@ -626,7 +669,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.7';
+const APP_VERSION = 'v2.8';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -809,6 +852,14 @@ async function setupTables() {
     { name:'out_pdf',          type:'multipleAttachments' },
     { name:'created',          type:'singleLineText' },
   ]);
+  await ensureTable('Statistiken', [
+    { name:'api_key',   type:'singleLineText' },
+    { name:'user_name', type:'singleLineText' },
+    { name:'tool',      type:'singleLineText' },
+    { name:'action',    type:'singleLineText' },
+    { name:'meta_json', type:'multilineText' },
+    { name:'timestamp', type:'singleLineText' },
+  ]);
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -958,6 +1009,16 @@ async function showApp() {
   } else {
     document.getElementById('tnav-users').style.display = 'none';
   }
+
+  // Tool-Topbar-Buttons je nach Permission ein-/ausblenden
+  document.getElementById('tnav-conv').style.display     = hasPermission('tool_arbeitsberichte') ? '' : 'none';
+  document.getElementById('tnav-overview').style.display = hasPermission('tool_overview') ? '' : 'none';
+
+  // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
+  trackEvent('app', 'login');
+
+  // Dashboard als Startbildschirm
+  switchView('dashboard');
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -1221,16 +1282,24 @@ function goTo(n) {
 }
 
 function switchView(view) {
-  if (view==='users' && !isAdmin()) return; // Sicherheitsnetz
-  const ov=document.getElementById('ov-view');
-  const usr=document.getElementById('usr-view');
-  document.getElementById('tnav-conv').classList.toggle('active',view==='conv');
-  document.getElementById('tnav-overview').classList.toggle('active',view==='overview');
-  document.getElementById('tnav-users').classList.toggle('active',view==='users');
-  if(view==='overview'){ov.classList.add('show');renderOverview();}
-  else ov.classList.remove('show');
-  if(view==='users'){usr.classList.add('show');renderUsers();}
-  else usr.classList.remove('show');
+  // Permission-Gates
+  if (view==='users' && !isAdmin()) return;
+  if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
+
+  const dash = document.getElementById('dash-view');
+  const ov   = document.getElementById('ov-view');
+  const usr  = document.getElementById('usr-view');
+  ['dashboard','conv','overview','users'].forEach(v => {
+    const btn = document.getElementById('tnav-'+v);
+    if (btn) btn.classList.toggle('active', view===v);
+  });
+  dash.classList.toggle('show', view==='dashboard');
+  ov.classList.toggle('show',   view==='overview');
+  usr.classList.toggle('show',  view==='users');
+  if (view==='dashboard') renderDashboard();
+  if (view==='overview') renderOverview();
+  if (view==='users')    renderUsers();
 }
 
 function toast(msg,type='') {
@@ -2096,6 +2165,18 @@ function isAdmin() {
    3) UI: button.style.display = hasPermission('xyz') ? '' : 'none';
    ────────────────────────────────────────────────────────────── */
 const FEATURES = {
+  // ── Tool-Zugriff (steuern, welche Tools im Dashboard sichtbar sind) ──
+  tool_arbeitsberichte: {
+    label: 'Tool: Arbeitsberichte Converter',
+    desc:  'Zugriff auf den PDF-zu-PDF Berichts-Konverter.',
+    default: true,
+  },
+  tool_overview: {
+    label: 'Tool: Berichts-Übersicht',
+    desc:  'Zugriff auf die Übersicht aller gespeicherten Berichte.',
+    default: true,
+  },
+  // ── Aktions-Permissions ──
   delete_reports: {
     label: 'Berichte löschen',
     desc:  'Darf Berichte aus der Übersicht löschen (eigene und fremde).',
@@ -2279,6 +2360,146 @@ async function createNewUser() {
     renderUsers();
   } catch(e) {
     toast('❌ '+e.message, 'err');
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   TOOLS-REGISTRY
+   Neues Tool hinzufügen:
+   1) Permission in FEATURES registrieren (oben)
+   2) Hier eintragen mit launch-Funktion
+   → Erscheint automatisch im Dashboard und als Checkbox in der User-Verwaltung
+   ────────────────────────────────────────────────────────────── */
+const TOOLS = {
+  arbeitsberichte: {
+    label: 'Arbeitsberichte Converter',
+    desc:  'PDF-Berichte aller Hersteller per KI in einheitliches Format umwandeln.',
+    icon:  '🔧',
+    permission: 'tool_arbeitsberichte',
+    launch: () => switchView('conv'),
+  },
+  overview: {
+    label: 'Berichts-Übersicht',
+    desc:  'Alle gespeicherten Berichte durchsuchen, bearbeiten und exportieren.',
+    icon:  '📋',
+    permission: 'tool_overview',
+    launch: () => switchView('overview'),
+  },
+};
+
+function launchTool(key) {
+  const t = TOOLS[key];
+  if (!t) return;
+  if (!hasPermission(t.permission)) return toast('🔒 Keine Berechtigung für dieses Tool.','err');
+  trackEvent(key, 'launch');
+  t.launch();
+}
+
+/* ──────────────────────────────────────────────────────────────
+   STATISTIK-TRACKING
+   ────────────────────────────────────────────────────────────── */
+async function trackEvent(tool, action, meta) {
+  if (!APP_KEYS.airtableWriteKey || !APP_KEYS.user) return;
+  try {
+    await atWrite('Statistiken', {
+      api_key:   APP_KEYS.user.api_key || '',
+      user_name: APP_KEYS.user.name || '',
+      tool:      tool || '',
+      action:    action || '',
+      meta_json: meta ? JSON.stringify(meta) : '',
+      timestamp: new Date().toISOString(),
+    });
+  } catch(e) { console.warn('trackEvent:', tool, action, e.message); }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   DASHBOARD
+   ────────────────────────────────────────────────────────────── */
+function renderDashboard() {
+  document.getElementById('dash-greet').textContent =
+    'Willkommen, ' + (APP_KEYS.user?.name || '') + '!';
+  // Tools-Grid rendern
+  const grid = document.getElementById('dash-tools');
+  grid.innerHTML = Object.entries(TOOLS).map(([key, t]) => {
+    const allowed = hasPermission(t.permission);
+    return `
+      <button class="dash-tool" ${allowed ? '' : 'disabled'} onclick="launchTool('${key}')">
+        <div class="dash-tool-icon">${t.icon}</div>
+        <div class="dash-tool-label">${t.label}</div>
+        <div class="dash-tool-desc">${t.desc}</div>
+        ${allowed
+          ? '<div class="dash-tool-stat" data-tool="'+key+'">…</div>'
+          : '<div class="dash-tool-locked">🔒 Keine Berechtigung</div>'}
+      </button>
+    `;
+  }).join('') + (Object.keys(TOOLS).length === 0
+    ? '<div style="color:var(--txt3);grid-column:1/-1;padding:20px;text-align:center">Noch keine Tools registriert.</div>'
+    : '');
+  // Statistik laden
+  loadDashboardStats();
+}
+
+function statCard(icon, num, lbl, sub) {
+  return `<div class="dash-stat-card">
+    <div class="dash-stat-icon">${icon}</div>
+    <div class="dash-stat-num">${num}</div>
+    <div class="dash-stat-lbl">${lbl}</div>
+    ${sub ? `<div class="dash-stat-sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+async function loadDashboardStats() {
+  const c = document.getElementById('dash-stats');
+  c.innerHTML = '<div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>';
+  try {
+    const todayISO = new Date().toISOString().slice(0,10);
+    const since30 = Date.now() - 30*24*3600*1000;
+
+    // Berichte laden
+    let reports = [];
+    try { reports = await atRead('Berichte', null); } catch(e) { console.warn('Berichte:', e); }
+    const todayReports = reports.filter(r => (r.fields.created || '').slice(0,10) === todayISO).length;
+
+    // Statistik-Events laden (Tabelle existiert evtl. noch nicht)
+    let events = [];
+    try { events = await atRead('Statistiken', null); } catch(e) { console.warn('Statistiken:', e.message); }
+    const todayLaunches = events.filter(e =>
+      (e.fields.timestamp || '').slice(0,10) === todayISO &&
+      e.fields.action === 'launch'
+    ).length;
+    const activeUsers = new Set(
+      events
+        .filter(e => Date.parse(e.fields.timestamp || '') > since30)
+        .map(e => e.fields.api_key)
+        .filter(k => k)
+    ).size;
+
+    // Beliebtestes Tool
+    const toolCounts = {};
+    events.forEach(e => {
+      if (e.fields.action !== 'launch') return;
+      const t = e.fields.tool;
+      if (!t || t === 'app') return;
+      toolCounts[t] = (toolCounts[t]||0) + 1;
+    });
+    const topTool = Object.entries(toolCounts).sort((a,b) => b[1]-a[1])[0];
+
+    c.innerHTML =
+      statCard('📋', reports.length, 'Berichte gesamt', '') +
+      statCard('✏', todayReports, 'Heute erstellt', '') +
+      statCard('🚀', todayLaunches, 'Tool-Starts heute', '') +
+      statCard('👥', activeUsers, 'Aktive User', 'in 30 Tagen') +
+      (topTool ? statCard('⭐', topTool[1], 'Beliebt: ' + (TOOLS[topTool[0]]?.label || topTool[0]), 'Starts gesamt') : '');
+
+    // Per-Tool Statistik in den Tool-Cards eintragen
+    Object.keys(TOOLS).forEach(key => {
+      const el = document.querySelector('.dash-tool-stat[data-tool="'+key+'"]');
+      if (!el) return;
+      const cnt = toolCounts[key] || 0;
+      el.innerHTML = '🚀 ' + cnt + ' Start' + (cnt !== 1 ? 's' : '') + ' insgesamt';
+    });
+  } catch(e) {
+    c.innerHTML = '<div style="grid-column:1/-1;color:var(--err);padding:8px">Fehler: '+e.message+'</div>';
   }
 }
 
