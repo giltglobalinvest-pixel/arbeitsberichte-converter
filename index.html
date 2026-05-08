@@ -502,6 +502,10 @@ body.has-modal .topbar{pointer-events:auto}
 .bf-foot{padding:12px 14px;background:var(--surf);border-top:1px solid var(--bdr);display:flex;gap:10px;flex-shrink:0;box-shadow:0 -2px 6px rgba(0,0,0,.05)}
 .bf-foot .btn{flex:1;padding:11px 14px;font-size:14px;font-weight:600}
 
+/* "KI"-Badge im Bericht-Formular ausblenden (Techniker fuellt manuell, keine AI-Extraktion) */
+.bf-view .ai-b{display:none}
+.bf-view .fi.aif,.bf-view .fta.aif{background:white;border-color:var(--bdr)}
+
 /* Unterschriftsfeld */
 .sig-wrap{position:relative;border:2px dashed var(--bdr);border-radius:var(--rs);background:#fafafa;height:160px;touch-action:none;user-select:none;overflow:hidden}
 .sig-wrap.signed{border-style:solid;border-color:var(--ok);background:white}
@@ -737,7 +741,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.24</div>
+    <div class="login-version">Elevator Servicebox v2.25</div>
   </div>
 </div>
 
@@ -1360,7 +1364,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.24';
+const APP_VERSION = 'v2.25';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4080,92 +4084,69 @@ function openBerichtForm(auftragId) {
   _currentBerichtAuftragId = auftragId;
   closeAuftragDetail();
   const f = rec.fields;
-  const tmplLabel = T[f.tmpl]?.label || f.tmpl || '';
-  const isWartung = (f.tmpl||'').includes('wartung');
+  const tmpl = T[f.tmpl];
+  if (!tmpl) return toast('Vorlage unbekannt: '+(f.tmpl||'(leer)'), 'err');
+  const tmplLabel = tmpl.label || f.tmpl;
 
-  document.getElementById('bf-title').textContent = 'Bericht zu Auftrag #' + (f.auftrag_num || '');
-  document.getElementById('bf-sub').textContent = tmplLabel + ' · ' + (f.standort || '');
+  document.getElementById('bf-title').textContent = tmplLabel;
+  document.getElementById('bf-sub').textContent   = '#'+(f.auftrag_num||'')+' · '+(f.standort||'');
 
+  // Schema + Vorausfüllung aus Auftrag
   const today = new Date().toISOString().slice(0,10);
   const myName = APP_KEYS.user?.name || '';
+  const data = Object.assign({}, tmpl.schema(), {
+    datum:             today,
+    auftragsnummer:    String(f.auftrag_num || ''),
+    standort:          f.standort     || '',
+    fabriknummer:      f.fabriknummer || '',
+    durchgefuehrt_von: myName,
+    beschreibung:      f.leistungsbeschreibung || '',  // bei Arbeitsbericht
+  });
 
-  document.getElementById('bf-body').innerHTML = `
-    <div class="bf-card">
-      <h2>📋 Auftrags-Info</h2>
-      <div class="bf-info-row"><span class="l">Nr.</span><span class="v">#${f.auftrag_num||''}</span></div>
+  // Form aus Vorlage rendern (gleiche Felder + gleiche Klassen wie Konverter)
+  const formHtml = tmpl.form(data);
+
+  // Auftrags-Info-Karte vornedran + Unterschrift-Karten hintendran
+  const infoCard = `
+    <div class="card" style="background:rgba(35,74,117,.05);border-color:rgba(35,74,117,.2)">
+      <div class="card-title">📋 Auftrags-Info <span style="font-weight:400;color:var(--txt3);font-size:11px;text-transform:none;letter-spacing:0;margin-left:6px">aus zugewiesenem Auftrag</span></div>
+      <div class="bf-info-row"><span class="l">Auftrag-Nr.</span><span class="v">#${f.auftrag_num||'–'}</span></div>
       <div class="bf-info-row"><span class="l">Vorlage</span><span class="v">${tmplLabel}</span></div>
-      <div class="bf-info-row"><span class="l">Standort</span><span class="v">${(f.standort||'').replace(/</g,'&lt;')}</span></div>
-      <div class="bf-info-row"><span class="l">Fabriknummer</span><span class="v">${(f.fabriknummer||'').replace(/</g,'&lt;')}</span></div>
-      <div class="bf-info-row"><span class="l">Kontakt</span><span class="v" style="white-space:pre-wrap">${((f.kontakt||f.kontakt_name)||'').replace(/</g,'&lt;')}</span></div>
-      ${f.leistungsbeschreibung ? '<div style="font-size:12px;color:var(--txt2);margin-top:8px;padding:8px;background:var(--bg);border-radius:4px;white-space:pre-wrap">'+f.leistungsbeschreibung.replace(/</g,'&lt;')+'</div>' : ''}
+      <div class="bf-info-row"><span class="l">Kontakt</span><span class="v" style="white-space:pre-wrap">${((f.kontakt||f.kontakt_name)||'–').replace(/</g,'&lt;')}</span></div>
+      ${f.leistungsbeschreibung ? '<div style="font-size:12px;color:var(--txt2);margin-top:8px;padding:8px;background:white;border-radius:4px;white-space:pre-wrap">'+f.leistungsbeschreibung.replace(/</g,'&lt;')+'</div>' : ''}
     </div>
+  `;
 
-    <div class="bf-card">
-      <h2>🕒 Zeit &amp; Datum</h2>
-      <div class="auf-grid2">
-        <div class="auf-field"><label class="auf-label">Datum</label>
-          <input type="date" class="auf-input" id="bf-datum" value="${today}"></div>
-        <div class="auf-field"><label class="auf-label">Anfahrt (h)</label>
-          <input type="number" step="0.25" min="0" class="auf-input" id="bf-anfahrt" value="0.5"></div>
-        <div class="auf-field"><label class="auf-label">Anfang</label>
-          <input type="time" class="auf-input" id="bf-anfang" value="08:00"></div>
-        <div class="auf-field"><label class="auf-label">Ende</label>
-          <input type="time" class="auf-input" id="bf-ende" value="10:00"></div>
+  const signCards = `
+    <div class="card">
+      <div class="card-title">✍ Unterschrift Techniker</div>
+      <div class="field"><div class="field-lbl">Name</div>
+        <input type="text" class="fi" id="bf-tech-name" value="${myName.replace(/"/g,'&quot;')}"></div>
+      <div class="sig-wrap" id="bf-sig-tech-wrap" style="margin-top:8px">
+        <canvas id="bf-sig-tech"></canvas>
+        <div class="sig-placeholder">✍ Hier mit Finger oder Stylus unterschreiben</div>
+      </div>
+      <div class="sig-actions">
+        <span style="color:var(--txt3)">Pflichtfeld</span>
+        <button type="button" class="sig-clear" onclick="_sigTechnikerPad?.clear()">↺ Zurücksetzen</button>
       </div>
     </div>
-
-    <div class="bf-card">
-      <h2>${isWartung ? '🔧 Wartungsdetails' : '🛠 Arbeiten'}</h2>
-      ${isWartung
-        ? `<div class="auf-field"><label class="auf-label">Ausgeführte Wartungsarbeiten</label>
-            <textarea class="auf-textarea" id="bf-arbeit" rows="5" placeholder="Was wurde geprüft, gewartet, ersetzt? Komponenten, Ergebnisse…"></textarea></div>
-           <div class="auf-field"><label class="auf-label">Mängel / Empfehlungen</label>
-            <textarea class="auf-textarea" id="bf-maengel" rows="3" placeholder="Festgestellte Mängel oder Folge-Empfehlungen"></textarea></div>`
-        : `<div class="auf-field"><label class="auf-label">Beschreibung der Störung</label>
-            <textarea class="auf-textarea" id="bf-stoerung" rows="3" placeholder="Was war defekt / der Auftrag?"></textarea></div>
-           <div class="auf-field"><label class="auf-label">Durchgeführte Arbeiten</label>
-            <textarea class="auf-textarea" id="bf-arbeit" rows="5" placeholder="Welche Arbeiten wurden ausgeführt?"></textarea></div>
-           <div class="auf-field"><label class="auf-label">Ursache / Bemerkungen</label>
-            <textarea class="auf-textarea" id="bf-maengel" rows="2" placeholder="Ursache, Empfehlungen, Hinweise"></textarea></div>`}
-    </div>
-
-    <div class="bf-card">
-      <h2>📦 Material &amp; Teile</h2>
-      <textarea class="auf-textarea" id="bf-material" rows="3" placeholder="z.B. 2× Sicherung 16A, 1× Türkontakt, …"></textarea>
-    </div>
-
-    <div class="bf-card">
-      <h2>👤 Techniker</h2>
-      <div class="auf-field"><label class="auf-label">Name</label>
-        <input type="text" class="auf-input" id="bf-tech-name" value="${myName.replace(/"/g,'&quot;')}"></div>
-      <div class="auf-field"><label class="auf-label">Unterschrift</label>
-        <div class="sig-wrap" id="bf-sig-tech-wrap">
-          <canvas id="bf-sig-tech"></canvas>
-          <div class="sig-placeholder">✍ Hier mit Finger oder Stylus unterschreiben</div>
-        </div>
-        <div class="sig-actions">
-          <span style="color:var(--txt3)">Pflichtfeld</span>
-          <button type="button" class="sig-clear" onclick="_sigTechnikerPad?.clear()">↺ Zurücksetzen</button>
-        </div>
+    <div class="card">
+      <div class="card-title">✍ Unterschrift Kunde</div>
+      <div class="field"><div class="field-lbl">Name (Kunde / Hausverwaltung)</div>
+        <input type="text" class="fi" id="bf-kunde-name" value="${(f.kontakt_name || (f.kontakt||'').split('\n')[0] || '').replace(/"/g,'&quot;')}"></div>
+      <div class="sig-wrap" id="bf-sig-kunde-wrap" style="margin-top:8px">
+        <canvas id="bf-sig-kunde"></canvas>
+        <div class="sig-placeholder">✍ Kunde unterschreibt hier</div>
       </div>
-    </div>
-
-    <div class="bf-card">
-      <h2>🤝 Kunde</h2>
-      <div class="auf-field"><label class="auf-label">Name (Kunde / Hausverwaltung)</label>
-        <input type="text" class="auf-input" id="bf-kunde-name" value="${(f.kontakt_name || (f.kontakt||'').split('\n')[0] || '').replace(/"/g,'&quot;')}"></div>
-      <div class="auf-field"><label class="auf-label">Unterschrift</label>
-        <div class="sig-wrap" id="bf-sig-kunde-wrap">
-          <canvas id="bf-sig-kunde"></canvas>
-          <div class="sig-placeholder">✍ Kunde unterschreibt hier</div>
-        </div>
-        <div class="sig-actions">
-          <span style="color:var(--txt3)">Pflichtfeld</span>
-          <button type="button" class="sig-clear" onclick="_sigKundePad?.clear()">↺ Zurücksetzen</button>
-        </div>
+      <div class="sig-actions">
+        <span style="color:var(--txt3)">Pflichtfeld</span>
+        <button type="button" class="sig-clear" onclick="_sigKundePad?.clear()">↺ Zurücksetzen</button>
       </div>
     </div>
   `;
+
+  document.getElementById('bf-body').innerHTML = infoCard + formHtml + signCards;
 
   // Pads initialisieren (nach DOM-Insertion)
   setTimeout(() => {
@@ -4189,38 +4170,36 @@ function closeBerichtForm() {
   }
 }
 
-function _gv(id) { return document.getElementById(id)?.value?.trim() || ''; }
-
 async function saveBerichtFromForm() {
   if (!_currentBerichtAuftragId) return;
   const auftrag = _auftragCache.find(r => r.id === _currentBerichtAuftragId);
   if (!auftrag) return toast('Auftrag nicht gefunden', 'err');
   const af = auftrag.fields;
+  const tmpl = T[af.tmpl];
+  if (!tmpl || typeof tmpl.pdf !== 'function') return toast('Vorlage unbekannt: '+(af.tmpl||'(leer)'), 'err');
+
+  // Form-Felder (alle [data-f] aus dem bf-body) + Unterschriften-Namen
+  const data = Object.assign({}, tmpl.schema());
+  document.querySelectorAll('#bf-body [data-f]').forEach(el => {
+    data[el.dataset.f] = el.value || '';
+  });
+  const techName  = (document.getElementById('bf-tech-name')?.value || '').trim();
+  const kundeName = (document.getElementById('bf-kunde-name')?.value || '').trim();
 
   // Validierung
-  const arbeit = _gv('bf-arbeit');
-  if (!arbeit) return toast('Bitte beschreibe die durchgeführten Arbeiten.', 'err');
+  if (!data.datum) return toast('Bitte Datum eintragen.', 'err');
+  if (!data.standort) return toast('Bitte Standort eintragen.', 'err');
+  const isWartung = (af.tmpl||'').includes('wartung');
+  if (!isWartung && !data.beschreibung) return toast('Bitte Beschreibung der Arbeiten eintragen.', 'err');
+  if (isWartung && !data.pruef_ergebnis) return toast('Bitte Prüfergebnis eintragen.', 'err');
+  if (!techName)  return toast('Bitte Techniker-Namen eintragen.', 'err');
+  if (!kundeName) return toast('Bitte Kunden-Namen eintragen.', 'err');
   if (!_sigTechnikerPad || _sigTechnikerPad.isEmpty()) return toast('Bitte Techniker-Unterschrift leisten.', 'err');
-  if (!_sigKundePad || _sigKundePad.isEmpty())         return toast('Bitte Kunden-Unterschrift leisten.', 'err');
+  if (!_sigKundePad     || _sigKundePad.isEmpty())     return toast('Bitte Kunden-Unterschrift leisten.', 'err');
 
-  const data = {
-    datum:        _gv('bf-datum'),
-    anfahrt:      _gv('bf-anfahrt'),
-    anfang:       _gv('bf-anfang'),
-    ende:         _gv('bf-ende'),
-    arbeit,
-    maengel:      _gv('bf-maengel'),
-    stoerung:     _gv('bf-stoerung'),
-    material:     _gv('bf-material'),
-    tech_name:    _gv('bf-tech-name'),
-    kunde_name:   _gv('bf-kunde-name'),
-    standort:     af.standort || '',
-    fabriknummer: af.fabriknummer || '',
-    kontakt_name: af.kontakt_name || '',
-    leistung:     af.leistungsbeschreibung || '',
-    auftrag_num:  af.auftrag_num,
-    tmpl:         af.tmpl,
-  };
+  // durchgefuehrt_von angleichen, falls leer
+  if (!data.durchgefuehrt_von) data.durchgefuehrt_von = techName;
+
   const sigTechURL  = _sigTechnikerPad.toDataURL();
   const sigKundeURL = _sigKundePad.toDataURL();
 
@@ -4228,9 +4207,6 @@ async function saveBerichtFromForm() {
   btn.disabled = true; btn.textContent = '☁ Generiere PDF…';
 
   try {
-    // PDF generieren
-    const pdfBlob = await generateBerichtPDF(data, sigTechURL, sigKundeURL, getCurrentFirma());
-
     // Bericht-Nummer (firma-scoped)
     const allBerichte = await atRead('Berichte', null);
     const firmaSlug = getCurrentFirmaSlug();
@@ -4239,20 +4215,25 @@ async function saveBerichtFromForm() {
     const fbMax = fbRecs.length > 0 ? Math.max(...fbRecs.map(r => r.fields.bericht_num || 0)) : 0;
     const berichtNum = Math.max(startNum, fbMax + 1);
 
+    // PDF aus Vorlage generieren + Unterschriften-Seite anhängen
+    const doc = tmpl.pdf(data, berichtNum);
+    appendSignatureSection(doc, techName, kundeName, sigTechURL, sigKundeURL, af.auftrag_num);
+    const pdfBlob = doc.output('blob');
+
     btn.textContent = '☁ Speichere Bericht…';
     const fname = berichtNum + '_' + (data.standort||'Bericht').replace(/[^a-zA-Z0-9]/g,'_').slice(0,40) + '.pdf';
     const rec = await atWrite('Berichte', {
       firma:        firmaSlug,
       api_key:      APP_KEYS.user.api_key,
       bericht_num:  berichtNum,
-      tmpl:         data.tmpl || '',
+      tmpl:         af.tmpl || '',
       datum:        data.datum,
       standort:     data.standort,
       fabriknummer: data.fabriknummer,
-      techniker:    data.tech_name,
+      techniker:    techName,
       fname:        fname,
-      subfolder:    SUBFOLDERS[data.tmpl] || 'Sonstige',
-      data_json:    JSON.stringify({ ...data, sig_tech: sigTechURL, sig_kunde: sigKundeURL }),
+      subfolder:    SUBFOLDERS[af.tmpl] || 'Sonstige',
+      data_json:    JSON.stringify(Object.assign({}, data, { tech_name: techName, kunde_name: kundeName, sig_tech: sigTechURL, sig_kunde: sigKundeURL })),
       auftrag_id:   _currentBerichtAuftragId,
       auftrag_num:  af.auftrag_num,
       created:      new Date().toISOString(),
@@ -4281,118 +4262,51 @@ async function saveBerichtFromForm() {
     await loadAuftraegeAndRender();
   } catch(e) {
     console.error('saveBerichtFromForm:', e);
-    toast('❌ '+e.message, 'err');
+    toast('❌ '+(e.message||e), 'err');
   } finally {
     btn.disabled = false; btn.textContent = '💾 Abschließen & PDF';
   }
 }
 
-/* ──────────────────────────────────────────────────────────────
-   PDF-GENERIERUNG für Auftrags-Bericht
-   ────────────────────────────────────────────────────────────── */
-async function generateBerichtPDF(d, sigTechURL, sigKundeURL, firma) {
-  const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation:'p', unit:'mm', format:'a4' });
-  const PW = 210, PH = 297, M = 18;
-  let y = M;
+/* Hängt eine Unterschriften-Seite an einen jsPDF-Doc an (kommt nach dem Vorlagen-PDF) */
+function appendSignatureSection(doc, techName, kundeName, sigTechURL, sigKundeURL, auftragNum) {
+  doc.addPage();
+  const PW = 210, PH = 297, ml = 14, cw = 182;
+  let y = 18;
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(30);
+  doc.text('Unterschriften', ml, y);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(100);
+  doc.text('Bestätigung der Auftrags-Erfüllung'+(auftragNum?' (Auftrag #'+auftragNum+')':''), ml, y+6);
+  y += 14;
 
-  // Header
-  doc.setFillColor(26, 51, 83);
-  doc.rect(0, 0, PW, 22, 'F');
-  doc.setTextColor(255);
-  doc.setFontSize(16); doc.setFont('helvetica','bold');
-  doc.text((firma?.name || 'Servicebox'), M, 13);
-  doc.setFontSize(10); doc.setFont('helvetica','normal');
-  const isWartung = (d.tmpl||'').includes('wartung');
-  doc.text(isWartung ? 'Wartungsbericht' : 'Arbeitsbericht', M, 18);
-  doc.setFontSize(9);
-  doc.text('Auftrag #'+(d.auftrag_num||'–')+'  ·  '+(d.datum||''), PW - M, 13, { align:'right' });
-  doc.setTextColor(20);
+  doc.setDrawColor(160); doc.setLineWidth(0.25);
+  const sigW = (cw - 8) / 2;
+  const sigH = 50;
 
-  y = 30;
-
-  // Helfer
-  function h2(txt) {
-    doc.setFontSize(10); doc.setFont('helvetica','bold');
-    doc.setFillColor(242, 241, 236);
-    doc.rect(M, y - 4, PW - 2*M, 6, 'F');
-    doc.text(txt, M + 2, y);
-    y += 6;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  }
-  function row(lbl, val) {
-    if (!val) return;
-    doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
-    doc.text(lbl + ':', M + 2, y);
-    doc.setFont('helvetica','normal');
-    const lines = doc.splitTextToSize(String(val), PW - 2*M - 38);
-    doc.text(lines, M + 38, y);
-    y += Math.max(4.5, lines.length * 4) + 1;
-    if (y > PH - 60) { doc.addPage(); y = M; }
-  }
-  function block(lbl, val, opts = {}) {
-    if (!val) return;
-    doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
-    doc.text(lbl + ':', M + 2, y);
-    y += 4;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9);
-    const lines = doc.splitTextToSize(String(val), PW - 2*M - 4);
-    doc.text(lines, M + 4, y);
-    y += lines.length * 4 + 3;
-    if (!opts.noPageBreak && y > PH - 60) { doc.addPage(); y = M; }
-  }
-
-  h2('Standort & Kontakt');
-  row('Standort',     d.standort);
-  row('Fabriknummer', d.fabriknummer);
-  row('Kontakt',      d.kontakt_name);
-  y += 2;
-
-  h2('Auftrag');
-  block('Leistungsbeschreibung', d.leistung);
-
-  h2('Zeit');
-  row('Datum',   d.datum);
-  row('Anfang',  d.anfang);
-  row('Ende',    d.ende);
-  row('Anfahrt', (d.anfahrt||'0') + ' h');
-  y += 2;
-
-  h2(isWartung ? 'Wartung' : 'Ausgeführte Arbeiten');
-  if (!isWartung && d.stoerung) block('Beschreibung der Störung', d.stoerung);
-  block(isWartung ? 'Ausgeführte Wartungsarbeiten' : 'Durchgeführte Arbeiten', d.arbeit);
-  if (d.maengel) block(isWartung ? 'Mängel / Empfehlungen' : 'Ursache / Bemerkungen', d.maengel);
-  if (d.material) block('Material / Teile', d.material);
-
-  // Unterschriften (immer am Seitenende)
-  if (y > PH - 75) { doc.addPage(); y = M; }
-  y = PH - 70;
-  doc.setDrawColor(180);
-  doc.line(M, y - 2, PW - M, y - 2);
-  y += 4;
-
-  h2('Unterschriften');
-  const sigW = (PW - 2*M - 8) / 2;
-  const sigH = 30;
   // Techniker
-  try {
-    doc.addImage(sigTechURL, 'PNG', M, y, sigW, sigH);
-  } catch(e) { console.warn('sig tech img:', e); }
-  doc.setDrawColor(120); doc.line(M, y + sigH, M + sigW, y + sigH);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8);
-  doc.text('Techniker: ' + (d.tech_name||''), M, y + sigH + 4);
+  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(30);
+  doc.text('Techniker', ml, y);
+  doc.rect(ml, y+2, sigW, sigH);
+  try { doc.addImage(sigTechURL, 'PNG', ml+1, y+3, sigW-2, sigH-2); } catch(e) { console.warn('sig tech img:', e); }
+  doc.setLineWidth(0.4); doc.line(ml, y+sigH+5, ml+sigW, y+sigH+5);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text(techName||'', ml, y+sigH+10);
+
   // Kunde
-  try {
-    doc.addImage(sigKundeURL, 'PNG', M + sigW + 8, y, sigW, sigH);
-  } catch(e) { console.warn('sig kunde img:', e); }
-  doc.line(M + sigW + 8, y + sigH, M + sigW + 8 + sigW, y + sigH);
-  doc.text('Kunde: ' + (d.kunde_name||''), M + sigW + 8, y + sigH + 4);
+  doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('Kunde', ml+sigW+8, y);
+  doc.setLineWidth(0.25);
+  doc.rect(ml+sigW+8, y+2, sigW, sigH);
+  try { doc.addImage(sigKundeURL, 'PNG', ml+sigW+9, y+3, sigW-2, sigH-2); } catch(e) { console.warn('sig kunde img:', e); }
+  doc.setLineWidth(0.4); doc.line(ml+sigW+8, y+sigH+5, ml+sigW+8+sigW, y+sigH+5);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9);
+  doc.text(kundeName||'', ml+sigW+8, y+sigH+10);
 
-  // Footer
-  doc.setFontSize(7); doc.setTextColor(140);
-  doc.text((firma?.name||'')+' · Auftrag #'+(d.auftrag_num||'')+'  ·  '+(d.datum||''), PW/2, PH - 8, { align:'center' });
-
-  return doc.output('blob');
+  // Footer-Linie wie auf den anderen Seiten
+  doc.setDrawColor(160); doc.setLineWidth(0.2);
+  doc.line(ml, PH-14, PW-ml-2, PH-14);
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(100);
+  doc.text('Unterschriften', ml, PH-9);
 }
 
 /* ──────────────────────────────────────────────────────────────
