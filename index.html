@@ -506,6 +506,28 @@ body.has-modal .topbar{pointer-events:auto}
 .bf-view .ai-b{display:none}
 .bf-view .fi.aif,.bf-view .fta.aif{background:white;border-color:var(--bdr)}
 
+/* Live-Kamera + Cropper für Bilder im Bericht-Form (quadratisch, 1:1) */
+.bf-cam-view,.bf-cropper-view{display:none;position:fixed;inset:0;z-index:350;background:#000;color:#fff;flex-direction:column;overflow:hidden}
+.bf-cam-view.show,.bf-cropper-view.show{display:flex}
+.bf-cam-hdr{padding:10px 14px;display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.5);flex-shrink:0;backdrop-filter:blur(8px);padding-top:calc(10px + env(safe-area-inset-top, 0px))}
+.bf-cam-hdr h2{font-size:13px;font-weight:600;flex:1;margin:0;text-align:center}
+.bf-cam-icon{width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;flex-shrink:0;font-family:inherit}
+.bf-cam-icon:hover{background:rgba(255,255,255,.2)}
+.bf-cam-icon input[type=file]{display:none}
+.bf-cam-stage,.bf-cropper-stage{flex:1;background:#000;position:relative;display:flex;align-items:center;justify-content:center;padding:16px;overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+.bf-cam-frame,.bf-cropper-frame{position:relative;aspect-ratio:1/1;width:100%;max-width:520px;max-height:70vh;background:#0a0a0a;overflow:hidden;border-radius:16px;box-shadow:0 0 0 9999px rgba(0,0,0,.55);touch-action:none}
+.bf-cam-frame video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+.bf-cropper-frame img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;will-change:transform;pointer-events:none;max-width:none;max-height:none}
+.bf-cam-frame .grid,.bf-cropper-frame .grid{position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(to right,rgba(255,255,255,.15) 1px,transparent 1px),linear-gradient(to bottom,rgba(255,255,255,.15) 1px,transparent 1px);background-size:33.333% 33.333%;background-position:33.333% 33.333%}
+.bf-cam-hint{text-align:center;font-size:11px;color:rgba(255,255,255,.7);padding:6px 14px;letter-spacing:.04em;font-family:monospace}
+.bf-cam-foot{padding:14px 20px;padding-bottom:calc(14px + env(safe-area-inset-bottom, 0px));display:flex;align-items:center;justify-content:space-between;gap:14px;background:rgba(0,0,0,.5);flex-shrink:0;backdrop-filter:blur(8px)}
+.bf-shutter{width:64px;height:64px;border-radius:50%;background:#fff;border:4px solid rgba(255,255,255,.4);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:24px;color:#000;font-family:inherit;padding:0}
+.bf-shutter:active{transform:scale(.95)}
+.bf-shutter.confirm{background:#00e676}
+.bf-cam-err{text-align:center;color:#fff;padding:20px;max-width:300px;margin:auto}
+.bf-cam-err .ico{font-size:48px;margin-bottom:14px;opacity:.5}
+.bf-cam-err button{margin-top:12px;padding:10px 18px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;cursor:pointer;font-family:inherit;font-size:13px}
+
 /* Bestehende-Unterschrift Vorschau (nur Edit-Modus) */
 .bf-existing-sig{margin-bottom:8px;padding:8px 10px;background:rgba(35,74,117,.05);border:1px solid rgba(35,74,117,.18);border-radius:5px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .bf-existing-sig img{height:50px;background:white;border:1px solid var(--bdr);border-radius:4px;padding:2px}
@@ -747,7 +769,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.28</div>
+    <div class="login-version">Elevator Servicebox v2.29</div>
   </div>
 </div>
 
@@ -1305,6 +1327,51 @@ body.has-modal .topbar{pointer-events:auto}
   </div>
 </div>
 
+<!-- LIVE-KAMERA für Bilder (1:1 Frame) -->
+<div class="bf-cam-view" id="bf-cam-view">
+  <div class="bf-cam-hdr">
+    <button class="bf-cam-icon" onclick="closeBfCamera()" title="Abbrechen">✕</button>
+    <h2 id="bf-cam-title">📷 Foto aufnehmen</h2>
+    <button class="bf-cam-icon" onclick="bfCameraFlip()" title="Kamera wechseln">↻</button>
+  </div>
+  <div class="bf-cam-stage" id="bf-cam-stage">
+    <div class="bf-cam-frame" id="bf-cam-frame">
+      <video id="bf-cam-video" autoplay playsinline muted></video>
+      <div class="grid"></div>
+    </div>
+  </div>
+  <div class="bf-cam-hint">Format 1:1 · so wird das Foto aussehen</div>
+  <div class="bf-cam-foot">
+    <label class="bf-cam-icon" title="Aus Galerie wählen">
+      🖼
+      <input type="file" id="bf-cam-gallery" accept="image/*" multiple onchange="_bfPickFromGallery(event)">
+    </label>
+    <button class="bf-shutter" onclick="bfCameraCapture()" title="Aufnehmen">📸</button>
+    <button class="bf-cam-icon" onclick="closeBfCamera()" title="Schließen">✓</button>
+  </div>
+</div>
+
+<!-- INTERAKTIVER CROPPER (1:1) für Galerie-Uploads -->
+<div class="bf-cropper-view" id="bf-cropper-view">
+  <div class="bf-cam-hdr">
+    <button class="bf-cam-icon" onclick="bfCropperCancel()" title="Abbrechen">✕</button>
+    <h2 id="bf-cropper-title">Ausschnitt wählen</h2>
+    <button class="bf-cam-icon" onclick="bfCropperReset()" title="Zurücksetzen">↺</button>
+  </div>
+  <div class="bf-cropper-stage">
+    <div class="bf-cropper-frame" id="bf-cropper-frame">
+      <img id="bf-cropper-img" src="" alt="">
+      <div class="grid"></div>
+    </div>
+  </div>
+  <div class="bf-cam-hint">Ziehen · Pinch zum Zoomen</div>
+  <div class="bf-cam-foot">
+    <button class="bf-cam-icon" onclick="bfCropperCancel()" title="Abbrechen">✕</button>
+    <button class="bf-shutter confirm" onclick="bfCropperConfirm()" title="Übernehmen">✓</button>
+    <button class="bf-cam-icon" onclick="bfCropperReset()" title="Zurücksetzen">↺</button>
+  </div>
+</div>
+
 <!-- USER-VERWALTUNG (nur für role=admin) -->
 <div class="usr-view" id="usr-view">
   <div class="usr-hdr">
@@ -1370,7 +1437,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.28';
+const APP_VERSION = 'v2.29';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4384,6 +4451,14 @@ async function openBerichtForm(auftragId, berichtId) {
 function closeBerichtForm() {
   if (_sigTechnikerPad) { _sigTechnikerPad.destroy(); _sigTechnikerPad = null; }
   if (_sigKundePad)     { _sigKundePad.destroy();     _sigKundePad = null; }
+  // Kamera/Cropper falls offen: zumachen
+  try { closeBfCamera(); } catch(_){}
+  if (_bfCropper) {
+    try { URL.revokeObjectURL(_bfCropper.imageUrl); } catch(_){}
+    _bfCropper = null;
+    document.getElementById('bf-cropper-view')?.classList.remove('show');
+  }
+  _bfCropperQueue = [];
   document.getElementById('bf-view').classList.remove('show');
   _currentBerichtAuftragId = null;
   if (!document.querySelector('.auf-modal.show, .kone-modal.show, .pdf-modal.show')) {
@@ -4415,14 +4490,298 @@ function _bfRenderImageGrid() {
     '</div>'
   ).join('');
   el.innerHTML = existingThumbs + newThumbs +
-    '<label class="auf-img-add" title="Foto hinzufügen oder Kamera öffnen">'+
-      '<input type="file" accept="image/*" capture="environment" multiple style="display:none" onchange="_bfPickImages(event)">+'+
-    '</label>';
+    '<button type="button" class="auf-img-add" onclick="openBfCamera()" title="Foto aufnehmen oder aus Galerie hochladen">+</button>';
 }
 function _bfRemoveExisting(idx) {
   if (idx < 0 || idx >= _bfKeepBilder.length) return;
   _bfKeepBilder.splice(idx, 1);
   _bfRenderImageGrid();
+}
+
+/* ──────────────────────────────────────────────────────────────
+   LIVE-KAMERA + INTERAKTIVER CROPPER (Format 1:1, quadratisch)
+   Übernommen vom Stockmanager-Pattern.
+   ────────────────────────────────────────────────────────────── */
+const BF_IMG_TARGET_RATIO = 1;       // quadratisch
+const BF_IMG_MAX_EDGE     = 1200;    // px Längskante nach Resize
+const BF_IMG_JPEG_QUALITY = 0.85;
+
+const _bfCam = {
+  stream: null, videoEl: null, facingMode: 'environment', starting: false,
+  isSupported() { return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia); },
+  async start(videoEl) {
+    if (!this.isSupported()) throw new Error('Kamera nicht unterstützt');
+    if (this.starting) return;
+    this.starting = true;
+    try {
+      this.stop();
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: this.facingMode }, width: { ideal: 1920 }, height: { ideal: 1440 } },
+        audio: false,
+      });
+      this.videoEl = videoEl;
+      if (videoEl) {
+        videoEl.srcObject = this.stream;
+        videoEl.setAttribute('playsinline','true'); videoEl.muted = true;
+        await videoEl.play().catch(()=>{});
+      }
+    } finally { this.starting = false; }
+  },
+  stop() {
+    if (this.stream) this.stream.getTracks().forEach(t => { try { t.stop(); } catch(_){} });
+    this.stream = null;
+    if (this.videoEl) { try { this.videoEl.srcObject = null; } catch(_){} }
+  },
+  async toggleFacing() {
+    this.facingMode = this.facingMode === 'environment' ? 'user' : 'environment';
+    if (this.videoEl) await this.start(this.videoEl);
+  },
+  async capture() {
+    if (!this.videoEl) throw new Error('Kein Live-Bild');
+    const v = this.videoEl;
+    const srcW = v.videoWidth, srcH = v.videoHeight;
+    if (!srcW || !srcH) throw new Error('Live-Bild noch nicht bereit – kurz warten');
+    // Zentrierter Crop auf 1:1
+    const min = Math.min(srcW, srcH);
+    const cropX = Math.round((srcW - min) / 2);
+    const cropY = Math.round((srcH - min) / 2);
+    let outSize = Math.min(min, BF_IMG_MAX_EDGE);
+    const canvas = document.createElement('canvas');
+    canvas.width = outSize; canvas.height = outSize;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(v, cropX, cropY, min, min, 0, 0, outSize, outSize);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', BF_IMG_JPEG_QUALITY));
+    if (!blob) throw new Error('Frame konnte nicht erfasst werden');
+    return new File([blob], 'photo_'+Date.now()+'.jpg', { type:'image/jpeg' });
+  },
+};
+
+async function openBfCamera() {
+  const view = document.getElementById('bf-cam-view');
+  view.classList.add('show');
+  const stage = document.getElementById('bf-cam-stage');
+  // Frame zurücksetzen falls vorher Fehler-State
+  stage.innerHTML = '<div class="bf-cam-frame" id="bf-cam-frame"><video id="bf-cam-video" autoplay playsinline muted></video><div class="grid"></div></div>';
+  const v = document.getElementById('bf-cam-video');
+  if (!_bfCam.isSupported()) {
+    stage.innerHTML = '<div class="bf-cam-err"><div class="ico">📵</div>Kamera nicht verfügbar.<br><span style="font-size:11px;opacity:.7">Du kannst stattdessen ein Foto aus der Galerie wählen (🖼-Button unten).</span></div>';
+    return;
+  }
+  try {
+    await _bfCam.start(v);
+  } catch(e) {
+    stage.innerHTML = '<div class="bf-cam-err"><div class="ico">🚫</div>Kamera-Zugriff verweigert.<br><span style="font-size:11px;opacity:.7">In den Browser-Einstellungen erlauben oder Galerie nutzen.</span><button onclick="closeBfCamera()">Schließen</button></div>';
+  }
+}
+function closeBfCamera() {
+  _bfCam.stop();
+  document.getElementById('bf-cam-view').classList.remove('show');
+}
+async function bfCameraFlip() {
+  try { await _bfCam.toggleFacing(); }
+  catch(e) { toast('❌ '+(e.message||e), 'err'); }
+}
+async function bfCameraCapture() {
+  try {
+    const file = await _bfCam.capture();
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file);
+    });
+    _bfImages.push({ dataUrl, file, name: file.name });
+    _bfRenderImageGrid();
+    toast('✅ Foto hinzugefügt ('+_bfImages.length+').', 'ok');
+    // Nach Capture: Live-Cam offen lassen für weitere Fotos (typischer Workflow)
+  } catch(e) { toast('❌ '+(e.message||e), 'err'); }
+}
+
+/* Galerie-Picker → öffnet danach Cropper für jedes Bild (1:1) */
+let _bfCropperQueue = [];
+function _bfPickFromGallery(ev) {
+  const files = Array.from(ev.target.files || []).filter(f => f.type.startsWith('image/'));
+  ev.target.value = '';
+  if (files.length === 0) return;
+  _bfCropperQueue = files.slice();
+  closeBfCamera();
+  _bfNextCropperFromQueue();
+}
+function _bfNextCropperFromQueue() {
+  if (_bfCropperQueue.length === 0) {
+    // Fertig: zurück zur Kamera-Ansicht (oder Bericht-Form), Hauptsache Grid aktualisiert
+    _bfRenderImageGrid();
+    return;
+  }
+  const file = _bfCropperQueue.shift();
+  openBfCropper(file);
+}
+
+/* ──────────────────────────────────────────────────────────────
+   INTERAKTIVER CROPPER (1:1)
+   ────────────────────────────────────────────────────────────── */
+let _bfCropper = null;  // { file, imageUrl, imgW, imgH, frameW, frameH, baseScale, scale, offsetX, offsetY }
+
+function openBfCropper(file) {
+  const url = URL.createObjectURL(file);
+  _bfCropper = { file, imageUrl: url, imgW:0, imgH:0, frameW:0, frameH:0, baseScale:1, scale:1, offsetX:0, offsetY:0 };
+  const v = document.getElementById('bf-cropper-view');
+  const img = document.getElementById('bf-cropper-img');
+  img.src = url;
+  v.classList.add('show');
+  setTimeout(_bfSetupCropper, 30);
+}
+function _bfSetupCropper() {
+  const c = _bfCropper;
+  if (!c) return;
+  const frame = document.getElementById('bf-cropper-frame');
+  const img = document.getElementById('bf-cropper-img');
+  if (!frame || !img) return;
+  const ready = () => {
+    if (!c.imgW) { c.imgW = img.naturalWidth; c.imgH = img.naturalHeight; }
+    const fb = frame.getBoundingClientRect();
+    c.frameW = fb.width; c.frameH = fb.height;
+    if (!c.imgW || !c.imgH || !c.frameW || !c.frameH) return;
+    c.baseScale = Math.max(c.frameW/c.imgW, c.frameH/c.imgH);
+    if (!c.scale || c.scale < 1) c.scale = 1;
+    _bfApplyCropperTransform();
+  };
+  if (img.complete && img.naturalWidth > 0) ready();
+  else img.addEventListener('load', ready, { once:true });
+
+  // Pointer Pan + Pinch-Zoom
+  const pointers = new Map();
+  let startDist = 0, startScale = 1, startOffset = {x:0,y:0}, startMid = {x:0,y:0};
+  const refresh = () => {
+    const cur = _bfCropper; if (!cur) return;
+    if (pointers.size === 1) {
+      const [p] = pointers.values();
+      startMid = { x:p.x, y:p.y };
+      startOffset = { x:cur.offsetX||0, y:cur.offsetY||0 };
+    } else if (pointers.size === 2) {
+      const arr = [...pointers.values()];
+      startDist = Math.hypot(arr[0].x-arr[1].x, arr[0].y-arr[1].y) || 1;
+      startScale = cur.scale;
+      startMid = { x:(arr[0].x+arr[1].x)/2, y:(arr[0].y+arr[1].y)/2 };
+      startOffset = { x:cur.offsetX||0, y:cur.offsetY||0 };
+    }
+  };
+  const onDown = e => {
+    if (!_bfCropper) return;
+    e.preventDefault();
+    pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    try { frame.setPointerCapture(e.pointerId); } catch(_){}
+    refresh();
+  };
+  const onMove = e => {
+    const cur = _bfCropper;
+    if (!cur || !pointers.has(e.pointerId)) return;
+    e.preventDefault();
+    pointers.set(e.pointerId, { x:e.clientX, y:e.clientY });
+    if (pointers.size === 1) {
+      const [p] = pointers.values();
+      cur.offsetX = startOffset.x + (p.x - startMid.x);
+      cur.offsetY = startOffset.y + (p.y - startMid.y);
+    } else if (pointers.size === 2) {
+      const arr = [...pointers.values()];
+      const dist = Math.hypot(arr[0].x-arr[1].x, arr[0].y-arr[1].y) || 1;
+      cur.scale = Math.max(1, Math.min(6, startScale * (dist/startDist)));
+      const mid = { x:(arr[0].x+arr[1].x)/2, y:(arr[0].y+arr[1].y)/2 };
+      cur.offsetX = startOffset.x + (mid.x - startMid.x);
+      cur.offsetY = startOffset.y + (mid.y - startMid.y);
+    }
+    _bfApplyCropperTransform();
+  };
+  const onUp = e => {
+    pointers.delete(e.pointerId);
+    try { frame.releasePointerCapture(e.pointerId); } catch(_){}
+    refresh();
+  };
+  frame.onpointerdown = onDown;
+  frame.onpointermove = onMove;
+  frame.onpointerup = onUp;
+  frame.onpointercancel = onUp;
+  frame.onpointerleave = onUp;
+  frame.onwheel = (e) => {
+    e.preventDefault();
+    const delta = -e.deltaY * 0.0015;
+    _bfCropper.scale = Math.max(1, Math.min(6, (_bfCropper.scale||1) * (1 + delta)));
+    _bfApplyCropperTransform();
+  };
+}
+function _bfApplyCropperTransform() {
+  const c = _bfCropper;
+  if (!c || !c.imgW) return;
+  const img = document.getElementById('bf-cropper-img');
+  if (!img) return;
+  const s = c.baseScale * c.scale;
+  const dispW = c.imgW * s, dispH = c.imgH * s;
+  const maxX = Math.max(0, (dispW - c.frameW)/2);
+  const maxY = Math.max(0, (dispH - c.frameH)/2);
+  c.offsetX = Math.max(-maxX, Math.min(maxX, c.offsetX||0));
+  c.offsetY = Math.max(-maxY, Math.min(maxY, c.offsetY||0));
+  const tx = (c.frameW - dispW)/2 + c.offsetX;
+  const ty = (c.frameH - dispH)/2 + c.offsetY;
+  img.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+}
+function bfCropperReset() {
+  if (!_bfCropper) return;
+  _bfCropper.scale = 1; _bfCropper.offsetX = 0; _bfCropper.offsetY = 0;
+  _bfApplyCropperTransform();
+}
+function bfCropperCancel() {
+  const c = _bfCropper;
+  if (c) { try { URL.revokeObjectURL(c.imageUrl); } catch(_){} }
+  _bfCropper = null;
+  document.getElementById('bf-cropper-view').classList.remove('show');
+  // Falls noch Bilder in der Queue: Skip dieses, weiter
+  if (_bfCropperQueue.length > 0) _bfNextCropperFromQueue();
+}
+async function bfCropperConfirm() {
+  const c = _bfCropper;
+  if (!c || !c.imgW) { bfCropperCancel(); return; }
+  try {
+    const s = c.baseScale * c.scale;
+    const tx = (c.frameW - c.imgW*s)/2 + c.offsetX;
+    const ty = (c.frameH - c.imgH*s)/2 + c.offsetY;
+    let cropX = -tx/s, cropY = -ty/s;
+    let cropW = c.frameW/s, cropH = c.frameH/s;
+    cropX = Math.max(0, Math.min(c.imgW, cropX));
+    cropY = Math.max(0, Math.min(c.imgH, cropY));
+    cropW = Math.max(1, Math.min(c.imgW - cropX, cropW));
+    cropH = Math.max(1, Math.min(c.imgH - cropY, cropH));
+    const imgEl = await new Promise((res, rej) => {
+      const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('Bild-Decoder-Fehler'));
+      i.src = c.imageUrl;
+    });
+    let outW = cropW, outH = cropH;
+    const longest = Math.max(cropW, cropH);
+    if (longest > BF_IMG_MAX_EDGE) {
+      const k = BF_IMG_MAX_EDGE / longest;
+      outW = Math.round(cropW*k); outH = Math.round(cropH*k);
+    } else { outW = Math.round(outW); outH = Math.round(outH); }
+    const canvas = document.createElement('canvas');
+    canvas.width = outW; canvas.height = outH;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(imgEl, cropX, cropY, cropW, cropH, 0, 0, outW, outH);
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', BF_IMG_JPEG_QUALITY));
+    if (!blob) throw new Error('Encoding fehlgeschlagen');
+    const baseName = (c.file?.name || 'photo').replace(/\.[^./]+$/,'');
+    const file = new File([blob], baseName + '.jpg', { type:'image/jpeg', lastModified: Date.now() });
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(file);
+    });
+    _bfImages.push({ dataUrl, file, name: file.name });
+    try { URL.revokeObjectURL(c.imageUrl); } catch(_){}
+    _bfCropper = null;
+    document.getElementById('bf-cropper-view').classList.remove('show');
+    // Weiteres Bild aus Queue?
+    if (_bfCropperQueue.length > 0) {
+      _bfNextCropperFromQueue();
+    } else {
+      _bfRenderImageGrid();
+      toast('✅ Foto übernommen ('+_bfImages.length+').', 'ok');
+    }
+  } catch(e) { toast('❌ '+(e.message||e), 'err'); }
 }
 async function _bfPickImages(ev) {
   const files = ev.target.files;
