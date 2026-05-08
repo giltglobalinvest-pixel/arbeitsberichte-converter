@@ -741,7 +741,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.26</div>
+    <div class="login-version">Elevator Servicebox v2.27</div>
   </div>
 </div>
 
@@ -1364,7 +1364,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.26';
+const APP_VERSION = 'v2.27';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1959,10 +1959,16 @@ function addZustandVerlassen(doc,d,y,ml,cw,pH_result,withFulfilled) {
 function addStandortHeader(doc,d,y,ml,cw,pH_result) {
   const{bd,ft,GH,DK}=pH_result;
   const c2=110,c3=cw-c2;
+  // Header
   bd();doc.setFillColor(...GH);doc.rect(ml,y,c2,7,'FD');doc.rect(ml+c2,y,c3,7,'FD');
   ft(9,true,DK);doc.text('Standort der Anlage',ml+2,y+5);doc.text('Durchgeführt von',ml+c2+2,y+5);y+=7;
+  // Body – Schrift explizit zurücksetzen (Helvetica normal, 9pt, dunkel) + Zeilen begrenzen
   doc.setFillColor(255,255,255);doc.rect(ml,y,c2,22,'FD');doc.rect(ml+c2,y,c3,22,'FD');
-  ft(9,false,DK);doc.text(doc.splitTextToSize(d.standort||'',c2-4),ml+2,y+5);doc.text(doc.splitTextToSize(d.durchgefuehrt_von||'',c3-4),ml+c2+2,y+5);
+  doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(...DK);
+  const standortLines = doc.splitTextToSize(String(d.standort||''),c2-4).slice(0,4);
+  const durchLines    = doc.splitTextToSize(String(d.durchgefuehrt_von||''),c3-4).slice(0,4);
+  doc.text(standortLines,ml+2,y+5);
+  doc.text(durchLines,   ml+c2+2,y+5);
   return y+27;
 }
 
@@ -1988,9 +1994,10 @@ function pdfArbeit(d,num,sigs) {
   y=p.sh(ml,y,cw,'Zustand Aufzug bei Ankunft');y=addZustandAnkunft(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Anlagendaten');y=addAnlagendatenArbeit(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustandsbericht bei Verlassen der Anlage');y=addZustandVerlassen(doc,d,y,ml,cw,p,true);
-  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,45,d.beschreibung||'');y+=51;
-  // Sonstiges: kleiner wenn Unterschriften mitkommen, damit beides auf eine Seite passt
-  const sonstH = sigs ? 18 : 38;
+  // Mit Unterschriften: Beschreibung + Sonstiges kleiner, damit alles auf 1 Seite passt
+  const beschH = sigs ? 28 : 45;
+  const sonstH = sigs ? 12 : 38;
+  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,beschH,d.beschreibung||'');y+=beschH+6;
   y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstH,d.sonstiges||'');y+=sonstH+4;
   if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs);
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
@@ -2012,8 +2019,8 @@ function pdfWartung(d,num,sigs) {
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Ist der Aufzug in Betrieb?:',zL-3),ml+2,y+4.5);p.ft(9,false,p.DK);doc.text(d.aufzug_verlassen_in_betrieb||'',ml+zL+2,y+5);
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Sind weiterführende Arbeiten erforderlich?:',zL2-3),ml+zL+zV+2,y+4);p.ft(9,false,p.DK);doc.text(d.weitere_arbeiten||'',ml+zL+zV+zL2+2,y+5);y+=19;
   // Sonstiges: kleiner wenn Unterschriften kommen
-  const sonstHW = sigs ? 14 : 26;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+6;
+  const sonstHW = sigs ? 10 : 26;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+5;
   p.ft(14,true,[33,82,169]);doc.text('Prüfergebnisse',ml,y);y+=8;
   const pN=14,pT=30,pD=cw-pN-pT-32,pE=32;
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,pN,7,'FD');doc.rect(ml+pN,y,pT,7,'FD');doc.rect(ml+pN+pT,y,pD,7,'FD');doc.rect(ml+pN+pT+pD,y,pE,7,'FD');
@@ -2041,9 +2048,11 @@ function pdfAufzugA(d,num,sigs) {
   y=p.sh(ml,y,cw,'Zustand Aufzug bei Ankunft');y=addZustandAnkunft(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Anlagendaten');y=addAnlagendatenArbeit(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustandsbericht bei Verlassen der Anlage');y=addZustandVerlassen(doc,d,y,ml,cw,p,true);
-  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,45,d.beschreibung||'');y+=51;
-  const sonstH = sigs ? 18 : 38;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstH,d.sonstiges||'');y+=sonstH+4;
+  // Mit Unterschriften: Beschreibung + Sonstiges kleiner, damit alles auf 1 Seite passt
+  const beschHA = sigs ? 28 : 45;
+  const sonstHA = sigs ? 12 : 38;
+  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,beschHA,d.beschreibung||'');y+=beschHA+6;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHA,d.sonstiges||'');y+=sonstHA+4;
   if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs);
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
@@ -2064,8 +2073,8 @@ function pdfAufzugW(d,num,sigs) {
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,zL2,14,'FD');doc.setFillColor(255,255,255);doc.rect(ml+zL2,y,zV2,14,'FD');doc.setFillColor(...p.GH);doc.rect(ml+zL2+zV2,y,zL3,14,'FD');doc.setFillColor(255,255,255);doc.rect(ml+zL2+zV2+zL3,y,zV3,14,'FD');
   p.bd();doc.rect(ml,y,cw,14,'D');p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Ist der Aufzug in Betrieb?:',zL2-3),ml+2,y+4.5);p.ft(9,false,p.DK);doc.text(d.aufzug_verlassen_in_betrieb||'',ml+zL2+2,y+5);
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Sind weiterführende Arbeiten erforderlich?:',zL3-3),ml+zL2+zV2+2,y+4);p.ft(9,false,p.DK);doc.text(d.weitere_arbeiten||'',ml+zL2+zV2+zL3+2,y+5);y+=19;
-  const sonstHW=sigs?14:26;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+6;
+  const sonstHW=sigs?10:26;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+5;
   p.ft(14,true,[40,40,40]);doc.text('Prüfergebnisse',ml,y);y+=8;
   const pN=14,pT=30,pD=cw-pN-pT-32,pE=32;
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,pN,7,'FD');doc.rect(ml+pN,y,pT,7,'FD');doc.rect(ml+pN+pT,y,pD,7,'FD');doc.rect(ml+pN+pT+pD,y,pE,7,'FD');
@@ -2094,8 +2103,14 @@ function addSignaturesInline(doc, ml, cw, y, sigs, opts) {
   doc.setDrawColor(170);doc.setLineWidth(0.25);
   doc.rect(ml, y, sigW, sigH);
   doc.rect(ml+sigW+6, y, sigW, sigH);
-  // Techniker-Bild
-  try { if (sigs.sigTechURL) doc.addImage(sigs.sigTechURL, 'PNG', ml+1, y+1, sigW-2, sigH-2); } catch(e) {}
+  // Techniker-Bild oder Hinweis falls keine Unterschrift
+  if (sigs.sigTechURL) {
+    try { doc.addImage(sigs.sigTechURL, 'PNG', ml+1, y+1, sigW-2, sigH-2); } catch(e) {}
+  } else {
+    doc.setFont('helvetica','italic');doc.setFontSize(8);doc.setTextColor(140);
+    doc.text('(ohne Unterschrift)', ml + sigW/2, y + sigH/2 + 1, { align:'center' });
+    doc.setTextColor(40);
+  }
   // Kunde: Bild ODER "abwesend" Hinweis
   if (sigs.kundeAbwesend) {
     doc.setFont('helvetica','italic');doc.setFontSize(8.5);doc.setTextColor(110);
@@ -3778,9 +3793,6 @@ function openAuftragDetail(recId) {
   if (!kontakt && (f.kontakt_name || f.kontakt_telefon || f.kontakt_email)) {
     kontakt = [f.kontakt_name, f.kontakt_telefon, f.kontakt_email].filter(Boolean).join('\n');
   }
-  // Techniker darf Notizen/Bilder editieren
-  const canEditTech = _isAssignedToMe(rec) || hasPermission('auftraege_edit');
-  const bilder = Array.isArray(f.bilder) ? f.bilder : [];
 
   const body = document.getElementById('auf-detail-body');
   body.innerHTML = `
@@ -3812,27 +3824,8 @@ function openAuftragDetail(recId) {
       <h3>Zugewiesene Techniker</h3>
       <div style="font-size:13px">${techNames ? techNames.split(',').map(n => '<span class="auf-tech-chip">'+n.trim().replace(/</g,'&lt;')+'</span>').join('') : '<span style="color:var(--txt3)">Niemand zugewiesen</span>'}</div>
     </div>
-    <div class="auf-section">
-      <h3>📝 Notizen vom Techniker</h3>
-      ${canEditTech
-        ? `<textarea class="auf-textarea" id="auf-d-notizen" rows="4" placeholder="Notizen, Beobachtungen, Erinnerungen…">${(f.notizen||'').replace(/</g,'&lt;')}</textarea>
-           <div style="display:flex;justify-content:flex-end;margin-top:6px"><button class="btn prim" style="padding:6px 12px;font-size:12px" onclick="saveAuftragNotizen('${rec.id}')">💾 Notizen speichern</button></div>`
-        : `<div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(f.notizen||'(keine Notizen)').replace(/</g,'&lt;')}</div>`}
-    </div>
-    <div class="auf-section">
-      <h3>📸 Bilder ${bilder.length>0 ? '<span style="font-weight:400;color:var(--txt3);font-size:10px;margin-left:4px">'+bilder.length+'</span>' : ''}</h3>
-      <div class="auf-img-grid" id="auf-d-bilder-grid">
-        ${bilder.map((att,i) => `<div class="auf-img-thumb" onclick="window.open('${att.url}','_blank')">
-          <img src="${att.thumbnails?.large?.url || att.url}" alt="${att.filename||''}">
-          ${canEditTech ? '<button class="auf-img-del" onclick="event.stopPropagation();removeAuftragBild(\''+rec.id+'\','+i+')" title="Löschen">✕</button>' : ''}
-        </div>`).join('')}
-        ${canEditTech ? `<label class="auf-img-add" title="Bild hochladen">
-          <input type="file" accept="image/*" multiple style="display:none" onchange="uploadAuftragBilder('${rec.id}', this.files)">+
-        </label>` : ''}
-      </div>
-      ${canEditTech ? '<div style="font-size:10px;color:var(--txt3);margin-top:6px">Tap auf + zum Hochladen (mehrere möglich). Bilder werden direkt auf den Auftrag gespeichert.</div>' : (bilder.length===0?'<div style="font-size:12px;color:var(--txt3)">Keine Bilder vorhanden.</div>':'')}
-    </div>
     ${f.bericht_num ? '<div class="auf-section"><h3>Verknüpfter Bericht</h3><div style="font-size:13px">📄 Nr. '+f.bericht_num+(f.completed_at?' (am '+f.completed_at.slice(0,10)+')':'')+'</div></div>' : ''}
+    ${status !== 'abgeschlossen' && _isAssignedToMe(rec) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
   `;
 
   // Footer-Buttons abhängig von Permissions + Status
@@ -4239,10 +4232,10 @@ function openBerichtForm(auftragId) {
         <input type="text" class="fi" id="bf-tech-name" value="${myName.replace(/"/g,'&quot;')}"></div>
       <div class="sig-wrap" id="bf-sig-tech-wrap" style="margin-top:8px">
         <canvas id="bf-sig-tech"></canvas>
-        <div class="sig-placeholder">✍ Hier mit Finger oder Stylus unterschreiben</div>
+        <div class="sig-placeholder">✍ Optional – mit Finger oder Stylus unterschreiben</div>
       </div>
       <div class="sig-actions">
-        <span style="color:var(--txt3)">Pflichtfeld</span>
+        <span style="color:var(--txt3)">Optional</span>
         <button type="button" class="sig-clear" onclick="_sigTechnikerPad?.clear()">↺ Zurücksetzen</button>
       </div>
     </div>
@@ -4361,7 +4354,7 @@ async function saveBerichtFromForm() {
   if (!isWartung && !data.beschreibung) return toast('Bitte Beschreibung der Arbeiten eintragen.', 'err');
   if (isWartung && !data.pruef_ergebnis) return toast('Bitte Prüfergebnis eintragen.', 'err');
   if (!techName) return toast('Bitte Techniker-Namen eintragen.', 'err');
-  if (!_sigTechnikerPad || _sigTechnikerPad.isEmpty()) return toast('Bitte Techniker-Unterschrift leisten.', 'err');
+  // Techniker-Unterschrift OPTIONAL
   if (!kundeAbwesend) {
     if (!kundeName) return toast('Bitte Kunden-Namen eintragen (oder "Niemand anwesend" anhaken).', 'err');
     if (!_sigKundePad || _sigKundePad.isEmpty()) return toast('Bitte Kunden-Unterschrift leisten (oder "Niemand anwesend" anhaken).', 'err');
@@ -4370,7 +4363,7 @@ async function saveBerichtFromForm() {
   // durchgefuehrt_von angleichen, falls leer
   if (!data.durchgefuehrt_von) data.durchgefuehrt_von = techName;
 
-  const sigTechURL  = _sigTechnikerPad.toDataURL();
+  const sigTechURL  = (_sigTechnikerPad && !_sigTechnikerPad.isEmpty()) ? _sigTechnikerPad.toDataURL() : null;
   const sigKundeURL = (kundeAbwesend || !_sigKundePad || _sigKundePad.isEmpty()) ? null : _sigKundePad.toDataURL();
   const sigs = {
     techName,
