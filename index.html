@@ -64,6 +64,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .topbar-btn:hover{background:rgba(255,255,255,.2)}
 .topbar-btn.active{background:var(--amber);border-color:var(--amber)}
 .user-pill{display:flex;align-items:center;gap:7px;color:rgba(255,255,255,.6);font-size:12px}
+.ver-pill{font-family:monospace;font-size:11px;color:rgba(255,255,255,.5);background:rgba(255,255,255,.05);padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.1);letter-spacing:.3px}
 .api-status{display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,.5)}
 .dot{width:7px;height:7px;border-radius:50%;background:#374151;flex-shrink:0}
 .dot.ok{background:var(--ok);box-shadow:0 0 0 2px rgba(5,150,105,.3)}
@@ -309,7 +310,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.8</div>
+    <div class="login-version">Elevator Servicebox v2.9</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -387,6 +388,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   <button class="topbar-btn" id="btn-src-preview" onclick="toggleSrcPanel()" style="display:none">📄 Quell-PDF</button>
   <button class="topbar-btn" id="btn-out-preview" onclick="showOutPreview()" style="display:none">🔍 Ergebnis</button>
   <button class="topbar-btn" id="btn-reset" onclick="confirmReset()" style="display:none;background:rgba(220,38,38,.25);border-color:rgba(220,38,38,.4)">↺ Reset</button>
+  <span class="ver-pill" id="ver-pill" title="App-Version">–</span>
+  <button class="topbar-btn" onclick="forceUpdate()" title="Auf neueste Version prüfen und App neu laden">↻ Update</button>
   <div class="user-pill" style="margin-left:8px">
     <span>👤</span><span id="user-name" style="color:rgba(255,255,255,.7)"></span>
   </div>
@@ -669,7 +672,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.8';
+const APP_VERSION = 'v2.9';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -976,6 +979,21 @@ function logout() {
   location.reload();
 }
 
+function forceUpdate() {
+  if (!confirm('App neu laden und auf neueste Version prüfen?\n\n⚠ Nicht gespeicherte Eingaben gehen verloren.')) return;
+  // Service Worker abmelden (falls vorhanden)
+  if ('serviceWorker' in navigator) {
+    try { navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())); } catch(e) {}
+  }
+  // Cache-API leeren (falls vorhanden)
+  if (typeof caches !== 'undefined') {
+    try { caches.keys().then(keys => keys.forEach(k => caches.delete(k))); } catch(e) {}
+  }
+  // Mit Cache-Buster neu laden (HTTP-Cache umgehen)
+  const base = location.href.split('?')[0].split('#')[0];
+  location.replace(base + '?v=' + Date.now());
+}
+
 async function doLogin() {
   const key = document.getElementById('login-key').value.trim();
   if (!key) return;
@@ -994,6 +1012,7 @@ async function showApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('show');
   document.getElementById('user-name').textContent = APP_KEYS.user?.name || '';
+  document.getElementById('ver-pill').textContent = APP_VERSION;
   toast('⏳ Richte Tabellen ein…', '');
   try { await setupTables(); } catch(e) { console.warn('setupTables:', e); }
   toast('📥 Lade Einstellungen…', '');
