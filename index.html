@@ -182,6 +182,23 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .ov-tag{background:var(--bg);padding:1px 7px;border-radius:99px;border:1px solid var(--bdr)}
 .ov-actions{display:flex;gap:7px;flex-shrink:0}
 
+/* ── User-Verwaltung ── */
+.usr-view{display:none;position:fixed;inset:52px 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:hidden}
+.usr-view.show{display:flex}
+.usr-hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:14px 24px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.usr-hdr h2{font-size:15px;font-weight:600;color:var(--navy);margin:0;flex:1}
+.usr-body{flex:1;overflow:auto;padding:20px 24px}
+.usr-tbl{width:100%;border-collapse:collapse;background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.06);font-size:13px}
+.usr-tbl th{background:var(--bg);padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--bdr)}
+.usr-tbl td{padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:middle}
+.usr-tbl tr:last-child td{border-bottom:none}
+.usr-tbl tr.me{background:rgba(224,123,16,.04)}
+.usr-inp{padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-family:inherit;background:white;outline:none;width:100%;max-width:180px}
+.usr-inp:focus{border-color:var(--amber)}
+.usr-inp[type="checkbox"]{width:auto;cursor:pointer}
+.usr-tbl select.usr-inp{cursor:pointer}
+.usr-tbl code{background:var(--bg);padding:2px 6px;border-radius:3px;font-size:11px;color:var(--txt2)}
+
 /* ── PDF Modal ── */
 .pdf-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:1000;display:none;flex-direction:column}
 .pdf-modal.show{display:flex}
@@ -258,7 +275,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Berichts-Konverter v2.5</div>
+    <div class="login-version">Berichts-Konverter v2.6</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -329,6 +346,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   <div class="topbar-nav" style="margin-left:16px">
     <button class="tnav active" id="tnav-conv" onclick="switchView('conv')">Konverter</button>
     <button class="tnav" id="tnav-overview" onclick="switchView('overview')">📋 Übersicht</button>
+    <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
   </div>
   <div class="topbar-gap"></div>
   <button class="topbar-btn" id="btn-src-preview" onclick="toggleSrcPanel()" style="display:none">📄 Quell-PDF</button>
@@ -533,6 +551,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
 </div>
 
+<!-- USER-VERWALTUNG (nur für role=admin) -->
+<div class="usr-view" id="usr-view">
+  <div class="usr-hdr">
+    <h2>👥 User-Verwaltung</h2>
+    <button class="btn" onclick="renderUsers()">↻ Neu laden</button>
+    <button class="btn prim" onclick="createNewUser()">+ Neuer User</button>
+  </div>
+  <div class="usr-body" id="usr-list"></div>
+</div>
+
 <!-- ADMIN STATUS BAR (nur für role=admin) -->
 <div id="admin-bar" style="display:none;position:fixed;bottom:0;left:0;right:0;z-index:500;
   background:#1a1a2e;border-top:1px solid rgba(255,255,255,.1);
@@ -588,7 +616,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.5';
+const APP_VERSION = 'v2.6';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -911,10 +939,14 @@ async function showApp() {
   try { await loadSettings(); } catch(e) { console.warn('loadSettings:', e); }
   try { await loadHistory(); } catch(e) { console.warn('loadHistory:', e); }
   toast('✅ Willkommen, '+(APP_KEYS.user?.name||'')+'!', 'ok');
-  // Admin: show status bar and run connection tests
+  // Admin: show status bar, user-management tab and run connection tests
   if (isAdmin()) {
+    document.getElementById('tnav-users').style.display = '';
     showAdminBar();
+    ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     runPostLoginTests();
+  } else {
+    document.getElementById('tnav-users').style.display = 'none';
   }
 }
 
@@ -1179,11 +1211,16 @@ function goTo(n) {
 }
 
 function switchView(view) {
+  if (view==='users' && !isAdmin()) return; // Sicherheitsnetz
   const ov=document.getElementById('ov-view');
+  const usr=document.getElementById('usr-view');
   document.getElementById('tnav-conv').classList.toggle('active',view==='conv');
   document.getElementById('tnav-overview').classList.toggle('active',view==='overview');
+  document.getElementById('tnav-users').classList.toggle('active',view==='users');
   if(view==='overview'){ov.classList.add('show');renderOverview();}
   else ov.classList.remove('show');
+  if(view==='users'){usr.classList.add('show');renderUsers();}
+  else usr.classList.remove('show');
 }
 
 function toast(msg,type='') {
@@ -1634,7 +1671,7 @@ async function renderOverview() {
         <div class="ov-actions">
           <button class="btn" style="font-size:12px;padding:6px 12px" onclick="openOvModal('${r.id}')">🔍 Vorschau</button>
           <button class="btn prim" style="font-size:12px;padding:6px 12px" onclick="loadReportForEditing('${r.id}')">✏ Bearbeiten</button>
-          <button class="btn" style="font-size:12px;padding:6px 12px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteOvRecord('${r.id}',${r.fields.bericht_num})">🗑</button>
+          ${hasPermission('delete_reports') ? `<button class="btn" style="font-size:12px;padding:6px 12px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteOvRecord('${r.id}',${r.fields.bericht_num})">🗑</button>` : ''}
         </div>
       </div>`).join('');
   } catch(e) {
@@ -1775,6 +1812,7 @@ function closeOvModal() {
 }
 
 async function deleteOvRecord(recId, num) {
+  if(!hasPermission('delete_reports')) return toast('❌ Keine Berechtigung zum Löschen.','err');
   if(!confirm('Bericht Nr. '+num+' dauerhaft löschen?'))return;
   try {
     await atDelete('Berichte',recId);
@@ -2038,6 +2076,200 @@ function delay(ms) { return new Promise(r=>setTimeout(r,ms)); }
 
 function isAdmin() {
   return APP_KEYS.user && APP_KEYS.user.role === 'admin';
+}
+
+/* ──────────────────────────────────────────────────────────────
+   FEATURE-RECHTE
+   Neues Feature gaten:
+   1) Hier registrieren
+   2) Im Code: if (!hasPermission('xyz')) return toast('...','err');
+   3) UI: button.style.display = hasPermission('xyz') ? '' : 'none';
+   ────────────────────────────────────────────────────────────── */
+const FEATURES = {
+  delete_reports: {
+    label: 'Berichte löschen',
+    desc:  'Darf Berichte aus der Übersicht löschen (eigene und fremde).',
+    default: true,
+  },
+};
+
+function hasPermission(key) {
+  if (!APP_KEYS.user) return false;
+  if (isAdmin()) return true;
+  let p = {};
+  try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(e) {}
+  if (key in p) return !!p[key];
+  return FEATURES[key] ? !!FEATURES[key].default : true;
+}
+
+function genApiKey() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i=0;i<16;i++) s += chars[Math.floor(Math.random()*chars.length)];
+  return s;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   USER-VERWALTUNG (nur Admin)
+   ────────────────────────────────────────────────────────────── */
+async function ensureUsersFieldsForAdmin() {
+  if (!isAdmin() || !APP_KEYS.airtableWriteKey) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey }
+    });
+    if (!r.ok) return;
+    const d = await r.json();
+    const userTbl = (d.tables||[]).find(t=>t.name==='User');
+    if (!userTbl) return;
+    const has = (userTbl.fields||[]).some(f => f.name === 'permissions_json');
+    if (has) return;
+    await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables/'+userTbl.id+'/fields', {
+      method:'POST',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ name:'permissions_json', type:'multilineText' }),
+    });
+    console.log('[Admin] Feld permissions_json zur User-Tabelle hinzugefügt.');
+  } catch(e) { console.warn('ensureUsersFieldsForAdmin:', e); }
+}
+
+let _usersCache = [];
+
+async function loadUsers() {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const r = await fetch('https://api.airtable.com/v0/'+baseId+'/User', {
+    headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message || 'Fehler beim Laden der User');
+  _usersCache = d.records || [];
+  return _usersCache;
+}
+
+async function renderUsers() {
+  if (!isAdmin()) return;
+  const list = document.getElementById('usr-list');
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade User…</div>';
+  try {
+    await loadUsers();
+    const featCols = Object.entries(FEATURES);
+    const hdrFeats = featCols.map(([k,f]) =>
+      `<th title="${(f.desc||'').replace(/"/g,'&quot;')}" style="white-space:nowrap">${f.label}</th>`
+    ).join('');
+
+    const rows = _usersCache.map(u => userRowHtml(u, featCols)).join('');
+
+    list.innerHTML = `
+      <table class="usr-tbl">
+        <thead><tr>
+          <th>Name</th>
+          <th>Login-Code</th>
+          <th>Rolle</th>
+          <th>Status</th>
+          ${hdrFeats}
+          <th></th>
+        </tr></thead>
+        <tbody>${rows || '<tr><td colspan="99" style="padding:40px;text-align:center;color:var(--txt3)">Keine User vorhanden.</td></tr>'}</tbody>
+      </table>
+      <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
+        ℹ️ Admins haben automatisch Zugriff auf alle Features (Checkboxen ausgegraut).
+        Bei normalen Usern ist eine nicht gesetzte Checkbox = Default-Wert des Features.
+      </div>
+    `;
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+e.message+'</div>';
+  }
+}
+
+function userRowHtml(u, featCols) {
+  const f = u.fields || {};
+  let perms = {};
+  try { perms = JSON.parse(f.permissions_json || '{}'); } catch(e) {}
+  const isMe = f.api_key === APP_KEYS.user?.api_key;
+  const isUserAdmin = f.role === 'admin';
+  const esc = s => String(s||'').replace(/"/g,'&quot;');
+  const featCells = featCols.map(([k,fe]) => {
+    const explicit = (k in perms);
+    const checked = isUserAdmin ? true : (explicit ? !!perms[k] : !!fe.default);
+    return `<td style="text-align:center"><input type="checkbox" data-perm="${k}" ${checked?'checked':''} ${isUserAdmin?'disabled':''}></td>`;
+  }).join('');
+  return `
+    <tr data-rec="${u.id}" class="${isMe?'me':''}">
+      <td><input class="usr-inp" data-field="name" value="${esc(f.name)}"></td>
+      <td><code>${esc(f.api_key)}</code></td>
+      <td>
+        <select class="usr-inp" data-field="role" style="max-width:90px">
+          <option value="user" ${f.role!=='admin'?'selected':''}>user</option>
+          <option value="admin" ${f.role==='admin'?'selected':''}>admin</option>
+        </select>
+      </td>
+      <td>
+        <select class="usr-inp" data-field="status" style="max-width:90px">
+          <option value="aktiv" ${f.status==='aktiv'?'selected':''}>aktiv</option>
+          <option value="inaktiv" ${f.status!=='aktiv'?'selected':''}>inaktiv</option>
+        </select>
+      </td>
+      ${featCells}
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveUserRow('${u.id}')">💾 Speichern</button>
+        ${isMe ? '<div style="font-size:10px;color:var(--txt3);margin-top:3px;text-align:right">eigener Account</div>' : ''}
+      </td>
+    </tr>
+  `;
+}
+
+async function saveUserRow(recId) {
+  const row = document.querySelector('tr[data-rec="'+recId+'"]');
+  if (!row) return;
+  const name   = row.querySelector('input[data-field="name"]').value.trim();
+  const role   = row.querySelector('select[data-field="role"]').value;
+  const status = row.querySelector('select[data-field="status"]').value;
+  const perms = {};
+  row.querySelectorAll('input[data-perm]').forEach(cb => {
+    if (!cb.disabled) perms[cb.dataset.perm] = cb.checked;
+  });
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/User/'+recId, {
+      method:'PATCH',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: { name, role, status, permissions_json: JSON.stringify(perms) } }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message || 'Fehler');
+    // Falls ich mich selbst bearbeitet habe: lokale Permissions aktualisieren
+    if (recId && d.fields && d.fields.api_key === APP_KEYS.user?.api_key) {
+      APP_KEYS.user = d.fields;
+    }
+    toast('✅ "'+name+'" gespeichert.', 'ok');
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+  }
+}
+
+async function createNewUser() {
+  const name = prompt('Name des neuen Users?');
+  if (!name) return;
+  const apiKey = genApiKey();
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/User', {
+      method:'POST',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: {
+        name: name.trim(), api_key: apiKey, role: 'user', status: 'aktiv', permissions_json: '{}'
+      }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message || 'Fehler');
+    alert('✅ Neuer User angelegt:\n\nName: '+name+'\nLogin-Code: '+apiKey+'\n\n⚠ Diesen Code dem User mitteilen – er wird nirgendwo sonst angezeigt!');
+    renderUsers();
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+  }
 }
 
 function showAdminBar() {
