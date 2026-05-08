@@ -49,6 +49,11 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ── APP LAYOUT ── */
 .app{display:none;grid-template-columns:260px 1fr;grid-template-rows:52px 1fr;height:100vh;overflow:hidden}
 .app.show{display:grid}
+/* Konverter-Inhalte (Sidebar + Main) nur sichtbar wenn explizit auf Konverter-View.
+   Verhindert das "Berichtskonverter-Hintergrund"-Aufblitzen beim App-Start
+   und in allen anderen Views (Dashboard, Aufträge, …). */
+.app .sidebar,.app .main{visibility:hidden;pointer-events:none}
+.app.view-conv .sidebar,.app.view-conv .main{visibility:visible;pointer-events:auto}
 
 /* ── Topbar ── */
 .topbar{grid-column:1/-1;background:var(--navy-d);display:flex;align-items:center;gap:14px;padding:0 20px;box-shadow:0 2px 8px rgba(0,0,0,.35)}
@@ -774,7 +779,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.30</div>
+    <div class="login-version">Elevator Servicebox v2.31</div>
   </div>
 </div>
 
@@ -1442,7 +1447,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.30';
+const APP_VERSION = 'v2.31';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1860,6 +1865,10 @@ async function showApp() {
   document.getElementById('ver-pill').textContent = APP_VERSION;
   // Browser-Tab-Titel inkl. Version (so dass User die Version auch im Tab/PWA-Title sieht)
   document.title = 'Elevator Servicebox ' + APP_VERSION;
+  // SOFORT zum Dashboard wechseln, BEVOR die langsamen Network-Loads passieren –
+  // sonst flackert kurz die Konverter-View durch. switchView setzt view-dashboard
+  // auf .app, das blendet Sidebar+Main aus + zeigt das dash-view Overlay.
+  switchView('dashboard');
   toast('⏳ Richte Tabellen ein…', '');
   try { await setupTables(); } catch(e) { console.warn('setupTables:', e); }
   toast('📥 Lade Einstellungen…', '');
@@ -2301,7 +2310,10 @@ function switchView(view) {
   const wk   = document.getElementById('wkalk-view');
   const fmg  = document.getElementById('firma-view');
   const auf  = document.getElementById('auf-view');
-  ['dashboard','conv','overview','users','wartung','auftraege'].forEach(v => {
+  const appEl = document.getElementById('app');
+  // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen'].forEach(v => {
+    appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
   });
