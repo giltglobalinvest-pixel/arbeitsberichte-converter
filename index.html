@@ -65,6 +65,36 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .topbar-btn.active{background:var(--amber);border-color:var(--amber)}
 .user-pill{display:flex;align-items:center;gap:7px;color:rgba(255,255,255,.6);font-size:12px}
 .ver-pill{font-family:monospace;font-size:11px;color:rgba(255,255,255,.5);background:rgba(255,255,255,.05);padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.1);letter-spacing:.3px}
+
+/* Firma-Selektor */
+.firma-pill-wrap{position:relative}
+.firma-pill{display:flex;align-items:center;gap:6px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;padding:5px 11px;border-radius:var(--rs);font-size:12px;cursor:pointer;font-family:inherit;transition:background .15s}
+.firma-pill:hover{background:rgba(255,255,255,.18)}
+.firma-pill .firma-pill-arrow{opacity:.5;font-size:9px;margin-left:2px}
+.firma-dropdown{display:none;position:absolute;top:calc(100% + 6px);right:0;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.18);min-width:240px;z-index:300;padding:5px;color:var(--txt)}
+.firma-dropdown.show{display:block}
+.firma-item{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:4px;cursor:pointer;font-size:13px;color:var(--txt)}
+.firma-item:hover{background:var(--bg)}
+.firma-item.active{background:rgba(224,123,16,.1);color:var(--navy);font-weight:500}
+.firma-item .check{margin-left:auto;color:var(--amber);font-weight:700}
+.firma-divider{height:1px;background:var(--bdr);margin:5px 4px}
+.firma-action{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--txt2);font-family:inherit;background:none;border:none;width:100%;text-align:left}
+.firma-action:hover{background:var(--bg);color:var(--navy)}
+
+/* Firmen-Verwaltung (Admin) */
+.firma-view{display:none;position:fixed;inset:52px 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:hidden}
+.firma-view.show{display:flex}
+.firma-hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:14px 24px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.firma-hdr h2{font-size:15px;font-weight:600;color:var(--navy);margin:0;flex:1}
+.firma-body{flex:1;overflow:auto;padding:20px 24px}
+.firma-tbl{width:100%;border-collapse:collapse;background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.06);font-size:13px}
+.firma-tbl th{background:var(--bg);padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--bdr)}
+.firma-tbl td{padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:middle}
+.firma-tbl tr:last-child td{border-bottom:none}
+.firma-inp{padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-family:inherit;background:white;outline:none;width:100%;max-width:200px}
+.firma-inp:focus{border-color:var(--amber)}
+.firma-inp[type="checkbox"]{width:auto;cursor:pointer}
+.firma-tbl select.firma-inp{cursor:pointer}
 .api-status{display:flex;align-items:center;gap:6px;font-size:12px;color:rgba(255,255,255,.5)}
 .dot{width:7px;height:7px;border-radius:50%;background:#374151;flex-shrink:0}
 .dot.ok{background:var(--ok);box-shadow:0 0 0 2px rgba(5,150,105,.3)}
@@ -388,7 +418,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.14</div>
+    <div class="login-version">Elevator Servicebox v2.15</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -468,6 +498,14 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   <button class="topbar-btn" id="btn-reset" onclick="confirmReset()" style="display:none;background:rgba(220,38,38,.25);border-color:rgba(220,38,38,.4)">↺ Reset</button>
   <span class="ver-pill" id="ver-pill" title="App-Version">–</span>
   <button class="topbar-btn" onclick="forceUpdate()" title="Auf neueste Version prüfen und App neu laden">↻ Update</button>
+  <div class="firma-pill-wrap">
+    <button class="firma-pill" id="firma-pill" onclick="toggleFirmaDropdown(event)" title="Aktuelle Firma – klicken zum Wechseln">
+      <span id="firma-pill-icon">🏢</span>
+      <span id="firma-pill-name">–</span>
+      <span class="firma-pill-arrow">▾</span>
+    </button>
+    <div class="firma-dropdown" id="firma-dropdown"></div>
+  </div>
   <div class="user-pill" style="margin-left:8px">
     <span>👤</span><span id="user-name" style="color:rgba(255,255,255,.7)"></span>
   </div>
@@ -693,15 +731,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
   <div class="wkalk-body">
 
-    <!-- Toggle: Aszendio / Aufzugshandwerk -->
-    <div style="display:flex;justify-content:center;margin-bottom:6px">
-      <div class="wkalk-toggle">
-        <button class="wkalk-toggle-btn active" data-mode="aszendio" onclick="setKalkMode('aszendio')">Aszendio</button>
-        <button class="wkalk-toggle-btn" data-mode="aufzug" onclick="setKalkMode('aufzug')">Aufzugshandwerk</button>
-      </div>
-    </div>
+    <!-- Hinweis: Wechsel der Firma erfolgt jetzt zentral über die Topbar (🏢 Firma-Pill) -->
 
-    <!-- ASZENDIO Kalkulator -->
+    <!-- KALKULATOR-TYP: kone (Aszendio-KONE-Preisliste) -->
     <div id="wkalk-aszendio">
 
     <div class="wkalk-info">
@@ -795,12 +827,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 
     </div><!-- /#wkalk-aszendio -->
 
-    <!-- AUFZUGSHANDWERK Kalkulator (Platzhalter) -->
+    <!-- KALKULATOR-TYP: none / custom (Platzhalter, je nach Firma) -->
     <div id="wkalk-aufzug" style="display:none;text-align:center;padding:50px 20px;color:var(--txt2)">
       <div style="font-size:48px;margin-bottom:14px;opacity:.6">🚧</div>
-      <h3 style="font-size:16px;color:var(--navy);margin:0 0 8px">Aufzugshandwerk – Kalkulator</h3>
+      <h3 style="font-size:16px;color:var(--navy);margin:0 0 8px"><span id="wkalk-placeholder-name">Diese Firma</span> – Kalkulator</h3>
       <p style="font-size:13px;color:var(--txt2);max-width:440px;margin:0 auto;line-height:1.5">
-        Noch nicht verfügbar. Sobald die Preisliste vom Aufzugshandwerk vorliegt, wird hier ein eigener Kalkulator integriert.
+        Noch nicht verfügbar. Sobald die Preisliste vorliegt, wird hier ein eigener Kalkulator integriert.<br>
+        <span style="font-size:11px;color:var(--txt3)">Firma in der Topbar wechseln über den 🏢-Selektor.</span>
       </p>
     </div>
 
@@ -876,6 +909,16 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
 </div>
 
+<!-- FIRMEN-VERWALTUNG (nur für role=admin) -->
+<div class="firma-view" id="firma-view">
+  <div class="firma-hdr">
+    <h2>🏢 Firmen-Verwaltung</h2>
+    <button class="btn" onclick="renderFirmaView()">↻ Neu laden</button>
+    <button class="btn prim" onclick="createNewFirma()">+ Neue Firma</button>
+  </div>
+  <div class="firma-body" id="firma-list"></div>
+</div>
+
 <!-- USER-VERWALTUNG (nur für role=admin) -->
 <div class="usr-view" id="usr-view">
   <div class="usr-hdr">
@@ -941,7 +984,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.14';
+const APP_VERSION = 'v2.15';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -996,6 +1039,7 @@ const S = {
   counter:50000, corrections:{}, history:[],
   blob:null,
   settingsRecordId: null,   // Airtable record ID for user settings
+  firma: null,              // aktuelle Firma (Mandanten-Kontext) – fields-Objekt aus _firmenCache
 };
 
 let srcBlobUrl = null, outBlobUrl = null;
@@ -1132,6 +1176,37 @@ async function setupTables() {
     { name:'meta_json', type:'multilineText' },
     { name:'timestamp', type:'singleLineText' },
   ]);
+  await ensureTable('Firmen', [
+    { name:'slug',     type:'singleLineText' },
+    { name:'name',     type:'singleLineText' },
+    { name:'icon',     type:'singleLineText' },
+    { name:'kalk_typ', type:'singleLineText' },
+    { name:'aktiv',    type:'checkbox', options:{ icon:'check', color:'greenBright' } },
+    { name:'created',  type:'singleLineText' },
+  ]);
+}
+
+/* Generischer Helper: einzelnes Feld zu existierender Tabelle hinzufügen (idempotent, admin-only) */
+async function ensureField(tableName, fieldName, fieldType) {
+  if (!APP_KEYS.airtableWriteKey) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey }
+    });
+    if (!r.ok) return;
+    const d = await r.json();
+    const tbl = (d.tables||[]).find(t => t.name === tableName);
+    if (!tbl) return;
+    const has = (tbl.fields||[]).some(f => f.name === fieldName);
+    if (has) return;
+    await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables/'+tbl.id+'/fields', {
+      method:'POST',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ name: fieldName, type: fieldType || 'singleLineText' }),
+    });
+    console.log('[Schema] Feld '+fieldName+' zu Tabelle '+tableName+' hinzugefügt.');
+  } catch(e) { console.warn('ensureField '+tableName+'.'+fieldName+':', e.message); }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -1288,15 +1363,23 @@ async function showApp() {
   try { await loadSettings(); } catch(e) { console.warn('loadSettings:', e); }
   try { await loadHistory(); } catch(e) { console.warn('loadHistory:', e); }
   toast('✅ Willkommen, '+(APP_KEYS.user?.name||'')+'!', 'ok');
-  // Admin: show status bar, user-management tab and run connection tests
+  // Admin: Schema-Migrationen + Status-Bar + Tests
   if (isAdmin()) {
     document.getElementById('tnav-users').style.display = '';
     showAdminBar();
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
+    ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
+    ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
     runPostLoginTests();
   } else {
     document.getElementById('tnav-users').style.display = 'none';
   }
+
+  // Firmen laden + initiale Firma setzen
+  await loadFirmen().catch(e => console.warn('loadFirmen:', e));
+  S.firma = pickInitialFirma();
+  updateFirmaPillUI();
+  renderTmplSelector();
 
   // Tool-Topbar-Buttons je nach Permission ein-/ausblenden
   document.getElementById('tnav-conv').style.display     = hasPermission('tool_arbeitsberichte') ? '' : 'none';
@@ -1572,6 +1655,7 @@ function goTo(n) {
 function switchView(view) {
   // Permission-Gates
   if (view==='users' && !isAdmin()) return;
+  if (view==='firmen' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
   if (view==='wartung' && !hasPermission('tool_wartung_kalk')) return toast('🔒 Keine Berechtigung','err');
@@ -1580,6 +1664,7 @@ function switchView(view) {
   const ov   = document.getElementById('ov-view');
   const usr  = document.getElementById('usr-view');
   const wk   = document.getElementById('wkalk-view');
+  const fmg  = document.getElementById('firma-view');
   ['dashboard','conv','overview','users','wartung'].forEach(v => {
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -1588,10 +1673,12 @@ function switchView(view) {
   ov.classList.toggle('show',   view==='overview');
   usr.classList.toggle('show',  view==='users');
   wk.classList.toggle('show',   view==='wartung');
+  fmg.classList.toggle('show',  view==='firmen');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
   if (view==='wartung')  renderWartungKalk();
+  if (view==='firmen')   renderFirmaView();
 }
 
 function toast(msg,type='') {
@@ -1620,14 +1707,26 @@ function updateLearnN() {
 /* ════════════════════════════════════════════════════════════
    HISTORY (last 8 from Airtable)
    ════════════════════════════════════════════════════════════ */
+function _firmaOfRec(r) {
+  // Bevorzugt das explizite Firma-Feld, sonst aus tmpl-Prefix abgeleitet (Migration)
+  if (r.fields.firma) return r.fields.firma;
+  const t = r.fields.tmpl || '';
+  if (t.startsWith('aszendio-')) return 'aszendio';
+  if (t.startsWith('aufzug-'))   return 'aufzug';
+  return null;
+}
+
 async function loadHistory() {
   try {
-    const recs = await atRead('Berichte', null);
+    const allRecs = await atRead('Berichte', null);
+    const firmaSlug = getCurrentFirmaSlug();
+    const recs = allRecs.filter(r => _firmaOfRec(r) === firmaSlug);
     recs.sort((a,b)=>b.fields.bericht_num-a.fields.bericht_num);
     S.history = recs.slice(0,8).map(r=>r.fields);
 
-    if (recs.length > 0) {
-      const maxNum = Math.max(...recs.map(r => r.fields.bericht_num || 0));
+    // Counter über ALLE Berichte (firma-übergreifend) hochziehen, damit Nummern global eindeutig bleiben
+    if (allRecs.length > 0) {
+      const maxNum = Math.max(...allRecs.map(r => r.fields.bericht_num || 0));
       if (maxNum >= S.counter) {
         S.counter = maxNum + 1;
         document.getElementById('ctr-val').textContent = S.counter;
@@ -1906,6 +2005,7 @@ async function doSaveAs(data, num, incrementCounter) {
 
     btn.textContent='☁ Lege Record an…';
     const rec = await atWrite('Berichte', {
+      firma:       getCurrentFirmaSlug(),
       api_key:     APP_KEYS.user.api_key,
       bericht_num: num,
       tmpl:        S.tmpl,
@@ -2013,7 +2113,9 @@ async function renderOverview() {
   const list=document.getElementById('ov-list');
   list.innerHTML='<div class="hist-empty" style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Berichte…</div>';
   try {
-    let recs=await atRead('Berichte', null);
+    const allRecs=await atRead('Berichte', null);
+    const firmaSlug = getCurrentFirmaSlug();
+    let recs = allRecs.filter(r => _firmaOfRec(r) === firmaSlug);
     recs.sort((a,b)=>b.fields.bericht_num-a.fields.bericht_num);
     _ovRecords=recs;
     const filtered=recs.filter(r=>{
@@ -2235,9 +2337,37 @@ function closePdfModal() {
    TEMPLATE BADGE & MISC
    ════════════════════════════════════════════════════════════ */
 function updateTmplBadge() {
-  const t=T[S.tmpl],b=document.getElementById('tmpl-badge');
-  b.className='tmpl-badge '+(t.ok?'ok':'pend');
-  b.textContent=t.ok?'✓ Vorlage konfiguriert':'⏳ Vorlage ausstehend';
+  const sel = document.getElementById('tmpl-sel');
+  const b = document.getElementById('tmpl-badge');
+  if (!sel.options.length) {
+    b.className = 'tmpl-badge pend';
+    b.textContent = '⚠ Keine Vorlage für diese Firma';
+    return;
+  }
+  const t = T[S.tmpl];
+  if (!t) {
+    b.className = 'tmpl-badge pend';
+    b.textContent = '⏳ Vorlage ausstehend';
+    return;
+  }
+  b.className = 'tmpl-badge ' + (t.ok ? 'ok' : 'pend');
+  b.textContent = t.ok ? '✓ Vorlage konfiguriert' : '⏳ Vorlage ausstehend';
+}
+
+/* Template-Dropdown firma-aware neu aufbauen */
+function renderTmplSelector() {
+  const sel = document.getElementById('tmpl-sel');
+  if (!sel) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  const matches = Object.entries(T).filter(([k]) => k.startsWith(firmaSlug + '-'));
+  sel.innerHTML = matches.map(([k,v]) => `<option value="${k}">${v.label||k}</option>`).join('');
+  if (!matches.find(([k]) => k === S.tmpl)) {
+    S.tmpl = matches[0]?.[0] || '';
+    if (S.tmpl) sel.value = S.tmpl;
+  } else {
+    sel.value = S.tmpl;
+  }
+  updateTmplBadge();
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -2661,6 +2791,273 @@ async function createNewUser() {
 }
 
 /* ──────────────────────────────────────────────────────────────
+   FIRMEN (globaler Mandanten-Kontext)
+   ────────────────────────────────────────────────────────────── */
+const FIRMEN_DEFAULT = [
+  { slug: 'aszendio', name: 'Aszendio',         icon: '🛗', kalk_typ: 'kone', aktiv: true },
+  { slug: 'aufzug',   name: 'Aufzugshandwerk',  icon: '🔧', kalk_typ: 'none', aktiv: true },
+];
+let _firmenCache = [];   // Array von Airtable-Records ODER pseudo-records mit id="_default_xxx"
+
+function _firmaTmplPrefix(slug) {
+  // Airtable-Bericht-Templates verwenden Slug-Prefix, AUSSER 'aufzug'-Slug → tmpl 'aufzug-*'
+  // Mapping bleibt 1:1 für unsere zwei Default-Firmen. Bei Custom-Firmen reicht der Slug.
+  return slug;
+}
+
+function getCurrentFirmaSlug() {
+  return (S.firma && S.firma.slug) || localStorage.getItem('firma_'+APP_CONFIG.PROJECT_ID) || 'aszendio';
+}
+function getCurrentFirma() {
+  return S.firma || null;
+}
+
+async function loadFirmen() {
+  try {
+    const recs = await atRead('Firmen', null);
+    if (recs.length > 0) {
+      _firmenCache = recs;
+      return _firmenCache;
+    }
+  } catch(e) { console.warn('loadFirmen (Tabelle evtl. noch nicht da):', e.message); }
+  // Fallback: defaults im Speicher (kein DB-Eintrag)
+  _firmenCache = FIRMEN_DEFAULT.map(f => ({ id: '_default_'+f.slug, fields: { ...f } }));
+  return _firmenCache;
+}
+
+async function ensureFirmenSeeded() {
+  if (!isAdmin() || !APP_KEYS.airtableWriteKey) return;
+  // Tabelle existiert bereits via setupTables – check ob Records da sind, sonst seeden
+  let existing = [];
+  try { existing = await atRead('Firmen', null); } catch(e) { return; }
+  if (existing.length > 0) return;
+  for (const f of FIRMEN_DEFAULT) {
+    try {
+      await atWrite('Firmen', { ...f, created: new Date().toISOString() });
+    } catch(e) { console.warn('Firmen-Seed fehlgeschlagen für', f.slug, e.message); }
+  }
+  console.log('[Firmen] Defaults angelegt.');
+  // Cache auffrischen
+  await loadFirmen();
+}
+
+async function ensureLegacyFirmaFields() {
+  if (!isAdmin() || !APP_KEYS.airtableWriteKey) return;
+  await ensureField('Berichte',     'firma', 'singleLineText');
+  await ensureField('Statistiken',  'firma', 'singleLineText');
+}
+
+function pickInitialFirma() {
+  const persisted = localStorage.getItem('firma_'+APP_CONFIG.PROJECT_ID);
+  if (persisted) {
+    const match = _firmenCache.find(f => f.fields.slug === persisted && f.fields.aktiv !== false);
+    if (match) return match.fields;
+  }
+  // Fallback: erste aktive Firma, sonst erste überhaupt
+  const firstActive = _firmenCache.find(f => f.fields.aktiv !== false);
+  return (firstActive || _firmenCache[0])?.fields || FIRMEN_DEFAULT[0];
+}
+
+function setCurrentFirma(slug, opts = {}) {
+  const target = _firmenCache.find(f => f.fields.slug === slug);
+  if (!target) return toast('Firma nicht gefunden: '+slug, 'err');
+  if ((S.firma?.slug) === slug) { hideFirmaDropdown(); return; }
+
+  // Bestätigung wenn Konverter-Vorgang läuft
+  if (!opts.force && (S.file || S.blob)) {
+    if (!confirm('Aktueller Vorgang im Konverter wird verworfen. Firma wechseln zu "'+target.fields.name+'"?')) {
+      hideFirmaDropdown();
+      return;
+    }
+    try { resetApp(); } catch(e) {}
+  }
+
+  S.firma = target.fields;
+  localStorage.setItem('firma_'+APP_CONFIG.PROJECT_ID, slug);
+  updateFirmaPillUI();
+  hideFirmaDropdown();
+  // Templates-Sidebar aktualisieren + Counter neu laden
+  renderTmplSelector();
+  // Aktuelle View neu rendern
+  const activeBtn = document.querySelector('.tnav.active');
+  const activeView = activeBtn ? activeBtn.id.replace('tnav-','') : 'dashboard';
+  switchView(activeView);
+  toast('Firma: '+target.fields.icon+' '+target.fields.name, 'ok');
+}
+
+function updateFirmaPillUI() {
+  const f = getCurrentFirma();
+  document.getElementById('firma-pill-icon').textContent = f?.icon || '🏢';
+  document.getElementById('firma-pill-name').textContent = f?.name || '–';
+}
+
+function toggleFirmaDropdown(ev) {
+  if (ev) ev.stopPropagation();
+  const dd = document.getElementById('firma-dropdown');
+  if (dd.classList.contains('show')) { hideFirmaDropdown(); return; }
+  renderFirmaDropdown();
+  dd.classList.add('show');
+}
+function hideFirmaDropdown() {
+  document.getElementById('firma-dropdown').classList.remove('show');
+}
+
+function renderFirmaDropdown() {
+  const dd = document.getElementById('firma-dropdown');
+  const cur = getCurrentFirmaSlug();
+  const aktive = _firmenCache.filter(f => f.fields.aktiv !== false);
+  const items = aktive.map(f => {
+    const active = f.fields.slug === cur;
+    return `<div class="firma-item ${active?'active':''}" onclick="setCurrentFirma('${f.fields.slug}')">
+      <span style="font-size:16px">${f.fields.icon||'🏢'}</span>
+      <span>${f.fields.name||f.fields.slug}</span>
+      ${active?'<span class="check">✓</span>':''}
+    </div>`;
+  }).join('');
+  let admin = '';
+  if (isAdmin()) {
+    admin =
+      '<div class="firma-divider"></div>' +
+      '<button class="firma-action" onclick="createNewFirma()">+ Neue Firma anlegen</button>' +
+      '<button class="firma-action" onclick="hideFirmaDropdown();switchView(\'firmen\')">⚙ Firmen verwalten</button>';
+  }
+  dd.innerHTML = items + admin || '<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Firmen verfügbar.</div>';
+}
+
+/* Click outside + ESC schließen */
+document.addEventListener('click', function(e) {
+  const dd = document.getElementById('firma-dropdown');
+  const pill = document.getElementById('firma-pill');
+  if (!dd || !pill) return;
+  if (dd.classList.contains('show') && !pill.contains(e.target) && !dd.contains(e.target)) {
+    hideFirmaDropdown();
+  }
+});
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') {
+    const dd = document.getElementById('firma-dropdown');
+    if (dd && dd.classList.contains('show')) hideFirmaDropdown();
+  }
+});
+
+/* ──────────────────────────────────────────────────────────────
+   FIRMEN-VERWALTUNG (Admin)
+   ────────────────────────────────────────────────────────────── */
+async function renderFirmaView() {
+  if (!isAdmin()) return;
+  const list = document.getElementById('firma-list');
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Firmen…</div>';
+  try {
+    await loadFirmen();
+    const rows = _firmenCache.map(f => firmaRowHtml(f)).join('');
+    list.innerHTML = `
+      <table class="firma-tbl">
+        <thead><tr>
+          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Aktiv</th><th></th>
+        </tr></thead>
+        <tbody>${rows || '<tr><td colspan="6" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
+      </table>
+      <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
+        ℹ️ <strong>Slug</strong> ist der eindeutige Schlüssel (z.B. <code>aszendio</code>) – wird intern für Berichts-Filter und Template-Zuordnung verwendet, nicht ändern wenn schon Berichte existieren.<br>
+        ℹ️ <strong>Kalkulator-Typ</strong>: <code>kone</code> = KONE-Preisliste (Aszendio), <code>none</code> = Kalkulator nicht verfügbar (Platzhalter), <code>custom</code> = ausstehend.
+      </div>
+    `;
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+e.message+'</div>';
+  }
+}
+
+function firmaRowHtml(f) {
+  const fid = f.id;
+  const fl = f.fields || {};
+  const esc = s => String(s||'').replace(/"/g,'&quot;');
+  const isDefault = fid && fid.startsWith('_default_');
+  return `
+    <tr data-fid="${fid}">
+      <td><input class="firma-inp" data-field="icon" value="${esc(fl.icon)}" style="max-width:60px;text-align:center;font-size:18px"></td>
+      <td><input class="firma-inp" data-field="name" value="${esc(fl.name)}"></td>
+      <td><input class="firma-inp" data-field="slug" value="${esc(fl.slug)}" ${isDefault?'':'readonly title="Slug nach Anlegen nicht mehr ändern"'} style="font-family:monospace;background:${isDefault?'white':'var(--bg)'}"></td>
+      <td>
+        <select class="firma-inp" data-field="kalk_typ" style="max-width:120px">
+          <option value="kone"   ${fl.kalk_typ==='kone'?'selected':''}>kone (KONE)</option>
+          <option value="none"   ${fl.kalk_typ==='none'?'selected':''}>none (Platzhalter)</option>
+          <option value="custom" ${fl.kalk_typ==='custom'?'selected':''}>custom</option>
+        </select>
+      </td>
+      <td style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
+      <td style="text-align:right;white-space:nowrap">
+        ${isDefault
+          ? `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="createFirmaFromDefault('${fl.slug}')">💾 In DB anlegen</button>`
+          : `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveFirmaRow('${fid}')">💾 Speichern</button>`}
+      </td>
+    </tr>
+  `;
+}
+
+async function saveFirmaRow(recId) {
+  const row = document.querySelector('tr[data-fid="'+recId+'"]');
+  if (!row) return;
+  const f = {};
+  row.querySelectorAll('.firma-inp').forEach(el => {
+    const fld = el.dataset.field;
+    if (el.type === 'checkbox') f[fld] = el.checked;
+    else f[fld] = el.value.trim();
+  });
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+recId, {
+      method:'PATCH',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: f }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message || 'Fehler');
+    toast('✅ Firma "'+(f.name||f.slug)+'" gespeichert.', 'ok');
+    await loadFirmen();
+    renderFirmaView();
+    // Falls aktuelle Firma editiert: Pill aktualisieren
+    if (S.firma?.slug === f.slug) { S.firma = f; updateFirmaPillUI(); renderTmplSelector(); }
+  } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+async function createFirmaFromDefault(slug) {
+  // Default-Pseudo-Record in DB anlegen
+  const def = FIRMEN_DEFAULT.find(d => d.slug === slug);
+  if (!def) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    await atWrite('Firmen', { ...def, created: new Date().toISOString() });
+    toast('✅ Firma "'+def.name+'" in Datenbank angelegt.', 'ok');
+    await loadFirmen();
+    renderFirmaView();
+  } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+async function createNewFirma() {
+  hideFirmaDropdown();
+  const name = prompt('Name der neuen Firma?');
+  if (!name) return;
+  const slug = (prompt('Slug (eindeutiger Schlüssel, kleinbuchstaben, z.B. "kone_fritz")', name.toLowerCase().replace(/[^a-z0-9_]/g,'_')) || '').trim();
+  if (!slug) return;
+  // Slug-Kollision prüfen
+  if (_firmenCache.find(f => f.fields.slug === slug && !f.id.startsWith('_default_'))) {
+    return toast('Slug "'+slug+'" existiert bereits.', 'err');
+  }
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    await atWrite('Firmen', {
+      slug, name: name.trim(), icon: '🏢', kalk_typ: 'none', aktiv: true,
+      created: new Date().toISOString(),
+    });
+    toast('✅ Firma "'+name+'" angelegt.', 'ok');
+    await loadFirmen();
+    if (document.getElementById('firma-view').classList.contains('show')) renderFirmaView();
+    renderFirmaDropdown();
+  } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+/* ──────────────────────────────────────────────────────────────
    TOOLS-REGISTRY
    Neues Tool hinzufügen:
    1) Permission in FEATURES registrieren (oben)
@@ -2706,6 +3103,7 @@ async function trackEvent(tool, action, meta) {
   if (!APP_KEYS.airtableWriteKey || !APP_KEYS.user) return;
   try {
     await atWrite('Statistiken', {
+      firma:     getCurrentFirmaSlug(),
       api_key:   APP_KEYS.user.api_key || '',
       user_name: APP_KEYS.user.name || '',
       tool:      tool || '',
@@ -2720,8 +3118,9 @@ async function trackEvent(tool, action, meta) {
    DASHBOARD
    ────────────────────────────────────────────────────────────── */
 function renderDashboard() {
+  const f = getCurrentFirma();
   document.getElementById('dash-greet').textContent =
-    'Willkommen, ' + (APP_KEYS.user?.name || '') + '!';
+    'Willkommen, ' + (APP_KEYS.user?.name || '') + '! · ' + (f?.icon||'') + ' ' + (f?.name||'');
   // Tools-Grid rendern
   const grid = document.getElementById('dash-tools');
   grid.innerHTML = Object.entries(TOOLS).map(([key, t]) => {
@@ -2758,15 +3157,18 @@ async function loadDashboardStats() {
   try {
     const todayISO = new Date().toISOString().slice(0,10);
     const since30 = Date.now() - 30*24*3600*1000;
+    const firmaSlug = getCurrentFirmaSlug();
 
-    // Berichte laden
-    let reports = [];
-    try { reports = await atRead('Berichte', null); } catch(e) { console.warn('Berichte:', e); }
+    // Berichte laden (firma-scoped)
+    let allReports = [];
+    try { allReports = await atRead('Berichte', null); } catch(e) { console.warn('Berichte:', e); }
+    const reports = allReports.filter(r => _firmaOfRec(r) === firmaSlug);
     const todayReports = reports.filter(r => (r.fields.created || '').slice(0,10) === todayISO).length;
 
-    // Statistik-Events laden (Tabelle existiert evtl. noch nicht)
-    let events = [];
-    try { events = await atRead('Statistiken', null); } catch(e) { console.warn('Statistiken:', e.message); }
+    // Statistik-Events laden (firma-scoped, Tabelle existiert evtl. noch nicht)
+    let allEvents = [];
+    try { allEvents = await atRead('Statistiken', null); } catch(e) { console.warn('Statistiken:', e.message); }
+    const events = allEvents.filter(e => (e.fields.firma||'aszendio') === firmaSlug);
     const todayLaunches = events.filter(e =>
       (e.fields.timestamp || '').slice(0,10) === todayISO &&
       e.fields.action === 'launch'
@@ -2958,23 +3360,19 @@ function onZielpreisSliderInput() {
   recalcWartung();
 }
 
-let _wkMode = 'aszendio';
-
-function setKalkMode(mode) {
-  _wkMode = mode;
-  document.querySelectorAll('.wkalk-toggle-btn').forEach(b => {
-    b.classList.toggle('active', b.dataset.mode === mode);
-  });
-  document.getElementById('wkalk-aszendio').style.display = (mode === 'aszendio') ? '' : 'none';
-  document.getElementById('wkalk-aufzug').style.display   = (mode === 'aufzug')   ? '' : 'none';
-  if (mode === 'aszendio') recalcWartung();
-}
-
 function renderWartungKalk() {
-  // Reset bei jedem Eintritt: Aszendio-Modus + 1 Wartung p.a.
-  setKalkMode('aszendio');
-  document.getElementById('wk-wartungen').value = 1;
-  recalcWartung();
+  // Tool zeigt den passenden Kalkulator je nach Firma.kalk_typ
+  const f = getCurrentFirma();
+  const kalkTyp = f?.kalk_typ || 'none';
+  const showKone = (kalkTyp === 'kone');
+  document.getElementById('wkalk-aszendio').style.display = showKone ? '' : 'none';
+  document.getElementById('wkalk-aufzug').style.display   = showKone ? 'none' : '';
+  document.getElementById('wkalk-placeholder-name').textContent = f?.name || 'Diese Firma';
+  if (showKone) {
+    // Bei jedem Eintritt zurücksetzen: 1 Wartung p.a.
+    document.getElementById('wk-wartungen').value = 1;
+    recalcWartung();
+  }
 }
 
 function showKonePrice() {
