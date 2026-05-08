@@ -741,7 +741,7 @@ body.has-modal .topbar{pointer-events:auto}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.25</div>
+    <div class="login-version">Elevator Servicebox v2.26</div>
   </div>
 </div>
 
@@ -1364,7 +1364,7 @@ body.has-modal .topbar{pointer-events:auto}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.25';
+const APP_VERSION = 'v2.26';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1979,7 +1979,7 @@ function pdfHeader(doc,titleLine1,titleLine2,logoB64,logoW,logoH,ml,mr) {
 /* ════════════════════════════════════════════════════════════
    PDF GENERATORS
    ════════════════════════════════════════════════════════════ */
-function pdfArbeit(d,num) {
+function pdfArbeit(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   y=pdfHeader(doc,'Installationsbericht','Aufzug',LOGO_B64,48,9.3,ml,mr);
@@ -1989,12 +1989,15 @@ function pdfArbeit(d,num) {
   y=p.sh(ml,y,cw,'Anlagendaten');y=addAnlagendatenArbeit(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustandsbericht bei Verlassen der Anlage');y=addZustandVerlassen(doc,d,y,ml,cw,p,true);
   y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,45,d.beschreibung||'');y+=51;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,38,d.sonstiges||'');
+  // Sonstiges: kleiner wenn Unterschriften mitkommen, damit beides auf eine Seite passt
+  const sonstH = sigs ? 18 : 38;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstH,d.sonstiges||'');y+=sonstH+4;
+  if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs);
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
 }
 
-function pdfWartung(d,num) {
+function pdfWartung(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   y=pdfHeader(doc,'Wartungsbericht','Aufzug',LOGO_B64,48,9.3,ml,mr);
@@ -2008,20 +2011,26 @@ function pdfWartung(d,num) {
   p.bd();doc.rect(ml,y,cw,14,'D');
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Ist der Aufzug in Betrieb?:',zL-3),ml+2,y+4.5);p.ft(9,false,p.DK);doc.text(d.aufzug_verlassen_in_betrieb||'',ml+zL+2,y+5);
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Sind weiterführende Arbeiten erforderlich?:',zL2-3),ml+zL+zV+2,y+4);p.ft(9,false,p.DK);doc.text(d.weitere_arbeiten||'',ml+zL+zV+zL2+2,y+5);y+=19;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,26,d.sonstiges||'');y+=32;
+  // Sonstiges: kleiner wenn Unterschriften kommen
+  const sonstHW = sigs ? 14 : 26;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+6;
   p.ft(14,true,[33,82,169]);doc.text('Prüfergebnisse',ml,y);y+=8;
   const pN=14,pT=30,pD=cw-pN-pT-32,pE=32;
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,pN,7,'FD');doc.rect(ml+pN,y,pT,7,'FD');doc.rect(ml+pN+pT,y,pD,7,'FD');doc.rect(ml+pN+pT+pD,y,pE,7,'FD');
   p.ft(8.5,true,p.DK);doc.text('Nr.',ml+2,y+5);doc.text('Typ',ml+pN+2,y+5);doc.text('Details',ml+pN+pT+2,y+5);doc.text('Ergebnis',ml+pN+pT+pD+2,y+5);y+=7;
-  const pruefErg=String(d.pruef_ergebnis||'');const rH=18;
+  // Pruef-Tabelle: kleinere Zeilenhöhe wenn Unterschriften kommen
+  const rH = sigs ? 12 : 18;
   doc.setFillColor(255,255,255);doc.rect(ml,y,pN,rH,'FD');doc.rect(ml+pN,y,pT,rH,'FD');doc.rect(ml+pN+pT,y,pD,rH,'FD');doc.rect(ml+pN+pT+pD,y,pE,rH,'FD');p.bd();doc.rect(ml,y,cw,rH,'D');
   p.ft(9,false,p.DK);doc.text('1',ml+2,y+5);doc.text('Aufzug',ml+pN+2,y+5);p.ft(8.5,false,p.DK);doc.text('Aufzugswartung nach DIN 13015:',ml+pN+pT+2,y+5);
+  const pruefErg=String(d.pruef_ergebnis||'');
   p.ft(9,false,p.DK);if(pruefErg)doc.text(doc.splitTextToSize(pruefErg,pE-4),ml+pN+pT+pD+2,y+5);
+  y += rH + 4;
+  if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs,{compact:true});
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);doc.text('|  Vertragsnummer: '+(d.vertragsnummer||''),ml+36,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
 }
 
-function pdfAufzugA(d,num) {
+function pdfAufzugA(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   p.ft(22,true,[40,40,40]);doc.text('Installationsbericht',ml,y);y+=7;p.ft(12,true,[40,40,40]);doc.text('Aufzug',ml,y);
@@ -2033,12 +2042,14 @@ function pdfAufzugA(d,num) {
   y=p.sh(ml,y,cw,'Anlagendaten');y=addAnlagendatenArbeit(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustandsbericht bei Verlassen der Anlage');y=addZustandVerlassen(doc,d,y,ml,cw,p,true);
   y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,45,d.beschreibung||'');y+=51;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,38,d.sonstiges||'');
+  const sonstH = sigs ? 18 : 38;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstH,d.sonstiges||'');y+=sonstH+4;
+  if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs);
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
 }
 
-function pdfAufzugW(d,num) {
+function pdfAufzugW(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   p.ft(22,true,[40,40,40]);doc.text('Wartungsbericht',ml,y);y+=7;p.ft(12,true,[40,40,40]);doc.text('Aufzug',ml,y);
@@ -2053,17 +2064,90 @@ function pdfAufzugW(d,num) {
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,zL2,14,'FD');doc.setFillColor(255,255,255);doc.rect(ml+zL2,y,zV2,14,'FD');doc.setFillColor(...p.GH);doc.rect(ml+zL2+zV2,y,zL3,14,'FD');doc.setFillColor(255,255,255);doc.rect(ml+zL2+zV2+zL3,y,zV3,14,'FD');
   p.bd();doc.rect(ml,y,cw,14,'D');p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Ist der Aufzug in Betrieb?:',zL2-3),ml+2,y+4.5);p.ft(9,false,p.DK);doc.text(d.aufzug_verlassen_in_betrieb||'',ml+zL2+2,y+5);
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Sind weiterführende Arbeiten erforderlich?:',zL3-3),ml+zL2+zV2+2,y+4);p.ft(9,false,p.DK);doc.text(d.weitere_arbeiten||'',ml+zL2+zV2+zL3+2,y+5);y+=19;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,26,d.sonstiges||'');y+=32;
+  const sonstHW=sigs?14:26;
+  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+6;
   p.ft(14,true,[40,40,40]);doc.text('Prüfergebnisse',ml,y);y+=8;
   const pN=14,pT=30,pD=cw-pN-pT-32,pE=32;
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,pN,7,'FD');doc.rect(ml+pN,y,pT,7,'FD');doc.rect(ml+pN+pT,y,pD,7,'FD');doc.rect(ml+pN+pT+pD,y,pE,7,'FD');
   p.ft(8.5,true,p.DK);doc.text('Nr.',ml+2,y+5);doc.text('Typ',ml+pN+2,y+5);doc.text('Details',ml+pN+pT+2,y+5);doc.text('Ergebnis',ml+pN+pT+pD+2,y+5);y+=7;
-  const pruefErg2=String(d.pruef_ergebnis||'');const rH2=18;
+  const pruefErg2=String(d.pruef_ergebnis||'');const rH2=sigs?12:18;
   doc.setFillColor(255,255,255);doc.rect(ml,y,pN,rH2,'FD');doc.rect(ml+pN,y,pT,rH2,'FD');doc.rect(ml+pN+pT,y,pD,rH2,'FD');doc.rect(ml+pN+pT+pD,y,pE,rH2,'FD');p.bd();doc.rect(ml,y,cw,rH2,'D');
   p.ft(9,false,p.DK);doc.text('1',ml+2,y+5);doc.text('Aufzug',ml+pN+2,y+5);p.ft(8.5,false,p.DK);doc.text('Aufzugswartung nach DIN 13015:',ml+pN+pT+2,y+5);
   p.ft(9,false,p.DK);if(pruefErg2)doc.text(doc.splitTextToSize(pruefErg2,pE-4),ml+pN+pT+pD+2,y+5);
+  y+=rH2+4;
+  if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs,{compact:true});
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);doc.text('|  Vertragsnummer: '+(d.vertragsnummer||''),ml+36,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
+}
+
+/* Unterschriften inline am Ende der ersten Berichts-Seite (nicht als separate Seite) */
+function addSignaturesInline(doc, ml, cw, y, sigs, opts) {
+  opts = opts || {};
+  const sigW = (cw - 6) / 2;
+  const sigH = opts.compact ? 16 : 22;
+  // Titel
+  doc.setFont('helvetica','bold');doc.setFontSize(opts.compact?8:9);doc.setTextColor(40);
+  doc.text('Techniker-Unterschrift', ml, y);
+  doc.text('Kunden-Unterschrift', ml+sigW+6, y);
+  y += 3;
+  // Boxen
+  doc.setDrawColor(170);doc.setLineWidth(0.25);
+  doc.rect(ml, y, sigW, sigH);
+  doc.rect(ml+sigW+6, y, sigW, sigH);
+  // Techniker-Bild
+  try { if (sigs.sigTechURL) doc.addImage(sigs.sigTechURL, 'PNG', ml+1, y+1, sigW-2, sigH-2); } catch(e) {}
+  // Kunde: Bild ODER "abwesend" Hinweis
+  if (sigs.kundeAbwesend) {
+    doc.setFont('helvetica','italic');doc.setFontSize(8.5);doc.setTextColor(110);
+    const cx = ml+sigW+6 + sigW/2;
+    const cy = y + sigH/2;
+    doc.text('Kein Kunde anwesend', cx, cy-0.5, { align:'center' });
+    doc.text('bei der Abnahme', cx, cy+3.5, { align:'center' });
+    doc.setTextColor(40);
+  } else if (sigs.sigKundeURL) {
+    try { doc.addImage(sigs.sigKundeURL, 'PNG', ml+sigW+7, y+1, sigW-2, sigH-2); } catch(e) {}
+  }
+  y += sigH + 1;
+  // Linien + Namen
+  doc.setLineWidth(0.4);doc.line(ml, y, ml+sigW, y);doc.line(ml+sigW+6, y, ml+sigW+6+sigW, y);
+  doc.setFont('helvetica','normal');doc.setFontSize(opts.compact?7:8);doc.setTextColor(60);
+  doc.text(sigs.techName||'', ml+1, y+3.5);
+  doc.text(sigs.kundeAbwesend ? '(kein Kunde anwesend)' : (sigs.kundeName||''), ml+sigW+7, y+3.5);
+  doc.setTextColor(20);
+  return y + 5;
+}
+
+/* Bilder als zusätzliche Seiten ans PDF-Doc anhängen */
+async function appendImagesToPDF(doc, imageDataUrls) {
+  for (const url of imageDataUrls) {
+    let img;
+    try {
+      img = await new Promise((res, rej) => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.onerror = rej;
+        i.src = url;
+      });
+    } catch(e) { console.warn('image load failed:', e); continue; }
+    doc.addPage();
+    const PW=210, PH=297, ml=14, mt=14;
+    const imgMaxW = PW - 2*ml;
+    const imgMaxH = PH - 2*mt - 14;
+    let w = imgMaxW, h = (img.height / img.width) * w;
+    if (h > imgMaxH) { h = imgMaxH; w = (img.width / img.height) * h; }
+    const x = ml + (imgMaxW - w) / 2;
+    const y = mt + 6;
+    doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(30);
+    doc.text('Anhang Bild', ml, mt);
+    try {
+      // JPEG bevorzugt; falls PNG, jsPDF erkennt das anhand des Headers
+      doc.addImage(url, /^data:image\/png/i.test(url) ? 'PNG' : 'JPEG', x, y, w, h, undefined, 'FAST');
+    } catch(e) { console.warn('image add failed:', e); }
+    doc.setDrawColor(160);doc.setLineWidth(0.2);
+    doc.line(ml, PH-14, PW-ml, PH-14);
+    doc.setFontSize(8);doc.setTextColor(100);
+    doc.text('Bild-Anhang', ml, PH-9);
+  }
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -3301,9 +3385,10 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Statistiken',  'firma', 'singleLineText');
   await ensureField('Firmen',       'start_num',         'number');
   await ensureField('Firmen',       'auftrag_start_num', 'number');
-  // Berichte ↔ Auftrag-Verknüpfung
+  // Berichte ↔ Auftrag-Verknüpfung + Bilder
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
+  await ensureField('Berichte',     'bilder',      'multipleAttachments');
   // Auftrag: Kontakt zusammenfassen + Notizen + Bilder
   await ensureField('Auftraege',    'kontakt',  'multilineText');
   await ensureField('Auftraege',    'notizen',  'multilineText');
@@ -3760,6 +3845,9 @@ function openAuftragDetail(recId) {
   if (status !== 'abgeschlossen' && _isAssignedToMe(rec)) {
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Bericht erfassen</button>';
   }
+  if (status === 'abgeschlossen' && f.bericht_id) {
+    html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Bericht ansehen</button>';
+  }
   foot.innerHTML = html;
 
   document.getElementById('auf-detail-modal').classList.add('show');
@@ -3770,6 +3858,25 @@ function closeAuftragDetail() {
   document.getElementById('auf-detail-modal').classList.remove('show');
   if (!document.getElementById('auf-form-modal').classList.contains('show')) {
     document.body.classList.remove('has-modal');
+  }
+}
+
+/* Bericht-PDF eines abgeschlossenen Auftrags öffnen (frischen Airtable-URL holen) */
+async function viewAuftragsBericht(berichtId) {
+  if (!berichtId) return toast('Kein Bericht verknüpft.', 'err');
+  toast('⏳ Lade Bericht…', '');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+berichtId, {
+      headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message || 'Fehler');
+    const url = d.fields && d.fields.out_pdf && d.fields.out_pdf[0] && d.fields.out_pdf[0].url;
+    if (!url) throw new Error('Kein PDF im Bericht-Record gefunden.');
+    window.open(url, '_blank');
+  } catch(e) {
+    toast('❌ '+(e.message || e), 'err');
   }
 }
 
@@ -4117,6 +4224,14 @@ function openBerichtForm(auftragId) {
     </div>
   `;
 
+  const imageCard = `
+    <div class="card">
+      <div class="card-title">📸 Bilder zum Bericht <span style="font-weight:400;color:var(--txt3);font-size:11px;text-transform:none;letter-spacing:0;margin-left:6px">optional, werden ans PDF angehängt</span></div>
+      <div class="auf-img-grid" id="bf-img-grid"></div>
+      <div style="font-size:11px;color:var(--txt3);margin-top:6px">Tap auf "+" zum Hinzufügen (mehrere möglich). Tap auf ein Bild zum Entfernen.</div>
+    </div>
+  `;
+
   const signCards = `
     <div class="card">
       <div class="card-title">✍ Unterschrift Techniker</div>
@@ -4133,20 +4248,28 @@ function openBerichtForm(auftragId) {
     </div>
     <div class="card">
       <div class="card-title">✍ Unterschrift Kunde</div>
-      <div class="field"><div class="field-lbl">Name (Kunde / Hausverwaltung)</div>
-        <input type="text" class="fi" id="bf-kunde-name" value="${(f.kontakt_name || (f.kontakt||'').split('\n')[0] || '').replace(/"/g,'&quot;')}"></div>
-      <div class="sig-wrap" id="bf-sig-kunde-wrap" style="margin-top:8px">
-        <canvas id="bf-sig-kunde"></canvas>
-        <div class="sig-placeholder">✍ Kunde unterschreibt hier</div>
-      </div>
-      <div class="sig-actions">
-        <span style="color:var(--txt3)">Pflichtfeld</span>
-        <button type="button" class="sig-clear" onclick="_sigKundePad?.clear()">↺ Zurücksetzen</button>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--txt2);margin-bottom:10px;cursor:pointer;padding:8px 10px;background:var(--bg);border-radius:5px">
+        <input type="checkbox" id="bf-kunde-absent" onchange="_bfToggleKundeAbsent(this.checked)">
+        <span><strong>Niemand war anwesend</strong> bei der Abnahme – keine Unterschrift erforderlich</span>
+      </label>
+      <div id="bf-kunde-sig-section">
+        <div class="field"><div class="field-lbl">Name (Kunde / Hausverwaltung)</div>
+          <input type="text" class="fi" id="bf-kunde-name" value="${(f.kontakt_name || (f.kontakt||'').split('\n')[0] || '').replace(/"/g,'&quot;')}"></div>
+        <div class="sig-wrap" id="bf-sig-kunde-wrap" style="margin-top:8px">
+          <canvas id="bf-sig-kunde"></canvas>
+          <div class="sig-placeholder">✍ Kunde unterschreibt hier</div>
+        </div>
+        <div class="sig-actions">
+          <span style="color:var(--txt3)">Pflichtfeld (außer wenn nicht anwesend)</span>
+          <button type="button" class="sig-clear" onclick="_sigKundePad?.clear()">↺ Zurücksetzen</button>
+        </div>
       </div>
     </div>
   `;
 
-  document.getElementById('bf-body').innerHTML = infoCard + formHtml + signCards;
+  document.getElementById('bf-body').innerHTML = infoCard + formHtml + imageCard + signCards;
+  _bfImages = [];
+  _bfRenderImageGrid();
 
   // Pads initialisieren (nach DOM-Insertion)
   setTimeout(() => {
@@ -4170,6 +4293,50 @@ function closeBerichtForm() {
   }
 }
 
+/* Bilder im Bericht-Form (lokal vor dem Save) */
+let _bfImages = []; // [{ dataUrl, file, name }]
+
+function _bfToggleKundeAbsent(absent) {
+  const sec = document.getElementById('bf-kunde-sig-section');
+  if (sec) sec.style.display = absent ? 'none' : '';
+}
+function _bfRenderImageGrid() {
+  const el = document.getElementById('bf-img-grid');
+  if (!el) return;
+  const thumbs = _bfImages.map((it, i) =>
+    '<div class="auf-img-thumb" onclick="_bfRemoveImage('+i+')" title="Tap zum Entfernen">'+
+      '<img src="'+it.dataUrl+'" alt="">'+
+      '<button class="auf-img-del" style="display:flex" onclick="event.stopPropagation();_bfRemoveImage('+i+')">✕</button>'+
+    '</div>'
+  ).join('');
+  el.innerHTML = thumbs +
+    '<label class="auf-img-add" title="Foto hinzufügen">'+
+      '<input type="file" accept="image/*" capture="environment" multiple style="display:none" onchange="_bfPickImages(event)">+'+
+    '</label>';
+}
+function _bfPickImages(ev) {
+  const files = ev.target.files;
+  if (!files || files.length === 0) return;
+  const arr = Array.from(files);
+  let pending = arr.length;
+  arr.forEach(file => {
+    if (!file.type.startsWith('image/')) { pending--; return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      _bfImages.push({ dataUrl: reader.result, file, name: file.name });
+      if (--pending === 0) _bfRenderImageGrid();
+    };
+    reader.onerror = () => { if (--pending === 0) _bfRenderImageGrid(); };
+    reader.readAsDataURL(file);
+  });
+  ev.target.value = '';
+}
+function _bfRemoveImage(idx) {
+  if (idx < 0 || idx >= _bfImages.length) return;
+  _bfImages.splice(idx, 1);
+  _bfRenderImageGrid();
+}
+
 async function saveBerichtFromForm() {
   if (!_currentBerichtAuftragId) return;
   const auftrag = _auftragCache.find(r => r.id === _currentBerichtAuftragId);
@@ -4183,8 +4350,9 @@ async function saveBerichtFromForm() {
   document.querySelectorAll('#bf-body [data-f]').forEach(el => {
     data[el.dataset.f] = el.value || '';
   });
-  const techName  = (document.getElementById('bf-tech-name')?.value || '').trim();
-  const kundeName = (document.getElementById('bf-kunde-name')?.value || '').trim();
+  const techName     = (document.getElementById('bf-tech-name')?.value || '').trim();
+  const kundeName    = (document.getElementById('bf-kunde-name')?.value || '').trim();
+  const kundeAbwesend = !!document.getElementById('bf-kunde-absent')?.checked;
 
   // Validierung
   if (!data.datum) return toast('Bitte Datum eintragen.', 'err');
@@ -4192,16 +4360,25 @@ async function saveBerichtFromForm() {
   const isWartung = (af.tmpl||'').includes('wartung');
   if (!isWartung && !data.beschreibung) return toast('Bitte Beschreibung der Arbeiten eintragen.', 'err');
   if (isWartung && !data.pruef_ergebnis) return toast('Bitte Prüfergebnis eintragen.', 'err');
-  if (!techName)  return toast('Bitte Techniker-Namen eintragen.', 'err');
-  if (!kundeName) return toast('Bitte Kunden-Namen eintragen.', 'err');
+  if (!techName) return toast('Bitte Techniker-Namen eintragen.', 'err');
   if (!_sigTechnikerPad || _sigTechnikerPad.isEmpty()) return toast('Bitte Techniker-Unterschrift leisten.', 'err');
-  if (!_sigKundePad     || _sigKundePad.isEmpty())     return toast('Bitte Kunden-Unterschrift leisten.', 'err');
+  if (!kundeAbwesend) {
+    if (!kundeName) return toast('Bitte Kunden-Namen eintragen (oder "Niemand anwesend" anhaken).', 'err');
+    if (!_sigKundePad || _sigKundePad.isEmpty()) return toast('Bitte Kunden-Unterschrift leisten (oder "Niemand anwesend" anhaken).', 'err');
+  }
 
   // durchgefuehrt_von angleichen, falls leer
   if (!data.durchgefuehrt_von) data.durchgefuehrt_von = techName;
 
   const sigTechURL  = _sigTechnikerPad.toDataURL();
-  const sigKundeURL = _sigKundePad.toDataURL();
+  const sigKundeURL = (kundeAbwesend || !_sigKundePad || _sigKundePad.isEmpty()) ? null : _sigKundePad.toDataURL();
+  const sigs = {
+    techName,
+    sigTechURL,
+    kundeName: kundeAbwesend ? '' : kundeName,
+    sigKundeURL,
+    kundeAbwesend,
+  };
 
   const btn = document.getElementById('bf-save-btn');
   btn.disabled = true; btn.textContent = '☁ Generiere PDF…';
@@ -4215,9 +4392,12 @@ async function saveBerichtFromForm() {
     const fbMax = fbRecs.length > 0 ? Math.max(...fbRecs.map(r => r.fields.bericht_num || 0)) : 0;
     const berichtNum = Math.max(startNum, fbMax + 1);
 
-    // PDF aus Vorlage generieren + Unterschriften-Seite anhängen
-    const doc = tmpl.pdf(data, berichtNum);
-    appendSignatureSection(doc, techName, kundeName, sigTechURL, sigKundeURL, af.auftrag_num);
+    // PDF aus Vorlage generieren – Unterschriften INLINE (unterhalb von "Sonstiges") + Bilder als Anhang-Seiten
+    const doc = tmpl.pdf(data, berichtNum, sigs);
+    if (_bfImages.length > 0) {
+      btn.textContent = '☁ Hänge Bilder an PDF an…';
+      await appendImagesToPDF(doc, _bfImages.map(it => it.dataUrl));
+    }
     const pdfBlob = doc.output('blob');
 
     btn.textContent = '☁ Speichere Bericht…';
@@ -4233,7 +4413,7 @@ async function saveBerichtFromForm() {
       techniker:    techName,
       fname:        fname,
       subfolder:    SUBFOLDERS[af.tmpl] || 'Sonstige',
-      data_json:    JSON.stringify(Object.assign({}, data, { tech_name: techName, kunde_name: kundeName, sig_tech: sigTechURL, sig_kunde: sigKundeURL })),
+      data_json:    JSON.stringify(Object.assign({}, data, { tech_name: techName, kunde_name: sigs.kundeName, kunde_abwesend: kundeAbwesend, sig_tech: sigTechURL, sig_kunde: sigKundeURL })),
       auftrag_id:   _currentBerichtAuftragId,
       auftrag_num:  af.auftrag_num,
       created:      new Date().toISOString(),
@@ -4241,6 +4421,15 @@ async function saveBerichtFromForm() {
 
     btn.textContent = '☁ Lade PDF hoch…';
     await atBlobUpload(rec.id, 'out_pdf', pdfBlob, fname, 'application/pdf');
+
+    // Bilder als Attachments im Bericht speichern
+    if (_bfImages.length > 0) {
+      btn.textContent = '☁ Lade Bilder hoch ('+_bfImages.length+')…';
+      for (const it of _bfImages) {
+        try { await atUploadFile(rec.id, 'bilder', it.file); }
+        catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e.message); }
+      }
+    }
 
     // Auftrag-Status auf abgeschlossen
     btn.textContent = '☁ Auftrag aktualisieren…';
@@ -4268,46 +4457,8 @@ async function saveBerichtFromForm() {
   }
 }
 
-/* Hängt eine Unterschriften-Seite an einen jsPDF-Doc an (kommt nach dem Vorlagen-PDF) */
-function appendSignatureSection(doc, techName, kundeName, sigTechURL, sigKundeURL, auftragNum) {
-  doc.addPage();
-  const PW = 210, PH = 297, ml = 14, cw = 182;
-  let y = 18;
-  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(30);
-  doc.text('Unterschriften', ml, y);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(100);
-  doc.text('Bestätigung der Auftrags-Erfüllung'+(auftragNum?' (Auftrag #'+auftragNum+')':''), ml, y+6);
-  y += 14;
-
-  doc.setDrawColor(160); doc.setLineWidth(0.25);
-  const sigW = (cw - 8) / 2;
-  const sigH = 50;
-
-  // Techniker
-  doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(30);
-  doc.text('Techniker', ml, y);
-  doc.rect(ml, y+2, sigW, sigH);
-  try { doc.addImage(sigTechURL, 'PNG', ml+1, y+3, sigW-2, sigH-2); } catch(e) { console.warn('sig tech img:', e); }
-  doc.setLineWidth(0.4); doc.line(ml, y+sigH+5, ml+sigW, y+sigH+5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  doc.text(techName||'', ml, y+sigH+10);
-
-  // Kunde
-  doc.setFont('helvetica','bold'); doc.setFontSize(10);
-  doc.text('Kunde', ml+sigW+8, y);
-  doc.setLineWidth(0.25);
-  doc.rect(ml+sigW+8, y+2, sigW, sigH);
-  try { doc.addImage(sigKundeURL, 'PNG', ml+sigW+9, y+3, sigW-2, sigH-2); } catch(e) { console.warn('sig kunde img:', e); }
-  doc.setLineWidth(0.4); doc.line(ml+sigW+8, y+sigH+5, ml+sigW+8+sigW, y+sigH+5);
-  doc.setFont('helvetica','normal'); doc.setFontSize(9);
-  doc.text(kundeName||'', ml+sigW+8, y+sigH+10);
-
-  // Footer-Linie wie auf den anderen Seiten
-  doc.setDrawColor(160); doc.setLineWidth(0.2);
-  doc.line(ml, PH-14, PW-ml-2, PH-14);
-  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(100);
-  doc.text('Unterschriften', ml, PH-9);
-}
+/* (alte appendSignatureSection wurde entfernt – Unterschriften kommen jetzt INLINE
+   via addSignaturesInline, direkt unter "Sonstiges" in der Vorlage) */
 
 /* ──────────────────────────────────────────────────────────────
    TOOLS-REGISTRY
