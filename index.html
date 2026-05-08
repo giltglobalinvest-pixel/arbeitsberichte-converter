@@ -581,7 +581,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.16</div>
+    <div class="login-version">Elevator Servicebox v2.17</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -1149,7 +1149,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.16';
+const APP_VERSION = 'v2.17';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1342,12 +1342,13 @@ async function setupTables() {
     { name:'timestamp', type:'singleLineText' },
   ]);
   await ensureTable('Firmen', [
-    { name:'slug',     type:'singleLineText' },
-    { name:'name',     type:'singleLineText' },
-    { name:'icon',     type:'singleLineText' },
-    { name:'kalk_typ', type:'singleLineText' },
-    { name:'aktiv',    type:'checkbox', options:{ icon:'check', color:'greenBright' } },
-    { name:'created',  type:'singleLineText' },
+    { name:'slug',      type:'singleLineText' },
+    { name:'name',      type:'singleLineText' },
+    { name:'icon',      type:'singleLineText' },
+    { name:'kalk_typ',  type:'singleLineText' },
+    { name:'aktiv',     type:'checkbox', options:{ icon:'check', color:'greenBright' } },
+    { name:'start_num', type:'number',   options:{ precision:0 } },
+    { name:'created',   type:'singleLineText' },
   ]);
 }
 
@@ -1365,10 +1366,15 @@ async function ensureField(tableName, fieldName, fieldType) {
     if (!tbl) return;
     const has = (tbl.fields||[]).some(f => f.name === fieldName);
     if (has) return;
+    const type = fieldType || 'singleLineText';
+    const body = { name: fieldName, type };
+    // Airtable verlangt options bei einigen Typen
+    if (type === 'number')   body.options = { precision: 0 };
+    if (type === 'checkbox') body.options = { icon:'check', color:'greenBright' };
     await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables/'+tbl.id+'/fields', {
       method:'POST',
       headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-      body: JSON.stringify({ name: fieldName, type: fieldType || 'singleLineText' }),
+      body: JSON.stringify(body),
     });
     console.log('[Schema] Feld '+fieldName+' zu Tabelle '+tableName+' hinzugefügt.');
   } catch(e) { console.warn('ensureField '+tableName+'.'+fieldName+':', e.message); }
@@ -1903,14 +1909,13 @@ async function loadHistory() {
     recs.sort((a,b)=>b.fields.bericht_num-a.fields.bericht_num);
     S.history = recs.slice(0,8).map(r=>r.fields);
 
-    // Counter über ALLE Berichte (firma-übergreifend) hochziehen, damit Nummern global eindeutig bleiben
-    if (allRecs.length > 0) {
-      const maxNum = Math.max(...allRecs.map(r => r.fields.bericht_num || 0));
-      if (maxNum >= S.counter) {
-        S.counter = maxNum + 1;
-        document.getElementById('ctr-val').textContent = S.counter;
-        saveSettings().catch(e => console.warn('saveSettings nach maxNum:', e));
-      }
+    // Counter PRO FIRMA: max(bericht_num der Firma) + 1, sonst start_num der Firma
+    const startNum = +((getCurrentFirma()?.start_num) || 1);
+    const firmaMax = recs.length > 0 ? Math.max(...recs.map(r => r.fields.bericht_num || 0)) : 0;
+    const nextNum  = Math.max(startNum, firmaMax + 1);
+    if (nextNum !== S.counter) {
+      S.counter = nextNum;
+      document.getElementById('ctr-val').textContent = S.counter;
     }
 
     renderHistory();
@@ -2167,11 +2172,13 @@ async function doSaveAs(data, num, incrementCounter) {
     btn.textContent='☁ Prüfe Berichtsnummer…';
     try {
       const allRecs = await atRead('Berichte', null);
-      if (allRecs.length > 0) {
-        const maxNum = Math.max(...allRecs.map(r => r.fields.bericht_num || 0));
+      const curFirma = getCurrentFirmaSlug();
+      const firmaRecs = allRecs.filter(r => _firmaOfRec(r) === curFirma);
+      if (firmaRecs.length > 0) {
+        const maxNum = Math.max(...firmaRecs.map(r => r.fields.bericht_num || 0));
         if (maxNum >= num) {
           const safeNum = maxNum + 1;
-          console.warn('[Save] Kollision! Geplant:', num, '→ verwende:', safeNum);
+          console.warn('[Save] Kollision innerhalb Firma '+curFirma+'! Geplant:', num, '→ verwende:', safeNum);
           toast('⚠ Nr. '+num+' bereits vergeben → verwende Nr. '+safeNum, 'warn');
           num = safeNum;
           S.counter = safeNum;
@@ -2973,8 +2980,8 @@ async function createNewUser() {
    FIRMEN (globaler Mandanten-Kontext)
    ────────────────────────────────────────────────────────────── */
 const FIRMEN_DEFAULT = [
-  { slug: 'aszendio', name: 'Aszendio',         icon: '🛗', kalk_typ: 'kone', aktiv: true },
-  { slug: 'aufzug',   name: 'Aufzugshandwerk',  icon: '🔧', kalk_typ: 'none', aktiv: true },
+  { slug: 'aszendio', name: 'Aszendio',         icon: '🛗', kalk_typ: 'kone', aktiv: true, start_num: 50000 },
+  { slug: 'aufzug',   name: 'Aufzugshandwerk',  icon: '🔧', kalk_typ: 'none', aktiv: true, start_num: 1 },
 ];
 let _firmenCache = [];   // Array von Airtable-Records ODER pseudo-records mit id="_default_xxx"
 
@@ -3024,6 +3031,8 @@ async function ensureLegacyFirmaFields() {
   if (!isAdmin() || !APP_KEYS.airtableWriteKey) return;
   await ensureField('Berichte',     'firma', 'singleLineText');
   await ensureField('Statistiken',  'firma', 'singleLineText');
+  // start_num für Firmen-Tabelle (für DBs, die schon vor v2.17 existierten)
+  await ensureField('Firmen',       'start_num', 'number');
 }
 
 function pickInitialFirma() {
@@ -3055,8 +3064,9 @@ function setCurrentFirma(slug, opts = {}) {
   localStorage.setItem('firma_'+APP_CONFIG.PROJECT_ID, slug);
   updateFirmaPillUI();
   hideFirmaDropdown();
-  // Templates-Sidebar aktualisieren + Counter neu laden
+  // Templates-Sidebar + Counter (jetzt firma-spezifisch) aktualisieren
   renderTmplSelector();
+  loadHistory().catch(e => console.warn('loadHistory nach Firma-Wechsel:', e));
   // Aktuelle View neu rendern
   const activeBtn = document.querySelector('.tnav.active');
   const activeView = activeBtn ? activeBtn.id.replace('tnav-','') : 'dashboard';
@@ -3132,13 +3142,14 @@ async function renderFirmaView() {
     list.innerHTML = `
       <table class="firma-tbl">
         <thead><tr>
-          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Aktiv</th><th></th>
+          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Start-Nr.</th><th>Aktiv</th><th></th>
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="6" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="7" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
       </table>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
         ℹ️ <strong>Slug</strong> ist der eindeutige Schlüssel (z.B. <code>aszendio</code>) – wird intern für Berichts-Filter und Template-Zuordnung verwendet, nicht ändern wenn schon Berichte existieren.<br>
-        ℹ️ <strong>Kalkulator-Typ</strong>: <code>kone</code> = KONE-Preisliste (Aszendio), <code>none</code> = Kalkulator nicht verfügbar (Platzhalter), <code>custom</code> = ausstehend.
+        ℹ️ <strong>Kalkulator-Typ</strong>: <code>kone</code> = KONE-Preisliste (Aszendio), <code>none</code> = Kalkulator nicht verfügbar (Platzhalter), <code>custom</code> = ausstehend.<br>
+        ℹ️ <strong>Start-Nr.</strong> ist der Startwert für die Bericht-Nummerierung dieser Firma. Jede Firma hat ihren eigenen, fortlaufenden Nummernkreis. Aszendio = 50000, neue Firmen = 1.
       </div>
     `;
   } catch(e) {
@@ -3163,6 +3174,7 @@ function firmaRowHtml(f) {
           <option value="custom" ${fl.kalk_typ==='custom'?'selected':''}>custom</option>
         </select>
       </td>
+      <td><input type="number" class="firma-inp" data-field="start_num" value="${+fl.start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
       <td style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
       <td style="text-align:right;white-space:nowrap">
         ${isDefault
@@ -3180,6 +3192,7 @@ async function saveFirmaRow(recId) {
   row.querySelectorAll('.firma-inp').forEach(el => {
     const fld = el.dataset.field;
     if (el.type === 'checkbox') f[fld] = el.checked;
+    else if (el.type === 'number') f[fld] = +el.value || 0;
     else f[fld] = el.value.trim();
   });
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
@@ -3195,8 +3208,14 @@ async function saveFirmaRow(recId) {
     toast('✅ Firma "'+(f.name||f.slug)+'" gespeichert.', 'ok');
     await loadFirmen();
     renderFirmaView();
-    // Falls aktuelle Firma editiert: Pill aktualisieren
-    if (S.firma?.slug === f.slug) { S.firma = f; updateFirmaPillUI(); renderTmplSelector(); }
+    // Falls aktuelle Firma editiert: Pill + Counter aktualisieren
+    if (S.firma?.slug === f.slug) {
+      const refreshed = _firmenCache.find(fr => fr.fields.slug === f.slug);
+      if (refreshed) S.firma = refreshed.fields;
+      updateFirmaPillUI();
+      renderTmplSelector();
+      loadHistory().catch(()=>{});
+    }
   } catch(e) { toast('❌ '+e.message, 'err'); }
 }
 
@@ -3226,7 +3245,7 @@ async function createNewFirma() {
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   try {
     await atWrite('Firmen', {
-      slug, name: name.trim(), icon: '🏢', kalk_typ: 'none', aktiv: true,
+      slug, name: name.trim(), icon: '🏢', kalk_typ: 'none', aktiv: true, start_num: 1,
       created: new Date().toISOString(),
     });
     toast('✅ Firma "'+name+'" angelegt.', 'ok');
