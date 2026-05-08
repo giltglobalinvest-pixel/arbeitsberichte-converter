@@ -268,11 +268,18 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .wkalk-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:24px;height:24px;background:var(--navy);border:3px solid #fff;border-radius:50%;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2)}
 .wkalk-slider::-moz-range-thumb{width:24px;height:24px;background:var(--navy);border:3px solid #fff;border-radius:50%;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.2)}
 .wkalk-slider-val{font-family:monospace;font-size:32px;font-weight:700;color:var(--amber);text-align:center;margin:8px 0;line-height:1}
-.wk-num-wrap{display:flex;align-items:baseline;gap:6px;margin:0;flex-wrap:wrap}
-.wk-num-input{font-family:monospace;font-size:26px;font-weight:700;color:var(--amber);width:auto;border:none;background:transparent;text-align:right;outline:none;border-bottom:2px dashed transparent;max-width:160px;padding:0 2px;line-height:1}
-.wk-num-input:hover{border-bottom-color:var(--bdr)}
-.wk-num-input:focus{border-bottom-color:var(--amber)}
+.wk-num-wrap{display:flex;align-items:center;gap:6px;margin:0;flex-wrap:wrap}
+.wk-num-input{font-family:monospace;font-size:24px;font-weight:700;color:var(--amber);width:auto;border:1.5px solid var(--bdr);background:white;text-align:right;outline:none;border-radius:6px;max-width:160px;padding:4px 9px;line-height:1.1;transition:border-color .15s,box-shadow .15s}
+.wk-num-input:hover{border-color:#c4bdb0}
+.wk-num-input:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(224,123,16,.1)}
 .wk-num-suffix{font-size:13px;color:var(--txt2);font-weight:500}
+/* Kalkulator-Toggle (Aszendio / Aufzugshandwerk) */
+.wkalk-toggle{display:inline-flex;background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:3px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.wkalk-toggle-btn{background:transparent;border:none;padding:6px 16px;font-size:12px;font-weight:600;color:var(--txt2);cursor:pointer;border-radius:5px;font-family:inherit;transition:all .15s;letter-spacing:.2px}
+.wkalk-toggle-btn.active{background:var(--navy);color:#fff;box-shadow:0 1px 2px rgba(0,0,0,.15)}
+.wkalk-toggle-btn:not(.active):hover{color:var(--txt);background:rgba(0,0,0,.03)}
+.wkalk-info{background:rgba(35,74,117,.08);border:1px solid rgba(35,74,117,.18);color:var(--navy);padding:7px 12px;border-radius:5px;font-size:11px;margin:10px 0;line-height:1.5;display:flex;align-items:flex-start;gap:8px}
+.wkalk-info-ico{flex-shrink:0;font-size:13px}
 .wk-auto-val{font-family:monospace;font-size:26px;font-weight:700;color:var(--ok);text-align:center;margin:6px 0 4px;line-height:1.1}
 .wk-auto-val.warn{color:var(--err)}
 .wkalk-slider-bounds{display:flex;justify-content:space-between;font-size:11px;color:var(--txt3);margin-top:6px;font-family:monospace}
@@ -355,7 +362,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.12</div>
+    <div class="login-version">Elevator Servicebox v2.13</div>
 
     <!-- CONNECTION TEST -->
     <div style="margin-top:20px;border-top:1px solid var(--bdr);padding-top:16px">
@@ -660,6 +667,22 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
   </div>
   <div class="wkalk-body">
 
+    <!-- Toggle: Aszendio / Aufzugshandwerk -->
+    <div style="display:flex;justify-content:center;margin-bottom:6px">
+      <div class="wkalk-toggle">
+        <button class="wkalk-toggle-btn active" data-mode="aszendio" onclick="setKalkMode('aszendio')">Aszendio</button>
+        <button class="wkalk-toggle-btn" data-mode="aufzug" onclick="setKalkMode('aufzug')">Aufzugshandwerk</button>
+      </div>
+    </div>
+
+    <!-- ASZENDIO Kalkulator -->
+    <div id="wkalk-aszendio">
+
+    <div class="wkalk-info">
+      <span class="wkalk-info-ico">ℹ️</span>
+      <span>Einkaufseingaben gemäß <strong>KONE Rahmenvereinbarung</strong> – Anhang 3 Preisliste 2026–2027 (Fixpreise bis 31.12.2027). Werte sind editierbar, falls im Einzelfall andere Konditionen gelten.</span>
+    </div>
+
     <!-- 1. Zielpreis-Slider (kompakt, Header inline mit Wert) -->
     <div class="wkalk-card">
       <div class="wkalk-slider-head">
@@ -716,7 +739,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
         </div>
         <div class="wkalk-field-row">
           <label class="wkalk-label">Wartungen p.a.</label>
-          <input type="number" class="wkalk-input" id="wk-wartungen" value="4" min="1" max="12" step="1" oninput="recalcWartung()">
+          <input type="number" class="wkalk-input" id="wk-wartungen" value="1" min="1" max="12" step="1" oninput="recalcWartung()">
         </div>
         <div class="wkalk-field-row">
           <label class="wkalk-label">Notruf €/Monat</label>
@@ -741,6 +764,17 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 
     <div style="font-size:10px;color:var(--txt3);margin-top:10px;text-align:center;font-style:italic">
       Datenbasis: Aszendio Preisliste 2026–2027 · Fixpreise bis 31.12.2027
+    </div>
+
+    </div><!-- /#wkalk-aszendio -->
+
+    <!-- AUFZUGSHANDWERK Kalkulator (Platzhalter) -->
+    <div id="wkalk-aufzug" style="display:none;text-align:center;padding:50px 20px;color:var(--txt2)">
+      <div style="font-size:48px;margin-bottom:14px;opacity:.6">🚧</div>
+      <h3 style="font-size:16px;color:var(--navy);margin:0 0 8px">Aufzugshandwerk – Kalkulator</h3>
+      <p style="font-size:13px;color:var(--txt2);max-width:440px;margin:0 auto;line-height:1.5">
+        Noch nicht verfügbar. Sobald die Preisliste vom Aufzugshandwerk vorliegt, wird hier ein eigener Kalkulator integriert.
+      </p>
     </div>
 
   </div>
@@ -811,7 +845,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.12';
+const APP_VERSION = 'v2.13';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2828,7 +2862,22 @@ function onZielpreisSliderInput() {
   recalcWartung();
 }
 
+let _wkMode = 'aszendio';
+
+function setKalkMode(mode) {
+  _wkMode = mode;
+  document.querySelectorAll('.wkalk-toggle-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  document.getElementById('wkalk-aszendio').style.display = (mode === 'aszendio') ? '' : 'none';
+  document.getElementById('wkalk-aufzug').style.display   = (mode === 'aufzug')   ? '' : 'none';
+  if (mode === 'aszendio') recalcWartung();
+}
+
 function renderWartungKalk() {
+  // Reset bei jedem Eintritt: Aszendio-Modus + 1 Wartung p.a.
+  setKalkMode('aszendio');
+  document.getElementById('wk-wartungen').value = 1;
   recalcWartung();
 }
 
