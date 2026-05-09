@@ -52,11 +52,13 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* ── APP LAYOUT ── */
 .app{display:none;grid-template-columns:260px 1fr;grid-template-rows:var(--tb-safe) 1fr;height:100vh;overflow:hidden}
 .app.show{display:grid}
-/* Konverter-Inhalte (Sidebar + Main) nur sichtbar wenn explizit auf Konverter-View.
-   Verhindert das "Berichtskonverter-Hintergrund"-Aufblitzen beim App-Start
-   und in allen anderen Views (Dashboard, Aufträge, …). */
-.app .sidebar,.app .main{visibility:hidden;pointer-events:none}
-.app.view-conv .sidebar,.app.view-conv .main{visibility:visible;pointer-events:auto}
+/* Konverter-Inhalte (Sidebar + Main) nur in der Konverter-View, sonst display:none
+   damit das Grid kollabiert und die Topbar nicht durch leere Zeilen verschoben wird. */
+.app .sidebar,.app .main{display:none}
+.app.view-conv .sidebar{display:block}
+.app.view-conv .main{display:flex}
+/* Topbar immer ueber allem stehend – verhindert Verschwinden hinter Sidebar/Main */
+.topbar{position:relative;z-index:60}
 
 /* ── Topbar ── */
 .topbar{grid-column:1/-1;background:var(--navy-d);display:flex;align-items:center;gap:14px;padding:calc(env(safe-area-inset-top, 0px) + 10px) 20px 8px;box-shadow:0 2px 8px rgba(0,0,0,.35)}
@@ -623,8 +625,8 @@ body.has-modal .topbar{pointer-events:auto}
     border-radius:6px;
   }
 
-  /* App-Layout: 1 Spalte, Sidebar oben */
-  .app{grid-template-columns:1fr;grid-template-rows:52px auto 1fr}
+  /* App-Layout: 1 Spalte, Sidebar oben (in conv-View) */
+  .app{grid-template-columns:1fr;grid-template-rows:var(--tb-safe) auto 1fr}
   .sidebar{
     border-right:none;
     border-bottom:1px solid rgba(255,255,255,.08);
@@ -1000,7 +1002,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.41</div>
+    <div class="login-version">Elevator Servicebox v2.42</div>
   </div>
 </div>
 
@@ -1679,7 +1681,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.41';
+const APP_VERSION = 'v2.42';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
