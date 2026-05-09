@@ -70,6 +70,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .topbar-nav{display:flex;gap:4px;align-items:center}
 /* Drawer-Items nur in Mobile-Drawer sichtbar – Desktop hidden */
 .drawer-divider,.drawer-user-info,.drawer-action,.drawer-footer{display:none}
+.tnav-mobile-only{display:none}
 .tnav{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.65);padding:5px 14px;border-radius:var(--rs);font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;transition:all .2s}
 .tnav:hover{background:rgba(255,255,255,.15);color:#fff}
 .tnav.active{background:var(--amber);border-color:var(--amber);color:#fff}
@@ -584,6 +585,7 @@ body.has-modal .topbar{pointer-events:auto}
   .user-pill{display:none !important}
 
   /* Drawer-Items SICHTBAR machen + stylen */
+  .tnav-mobile-only{display:flex}
   .drawer-divider{display:block;height:1px;background:rgba(255,255,255,.12);margin:10px 4px 6px}
   .drawer-user-info{display:flex;align-items:center;gap:9px;padding:10px 14px;color:rgba(255,255,255,.85);font-size:13px;background:rgba(255,255,255,.04);border-radius:6px;margin-bottom:4px}
   .drawer-action{display:flex;align-items:center;gap:9px;padding:11px 14px;font-size:14px;font-weight:500;color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;cursor:pointer;font-family:inherit;text-align:left;width:100%;transition:background .15s}
@@ -976,7 +978,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.36</div>
+    <div class="login-version">Elevator Servicebox v2.37</div>
   </div>
 </div>
 
@@ -996,7 +998,10 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <button class="tnav active" id="tnav-dashboard" onclick="switchView('dashboard')">🏠 Dashboard</button>
     <button class="tnav" id="tnav-conv" onclick="switchView('conv')">🔧 Konverter</button>
     <button class="tnav" id="tnav-overview" onclick="switchView('overview')">📋 Übersicht</button>
+    <button class="tnav tnav-mobile-only" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
+    <button class="tnav tnav-mobile-only" id="tnav-wartung" onclick="switchView('wartung')">🧮 Wartungspreis-Kalkulator</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
+    <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
     <div class="drawer-divider"></div>
     <div class="drawer-user-info"><span style="font-size:18px">👤</span><span id="drawer-user-name" style="font-weight:600">–</span></div>
@@ -1652,7 +1657,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.36';
+const APP_VERSION = 'v2.37';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2119,11 +2124,13 @@ async function showApp() {
   // Admin: Schema-Migrationen still im Hintergrund laufen lassen, aber KEINE Status-Bar
   if (isAdmin()) {
     document.getElementById('tnav-users').style.display = '';
+    document.getElementById('tnav-firmen').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
   } else {
     document.getElementById('tnav-users').style.display = 'none';
+    document.getElementById('tnav-firmen').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -2133,8 +2140,10 @@ async function showApp() {
   renderTmplSelector();
 
   // Tool-Topbar-Buttons je nach Permission ein-/ausblenden
-  document.getElementById('tnav-conv').style.display     = hasPermission('tool_arbeitsberichte') ? '' : 'none';
-  document.getElementById('tnav-overview').style.display = hasPermission('tool_overview') ? '' : 'none';
+  document.getElementById('tnav-conv').style.display      = hasPermission('tool_arbeitsberichte') ? '' : 'none';
+  document.getElementById('tnav-overview').style.display  = hasPermission('tool_overview') ? '' : 'none';
+  document.getElementById('tnav-wartung').style.display   = hasPermission('tool_wartung_kalk') ? '' : 'none';
+  document.getElementById('tnav-auftraege').style.display = hasPermission('tool_auftraege') ? '' : 'none';
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
   trackEvent('app', 'login');
