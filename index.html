@@ -68,6 +68,8 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .logo-name{color:#fff;font-weight:600;font-size:14px}
 .logo-sub{color:rgba(255,255,255,.4);font-size:10px;letter-spacing:1px;text-transform:uppercase}
 .topbar-nav{display:flex;gap:4px;align-items:center}
+/* Drawer-Items nur in Mobile-Drawer sichtbar – Desktop hidden */
+.drawer-divider,.drawer-user-info,.drawer-action,.drawer-footer{display:none}
 .tnav{background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);color:rgba(255,255,255,.65);padding:5px 14px;border-radius:var(--rs);font-size:12px;font-weight:500;cursor:pointer;font-family:inherit;transition:all .2s}
 .tnav:hover{background:rgba(255,255,255,.15);color:#fff}
 .tnav.active{background:var(--amber);border-color:var(--amber);color:#fff}
@@ -573,13 +575,22 @@ body.has-modal .topbar{pointer-events:auto}
   .mobile-menu-btn{display:flex}
   .topbar-btn{padding:6px 8px;font-size:12px;white-space:nowrap;background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.3);color:#fff;font-weight:600}
   .topbar-btn:hover{background:rgba(255,255,255,.28)}
-  /* Auf Mobile: weniger Platz – kompakte Icon-Buttons */
-  #theme-toggle-btn{padding:5px 9px}
-  .topbar-btn[onclick*="forceUpdate"]{font-size:0 !important;padding:5px 9px}
-  .topbar-btn[onclick*="forceUpdate"]::before{content:'↻';font-size:16px;color:inherit;font-weight:700;line-height:1}
-  .topbar-btn[onclick*="logout"]{font-size:0 !important;padding:5px 9px}
-  .topbar-btn[onclick*="logout"]::before{content:'⏏';font-size:16px;color:inherit;font-weight:700;line-height:1}
-  .ver-pill{display:none}
+  /* Auf Mobile sichtbar in Topbar: NUR Hamburger + Logo + Firma-Pill.
+     Theme/Update/Logout/Version → wandern in den Hamburger-Drawer. */
+  #theme-toggle-btn,
+  .topbar-btn[onclick*="forceUpdate"],
+  .topbar-btn[onclick*="logout"],
+  .ver-pill,
+  .user-pill{display:none !important}
+
+  /* Drawer-Items SICHTBAR machen + stylen */
+  .drawer-divider{display:block;height:1px;background:rgba(255,255,255,.12);margin:10px 4px 6px}
+  .drawer-user-info{display:flex;align-items:center;gap:9px;padding:10px 14px;color:rgba(255,255,255,.85);font-size:13px;background:rgba(255,255,255,.04);border-radius:6px;margin-bottom:4px}
+  .drawer-action{display:flex;align-items:center;gap:9px;padding:11px 14px;font-size:14px;font-weight:500;color:rgba(255,255,255,.9);background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);border-radius:6px;cursor:pointer;font-family:inherit;text-align:left;width:100%;transition:background .15s}
+  .drawer-action:hover{background:rgba(255,255,255,.12);color:#fff}
+  .drawer-action.drawer-logout{background:rgba(220,38,38,.18);border-color:rgba(220,38,38,.3);color:#FCA5A5;margin-top:4px}
+  .drawer-action.drawer-logout:hover{background:rgba(220,38,38,.3);color:#fff}
+  .drawer-footer{display:block;padding:14px;font-size:11px;color:rgba(255,255,255,.4);font-family:monospace;text-align:center;margin-top:auto}
   #user-name{display:none}
   .user-pill{padding:0 4px;color:rgba(255,255,255,.95)}
   .firma-pill{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.3);color:#fff;font-weight:600}
@@ -934,12 +945,14 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 @media (max-width:768px){
   body.theme-modern .topbar{box-shadow:0 2px 12px rgba(27,91,217,.12)}
   body.theme-modern .topbar-btn{background:#EAF2FE;border-color:#BFD6FB;color:var(--navy-d)}
-  body.theme-modern .ver-pill{background:#EAF2FE;color:var(--navy-d);border-color:#BFD6FB}
   body.theme-modern .firma-pill{background:#EAF2FE;color:var(--navy-d);border-color:#BFD6FB}
   body.theme-modern .firma-pill:hover{background:#D5E5FC}
-  body.theme-modern .topbar-btn[onclick*="logout"]{background:#FEE2E2;border-color:#FCA5A5;color:#B91C1C}
   body.theme-modern .dash-hero h1{font-size:22px}
   body.theme-modern .dash-tool{padding:18px}
+  /* Drawer behält dunkles Navy-Schema – Modern-Theme passt nur Akzente an */
+  body.theme-modern .topbar-nav{background:#0F1F40}
+  body.theme-modern .drawer-action{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.14)}
+  body.theme-modern .drawer-action.drawer-logout{background:rgba(239,68,68,.22);border-color:rgba(239,68,68,.4);color:#FCA5A5}
 }
 </style>
 </head>
@@ -961,7 +974,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.34</div>
+    <div class="login-version">Elevator Servicebox v2.35</div>
   </div>
 </div>
 
@@ -982,6 +995,13 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <button class="tnav" id="tnav-conv" onclick="switchView('conv')">🔧 Konverter</button>
     <button class="tnav" id="tnav-overview" onclick="switchView('overview')">📋 Übersicht</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
+    <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
+    <div class="drawer-divider"></div>
+    <div class="drawer-user-info"><span style="font-size:18px">👤</span><span id="drawer-user-name" style="font-weight:600">–</span></div>
+    <button type="button" class="drawer-action" onclick="toggleTheme()">🎨 Design wechseln</button>
+    <button type="button" class="drawer-action" onclick="forceUpdate()">↻ Update prüfen</button>
+    <button type="button" class="drawer-action drawer-logout" onclick="logout()">⏏ Abmelden</button>
+    <div class="drawer-footer" id="drawer-version">–</div>
   </div>
   <div class="mobile-nav-backdrop" id="mobile-nav-backdrop" onclick="toggleMobileMenu()"></div>
   <div class="topbar-gap"></div>
@@ -1630,7 +1650,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.34';
+const APP_VERSION = 'v2.35';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2017,6 +2037,7 @@ function toggleTheme() {
   const next = (cur === 'modern') ? 'classic' : 'modern';
   try { localStorage.setItem('theme_'+APP_CONFIG.PROJECT_ID, next); } catch(e) {}
   applyTheme(next);
+  if (typeof closeMobileMenu === 'function') closeMobileMenu();
   if (typeof toast === 'function') toast('Design: ' + (next === 'modern' ? 'Modern (hellblau)' : 'Classic (navy/amber)'), 'ok');
 }
 // So früh wie möglich anwenden – sobald body existiert
@@ -2077,6 +2098,9 @@ async function showApp() {
   document.getElementById('app').classList.add('show');
   document.getElementById('user-name').textContent = APP_KEYS.user?.name || '';
   document.getElementById('ver-pill').textContent = APP_VERSION;
+  // Drawer-Erweiterung mit Daten füllen (mobile sichtbar)
+  const dn = document.getElementById('drawer-user-name'); if (dn) dn.textContent = APP_KEYS.user?.name || '–';
+  const dv = document.getElementById('drawer-version');   if (dv) dv.textContent = APP_VERSION;
   // Browser-Tab-Titel inkl. Version (so dass User die Version auch im Tab/PWA-Title sieht)
   document.title = 'Elevator Servicebox ' + APP_VERSION;
   applyTheme(getActiveTheme());
