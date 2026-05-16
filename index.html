@@ -1030,7 +1030,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.45</div>
+    <div class="login-version">Elevator Servicebox v2.46</div>
   </div>
 </div>
 
@@ -1513,6 +1513,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
         <input type="password" class="intg-input" id="intg-vt-key" placeholder="vt_pat_…" autocomplete="off">
         <button class="btn prim" id="intg-vt-setup-btn" onclick="valtownStartSetup(this)">⚡ Setup starten</button>
         <button class="btn"      onclick="valtownTestProxy()">🩺 Proxy testen</button>
+        <button class="btn"      onclick="valtownRefreshProxyUrl(this)" title="URL frisch von Val.town holen + normalisieren">🔧 URL reparieren</button>
       </div>
       <div class="intg-hint">Token findest du unter <code>val.town</code> → Settings → API Tokens. Berechtigung: <code>vals.read</code>, <code>vals.write</code>, <code>vals.execute</code>.</div>
 
@@ -1532,14 +1533,14 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <div class="intg-row">
         <input type="password" class="intg-input" id="intg-erp-key-aufzug" placeholder="API-Key für Tenant 1…" autocomplete="off">
         <button class="btn" onclick="erpSaveFirmaKey('aufzug', this)">💾 Speichern</button>
-        <button class="btn" onclick="erpProbe('aufzug')">🔬 Testen</button>
+        <button class="btn" onclick="erpProbe('aufzug', null, this)">🔬 Testen</button>
       </div>
 
       <div class="intg-label" style="margin-top:14px">🏢 Aszendio (Tenant 4)</div>
       <div class="intg-row">
         <input type="password" class="intg-input" id="intg-erp-key-aszendio" placeholder="API-Key für Tenant 4…" autocomplete="off">
         <button class="btn" onclick="erpSaveFirmaKey('aszendio', this)">💾 Speichern</button>
-        <button class="btn" onclick="erpProbe('aszendio')">🔬 Testen</button>
+        <button class="btn" onclick="erpProbe('aszendio', null, this)">🔬 Testen</button>
       </div>
 
       <details style="margin-top:12px">
@@ -1791,7 +1792,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.45';
+const APP_VERSION = 'v2.46';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2139,7 +2140,22 @@ async function loginWithUserKey(userKey) {
     if (rec.fields.key_name==='airtableBaseId')  APP_KEYS.appBaseId       = rec.fields.key_value;
     if (rec.fields.key_name==='valtownKey')      APP_KEYS.valtownKey      = rec.fields.key_value;
     if (rec.fields.key_name==='valtownValId')    APP_KEYS.valtownValId    = rec.fields.key_value;
-    if (rec.fields.key_name==='valtownProxyUrl') APP_KEYS.valtownProxyUrl = rec.fields.key_value;
+    if (rec.fields.key_name==='valtownProxyUrl') {
+      const raw = rec.fields.key_value;
+      const normalized = (typeof _normalizeProxyUrl === 'function') ? _normalizeProxyUrl(raw) : raw;
+      APP_KEYS.valtownProxyUrl = normalized;
+      // Auto-Heal: bei wrong-case in DB die normalisierte Version zurueckschreiben
+      if (raw && normalized && raw !== normalized) {
+        try {
+          fetch('https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys/'+rec.id, {
+            method:'PATCH',
+            headers: { 'Authorization':'Bearer '+(APP_KEYS.airtableWriteKey||''), 'Content-Type':'application/json' },
+            body: JSON.stringify({ fields: { key_value: normalized } })
+          });
+          console.log('[Auto-Heal] valtownProxyUrl normalisiert:', raw, '→', normalized);
+        } catch(_){}
+      }
+    }
     if (rec.fields.key_name==='aufzugApiKey')    APP_KEYS.aufzugApiKey    = rec.fields.key_value;
     // Per-Firma keys: aufzugApiKey_aufzug, aufzugApiKey_aszendio
     if (rec.fields.key_name && rec.fields.key_name.startsWith('aufzugApiKey_')) {
@@ -6025,8 +6041,19 @@ function showAdminPanel(section) {
    App pusht Proxy-Code via Val.town REST API.
    ════════════════════════════════════════════════════════════ */
 const VALTOWN_API_BASE  = 'https://api.val.town';
-const VALTOWN_VAL_NAME  = 'elevatorServiceboxProxy';
+const VALTOWN_VAL_NAME  = 'elevatorserviceboxproxy'; // ⚠ MUST be lowercase: Val.town hostet Vals unter lowercase URLs
 const VALTOWN_FILE_PATH = 'main.tsx';
+
+/* ── Proxy-URL normalisieren (Val.town nutzt lowercase Hostnames) ── */
+function _normalizeProxyUrl(url) {
+  if (!url) return url;
+  try {
+    const u = new URL(url);
+    u.hostname = u.hostname.toLowerCase();
+    let s = u.protocol + '//' + u.hostname + (u.pathname && u.pathname !== '/' ? u.pathname : '');
+    return s.replace(/\/+$/, '');
+  } catch(_) { return String(url).replace(/\/+$/, ''); }
+}
 
 // Proxy-Code wird ins Val gepusht. Routes:
 //   POST /auth        → Login mit user_key → session_token
@@ -6361,10 +6388,11 @@ async function valtownStartSetup(btn) {
       _vtLog('✓ '+env.k+' gesetzt', 'ok');
     }
 
-    // Proxy-URL: Val.town vergibt eine pro Val
+    // Proxy-URL: Val.town vergibt eine pro Val. Wichtig: Hostname IMMER lowercase!
     const val = await valtownApi(token, 'GET', '/v2/vals/'+valId);
-    let proxyUrl = val.links?.endpoint || ('https://'+me.username+'-'+(val.name||VALTOWN_VAL_NAME)+'.web.val.run');
-    proxyUrl = proxyUrl.replace(/\/$/,'');
+    const rawName = (val.name || VALTOWN_VAL_NAME).toLowerCase();
+    let proxyUrl = val.links?.endpoint || ('https://'+(me.username||'').toLowerCase()+'-'+rawName+'.web.val.run');
+    proxyUrl = _normalizeProxyUrl(proxyUrl);
     _vtLog('✓ Proxy-URL: '+proxyUrl, 'ok');
 
     // In Master-Keys speichern
@@ -6468,10 +6496,15 @@ async function erpSaveFirmaKey(firmaSlug, btn) {
 function _erpLog(msg, cls='') {
   const el = document.getElementById('intg-erp-log');
   if (!el) { console.log('[ERP]', msg); return; }
+  const wasHidden = el.style.display !== 'block';
   el.style.display = 'block';
   const ts = new Date().toLocaleTimeString('de-DE');
   el.innerHTML += '<div class="'+cls+'">['+ts+'] '+String(msg).replace(/</g,'&lt;')+'</div>';
   el.scrollTop = el.scrollHeight;
+  // Beim ersten Eintrag: Log ins Sichtfeld scrollen
+  if (wasHidden) {
+    setTimeout(() => { try { el.scrollIntoView({behavior:'smooth', block:'center'}); } catch(_){} }, 60);
+  }
   console.log('[ERP]', msg);
 }
 
@@ -6490,32 +6523,92 @@ async function erpShowDebugEnv() {
 }
 
 /* ── Debug-Probe: ERP-Endpunkt direkt testen ── */
-async function erpProbe(firmaSlug, customPath) {
+async function erpProbe(firmaSlug, customPath, btn) {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Teste…'; }
   const tenant = _getErpTenantForFirma(firmaSlug);
-  _erpLog('=== Probe '+firmaSlug+(tenant?' (Tenant '+tenant+')':' (kein Tenant!)')+' ===', 'info');
-  if (!tenant) {
-    _erpLog('⚠ Kein ERP-Tenant für "'+firmaSlug+'" hinterlegt. Setze ihn in Admin → 🏢 Firmen-Verwaltung.', 'err');
-    return;
-  }
-  const paths = customPath ? [customPath] : ['api/auftraege?limit=1','auftraege?limit=1'];
-  for (const p of paths) {
-    try {
-      _erpLog('GET '+p+' …', 'info');
-      const d = await erpFetch('/debug/probe', { method:'POST', body:{ firma:firmaSlug, tenant, path:p } });
-      _erpLog('  → Target: '+d.target, 'info');
-      _erpLog('  → Tenant: '+d.tenant+' · Key: '+d.api_key_source+' ('+d.api_key_preview+')', 'info');
-      _erpLog('  → Duration: '+d.duration_ms+'ms', 'info');
-      if (d.err) _erpLog('  ❌ Fetch-Error: '+d.err, 'err');
-      else if (d.status >= 200 && d.status < 300) {
-        _erpLog('  ✓ HTTP '+d.status+' OK', 'ok');
-        if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,200)+(d.body_excerpt.length>200?'…':''), 'ok');
+  toast('🔬 Teste '+firmaSlug+'…', '');
+  _erpLog('================================', 'info');
+  _erpLog('🔬 Probe '+firmaSlug+(tenant?' (Tenant '+tenant+')':' (kein Tenant!)'), 'info');
+  _erpLog('Proxy: '+APP_KEYS.valtownProxyUrl, 'info');
+  // Log sichtbar machen (scrollt zum Log)
+  setTimeout(() => {
+    const el = document.getElementById('intg-erp-log');
+    if (el) el.scrollIntoView({behavior:'smooth', block:'center'});
+  }, 50);
+  try {
+    if (!tenant) {
+      _erpLog('⚠ Kein ERP-Tenant für "'+firmaSlug+'" hinterlegt. Setze ihn in Admin → 🏢 Firmen-Verwaltung.', 'err');
+      toast('⚠ Tenant für '+firmaSlug+' fehlt (Firmen-Verwaltung)', 'err');
+      return;
+    }
+    const paths = customPath ? [customPath] : ['api/auftraege?limit=1','auftraege?limit=1'];
+    let success = false;
+    for (const p of paths) {
+      try {
+        _erpLog('GET '+p+' …', 'info');
+        const d = await erpFetch('/debug/probe', { method:'POST', body:{ firma:firmaSlug, tenant, path:p } });
+        _erpLog('  → Target: '+d.target, 'info');
+        _erpLog('  → Tenant: '+d.tenant+' (via '+(d.tenant_source||'?')+')', 'info');
+        _erpLog('  → Key: '+d.api_key_source+' ('+d.api_key_preview+')', 'info');
+        _erpLog('  → Duration: '+d.duration_ms+'ms', 'info');
+        if (d.err) _erpLog('  ❌ Fetch-Error: '+d.err, 'err');
+        else if (d.status >= 200 && d.status < 300) {
+          _erpLog('  ✓ HTTP '+d.status+' OK', 'ok');
+          if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,200)+(d.body_excerpt.length>200?'…':''), 'ok');
+          toast('✅ '+firmaSlug+': HTTP '+d.status+' OK', 'ok');
+          success = true;
+          break;
+        } else {
+          _erpLog('  ⚠ HTTP '+d.status, 'err');
+          if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,500), 'err');
+        }
+      } catch(e) {
+        _erpLog('❌ Probe-Fehler: '+e.message, 'err');
+        toast('❌ '+firmaSlug+': '+e.message.slice(0,140), 'err');
         return;
-      } else {
-        _erpLog('  ⚠ HTTP '+d.status, 'err');
-        if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,500), 'err');
       }
-    } catch(e) { _erpLog('❌ Probe-Fehler: '+e.message, 'err'); break; }
+    }
+    if (!success) toast('⚠ '+firmaSlug+': keine Antwort 2xx (siehe Log unten)', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔬 Testen'; }
+  }
+}
+
+/* ── Proxy-URL frisch von Val.town holen + normalisieren ── */
+async function valtownRefreshProxyUrl(btn) {
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Erst Setup ausführen.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ hole URL…'; }
+  _vtLog('=== URL reparieren ===', 'info');
+  try {
+    const me  = await valtownMe(APP_KEYS.valtownKey);
+    _vtLog('Eingeloggt als '+me.username, 'info');
+    const val = await valtownApi(APP_KEYS.valtownKey, 'GET', '/v2/vals/'+APP_KEYS.valtownValId);
+    _vtLog('Val-Name: '+val.name+' · Endpoint: '+(val.links?.endpoint||'(nicht im response)'), 'info');
+    const rawName = (val.name || VALTOWN_VAL_NAME).toLowerCase();
+    let newUrl = val.links?.endpoint || ('https://'+(me.username||'').toLowerCase()+'-'+rawName+'.web.val.run');
+    newUrl = _normalizeProxyUrl(newUrl);
+    _vtLog('Normalisierte URL: '+newUrl, 'ok');
+    const oldUrl = APP_KEYS.valtownProxyUrl;
+    if (oldUrl === newUrl) {
+      _vtLog('URL ist schon korrekt – kein Update nötig.', 'ok');
+      toast('✓ URL ist bereits korrekt.', 'ok');
+      return;
+    }
+    _vtLog('Alte URL: '+oldUrl, 'info');
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey('valtownProxyUrl', newUrl, mk['valtownProxyUrl']?.id);
+    APP_KEYS.valtownProxyUrl = newUrl;
+    erpClearSessionToken();
+    _vtLog('✓ URL gespeichert', 'ok');
+    toast('✅ Proxy-URL repariert: '+newUrl, 'ok');
+    renderIntegrationView();
+  } catch(e) {
+    console.error('refresh URL:', e);
+    _vtLog('❌ '+e.message, 'err');
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔧 URL reparieren'; }
   }
 }
 
