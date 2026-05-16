@@ -1030,7 +1030,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.43</div>
+    <div class="login-version">Elevator Servicebox v2.44</div>
   </div>
 </div>
 
@@ -1523,18 +1523,36 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <div class="intg-card">
       <h3>🛗 Aufzugshandwerk ERP-API <span id="intg-erp-status"><span class="intg-status">…</span></span></h3>
       <p class="intg-desc">
-        Statischer API-Key für <code>verwaltung.api.aufzugshandwerk.de</code>. Identisch für Aufzugshandwerk (Tenant 1) und Aszendio (Tenant 4) – die Firma wird beim Sync automatisch zugeordnet.
-        Der Key wird im Val.town-Proxy als Env-Variable abgelegt (nicht im Browser).
+        API-Keys für <code>verwaltung.api.aufzugshandwerk.de</code>. <strong>Pro Mandant ein eigener Key</strong> – der Key wird im Val.town-Proxy als Env-Variable abgelegt (nicht im Browser).
+        Beim Sync wählt der Proxy automatisch den passenden Key für die aktive Firma. Falls für eine Firma kein Key gesetzt ist, fällt er auf einen optionalen globalen Key zurück.
       </p>
-      <div class="intg-label">API-Key</div>
+
+      <div class="intg-label">🛗 Aufzugshandwerk (Tenant 1)</div>
       <div class="intg-row">
-        <input type="password" class="intg-input" id="intg-erp-key" placeholder="eisbergsalat…" autocomplete="off">
-        <button class="btn" onclick="erpSaveKey(this)">💾 Key speichern</button>
+        <input type="password" class="intg-input" id="intg-erp-key-aufzug" placeholder="API-Key für Tenant 1…" autocomplete="off">
+        <button class="btn" onclick="erpSaveFirmaKey('aufzug', this)">💾 Speichern</button>
+        <button class="btn" onclick="erpProbe('aufzug')">🔬 Testen</button>
       </div>
-      <div class="intg-hint">Ändert sich der Key, einfach hier neu eintragen und speichern – der Proxy wird auf dem Val.town-Server aktualisiert.</div>
+
+      <div class="intg-label" style="margin-top:14px">🏢 Aszendio (Tenant 4)</div>
+      <div class="intg-row">
+        <input type="password" class="intg-input" id="intg-erp-key-aszendio" placeholder="API-Key für Tenant 4…" autocomplete="off">
+        <button class="btn" onclick="erpSaveFirmaKey('aszendio', this)">💾 Speichern</button>
+        <button class="btn" onclick="erpProbe('aszendio')">🔬 Testen</button>
+      </div>
+
+      <details style="margin-top:12px">
+        <summary style="font-size:12px;color:var(--txt2);cursor:pointer">⚙ Optional: globaler Fallback-Key</summary>
+        <div class="intg-row" style="margin-top:8px">
+          <input type="password" class="intg-input" id="intg-erp-key" placeholder="Globaler Fallback (nur falls beide Mandanten denselben Key haben)" autocomplete="off">
+          <button class="btn" onclick="erpSaveKey(this)">💾 Speichern</button>
+        </div>
+      </details>
+
+      <div class="intg-hint">"🔬 Testen" ruft <code>/api/auftraege?limit=1</code> ab und zeigt HTTP-Status + Antwort-Body. Damit siehst du sofort, ob Key+Tenant passen.</div>
     </div>
 
-    <!-- ERP-SYNC -->
+    <!-- ERP-SYNC + DEBUG -->
     <div class="intg-card">
       <h3>🔄 Aufträge synchronisieren</h3>
       <p class="intg-desc">
@@ -1542,8 +1560,12 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       </p>
       <div class="intg-row">
         <button class="btn prim" onclick="runErpSync()">🔄 Sync für aktuelle Firma starten</button>
-        <span class="intg-hint" style="margin-top:0">Aktive Firma siehst du oben links im Firmen-Selektor.</span>
+        <button class="btn" onclick="erpShowDebugEnv()">🔍 Env-Status anzeigen</button>
+        <button class="btn" onclick="valtownUpdateProxyCode(this)" title="Push aktuellen Proxy-Code (z.B. nach App-Update)">⬆ Proxy-Code aktualisieren</button>
       </div>
+      <div class="intg-hint">Aktive Firma siehst du oben rechts im Firmen-Selektor.</div>
+
+      <div class="intg-log" id="intg-erp-log"></div>
     </div>
 
   </div>
@@ -1768,7 +1790,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.43';
+const APP_VERSION = 'v2.44';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1780,8 +1802,9 @@ let APP_KEYS = {
   airtableWriteKey:null, anthropicKey:null, appBaseId:null, user:null,
   // Val.town-Proxy für ERP-API
   valtownKey:null, valtownValId:null, valtownProxyUrl:null,
-  // Aufzugshandwerk-ERP-Token (wird im Val.town Proxy gesetzt, hier nur Setup)
+  // Aufzugshandwerk-ERP-Token: globaler Fallback + pro Firma
   aufzugApiKey:null,
+  aufzugApiKeys: {}, // { aufzug: '...', aszendio: '...' }
 };
 
 /* ════════════════════════════════════════════════════════════
@@ -2117,6 +2140,11 @@ async function loginWithUserKey(userKey) {
     if (rec.fields.key_name==='valtownValId')    APP_KEYS.valtownValId    = rec.fields.key_value;
     if (rec.fields.key_name==='valtownProxyUrl') APP_KEYS.valtownProxyUrl = rec.fields.key_value;
     if (rec.fields.key_name==='aufzugApiKey')    APP_KEYS.aufzugApiKey    = rec.fields.key_value;
+    // Per-Firma keys: aufzugApiKey_aufzug, aufzugApiKey_aszendio
+    if (rec.fields.key_name && rec.fields.key_name.startsWith('aufzugApiKey_')) {
+      const slug = rec.fields.key_name.replace('aufzugApiKey_','');
+      APP_KEYS.aufzugApiKeys[slug] = rec.fields.key_value;
+    }
   });
 
   // Step 3: Global fallback keys
@@ -6087,6 +6115,49 @@ export default async function (req) {
   if (path === "me")     return json({ user });
   if (path === "health") return json({ ok:true, user:{ name:user.name, is_admin:user.is_admin } });
 
+  // ── Debug: welche Env-Vars sind gesetzt? (Werte nicht ausgegeben) ──
+  if (path === "debug/env") {
+    if (!user.is_admin) return json({ error:"Nur fuer Admins" }, 403);
+    const keys = ["AIRTABLE_READ_KEY","AIRTABLE_BASE_ID","AUFZUG_API_KEY","AUFZUG_API_KEY_AUFZUG","AUFZUG_API_KEY_ASZENDIO","AUFZUG_BASE_URL"];
+    const out = {};
+    for (const k of keys) {
+      const v = Deno.env.get(k);
+      out[k] = v ? { set: true, length: v.length, preview: v.length>8 ? v.slice(0,4)+"..."+v.slice(-2) : "(short)" } : { set: false };
+    }
+    return json({ env: out, tenant_map: TENANT_MAP });
+  }
+
+  // ── Debug-Probe: beliebigen ERP-Pfad testen, raw upstream-response zurueckgeben ──
+  if (path === "debug/probe" && req.method === "POST") {
+    if (!user.is_admin) return json({ error:"Nur fuer Admins" }, 403);
+    let b = {}; try { b = await req.json(); } catch(_){}
+    const firma = (b.firma||"aufzug").toString();
+    const probePath = (b.path||"").toString().replace(/^\\/+/,"");
+    const tenant = TENANT_MAP[firma];
+    if (!tenant) return json({ error:"Unbekannte Firma: "+firma }, 404);
+    const apiKey = Deno.env.get("AUFZUG_API_KEY_"+firma.toUpperCase()) || Deno.env.get("AUFZUG_API_KEY");
+    if (!apiKey) return json({ error:"Kein API-Key fuer Firma "+firma+" gesetzt", expected_env:["AUFZUG_API_KEY_"+firma.toUpperCase(),"AUFZUG_API_KEY"] }, 500);
+    const baseUrl = Deno.env.get("AUFZUG_BASE_URL") || "https://verwaltung.api.aufzugshandwerk.de/v1";
+    const target  = baseUrl + "/" + probePath;
+    const t0 = Date.now();
+    let upstreamStatus = null, upstreamBody = "", upstreamErr = null;
+    try {
+      const r = await fetch(target, { method:"GET", headers: { APIKEY:apiKey, TENANT:tenant, Accept:"application/json" } });
+      upstreamStatus = r.status;
+      upstreamBody = await r.text();
+    } catch(e) { upstreamErr = e.message; }
+    return json({
+      target,
+      tenant,
+      api_key_source: Deno.env.get("AUFZUG_API_KEY_"+firma.toUpperCase()) ? "AUFZUG_API_KEY_"+firma.toUpperCase() : "AUFZUG_API_KEY",
+      api_key_preview: apiKey.length>8 ? apiKey.slice(0,4)+"..."+apiKey.slice(-2) : "(short)",
+      duration_ms: Date.now()-t0,
+      status: upstreamStatus,
+      err: upstreamErr,
+      body_excerpt: upstreamBody ? upstreamBody.slice(0, 2000) : null
+    });
+  }
+
   if (path.startsWith("aufzug/")) {
     const rest = path.replace(/^aufzug\\//,"");
     const i = rest.indexOf("/");
@@ -6094,22 +6165,46 @@ export default async function (req) {
     const firma = rest.slice(0, i);
     const up = rest.slice(i+1);
     const tenant = TENANT_MAP[firma];
-    if (!tenant) return json({ error:"Unbekannte Firma: "+firma }, 404);
-    const apiKey = Deno.env.get("AUFZUG_API_KEY");
-    if (!apiKey) return json({ error:"AUFZUG_API_KEY env var fehlt" }, 500);
+    if (!tenant) return json({ error:"Unbekannte Firma: "+firma, hint:"Erlaubt: "+Object.keys(TENANT_MAP).join(", ") }, 404);
+    // Per-Firma API-Key zuerst, dann globalen Fallback
+    const firmaEnvKey = "AUFZUG_API_KEY_"+firma.toUpperCase();
+    const apiKey = Deno.env.get(firmaEnvKey) || Deno.env.get("AUFZUG_API_KEY");
+    if (!apiKey) return json({ error:"Kein API-Key fuer Firma "+firma+" hinterlegt", expected_env:[firmaEnvKey,"AUFZUG_API_KEY"] }, 500);
     const baseUrl = Deno.env.get("AUFZUG_BASE_URL") || "https://verwaltung.api.aufzugshandwerk.de/v1";
     const target = baseUrl + "/" + up + url.search;
-    const init = { method:req.method, headers: { APIKEY:apiKey, TENANT:tenant } };
+    const t0 = Date.now();
+    const init = { method:req.method, headers: { APIKEY:apiKey, TENANT:tenant, Accept:"application/json" } };
     if (req.method !== "GET" && req.method !== "HEAD") {
       const t = await req.text();
       if (t && t.length > 0) { init.body = t; init.headers["Content-Type"] = "application/json"; }
     }
-    const up2 = await fetch(target, init);
+    let up2, text;
+    try {
+      up2 = await fetch(target, init);
+    } catch(e) {
+      return json({ error:"Upstream-Verbindung fehlgeschlagen", target, tenant, message:e.message }, 502);
+    }
     const noBody = up2.status===101||up2.status===204||up2.status===205||up2.status===304;
-    const text = noBody ? null : await up2.text();
+    text = noBody ? null : await up2.text();
+    // Bei Upstream-Fehler: strukturierte Fehlerantwort mit Diagnose
+    if (up2.status >= 400) {
+      return json({
+        error: "Upstream HTTP "+up2.status,
+        target,
+        tenant,
+        method: req.method,
+        api_key_source: Deno.env.get(firmaEnvKey) ? firmaEnvKey : "AUFZUG_API_KEY",
+        duration_ms: Date.now()-t0,
+        upstream_body_excerpt: text ? text.slice(0, 1500) : null,
+        upstream_content_type: up2.headers.get("content-type") || null
+      }, up2.status);
+    }
     return new Response(text, { status:up2.status, headers: {
       "content-type": up2.headers.get("content-type") || "application/json",
-      "access-control-allow-origin": "*"
+      "access-control-allow-origin": "*",
+      "x-erp-target": target,
+      "x-erp-tenant": tenant,
+      "x-erp-duration-ms": String(Date.now()-t0)
     }});
   }
 
@@ -6192,11 +6287,16 @@ function _vtLog(msg, cls='') {
 }
 async function valtownStartSetup(btn) {
   const tokenInput = document.getElementById('intg-vt-key');
-  const erpInput   = document.getElementById('intg-erp-key');
   const token = (tokenInput?.value || APP_KEYS.valtownKey || '').trim();
   if (!token) return toast('Bitte Val.town-Token eintragen (vt_pat_…)', 'err');
-  const erpKey = (erpInput?.value || APP_KEYS.aufzugApiKey || '').trim();
-  if (!erpKey) return toast('Bitte Aufzugshandwerk-API-Key eintragen', 'err');
+
+  // ERP-Keys einsammeln: pro Firma + optional global
+  const keyAufzug   = (document.getElementById('intg-erp-key-aufzug')?.value   || APP_KEYS.aufzugApiKeys.aufzug   || '').trim();
+  const keyAszendio = (document.getElementById('intg-erp-key-aszendio')?.value || APP_KEYS.aufzugApiKeys.aszendio || '').trim();
+  const keyGlobal   = (document.getElementById('intg-erp-key')?.value          || APP_KEYS.aufzugApiKey           || '').trim();
+  if (!keyAufzug && !keyAszendio && !keyGlobal) {
+    return toast('Bitte mindestens einen ERP-API-Key eintragen (pro Mandant oder global)', 'err');
+  }
 
   if (btn) { btn.disabled = true; btn.textContent = '⏳ läuft…'; }
   document.getElementById('intg-vt-log').innerHTML = '';
@@ -6240,8 +6340,10 @@ async function valtownStartSetup(btn) {
     const envs = [
       { k:'AIRTABLE_READ_KEY', v:APP_CONFIG.AIRTABLE_READ_KEY, d:'Read token for User-Tabelle' },
       { k:'AIRTABLE_BASE_ID',  v:APP_KEYS.appBaseId||APP_CONFIG.APP_BASE_ID, d:'App-Base ID' },
-      { k:'AUFZUG_API_KEY',    v:erpKey, d:'Aufzugshandwerk ERP API-Key' },
     ];
+    if (keyGlobal)   envs.push({ k:'AUFZUG_API_KEY',          v:keyGlobal,   d:'ERP-Key Fallback (global)' });
+    if (keyAufzug)   envs.push({ k:'AUFZUG_API_KEY_AUFZUG',   v:keyAufzug,   d:'ERP-Key Aufzugshandwerk (Tenant 1)' });
+    if (keyAszendio) envs.push({ k:'AUFZUG_API_KEY_ASZENDIO', v:keyAszendio, d:'ERP-Key Aszendio (Tenant 4)' });
     for (const env of envs) {
       await valtownSetEnvVar(token, valId, env.k, env.v, env.d);
       _vtLog('✓ '+env.k+' gesetzt', 'ok');
@@ -6258,13 +6360,17 @@ async function valtownStartSetup(btn) {
     await writeMasterBaseKey('valtownKey',      token,    mk['valtownKey']?.id);
     await writeMasterBaseKey('valtownValId',    valId,    mk['valtownValId']?.id);
     await writeMasterBaseKey('valtownProxyUrl', proxyUrl, mk['valtownProxyUrl']?.id);
-    await writeMasterBaseKey('aufzugApiKey',    erpKey,   mk['aufzugApiKey']?.id);
+    if (keyGlobal)   await writeMasterBaseKey('aufzugApiKey',          keyGlobal,   mk['aufzugApiKey']?.id);
+    if (keyAufzug)   await writeMasterBaseKey('aufzugApiKey_aufzug',   keyAufzug,   mk['aufzugApiKey_aufzug']?.id);
+    if (keyAszendio) await writeMasterBaseKey('aufzugApiKey_aszendio', keyAszendio, mk['aufzugApiKey_aszendio']?.id);
     _vtLog('✓ Keys in Master-Base gespeichert', 'ok');
 
     APP_KEYS.valtownKey       = token;
     APP_KEYS.valtownValId     = valId;
     APP_KEYS.valtownProxyUrl  = proxyUrl;
-    APP_KEYS.aufzugApiKey     = erpKey;
+    if (keyGlobal)   APP_KEYS.aufzugApiKey            = keyGlobal;
+    if (keyAufzug)   APP_KEYS.aufzugApiKeys.aufzug    = keyAufzug;
+    if (keyAszendio) APP_KEYS.aufzugApiKeys.aszendio  = keyAszendio;
 
     _vtLog('🎉 Setup abgeschlossen!', 'ok');
     toast('✅ Val.town-Proxy eingerichtet.', 'ok');
@@ -6280,39 +6386,138 @@ async function valtownStartSetup(btn) {
 
 async function valtownTestProxy() {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy noch nicht eingerichtet.', 'err');
+  _erpLog('=== Proxy-Test ===', 'info');
+  _erpLog('URL: '+APP_KEYS.valtownProxyUrl, 'info');
   try {
-    // Auto-login wenn nötig
     await erpEnsureSession();
+    _erpLog('✓ Session aktiv', 'ok');
     const r = await erpFetch('/health');
+    _erpLog('✓ /health: '+JSON.stringify(r), 'ok');
     toast('✅ Proxy OK: '+(r.user?.name||'?')+(r.user?.is_admin?' (admin)':''), 'ok');
-  } catch(e) { toast('❌ '+e.message, 'err'); }
+  } catch(e) {
+    _erpLog('❌ '+e.message, 'err');
+    toast('❌ '+e.message, 'err');
+  }
 }
 
-/* ── ERP-API-Key updaten (im Proxy + Master-Base) ── */
+/* ── ERP-API-Key updaten – globaler Fallback ── */
 async function erpSaveKey(btn) {
   const inp = document.getElementById('intg-erp-key');
   const newKey = (inp?.value || '').trim();
   if (!newKey) return toast('Bitte API-Key eintragen.', 'err');
   if (newKey === APP_KEYS.aufzugApiKey) return toast('Key unverändert.', '');
-  if (btn) { btn.disabled = true; const orig = btn.textContent; btn.textContent = '⏳ speichere…'; btn._orig = orig; }
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ speichere…'; }
   try {
-    // 1) Im Val.town-Proxy als Env-Var setzen (falls Proxy schon existiert)
     if (APP_KEYS.valtownKey && APP_KEYS.valtownValId) {
-      await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'AUFZUG_API_KEY', newKey, 'Aufzugshandwerk ERP API-Key');
+      await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'AUFZUG_API_KEY', newKey, 'Aufzugshandwerk ERP API-Key (Global Fallback)');
     }
-    // 2) In Master-Base persistieren
     const mk = await loadMasterKeys();
     await writeMasterBaseKey('aufzugApiKey', newKey, mk['aufzugApiKey']?.id);
     APP_KEYS.aufzugApiKey = newKey;
-    // 3) Bestehende Session invalidieren – beim nächsten erpFetch wird neu authentifiziert
     erpClearSessionToken();
-    toast('✅ ERP-API-Key gespeichert.', 'ok');
+    toast('✅ Global-Key gespeichert.', 'ok');
     renderIntegrationView();
   } catch(e) {
-    console.error('erpSaveKey:', e);
+    console.error('erpSaveKey:', e); toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Speichern'; }
+  }
+}
+
+/* ── ERP-API-Key updaten – pro Firma ── */
+async function erpSaveFirmaKey(firmaSlug, btn) {
+  const inp = document.getElementById('intg-erp-key-'+firmaSlug);
+  const newKey = (inp?.value || '').trim();
+  if (!newKey) return toast('Bitte API-Key eintragen.', 'err');
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Erst Val.town-Proxy einrichten.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳…'; }
+  const envName = 'AUFZUG_API_KEY_' + firmaSlug.toUpperCase();
+  const mkName  = 'aufzugApiKey_' + firmaSlug;
+  try {
+    _erpLog('Setze Env-Var '+envName+' im Val…', 'info');
+    await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, envName, newKey, 'ERP-Key fuer Firma '+firmaSlug);
+    _erpLog('✓ Env-Var '+envName+' gesetzt', 'ok');
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey(mkName, newKey, mk[mkName]?.id);
+    APP_KEYS.aufzugApiKeys[firmaSlug] = newKey;
+    erpClearSessionToken();
+    toast('✅ Key für '+firmaSlug+' gespeichert.', 'ok');
+    renderIntegrationView();
+  } catch(e) {
+    console.error('erpSaveFirmaKey:', e);
+    _erpLog('❌ '+e.message, 'err');
     toast('❌ '+e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Key speichern'; }
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Speichern'; }
+  }
+}
+
+/* ── Live-Log helper für ERP-View ── */
+function _erpLog(msg, cls='') {
+  const el = document.getElementById('intg-erp-log');
+  if (!el) { console.log('[ERP]', msg); return; }
+  el.style.display = 'block';
+  const ts = new Date().toLocaleTimeString('de-DE');
+  el.innerHTML += '<div class="'+cls+'">['+ts+'] '+String(msg).replace(/</g,'&lt;')+'</div>';
+  el.scrollTop = el.scrollHeight;
+  console.log('[ERP]', msg);
+}
+
+/* ── Debug: Env-Status im Proxy abfragen ── */
+async function erpShowDebugEnv() {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet.', 'err');
+  _erpLog('=== Env-Status ===', 'info');
+  try {
+    const d = await erpFetch('/debug/env');
+    _erpLog('Tenant-Map: '+JSON.stringify(d.tenant_map), 'info');
+    Object.entries(d.env || {}).forEach(([k,v]) => {
+      if (v.set) _erpLog('✓ '+k+' gesetzt ('+v.length+' Zeichen, '+v.preview+')', 'ok');
+      else       _erpLog('— '+k+' NICHT gesetzt', 'err');
+    });
+  } catch(e) { _erpLog('❌ '+e.message, 'err'); }
+}
+
+/* ── Debug-Probe: ERP-Endpunkt direkt testen ── */
+async function erpProbe(firmaSlug, customPath) {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet.', 'err');
+  _erpLog('=== Probe '+firmaSlug+' ===', 'info');
+  // Verschiedene wahrscheinliche Pfade probieren, falls keiner explizit übergeben
+  const paths = customPath ? [customPath] : ['api/auftraege?limit=1','auftraege?limit=1'];
+  for (const p of paths) {
+    try {
+      _erpLog('GET '+p+' …', 'info');
+      const d = await erpFetch('/debug/probe', { method:'POST', body:{ firma:firmaSlug, path:p } });
+      _erpLog('  → Target: '+d.target, 'info');
+      _erpLog('  → Tenant: '+d.tenant+' · Key: '+d.api_key_source+' ('+d.api_key_preview+')', 'info');
+      _erpLog('  → Duration: '+d.duration_ms+'ms', 'info');
+      if (d.err) _erpLog('  ❌ Fetch-Error: '+d.err, 'err');
+      else if (d.status >= 200 && d.status < 300) {
+        _erpLog('  ✓ HTTP '+d.status+' OK', 'ok');
+        if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,200)+(d.body_excerpt.length>200?'…':''), 'ok');
+        return; // Erfolg, abbrechen
+      } else {
+        _erpLog('  ⚠ HTTP '+d.status, 'err');
+        if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,500), 'err');
+      }
+    } catch(e) { _erpLog('❌ Probe-Fehler: '+e.message, 'err'); break; }
+  }
+}
+
+/* ── Proxy-Code neu pushen (z.B. nach App-Update) ── */
+async function valtownUpdateProxyCode(btn) {
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Proxy nicht eingerichtet.', 'err');
+  if (!confirm('Proxy-Code aktualisieren? (überschreibt main.tsx im Val)')) return;
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ pushe…'; }
+  _erpLog('=== Proxy-Code Update ===', 'info');
+  try {
+    await valtownUpdateFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, VALTOWN_PROXY_CODE);
+    _erpLog('✓ Proxy-Code im Val aktualisiert', 'ok');
+    erpClearSessionToken();
+    toast('✅ Proxy aktualisiert.', 'ok');
+  } catch(e) {
+    _erpLog('❌ '+e.message, 'err'); toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '⬆ Proxy-Code aktualisieren'; }
   }
 }
 
@@ -6330,16 +6535,34 @@ function erpClearSessionToken() {
   _erpSessionToken = null;
   try { localStorage.removeItem('erp_session_'+APP_CONFIG.PROJECT_ID); } catch(_){}
 }
+/* fetch-Wrapper, der iOS-"Load failed" in lesbare Meldung uebersetzt */
+async function _erpRawFetch(url, init) {
+  try {
+    return await fetch(url, init);
+  } catch(e) {
+    // iOS Safari: TypeError "Load failed". Chrome: TypeError "Failed to fetch"
+    const m = e && e.message || String(e);
+    const hint = /load failed|failed to fetch|networkerror/i.test(m)
+      ? ' – Proxy-URL nicht erreichbar (DNS/Network/CORS). URL: '+url
+      : '';
+    throw new Error('Netzwerk-Fehler: '+m+hint);
+  }
+}
 async function erpAuth() {
   if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
   if (!APP_KEYS.user?.api_key) throw new Error('Nicht eingeloggt');
-  const res = await fetch(APP_KEYS.valtownProxyUrl + '/auth', {
+  const url = APP_KEYS.valtownProxyUrl + '/auth';
+  const res = await _erpRawFetch(url, {
     method:'POST',
     headers: { 'Content-Type':'application/json' },
     body: JSON.stringify({ user_key: APP_KEYS.user.api_key, long_lived: true })
   });
-  const d = await res.json();
-  if (!res.ok) throw new Error(d.error || ('HTTP '+res.status));
+  const text = await res.text();
+  let d = null; try { d = text ? JSON.parse(text) : null; } catch(_){ d = { _raw: text }; }
+  if (!res.ok) {
+    const detail = (d && (d.error||d.message)) || (d?._raw||'').slice(0,300) || ('HTTP '+res.status);
+    throw new Error('Proxy /auth: '+detail);
+  }
   erpSetSessionToken(d.session_token);
   return d;
 }
@@ -6356,20 +6579,32 @@ async function erpFetch(path, options={}) {
     headers: Object.assign({ 'Authorization':'Bearer '+erpGetSessionToken() }, options.headers||{}),
   };
   if (options.body) { init.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body); init.headers['Content-Type'] = 'application/json'; }
-  let res = await fetch(url, init);
+  let res = await _erpRawFetch(url, init);
   if (res.status === 401) {
-    // Session abgelaufen → erneut anmelden
     erpClearSessionToken();
     await erpAuth();
     init.headers['Authorization'] = 'Bearer '+erpGetSessionToken();
-    res = await fetch(url, init);
+    res = await _erpRawFetch(url, init);
   }
   const noBody = res.status===204 || res.status===205;
   const text = noBody ? '' : await res.text();
   let data = null; try { data = text ? JSON.parse(text) : null; } catch(_){ data = text; }
   if (!res.ok) {
-    const msg = (data && (data.error||data.message)) || ('HTTP '+res.status);
-    throw new Error(msg);
+    let msg = (data && typeof data==='object' && (data.error||data.message)) || ('HTTP '+res.status);
+    // Wenn Proxy strukturierte Error-Antwort liefert: Target/Tenant/Excerpt anhaengen
+    if (data && typeof data==='object') {
+      const extras = [];
+      if (data.target)               extras.push('target='+data.target);
+      if (data.tenant)               extras.push('tenant='+data.tenant);
+      if (data.api_key_source)       extras.push('key='+data.api_key_source);
+      if (data.upstream_body_excerpt) extras.push('upstream='+String(data.upstream_body_excerpt).slice(0,180));
+      if (extras.length) msg += ' [' + extras.join(' · ') + ']';
+    } else if (typeof text==='string' && text) {
+      msg += ' – ' + text.slice(0,300);
+    }
+    const err = new Error('Proxy '+path+': '+msg);
+    err.url = url; err.status = res.status; err.body = data || text;
+    throw err;
   }
   return data;
 }
@@ -6379,9 +6614,32 @@ const ERP_ACTIVE_STATUSES = ['Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlos
 
 async function erpImportAuftraege(firmaSlug, onProgress) {
   const log = (msg) => { console.log('[ERP-Sync]', msg); if (onProgress) onProgress(msg); };
-  log('Aufträge laden…');
-  const all = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
-  if (!Array.isArray(all)) throw new Error('Unerwartete Antwort: kein Array');
+
+  // Mehrere wahrscheinliche Pfade probieren – Swagger ist /v1/swagger-ui, also /v1/auftraege
+  const candidates = ['api/auftraege','auftraege'];
+  let all = null, usedPath = null, lastErr = null;
+  for (const p of candidates) {
+    log('GET /aufzug/'+firmaSlug+'/'+p+' …');
+    try {
+      all = await erpFetch('/aufzug/'+firmaSlug+'/'+p);
+      usedPath = p;
+      log('✓ erfolgreich über Pfad: '+p);
+      break;
+    } catch(e) {
+      lastErr = e;
+      log('  ↳ '+p+' fehlgeschlagen: '+e.message.slice(0,200));
+      // Bei 401/403: API-Key passt nicht → keine weiteren Pfade probieren
+      if (e.status === 401 || e.status === 403) throw e;
+    }
+  }
+  if (!all) throw (lastErr || new Error('Kein gültiger ERP-Pfad gefunden'));
+  if (!Array.isArray(all)) {
+    // ERPs liefern manchmal { items: [...] } oder { data: [...] }
+    if (all && Array.isArray(all.items)) all = all.items;
+    else if (all && Array.isArray(all.data)) all = all.data;
+    else if (all && Array.isArray(all.content)) all = all.content; // Spring Boot Pagination
+    else throw new Error('Unerwartete Antwort: kein Array (Top-Level Keys: '+Object.keys(all||{}).join(',')+')');
+  }
   const active = all.filter(a => ERP_ACTIVE_STATUSES.includes(a.status));
   log('Gesamt: '+all.length+' · Aktive: '+active.length);
 
@@ -6474,7 +6732,14 @@ async function runErpSync() {
   const firmaSlug = getCurrentFirmaSlug();
   if (!confirm('ERP-Sync für Firma "'+firmaSlug+'" starten?\n\nAktive Aufträge werden aus dem Aufzugshandwerk-ERP geladen und in unsere Datenbank gespiegelt. Bestehende werden aktualisiert.')) return;
 
+  // Log-Panel oeffnen (falls in Integrationen-View)
+  _erpLog('================================', 'info');
+  _erpLog('🔄 ERP-Sync für Firma '+firmaSlug, 'info');
+  _erpLog('Proxy: '+APP_KEYS.valtownProxyUrl, 'info');
+  _erpLog('================================', 'info');
+
   // Schema-Felder sicherstellen
+  _erpLog('Prüfe Airtable-Schema…', 'info');
   toast('⏳ Schema prüfen…', '');
   try {
     await ensureField('Auftraege', 'ext_id',                'number');
@@ -6489,21 +6754,46 @@ async function runErpSync() {
     await ensureField('Auftraege', 'einsatzpauschale',      'number');
     await ensureField('Auftraege', 'objekttyp',             'singleLineText');
     await ensureField('Auftraege', 'kunde_firmenname',      'singleLineText');
-  } catch(e) { console.warn('Schema:', e); }
+    _erpLog('✓ Schema OK', 'ok');
+  } catch(e) {
+    _erpLog('⚠ Schema-Warnung: '+e.message, 'err');
+  }
 
   const btn = document.getElementById('auf-erp-sync-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sync läuft…'; }
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Sync…'; }
   try {
+    const t0 = Date.now();
     const res = await erpImportAuftraege(firmaSlug, msg => {
-      if (btn) btn.textContent = '⏳ '+msg;
+      _erpLog(msg, 'info');
+      if (btn && msg.length < 40) btn.textContent = '⏳ '+msg;
     });
-    toast('✅ Sync fertig: '+res.created+' neu · '+res.updated+' aktualisiert · '+res.withAngebot+' mit Angebot · '+res.errors+' Fehler', 'ok');
+    const dur = Math.round((Date.now()-t0)/1000);
+    _erpLog('================================', 'ok');
+    _erpLog('✅ Sync fertig in '+dur+'s', 'ok');
+    _erpLog('  '+res.created+' neu · '+res.updated+' aktualisiert · '+res.withAngebot+' mit Angebot · '+res.errors+' Fehler', 'ok');
+    toast('✅ Sync fertig: '+res.created+' neu · '+res.updated+' aktualisiert · '+res.errors+' Fehler', 'ok');
     trackEvent('auftraege', 'erp_sync', res);
     await loadAuftraegeAndRender();
   } catch(e) {
-    toast('❌ '+e.message, 'err');
+    console.error('ERP-Sync Fehler:', e);
+    _erpLog('================================', 'err');
+    _erpLog('❌ SYNC ABGEBROCHEN', 'err');
+    _erpLog('Fehler: '+e.message, 'err');
+    if (e.status) _erpLog('HTTP-Status: '+e.status, 'err');
+    if (e.url)    _erpLog('URL: '+e.url, 'err');
+    if (e.body && typeof e.body === 'object') {
+      _erpLog('Antwort-Details:', 'err');
+      Object.entries(e.body).forEach(([k,v]) => _erpLog('  '+k+': '+JSON.stringify(v).slice(0,300), 'err'));
+    }
+    _erpLog('---', 'err');
+    _erpLog('💡 Tipps zur Diagnose:', 'info');
+    _erpLog('  • Admin → Integrationen → "🔍 Env-Status anzeigen"', 'info');
+    _erpLog('  • Admin → Integrationen → "🔬 Testen" pro Firma', 'info');
+    _erpLog('  • Bei HTTP 401: API-Key passt nicht zum Tenant', 'info');
+    _erpLog('  • Bei HTTP 404: Pfad evtl. ohne /api/-Prefix', 'info');
+    toast('❌ '+e.message.slice(0,180), 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '🔄 ERP-Sync'; }
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔄 ERP-Sync'; }
   }
 }
 
@@ -6511,19 +6801,30 @@ async function runErpSync() {
 function renderIntegrationView() {
   if (!isAdmin()) return;
   const vtSet  = !!(APP_KEYS.valtownKey && APP_KEYS.valtownValId && APP_KEYS.valtownProxyUrl);
-  const erpSet = !!APP_KEYS.aufzugApiKey;
+  const keys   = APP_KEYS.aufzugApiKeys || {};
+  const anyErp = !!(APP_KEYS.aufzugApiKey || keys.aufzug || keys.aszendio);
   const vtStatus = vtSet
     ? '<span class="intg-status ok">✓ Eingerichtet</span> <span style="font-size:11px;color:var(--txt2);margin-left:8px">Val: <code>'+APP_KEYS.valtownValId.substring(0,8)+'…</code> · URL: <code style="word-break:break-all">'+APP_KEYS.valtownProxyUrl+'</code></span>'
     : '<span class="intg-status warn">⚠ Nicht eingerichtet</span>';
-  const erpStatus = erpSet
-    ? '<span class="intg-status ok">✓ Eingerichtet</span>'
+  let erpBits = [];
+  if (keys.aufzug)   erpBits.push('Aufzugshandwerk ✓');
+  if (keys.aszendio) erpBits.push('Aszendio ✓');
+  if (APP_KEYS.aufzugApiKey && !keys.aufzug && !keys.aszendio) erpBits.push('Global ✓');
+  const erpStatus = anyErp
+    ? '<span class="intg-status ok">'+erpBits.join(' · ')+'</span>'
     : '<span class="intg-status warn">⚠ Kein API-Key gesetzt</span>';
 
   document.getElementById('intg-vt-status').innerHTML  = vtStatus;
   document.getElementById('intg-erp-status').innerHTML = erpStatus;
   if (APP_KEYS.valtownKey) document.getElementById('intg-vt-key').value = APP_KEYS.valtownKey;
-  if (APP_KEYS.aufzugApiKey) document.getElementById('intg-erp-key').value = APP_KEYS.aufzugApiKey;
-  document.getElementById('intg-vt-setup-btn').textContent = vtSet ? '⚡ Proxy aktualisieren' : '⚡ Setup starten';
+  const eA = document.getElementById('intg-erp-key-aufzug');
+  const eZ = document.getElementById('intg-erp-key-aszendio');
+  const eG = document.getElementById('intg-erp-key');
+  if (eA && keys.aufzug)              eA.value = keys.aufzug;
+  if (eZ && keys.aszendio)            eZ.value = keys.aszendio;
+  if (eG && APP_KEYS.aufzugApiKey)    eG.value = APP_KEYS.aufzugApiKey;
+  const setupBtn = document.getElementById('intg-vt-setup-btn');
+  if (setupBtn) setupBtn.textContent = vtSet ? '⚡ Proxy aktualisieren' : '⚡ Setup starten';
 }
 
 /* ════════════════════════════════════════════════════════════
