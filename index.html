@@ -1030,7 +1030,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.49</div>
+    <div class="login-version">Elevator Servicebox v2.50</div>
   </div>
 </div>
 
@@ -1582,6 +1582,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
         <button class="btn prim" onclick="runErpSync()">🔄 Sync für aktuelle Firma starten</button>
         <button class="btn" onclick="erpShowDebugEnv()">🔍 Env-Status anzeigen</button>
         <button class="btn" onclick="valtownUpdateProxyCode(this)" title="Push aktuellen Proxy-Code (z.B. nach App-Update)">⬆ Proxy-Code aktualisieren</button>
+        <button class="btn" onclick="valtownViewProxyCode()" title="Zeigt was tatsächlich im Val deployed ist">👁 Code im Val anschauen</button>
       </div>
       <div class="intg-hint">Aktive Firma siehst du oben rechts im Firmen-Selektor.</div>
 
@@ -1810,7 +1811,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.49';
+const APP_VERSION = 'v2.50';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6106,8 +6107,8 @@ async function lookupUser(userKey) {
   const baseId  = Deno.env.get("AIRTABLE_BASE_ID");
   const readKey = Deno.env.get("AIRTABLE_READ_KEY");
   if (!baseId || !readKey) throw new Error("AIRTABLE_BASE_ID/AIRTABLE_READ_KEY env var fehlt");
-  const formula = \\\`AND({api_key}='\\\${userKey.replace(/'/g,"\\\\\\\\'")}',{status}='aktiv')\\\`;
-  const url = \\\`https://api.airtable.com/v0/\\\${baseId}/User?filterByFormula=\\\${encodeURIComponent(formula)}&maxRecords=1\\\`;
+  const formula = \`AND({api_key}='\${userKey.replace(/'/g,"\\\\'")}',{status}='aktiv')\`;
+  const url = \`https://api.airtable.com/v0/\${baseId}/User?filterByFormula=\${encodeURIComponent(formula)}&maxRecords=1\`;
   const res = await fetch(url, { headers: { Authorization: "Bearer "+readKey } });
   if (!res.ok) throw new Error("Airtable User-Lookup HTTP "+res.status);
   const data = await res.json();
@@ -6655,6 +6656,16 @@ async function valtownRefreshProxyUrl(btn) {
     _vtLog('Eingeloggt als '+me.username+' (id '+me.id+')', 'info');
     const val = await valtownApi(APP_KEYS.valtownKey, 'GET', '/v2/vals/'+APP_KEYS.valtownValId);
     _vtLog('Val-Name: '+(val.name||'(?)')+' · Privacy: '+(val.privacy||'(?)'), 'info');
+    // SAFETY: stellt sicher dass wir den Elevator-Val anfassen, nicht z.B. den FDH-Val
+    const vname = String(val.name||'').toLowerCase();
+    if (!/^elevatorservicebox(proxy)?/.test(vname)) {
+      _vtLog('❌ SAFETY-ABBRUCH: Val "'+val.name+'" gehört nicht zu dieser App!', 'err');
+      _vtLog('   Erwartet: elevatorserviceboxproxy* — gefunden: '+val.name, 'err');
+      _vtLog('   Diese App darf nur eigene Vals modifizieren. Bitte Val-ID prüfen oder neues Setup.', 'err');
+      toast('❌ Falsche Val-ID – Operation abgebrochen.', 'err');
+      return;
+    }
+    _vtLog('✓ Safety-Check: Val gehört zu Elevator Servicebox', 'ok');
 
     // PRIO 1: Endpoint-URL aus File-Response holen (wie FDH macht)
     let endpointFromFile = null;
@@ -6823,6 +6834,19 @@ async function valtownSaveManualUrl(btn, force=false) {
   }
 }
 
+/* ── Safety-Check: stellt sicher dass wir AUF UNSEREM Val arbeiten ── */
+async function _verifyOurVal(opLabel='Operation') {
+  if (!APP_KEYS.valtownValId) throw new Error('Keine Val-ID gesetzt');
+  const val = await valtownApi(APP_KEYS.valtownKey, 'GET', '/v2/vals/'+APP_KEYS.valtownValId);
+  const name = String(val?.name||'').toLowerCase();
+  // Erlaubte Namen: 'elevatorserviceboxproxy' + Suffix-Variationen (mit Zeitstempel)
+  const isOurs = /^elevatorservicebox(proxy)?/.test(name);
+  if (!isOurs) {
+    throw new Error(opLabel+' abgebrochen: Val-Name "'+val.name+'" passt nicht zu Elevator Servicebox (erwartet: elevatorserviceboxproxy*). Anderer Val? Setup neu starten oder Val-ID manuell prüfen.');
+  }
+  return val;
+}
+
 /* ── Proxy-Code neu pushen (z.B. nach App-Update) ── */
 async function valtownUpdateProxyCode(btn) {
   if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Proxy nicht eingerichtet.', 'err');
@@ -6830,14 +6854,50 @@ async function valtownUpdateProxyCode(btn) {
   if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ pushe…'; }
   _erpLog('=== Proxy-Code Update ===', 'info');
   try {
-    await valtownUpdateFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, VALTOWN_PROXY_CODE);
-    _erpLog('✓ Proxy-Code im Val aktualisiert', 'ok');
+    // Safety: stellt sicher dass wir den richtigen Val anfassen
+    const val = await _verifyOurVal('Proxy-Code Update');
+    _erpLog('✓ Val verifiziert: '+val.name, 'ok');
+    const res = await valtownUpdateFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, VALTOWN_PROXY_CODE);
+    const ep = res?.links?.endpoint;
+    _erpLog('✓ Proxy-Code im Val aktualisiert'+(ep?' · Endpoint: '+ep:''), 'ok');
+    // Wenn endpoint gegeben + von alter URL abweicht: heilen
+    if (ep) {
+      const normalized = _normalizeProxyUrl(ep);
+      if (normalized !== APP_KEYS.valtownProxyUrl) {
+        const mk = await loadMasterKeys();
+        await writeMasterBaseKey('valtownProxyUrl', normalized, mk['valtownProxyUrl']?.id);
+        APP_KEYS.valtownProxyUrl = normalized;
+        _erpLog('  ↳ URL gespeichert: '+normalized, 'ok');
+      }
+    }
     erpClearSessionToken();
     toast('✅ Proxy aktualisiert.', 'ok');
+    renderIntegrationView();
   } catch(e) {
     _erpLog('❌ '+e.message, 'err'); toast('❌ '+e.message, 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = btn._orig || '⬆ Proxy-Code aktualisieren'; }
+  }
+}
+
+/* ── View Proxy Code: zeigt was tatsächlich im Val deployed ist ── */
+async function valtownViewProxyCode() {
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Proxy nicht eingerichtet.', 'err');
+  _erpLog('=== Code im Val abrufen ===', 'info');
+  try {
+    const val = await _verifyOurVal('Code-View');
+    _erpLog('Val: '+val.name+' (ID '+val.id.substring(0,8)+'…)', 'info');
+    const f = await valtownGetFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
+    _erpLog('File '+(f.path||'main.tsx')+' · type='+(f.type||'?')+' · '+(f.content?.length||0)+' Zeichen', 'info');
+    if (f.links?.endpoint) _erpLog('Endpoint: '+f.links.endpoint, 'info');
+    // Erste 40 Zeilen anzeigen
+    const lines = String(f.content||'').split('\n').slice(0, 30);
+    lines.forEach((ln, i) => _erpLog((i+1).toString().padStart(2,'0')+': '+ln.slice(0,180), ''));
+    _erpLog('… (gekürzt, gesamter Inhalt in Browser-Console)', 'info');
+    console.log('[Val Code]', f.content);
+    toast('✅ Code geladen (siehe Log + Browser-Console)', 'ok');
+  } catch(e) {
+    _erpLog('❌ '+e.message, 'err'); toast('❌ '+e.message, 'err');
   }
 }
 
