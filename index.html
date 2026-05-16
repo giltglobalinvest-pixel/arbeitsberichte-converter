@@ -470,6 +470,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .auf-status.offen{background:rgba(35,74,117,.12);color:var(--navy)}
 .auf-status.in_bearbeitung{background:rgba(224,123,16,.15);color:var(--amber)}
 .auf-status.abgeschlossen{background:rgba(5,150,105,.12);color:var(--ok)}
+.auf-status.abgerechnet{background:rgba(99,102,241,.15);color:#4338ca}
 .auf-prio{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.3px}
 .auf-prio.normal{background:#f1f1ec;color:var(--txt2)}
 .auf-prio.hoch{background:rgba(224,123,16,.18);color:#9a5000}
@@ -937,6 +938,7 @@ body.theme-modern .auf-status{border-radius:999px;padding:5px 12px;font-weight:7
 body.theme-modern .auf-status.offen{background:#EAF2FE;color:var(--navy-d)}
 body.theme-modern .auf-status.in_bearbeitung{background:#FFF1DC;color:#B96100}
 body.theme-modern .auf-status.abgeschlossen{background:#D1FAE5;color:#047857}
+body.theme-modern .auf-status.abgerechnet{background:#E0E7FF;color:#3730A3}
 body.theme-modern .auf-prio.normal{background:#F1F5F9;color:var(--txt2)}
 body.theme-modern .auf-prio.hoch{background:#FEF3C7;color:#92400E}
 body.theme-modern .auf-prio.dringend{background:#FEE2E2;color:#B91C1C}
@@ -1030,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.50</div>
+    <div class="login-version">Elevator Servicebox v2.51</div>
   </div>
 </div>
 
@@ -1598,6 +1600,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <h2>🛠 Aufträge</h2>
     <button class="btn" onclick="loadAuftraegeAndRender()">↻ Neu laden</button>
     <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren">🔄 ERP-Sync</button>
+    <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen">💶 Rechnungen prüfen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
   </div>
   <div class="auf-search-bar">
@@ -1610,6 +1613,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <button class="auf-tab active" data-status="offen"          onclick="setAuftragTab('offen')">Offen <span class="auf-tab-count" id="auf-cnt-offen">0</span></button>
     <button class="auf-tab"        data-status="in_bearbeitung" onclick="setAuftragTab('in_bearbeitung')">In Bearbeitung <span class="auf-tab-count" id="auf-cnt-in_bearbeitung">0</span></button>
     <button class="auf-tab"        data-status="abgeschlossen"  onclick="setAuftragTab('abgeschlossen')">Abgeschlossen <span class="auf-tab-count" id="auf-cnt-abgeschlossen">0</span></button>
+    <button class="auf-tab"        data-status="abgerechnet"    onclick="setAuftragTab('abgerechnet')">Abgerechnet <span class="auf-tab-count" id="auf-cnt-abgerechnet">0</span></button>
     <button class="auf-tab"        data-status="all"            onclick="setAuftragTab('all')">Alle <span class="auf-tab-count" id="auf-cnt-all">0</span></button>
   </div>
   <div class="auf-body" id="auf-list"></div>
@@ -1811,7 +1815,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.50';
+const APP_VERSION = 'v2.51';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4256,12 +4260,12 @@ async function loadAuftraegeAndRender() {
       .sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));
     // Anlegen-Button sichtbar?
     document.getElementById('auf-new-btn').style.display = hasPermission('auftraege_create') ? '' : 'none';
-    // ERP-Sync-Button: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
+    // ERP-Sync-Button + Bulk-Rechnungs-Check: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
     const erpBtn = document.getElementById('auf-erp-sync-btn');
-    if (erpBtn) {
-      const canSync = (isAdmin() || hasPermission('auftraege_edit')) && !!APP_KEYS.valtownProxyUrl;
-      erpBtn.style.display = canSync ? '' : 'none';
-    }
+    const rechnBtn = document.getElementById('auf-rechn-check-btn');
+    const canSync = (isAdmin() || hasPermission('auftraege_edit')) && !!APP_KEYS.valtownProxyUrl;
+    if (erpBtn)   erpBtn.style.display   = canSync ? '' : 'none';
+    if (rechnBtn) rechnBtn.style.display = canSync ? '' : 'none';
     renderAuftraegeList();
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
@@ -4276,13 +4280,26 @@ function setAuftragTab(status) {
   renderAuftraegeList();
 }
 
+/* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys) */
+function _normAuftragStatus(s) {
+  const t = String(s||'').toLowerCase().trim();
+  if (!t) return 'offen';
+  if (/abgerechnet/.test(t)) return 'abgerechnet';
+  if (/abgeschlossen/.test(t)) return 'abgeschlossen';
+  if (/bearbeit/.test(t)) return 'in_bearbeitung';
+  if (/best.tigt|^offen$/.test(t)) return 'offen';
+  return t;
+}
+
 function renderAuftraegeList() {
   const list = document.getElementById('auf-list');
-  // Counts
-  const counts = { offen:0, in_bearbeitung:0, abgeschlossen:0, all: _auftragCache.length };
+  // Counts (mit Status-Normalisierung)
+  const counts = { offen:0, in_bearbeitung:0, abgeschlossen:0, abgerechnet:0, all: 0 };
   _auftragCache.forEach(r => {
-    const s = r.fields.status || 'offen';
+    const s = _normAuftragStatus(r.fields.status);
     if (counts[s] !== undefined) counts[s]++;
+    // 'Alle' zählt explizit OHNE abgerechnete (die haben einen eigenen Tab)
+    if (s !== 'abgerechnet') counts.all++;
   });
   Object.keys(counts).forEach(k => {
     const el = document.getElementById('auf-cnt-'+k);
@@ -4291,9 +4308,13 @@ function renderAuftraegeList() {
 
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
 
-  let filtered = _auftragTab === 'all'
-    ? _auftragCache
-    : _auftragCache.filter(r => (r.fields.status||'offen') === _auftragTab);
+  let filtered;
+  if (_auftragTab === 'all') {
+    // Alle außer abgerechnet
+    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+  } else {
+    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
+  }
 
   if (search) {
     filtered = filtered.filter(r => {
@@ -4321,8 +4342,8 @@ function renderAuftraegeList() {
 
 function _auftragCardHtml(r) {
   const f = r.fields;
-  const status = f.status || 'offen';
-  const statusLabel = { offen:'Offen', in_bearbeitung:'In Arbeit', abgeschlossen:'Abgeschlossen' }[status] || status;
+  const status = _normAuftragStatus(f.status);
+  const statusLabel = { offen:'Offen', in_bearbeitung:'In Arbeit', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
   const prio = f.priority || 'normal';
   const prioLabel = { normal:'Normal', hoch:'Hoch', dringend:'Dringend' }[prio] || prio;
   let techs = [];
@@ -4359,8 +4380,8 @@ function openAuftragDetail(recId) {
   let techs = [];
   try { techs = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techNames = f.techniker_namen || _techNamesByKeys(techs);
-  const status = f.status || 'offen';
-  const statusLabel = { offen:'Offen', in_bearbeitung:'In Bearbeitung', abgeschlossen:'Abgeschlossen' }[status] || status;
+  const status = _normAuftragStatus(f.status);
+  const statusLabel = { offen:'Offen', in_bearbeitung:'In Bearbeitung', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
   const prio = f.priority || 'normal';
 
   // Kontakt: bevorzugt das neue Textfeld; Legacy-Felder als Fallback
@@ -4425,14 +4446,18 @@ function openAuftragDetail(recId) {
   let html = '<button class="btn" onclick="closeAuftragDetail()">Schließen</button>';
   if (hasPermission('auftraege_edit')) {
     html += '<button class="btn" onclick="openAuftragForm(\''+rec.id+'\')">✏ Bearbeiten</button>';
+    // Rechnungs-Check: nur wenn ERP-Auftrag + Proxy eingerichtet + nicht bereits abgerechnet
+    if (f.ext_id && APP_KEYS.valtownProxyUrl && status !== 'abgerechnet') {
+      html += '<button class="btn" style="color:#4338ca;border-color:rgba(99,102,241,.4)" onclick="checkAuftragInvoice(\''+rec.id+'\')" title="Im ERP prüfen, ob Rechnung existiert">💶 Rechnung prüfen</button>';
+    }
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')">🗑 Löschen</button>';
   }
-  if (status !== 'abgeschlossen' && _isAssignedToMe(rec)) {
+  if (status !== 'abgeschlossen' && status !== 'abgerechnet' && _isAssignedToMe(rec)) {
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Bericht erfassen</button>';
   }
-  if (status === 'abgeschlossen' && f.bericht_id) {
+  if ((status === 'abgeschlossen' || status === 'abgerechnet') && f.bericht_id) {
     html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Ansehen</button>';
-    if (_isAssignedToMe(rec) || hasPermission('auftraege_edit')) {
+    if ((_isAssignedToMe(rec) || hasPermission('auftraege_edit')) && status !== 'abgerechnet') {
       html += '<button class="btn" onclick="openBerichtForm(\''+rec.id+'\',\''+f.bericht_id+'\')">✏ Bericht bearbeiten</button>';
     }
   }
@@ -4680,6 +4705,145 @@ async function deleteAuftrag(recId, num) {
     closeAuftragDetail();
     await loadAuftraegeAndRender();
   } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+/* ── Status eines Auftrags direkt in Airtable patchen ── */
+async function _patchAuftragFields(recId, fieldsPatch) {
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+recId, {
+    method:'PATCH',
+    headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+    body: JSON.stringify({ fields: fieldsPatch })
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message || 'Patch fehlgeschlagen');
+  return d;
+}
+
+/* ── Rechnungen für eine Firma aus ERP holen (gecached pro Aufruf) ── */
+async function _fetchErpRechnungen(firmaSlug) {
+  const candidates = ['api/rechnungen','rechnungen'];
+  let res = null, lastErr = null;
+  for (const p of candidates) {
+    try { res = await erpFetch('/aufzug/'+firmaSlug+'/'+p); break; }
+    catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
+  }
+  if (!res) throw (lastErr || new Error('Rechnungen-Endpoint nicht erreichbar'));
+  if (Array.isArray(res)) return res;
+  if (Array.isArray(res.content)) return res.content;
+  if (Array.isArray(res.items))   return res.items;
+  if (Array.isArray(res.data))    return res.data;
+  return [];
+}
+
+/* ── Index: Map<auftragExtId, rechnung> ── */
+function _indexRechnungenByAuftrag(rechnungen) {
+  const m = new Map();
+  for (const r of (rechnungen||[])) {
+    // Auftrag-Referenz kann mehrere Formen haben
+    const cands = [
+      r?.auftragId, r?.auftrag_id,
+      r?.auftrag?.id,                    // wenn auftrag ein Objekt ist
+      typeof r?.auftrag === 'number' ? r.auftrag : null,  // wenn auftrag = ID
+      typeof r?.auftrag === 'string' ? r.auftrag : null,
+    ].filter(v => v != null && v !== '');
+    for (const c of cands) m.set(String(c), r);
+  }
+  return m;
+}
+
+/* ── Einzelner Auftrag: Rechnung prüfen + Aktion ── */
+async function checkAuftragInvoice(recId) {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId);
+  if (!rec) return toast('Auftrag nicht gefunden.', 'err');
+  const f = rec.fields;
+  if (!f.ext_id) return toast('Dieser Auftrag stammt nicht aus dem ERP (keine ext_id).', 'err');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+
+  toast('⏳ Prüfe Rechnungen für #'+(f.auftrag_num||'?')+'…', '');
+  try {
+    const list = await _fetchErpRechnungen(firmaSlug);
+    const idx  = _indexRechnungenByAuftrag(list);
+    const inv  = idx.get(String(f.ext_id));
+    if (!inv) {
+      toast('ℹ Keine Rechnung für #'+(f.auftrag_num||'?')+' gefunden.', '');
+      return;
+    }
+    // Rechnungs-Info zusammenbauen
+    const invNum  = inv.id || inv.rechnungsnummer || '?';
+    const invDate = (inv.createdDate || inv.rechnungsdatum || inv.leistungszeitraum || '').slice(0,10);
+    const invTotal = inv.gesamtsumme || inv.summe || inv.bruttobetrag || null;
+    const lines = [
+      'Auftrag #'+(f.auftrag_num||'?')+' wurde bereits abgerechnet.',
+      '',
+      'Rechnung Nr.:   '+invNum,
+      invDate ? 'Datum:          '+invDate : '',
+      invTotal != null ? 'Betrag:         '+Number(invTotal).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €' : '',
+      '',
+      'Soll dieser Auftrag aus der App entfernt werden?',
+      '(Abbrechen = Status auf "abgerechnet" setzen, Auftrag bleibt aber sichtbar im "Abgerechnet"-Tab.)'
+    ].filter(Boolean).join('\n');
+
+    if (confirm(lines)) {
+      // Löschen
+      await atDelete('Auftraege', recId);
+      toast('🗑 Auftrag #'+(f.auftrag_num||'?')+' entfernt.', 'warn');
+      closeAuftragDetail();
+    } else {
+      // Status setzen
+      await _patchAuftragFields(recId, { status: 'abgerechnet' });
+      toast('✓ Auftrag #'+(f.auftrag_num||'?')+' als "abgerechnet" markiert.', 'ok');
+    }
+    await loadAuftraegeAndRender();
+  } catch(e) {
+    console.error('checkAuftragInvoice:', e);
+    toast('❌ '+e.message, 'err');
+  }
+}
+
+/* ── Bulk: alle Aufträge der aktuellen Firma auf Rechnungen prüfen ── */
+async function bulkCheckInvoices() {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  // Kandidaten: ext_id + NICHT bereits 'abgerechnet'
+  const candidates = _auftragCache.filter(r => r.fields.ext_id && _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+  if (candidates.length === 0) return toast('Keine Aufträge mit ERP-ID zu prüfen.', '');
+  if (!confirm('Bulk-Check für '+candidates.length+' Aufträge starten?\n\nFür jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert. Treffer werden automatisch auf "abgerechnet" gesetzt (kein einzelner Bestätigungs-Dialog).')) return;
+
+  const btn = document.getElementById('auf-rechn-check-btn');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ lade Rechnungen…'; }
+  toast('⏳ Lade Rechnungen aus ERP…', '');
+  try {
+    const list = await _fetchErpRechnungen(firmaSlug);
+    const idx  = _indexRechnungenByAuftrag(list);
+    if (btn) btn.textContent = '⏳ prüfe '+candidates.length+'…';
+    let marked = 0, errors = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      const rec = candidates[i];
+      const f   = rec.fields;
+      if (btn) btn.textContent = '⏳ '+(i+1)+'/'+candidates.length;
+      if (idx.has(String(f.ext_id))) {
+        try {
+          await _patchAuftragFields(rec.id, { status: 'abgerechnet' });
+          marked++;
+        } catch(e) {
+          errors++;
+          console.warn('Patch fail für #'+f.auftrag_num+':', e.message);
+        }
+      }
+    }
+    toast('✅ Bulk-Check fertig: '+marked+' als abgerechnet markiert · '+(candidates.length-marked-errors)+' offen · '+errors+' Fehler', 'ok');
+    await loadAuftraegeAndRender();
+  } catch(e) {
+    console.error('bulkCheckInvoices:', e);
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+  }
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -7083,7 +7247,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         fabriknummer:          anlage.fabriknummer || '',
         kontakt:               kontaktText,
         leistungsbeschreibung: a.leistungsbeschreibung || a.notizen || '',
-        status:                a.status || 'offen',
+        status:                _normAuftragStatus(a.status),
         priority:              'normal',
         due_date:              (a.ausfuehrungstermin||'').slice(0,10) || '',
         created:               a.createdDate || new Date().toISOString(),
