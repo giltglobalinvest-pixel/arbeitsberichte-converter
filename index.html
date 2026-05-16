@@ -1030,7 +1030,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.46</div>
+    <div class="login-version">Elevator Servicebox v2.47</div>
   </div>
 </div>
 
@@ -1513,9 +1513,20 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
         <input type="password" class="intg-input" id="intg-vt-key" placeholder="vt_pat_…" autocomplete="off">
         <button class="btn prim" id="intg-vt-setup-btn" onclick="valtownStartSetup(this)">⚡ Setup starten</button>
         <button class="btn"      onclick="valtownTestProxy()">🩺 Proxy testen</button>
-        <button class="btn"      onclick="valtownRefreshProxyUrl(this)" title="URL frisch von Val.town holen + normalisieren">🔧 URL reparieren</button>
+        <button class="btn"      onclick="valtownRefreshProxyUrl(this)" title="Versucht mehrere URL-Formate und nimmt die erreichbare">🔧 URL Auto-Detect</button>
       </div>
       <div class="intg-hint">Token findest du unter <code>val.town</code> → Settings → API Tokens. Berechtigung: <code>vals.read</code>, <code>vals.write</code>, <code>vals.execute</code>.</div>
+
+      <details style="margin-top:14px">
+        <summary style="font-size:12px;color:var(--txt2);cursor:pointer">🛠 Proxy-URL manuell eintragen (Fallback)</summary>
+        <div class="intg-hint" style="margin-bottom:8px">
+          Falls Auto-Detect fehlschlägt: gehe auf <code>val.town</code> → dein Val → "HTTP" Trigger → kopiere die URL und fügst sie hier ein.
+        </div>
+        <div class="intg-row">
+          <input type="text" class="intg-input" id="intg-vt-manualurl" placeholder="https://username--valname.val.run" autocomplete="off">
+          <button class="btn" onclick="valtownSaveManualUrl(this)">💾 URL übernehmen</button>
+        </div>
+      </details>
 
       <div class="intg-log" id="intg-vt-log"></div>
     </div>
@@ -1792,7 +1803,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.46';
+const APP_VERSION = 'v2.47';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6575,33 +6586,87 @@ async function erpProbe(firmaSlug, customPath, btn) {
   }
 }
 
-/* ── Proxy-URL frisch von Val.town holen + normalisieren ── */
+/* ── Erreichbarkeits-Probe: bevorzugt erfolgreichen HTTP-Response,
+       trotzdem akzeptieren wir alles, was NICHT als Network-Error fliegt. ── */
+async function _pingProxyCandidate(url) {
+  const target = url.replace(/\/+$/,'') + '/health';
+  const ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const to = ctrl ? setTimeout(() => ctrl.abort(), 6000) : null;
+  try {
+    const r = await fetch(target, { method:'GET', signal: ctrl?.signal });
+    if (to) clearTimeout(to);
+    // Jeder HTTP-Status (auch 401/404) heisst: Hostname erreichbar
+    return { ok:true, status:r.status, target };
+  } catch(e) {
+    if (to) clearTimeout(to);
+    return { ok:false, status:null, target, err: String(e && e.message || e) };
+  }
+}
+
+/* ── Kandidaten-URLs aus username + valname zusammenbauen ── */
+function _candidateProxyUrls(username, valname) {
+  const u = (username||'').toLowerCase();
+  const v = (valname||'').toLowerCase();
+  if (!u || !v) return [];
+  return [
+    'https://'+u+'--'+v+'.val.run',
+    'https://'+u+'-'+v+'.val.run',
+    'https://'+u+'-'+v+'.web.val.run',
+    'https://'+v+'.'+u+'.web.val.run'
+  ];
+}
+
+/* ── Proxy-URL frisch von Val.town holen + normalisieren + Auto-Detect ── */
 async function valtownRefreshProxyUrl(btn) {
   if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Erst Setup ausführen.', 'err');
-  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ hole URL…'; }
-  _vtLog('=== URL reparieren ===', 'info');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ teste URLs…'; }
+  _vtLog('=== URL reparieren / Auto-Detect ===', 'info');
   try {
     const me  = await valtownMe(APP_KEYS.valtownKey);
-    _vtLog('Eingeloggt als '+me.username, 'info');
+    _vtLog('Eingeloggt als '+me.username+' (id '+me.id+')', 'info');
     const val = await valtownApi(APP_KEYS.valtownKey, 'GET', '/v2/vals/'+APP_KEYS.valtownValId);
-    _vtLog('Val-Name: '+val.name+' · Endpoint: '+(val.links?.endpoint||'(nicht im response)'), 'info');
-    const rawName = (val.name || VALTOWN_VAL_NAME).toLowerCase();
-    let newUrl = val.links?.endpoint || ('https://'+(me.username||'').toLowerCase()+'-'+rawName+'.web.val.run');
-    newUrl = _normalizeProxyUrl(newUrl);
-    _vtLog('Normalisierte URL: '+newUrl, 'ok');
+    _vtLog('Val-Name: '+(val.name||'(?)')+' · Privacy: '+(val.privacy||'(?)'), 'info');
+    // Full Val-Object zur Diagnose loggen (gekürzt)
+    try { _vtLog('Val-Response: '+JSON.stringify(val).slice(0,800), 'info'); } catch(_){}
+
+    // Sammle Kandidaten: API-gelieferter Endpoint + heuristische
+    const heuristics = _candidateProxyUrls(me.username, val.name || VALTOWN_VAL_NAME);
+    const apiUrls = []
+      .concat(val.links?.endpoint ? [_normalizeProxyUrl(val.links.endpoint)] : [])
+      .concat(val.url ? [_normalizeProxyUrl(val.url)] : []);
+    const all = Array.from(new Set([...apiUrls, ...heuristics]));
+
+    _vtLog('Teste '+all.length+' URL-Kandidat'+(all.length!==1?'en':'')+'…', 'info');
+    let reachable = null;
+    for (const candidate of all) {
+      _vtLog('  → '+candidate, 'info');
+      const r = await _pingProxyCandidate(candidate);
+      if (r.ok) {
+        _vtLog('     ✓ erreichbar (HTTP '+r.status+')', 'ok');
+        reachable = candidate;
+        break;
+      } else {
+        _vtLog('     ❌ '+r.err, 'err');
+      }
+    }
+    if (!reachable) {
+      _vtLog('❌ Keine URL erreichbar. Bitte URL manuell aus Val.town-UI kopieren.', 'err');
+      toast('❌ Keine URL antwortet. Manuell eintragen.', 'err');
+      return;
+    }
     const oldUrl = APP_KEYS.valtownProxyUrl;
-    if (oldUrl === newUrl) {
-      _vtLog('URL ist schon korrekt – kein Update nötig.', 'ok');
+    if (oldUrl === reachable) {
+      _vtLog('URL bereits korrekt: '+reachable, 'ok');
       toast('✓ URL ist bereits korrekt.', 'ok');
       return;
     }
     _vtLog('Alte URL: '+oldUrl, 'info');
+    _vtLog('Neue URL: '+reachable, 'ok');
     const mk = await loadMasterKeys();
-    await writeMasterBaseKey('valtownProxyUrl', newUrl, mk['valtownProxyUrl']?.id);
-    APP_KEYS.valtownProxyUrl = newUrl;
+    await writeMasterBaseKey('valtownProxyUrl', reachable, mk['valtownProxyUrl']?.id);
+    APP_KEYS.valtownProxyUrl = reachable;
     erpClearSessionToken();
-    _vtLog('✓ URL gespeichert', 'ok');
-    toast('✅ Proxy-URL repariert: '+newUrl, 'ok');
+    toast('✅ Proxy-URL repariert.', 'ok');
     renderIntegrationView();
   } catch(e) {
     console.error('refresh URL:', e);
@@ -6609,6 +6674,38 @@ async function valtownRefreshProxyUrl(btn) {
     toast('❌ '+e.message, 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔧 URL reparieren'; }
+  }
+}
+
+/* ── Manuell eingegebene Proxy-URL speichern ── */
+async function valtownSaveManualUrl(btn) {
+  const inp = document.getElementById('intg-vt-manualurl');
+  const raw = (inp?.value || '').trim();
+  if (!raw) return toast('Bitte URL eintragen.', 'err');
+  const url = _normalizeProxyUrl(raw);
+  if (!/^https?:\/\//i.test(url)) return toast('URL muss mit https:// beginnen.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ teste…'; }
+  _vtLog('=== Manuelle URL setzen ===', 'info');
+  _vtLog('Teste '+url+' …', 'info');
+  try {
+    const r = await _pingProxyCandidate(url);
+    if (!r.ok) {
+      _vtLog('❌ URL nicht erreichbar: '+r.err, 'err');
+      toast('❌ URL antwortet nicht: '+r.err.slice(0,140), 'err');
+      return;
+    }
+    _vtLog('✓ Erreichbar (HTTP '+r.status+')', 'ok');
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey('valtownProxyUrl', url, mk['valtownProxyUrl']?.id);
+    APP_KEYS.valtownProxyUrl = url;
+    erpClearSessionToken();
+    _vtLog('✓ Gespeichert: '+url, 'ok');
+    toast('✅ URL übernommen.', 'ok');
+    renderIntegrationView();
+  } catch(e) {
+    _vtLog('❌ '+e.message, 'err'); toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 URL übernehmen'; }
   }
 }
 
@@ -6952,6 +7049,8 @@ function renderIntegrationView() {
   document.getElementById('intg-vt-status').innerHTML  = vtStatus;
   document.getElementById('intg-erp-status').innerHTML = erpStatus;
   if (APP_KEYS.valtownKey) document.getElementById('intg-vt-key').value = APP_KEYS.valtownKey;
+  const manualUrlInput = document.getElementById('intg-vt-manualurl');
+  if (manualUrlInput && APP_KEYS.valtownProxyUrl) manualUrlInput.value = APP_KEYS.valtownProxyUrl;
   const eA = document.getElementById('intg-erp-key-aufzug');
   const eZ = document.getElementById('intg-erp-key-aszendio');
   const eG = document.getElementById('intg-erp-key');
