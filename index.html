@@ -1030,7 +1030,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.44</div>
+    <div class="login-version">Elevator Servicebox v2.45</div>
   </div>
 </div>
 
@@ -1524,7 +1524,8 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <h3>🛗 Aufzugshandwerk ERP-API <span id="intg-erp-status"><span class="intg-status">…</span></span></h3>
       <p class="intg-desc">
         API-Keys für <code>verwaltung.api.aufzugshandwerk.de</code>. <strong>Pro Mandant ein eigener Key</strong> – der Key wird im Val.town-Proxy als Env-Variable abgelegt (nicht im Browser).
-        Beim Sync wählt der Proxy automatisch den passenden Key für die aktive Firma. Falls für eine Firma kein Key gesetzt ist, fällt er auf einen optionalen globalen Key zurück.
+        Beim Sync wählt der Proxy automatisch den passenden Key für die aktive Firma. Falls für eine Firma kein Key gesetzt ist, fällt er auf einen optionalen globalen Key zurück.<br>
+        💡 <strong>Mandanten-ID (Tenant)</strong> wird pro Firma in <a href="#" onclick="event.preventDefault();switchView('firmen')" style="color:var(--amber);font-weight:600">🏢 Firmen-Verwaltung</a> → Spalte "ERP-Tenant" hinterlegt (z.B. 1, 4).
       </p>
 
       <div class="intg-label">🛗 Aufzugshandwerk (Tenant 1)</div>
@@ -1790,7 +1791,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.44';
+const APP_VERSION = 'v2.45';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4046,14 +4047,15 @@ async function renderFirmaView() {
     list.innerHTML = `
       <table class="firma-tbl">
         <thead><tr>
-          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>Aktiv</th><th></th>
+          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>ERP-Tenant</th><th>Aktiv</th><th></th>
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="8" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
       </table>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
         ℹ️ <strong>Slug</strong> ist der eindeutige Schlüssel (z.B. <code>aszendio</code>) – wird intern für Berichts-Filter und Template-Zuordnung verwendet, nicht ändern wenn schon Berichte existieren.<br>
         ℹ️ <strong>Kalkulator-Typ</strong>: <code>kone</code> = KONE-Preisliste (Aszendio), <code>none</code> = Kalkulator nicht verfügbar (Platzhalter), <code>custom</code> = ausstehend.<br>
-        ℹ️ <strong>Bericht-Start</strong> / <strong>Auftrag-Start</strong>: Startwerte für die jeweiligen Nummernkreise pro Firma. Aszendio: Berichte ab 50000, Aufträge ab 1001. Neue Firmen jeweils ab 1.
+        ℹ️ <strong>Bericht-Start</strong> / <strong>Auftrag-Start</strong>: Startwerte für die jeweiligen Nummernkreise pro Firma. Aszendio: Berichte ab 50000, Aufträge ab 1001. Neue Firmen jeweils ab 1.<br>
+        ℹ️ <strong>ERP-Tenant</strong>: Mandanten-ID im Aufzugshandwerk-ERP (z.B. <code>1</code> = Aufzugshandwerk, <code>4</code> = Aszendio). Leer lassen, wenn die Firma kein ERP nutzt. Der zugehörige API-Key wird in Admin → 🔌 Integrationen pro Mandant hinterlegt.
       </div>
     `;
   } catch(e) {
@@ -4080,6 +4082,7 @@ function firmaRowHtml(f) {
       </td>
       <td data-label="Bericht-Start"><input type="number" class="firma-inp" data-field="start_num" value="${+fl.start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
       <td data-label="Auftrag-Start"><input type="number" class="firma-inp" data-field="auftrag_start_num" value="${+fl.auftrag_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
+      <td data-label="ERP-Tenant"><input class="firma-inp" data-field="erp_tenant" value="${esc(fl.erp_tenant)}" placeholder="z.B. 1 oder 4" style="max-width:80px;font-family:monospace;text-align:center" title="Mandanten-ID im Aufzugshandwerk-ERP"></td>
       <td data-label="Aktiv" style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
       <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
@@ -4102,6 +4105,10 @@ async function saveFirmaRow(recId) {
   });
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   try {
+    // Schema-Sicherstellung: erp_tenant ggf. anlegen
+    if ('erp_tenant' in f) {
+      try { await ensureField('Firmen', 'erp_tenant', 'singleLineText'); } catch(_){}
+    }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+recId, {
       method:'PATCH',
@@ -6084,7 +6091,7 @@ function json(d, s=200) {
 export default async function (req) {
   if (req.method === "OPTIONS") return new Response(null, { status:204, headers: {
     "access-control-allow-origin":"*",
-    "access-control-allow-headers":"authorization, content-type",
+    "access-control-allow-headers":"authorization, content-type, x-erp-tenant",
     "access-control-allow-methods":"GET, POST, PATCH, PUT, DELETE, OPTIONS",
     "access-control-max-age":"86400"
   }});
@@ -6133,8 +6140,9 @@ export default async function (req) {
     let b = {}; try { b = await req.json(); } catch(_){}
     const firma = (b.firma||"aufzug").toString();
     const probePath = (b.path||"").toString().replace(/^\\/+/,"");
-    const tenant = TENANT_MAP[firma];
-    if (!tenant) return json({ error:"Unbekannte Firma: "+firma }, 404);
+    // Tenant aus Body (Firmen-Verwaltung) > TENANT_MAP-Fallback
+    const tenant = (b.tenant && String(b.tenant).trim()) || TENANT_MAP[firma];
+    if (!tenant) return json({ error:"Kein Tenant fuer Firma "+firma+" (weder Body noch TENANT_MAP)" }, 400);
     const apiKey = Deno.env.get("AUFZUG_API_KEY_"+firma.toUpperCase()) || Deno.env.get("AUFZUG_API_KEY");
     if (!apiKey) return json({ error:"Kein API-Key fuer Firma "+firma+" gesetzt", expected_env:["AUFZUG_API_KEY_"+firma.toUpperCase(),"AUFZUG_API_KEY"] }, 500);
     const baseUrl = Deno.env.get("AUFZUG_BASE_URL") || "https://verwaltung.api.aufzugshandwerk.de/v1";
@@ -6149,6 +6157,7 @@ export default async function (req) {
     return json({
       target,
       tenant,
+      tenant_source: b.tenant ? "body" : "TENANT_MAP",
       api_key_source: Deno.env.get("AUFZUG_API_KEY_"+firma.toUpperCase()) ? "AUFZUG_API_KEY_"+firma.toUpperCase() : "AUFZUG_API_KEY",
       api_key_preview: apiKey.length>8 ? apiKey.slice(0,4)+"..."+apiKey.slice(-2) : "(short)",
       duration_ms: Date.now()-t0,
@@ -6164,8 +6173,10 @@ export default async function (req) {
     if (i < 0) return json({ error:"Bad path. Erwartet: /aufzug/<firma>/<path>" }, 400);
     const firma = rest.slice(0, i);
     const up = rest.slice(i+1);
-    const tenant = TENANT_MAP[firma];
-    if (!tenant) return json({ error:"Unbekannte Firma: "+firma, hint:"Erlaubt: "+Object.keys(TENANT_MAP).join(", ") }, 404);
+    // Tenant: X-ERP-Tenant Header (Firmen-Verwaltung) > TENANT_MAP-Fallback
+    const tenantHeader = (req.headers.get("x-erp-tenant")||"").trim();
+    const tenant = tenantHeader || TENANT_MAP[firma];
+    if (!tenant) return json({ error:"Kein Tenant fuer Firma "+firma+" – setze ihn in der Firmen-Verwaltung", hint:"erlaubte Slugs im Fallback: "+Object.keys(TENANT_MAP).join(", ") }, 400);
     // Per-Firma API-Key zuerst, dann globalen Fallback
     const firmaEnvKey = "AUFZUG_API_KEY_"+firma.toUpperCase();
     const apiKey = Deno.env.get(firmaEnvKey) || Deno.env.get("AUFZUG_API_KEY");
@@ -6192,6 +6203,7 @@ export default async function (req) {
         error: "Upstream HTTP "+up2.status,
         target,
         tenant,
+        tenant_source: tenantHeader ? "X-ERP-Tenant header" : "TENANT_MAP fallback",
         method: req.method,
         api_key_source: Deno.env.get(firmaEnvKey) ? firmaEnvKey : "AUFZUG_API_KEY",
         duration_ms: Date.now()-t0,
@@ -6480,13 +6492,17 @@ async function erpShowDebugEnv() {
 /* ── Debug-Probe: ERP-Endpunkt direkt testen ── */
 async function erpProbe(firmaSlug, customPath) {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet.', 'err');
-  _erpLog('=== Probe '+firmaSlug+' ===', 'info');
-  // Verschiedene wahrscheinliche Pfade probieren, falls keiner explizit übergeben
+  const tenant = _getErpTenantForFirma(firmaSlug);
+  _erpLog('=== Probe '+firmaSlug+(tenant?' (Tenant '+tenant+')':' (kein Tenant!)')+' ===', 'info');
+  if (!tenant) {
+    _erpLog('⚠ Kein ERP-Tenant für "'+firmaSlug+'" hinterlegt. Setze ihn in Admin → 🏢 Firmen-Verwaltung.', 'err');
+    return;
+  }
   const paths = customPath ? [customPath] : ['api/auftraege?limit=1','auftraege?limit=1'];
   for (const p of paths) {
     try {
       _erpLog('GET '+p+' …', 'info');
-      const d = await erpFetch('/debug/probe', { method:'POST', body:{ firma:firmaSlug, path:p } });
+      const d = await erpFetch('/debug/probe', { method:'POST', body:{ firma:firmaSlug, tenant, path:p } });
       _erpLog('  → Target: '+d.target, 'info');
       _erpLog('  → Tenant: '+d.tenant+' · Key: '+d.api_key_source+' ('+d.api_key_preview+')', 'info');
       _erpLog('  → Duration: '+d.duration_ms+'ms', 'info');
@@ -6494,7 +6510,7 @@ async function erpProbe(firmaSlug, customPath) {
       else if (d.status >= 200 && d.status < 300) {
         _erpLog('  ✓ HTTP '+d.status+' OK', 'ok');
         if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,200)+(d.body_excerpt.length>200?'…':''), 'ok');
-        return; // Erfolg, abbrechen
+        return;
       } else {
         _erpLog('  ⚠ HTTP '+d.status, 'err');
         if (d.body_excerpt) _erpLog('  Body: '+d.body_excerpt.slice(0,500), 'err');
@@ -6535,6 +6551,21 @@ function erpClearSessionToken() {
   _erpSessionToken = null;
   try { localStorage.removeItem('erp_session_'+APP_CONFIG.PROJECT_ID); } catch(_){}
 }
+/* ── Tenant pro Firma aus Firmen-Cache lesen ── */
+function _getErpTenantForFirma(firmaSlug) {
+  if (!firmaSlug) return null;
+  try {
+    if (Array.isArray(_firmenCache)) {
+      const rec = _firmenCache.find(f => f.fields && f.fields.slug === firmaSlug);
+      const t = rec && rec.fields && rec.fields.erp_tenant;
+      if (t != null && String(t).trim() !== '') return String(t).trim();
+    }
+  } catch(_){}
+  // Legacy-Fallback für altbekannte Slugs
+  const LEGACY = { aufzug:'1', aszendio:'4' };
+  return LEGACY[firmaSlug] || null;
+}
+
 /* fetch-Wrapper, der iOS-"Load failed" in lesbare Meldung uebersetzt */
 async function _erpRawFetch(url, init) {
   try {
@@ -6578,6 +6609,12 @@ async function erpFetch(path, options={}) {
     method: options.method || 'GET',
     headers: Object.assign({ 'Authorization':'Bearer '+erpGetSessionToken() }, options.headers||{}),
   };
+  // Tenant-Override für /aufzug/<firma>/... Pfade aus Firmen-Verwaltung
+  const m = /^\/aufzug\/([^\/]+)\//.exec(path);
+  if (m && !init.headers['X-ERP-Tenant']) {
+    const t = _getErpTenantForFirma(m[1]);
+    if (t) init.headers['X-ERP-Tenant'] = t;
+  }
   if (options.body) { init.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body); init.headers['Content-Type'] = 'application/json'; }
   let res = await _erpRawFetch(url, init);
   if (res.status === 401) {
@@ -6730,11 +6767,16 @@ async function runErpSync() {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Nur für Admins/Verwalter', 'err');
   if (!APP_KEYS.valtownProxyUrl) return toast('Erst Val.town-Proxy einrichten (Admin → Integrationen)', 'err');
   const firmaSlug = getCurrentFirmaSlug();
-  if (!confirm('ERP-Sync für Firma "'+firmaSlug+'" starten?\n\nAktive Aufträge werden aus dem Aufzugshandwerk-ERP geladen und in unsere Datenbank gespiegelt. Bestehende werden aktualisiert.')) return;
+  const tenant    = _getErpTenantForFirma(firmaSlug);
+  if (!tenant) {
+    toast('Firma "'+firmaSlug+'" hat keinen ERP-Tenant. Bitte in Firmen-Verwaltung setzen.', 'err');
+    return;
+  }
+  if (!confirm('ERP-Sync für Firma "'+firmaSlug+'" (Tenant '+tenant+') starten?\n\nAktive Aufträge werden aus dem Aufzugshandwerk-ERP geladen und in unsere Datenbank gespiegelt. Bestehende werden aktualisiert.')) return;
 
   // Log-Panel oeffnen (falls in Integrationen-View)
   _erpLog('================================', 'info');
-  _erpLog('🔄 ERP-Sync für Firma '+firmaSlug, 'info');
+  _erpLog('🔄 ERP-Sync für Firma '+firmaSlug+' (Tenant '+tenant+')', 'info');
   _erpLog('Proxy: '+APP_KEYS.valtownProxyUrl, 'info');
   _erpLog('================================', 'info');
 
