@@ -101,6 +101,34 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* Firmen-Verwaltung (Admin) */
 .firma-view{display:none;position:fixed;inset:var(--tb-safe) 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:hidden}
 .firma-view.show{display:flex}
+
+/* Integrationen (Admin) */
+.intg-view{display:none;position:fixed;inset:var(--tb-safe) 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:hidden}
+.intg-view.show{display:flex}
+.intg-hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:14px 24px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.intg-hdr h2{font-size:15px;font-weight:600;color:var(--navy);margin:0;flex:1}
+.intg-body{flex:1;overflow:auto;padding:20px 24px;max-width:920px;width:100%;margin:0 auto;box-sizing:border-box}
+.intg-card{background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);padding:18px 20px;margin-bottom:18px;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.intg-card h3{margin:0 0 4px;font-size:14px;color:var(--navy);font-weight:600;display:flex;align-items:center;gap:8px}
+.intg-card .intg-desc{font-size:12px;color:var(--txt2);margin:0 0 12px;line-height:1.5}
+.intg-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.intg-status{display:inline-block;font-size:11px;font-weight:600;padding:3px 9px;border-radius:99px;background:#eef2ff;color:var(--navy)}
+.intg-status.ok{background:rgba(5,150,105,.15);color:#047857}
+.intg-status.warn{background:rgba(217,119,6,.15);color:#b45309}
+.intg-status.err{background:rgba(220,38,38,.15);color:#b91c1c}
+.intg-input{flex:1;min-width:240px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-family:monospace;font-size:12px;background:white;outline:none}
+.intg-input:focus{border-color:var(--amber)}
+.intg-label{font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--txt2);font-weight:600;margin:8px 0 4px}
+.intg-hint{font-size:11px;color:var(--txt3);margin-top:6px;line-height:1.4}
+.intg-log{display:none;margin-top:12px;background:#0f172a;color:#cbd5e1;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:11px;max-height:200px;overflow:auto;line-height:1.6}
+.intg-log .ok{color:#6ee7b7}
+.intg-log .err{color:#fca5a5}
+.intg-log .info{color:#93c5fd}
+@media (max-width:760px){
+  .intg-hdr{padding:10px 14px}
+  .intg-body{padding:14px}
+  .intg-input{min-width:0;width:100%}
+}
 .firma-hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:14px 24px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .firma-hdr h2{font-size:15px;font-weight:600;color:var(--navy);margin:0;flex:1}
 .firma-body{flex:1;overflow:auto;padding:20px 24px}
@@ -1002,7 +1030,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.42</div>
+    <div class="login-version">Elevator Servicebox v2.43</div>
   </div>
 </div>
 
@@ -1463,11 +1491,70 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
   <div class="firma-body" id="firma-list"></div>
 </div>
 
+<!-- INTEGRATIONEN (nur für role=admin) -->
+<div class="intg-view" id="intg-view">
+  <div class="intg-hdr">
+    <h2>🔌 Integrationen</h2>
+    <button class="btn" onclick="renderIntegrationView()">↻ Status aktualisieren</button>
+  </div>
+  <div class="intg-body">
+
+    <!-- VAL.TOWN PROXY -->
+    <div class="intg-card">
+      <h3>⚙ Val.town Proxy <span id="intg-vt-status"><span class="intg-status">…</span></span></h3>
+      <p class="intg-desc">
+        Der Val.town-Proxy ist die Brücke zwischen dieser App und dem Aufzugshandwerk-ERP.
+        Er behandelt Auth, Sessions und CORS. Trage deinen persönlichen Val.town-Token (vt_pat_…) ein
+        und das Setup legt einen Val automatisch in deinem Account an.
+      </p>
+
+      <div class="intg-label">Val.town Token (vt_pat_…)</div>
+      <div class="intg-row">
+        <input type="password" class="intg-input" id="intg-vt-key" placeholder="vt_pat_…" autocomplete="off">
+        <button class="btn prim" id="intg-vt-setup-btn" onclick="valtownStartSetup(this)">⚡ Setup starten</button>
+        <button class="btn"      onclick="valtownTestProxy()">🩺 Proxy testen</button>
+      </div>
+      <div class="intg-hint">Token findest du unter <code>val.town</code> → Settings → API Tokens. Berechtigung: <code>vals.read</code>, <code>vals.write</code>, <code>vals.execute</code>.</div>
+
+      <div class="intg-log" id="intg-vt-log"></div>
+    </div>
+
+    <!-- AUFZUGSHANDWERK ERP -->
+    <div class="intg-card">
+      <h3>🛗 Aufzugshandwerk ERP-API <span id="intg-erp-status"><span class="intg-status">…</span></span></h3>
+      <p class="intg-desc">
+        Statischer API-Key für <code>verwaltung.api.aufzugshandwerk.de</code>. Identisch für Aufzugshandwerk (Tenant 1) und Aszendio (Tenant 4) – die Firma wird beim Sync automatisch zugeordnet.
+        Der Key wird im Val.town-Proxy als Env-Variable abgelegt (nicht im Browser).
+      </p>
+      <div class="intg-label">API-Key</div>
+      <div class="intg-row">
+        <input type="password" class="intg-input" id="intg-erp-key" placeholder="eisbergsalat…" autocomplete="off">
+        <button class="btn" onclick="erpSaveKey(this)">💾 Key speichern</button>
+      </div>
+      <div class="intg-hint">Ändert sich der Key, einfach hier neu eintragen und speichern – der Proxy wird auf dem Val.town-Server aktualisiert.</div>
+    </div>
+
+    <!-- ERP-SYNC -->
+    <div class="intg-card">
+      <h3>🔄 Aufträge synchronisieren</h3>
+      <p class="intg-desc">
+        Lädt alle aktiven Aufträge (Status: <code>Auftrag bestätigt</code>, <code>In Bearbeitung</code>, <code>Abgeschlossen</code>) aus dem ERP der aktuell gewählten Firma in unsere Datenbank. MITANGEBOT-Aufträge bekommen zusätzlich Leistungsumfang + Erläuterungen aus dem Angebot.
+      </p>
+      <div class="intg-row">
+        <button class="btn prim" onclick="runErpSync()">🔄 Sync für aktuelle Firma starten</button>
+        <span class="intg-hint" style="margin-top:0">Aktive Firma siehst du oben links im Firmen-Selektor.</span>
+      </div>
+    </div>
+
+  </div>
+</div>
+
 <!-- AUFTRÄGE -->
 <div class="auf-view" id="auf-view">
   <div class="auf-hdr">
     <h2>🛠 Aufträge</h2>
     <button class="btn" onclick="loadAuftraegeAndRender()">↻ Neu laden</button>
+    <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren">🔄 ERP-Sync</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
   </div>
   <div class="auf-search-bar">
@@ -1681,7 +1768,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.42';
+const APP_VERSION = 'v2.43';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1689,7 +1776,13 @@ const APP_CONFIG = {
   PROJECT_ID:        'p_1777231909085',
   PROJECT_NAME:      'Arbeitsberichte Converter',
 };
-let APP_KEYS = { airtableWriteKey:null, anthropicKey:null, appBaseId:null, user:null };
+let APP_KEYS = {
+  airtableWriteKey:null, anthropicKey:null, appBaseId:null, user:null,
+  // Val.town-Proxy für ERP-API
+  valtownKey:null, valtownValId:null, valtownProxyUrl:null,
+  // Aufzugshandwerk-ERP-Token (wird im Val.town Proxy gesetzt, hier nur Setup)
+  aufzugApiKey:null,
+};
 
 /* ════════════════════════════════════════════════════════════
    LOGOS
@@ -2020,6 +2113,10 @@ async function loginWithUserKey(userKey) {
     if (rec.fields.key_name==='anthropicKey')    APP_KEYS.anthropicKey    = rec.fields.key_value;
     if (rec.fields.key_name==='airtableWriteKey')APP_KEYS.airtableWriteKey= rec.fields.key_value;
     if (rec.fields.key_name==='airtableBaseId')  APP_KEYS.appBaseId       = rec.fields.key_value;
+    if (rec.fields.key_name==='valtownKey')      APP_KEYS.valtownKey      = rec.fields.key_value;
+    if (rec.fields.key_name==='valtownValId')    APP_KEYS.valtownValId    = rec.fields.key_value;
+    if (rec.fields.key_name==='valtownProxyUrl') APP_KEYS.valtownProxyUrl = rec.fields.key_value;
+    if (rec.fields.key_name==='aufzugApiKey')    APP_KEYS.aufzugApiKey    = rec.fields.key_value;
   });
 
   // Step 3: Global fallback keys
@@ -2573,6 +2670,7 @@ function switchView(view) {
   // Permission-Gates
   if (view==='users' && !isAdmin()) return;
   if (view==='firmen' && !isAdmin()) return;
+  if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
   if (view==='wartung' && !hasPermission('tool_wartung_kalk')) return toast('🔒 Keine Berechtigung','err');
@@ -2584,9 +2682,10 @@ function switchView(view) {
   const wk   = document.getElementById('wkalk-view');
   const fmg  = document.getElementById('firma-view');
   const auf  = document.getElementById('auf-view');
+  const intg = document.getElementById('intg-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -2597,12 +2696,14 @@ function switchView(view) {
   wk.classList.toggle('show',   view==='wartung');
   fmg.classList.toggle('show',  view==='firmen');
   auf.classList.toggle('show',  view==='auftraege');
+  if (intg) intg.classList.toggle('show', view==='intg');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
   if (view==='wartung')  renderWartungKalk();
   if (view==='firmen')   renderFirmaView();
   if (view==='auftraege') loadAuftraegeAndRender();
+  if (view==='intg')     renderIntegrationView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -4085,6 +4186,12 @@ async function loadAuftraegeAndRender() {
       .sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));
     // Anlegen-Button sichtbar?
     document.getElementById('auf-new-btn').style.display = hasPermission('auftraege_create') ? '' : 'none';
+    // ERP-Sync-Button: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
+    const erpBtn = document.getElementById('auf-erp-sync-btn');
+    if (erpBtn) {
+      const canSync = (isAdmin() || hasPermission('auftraege_edit')) && !!APP_KEYS.valtownProxyUrl;
+      erpBtn.style.display = canSync ? '' : 'none';
+    }
     renderAuftraegeList();
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
@@ -4218,6 +4325,23 @@ function openAuftragDetail(recId) {
       <h3>Leistungsbeschreibung</h3>
       <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(f.leistungsbeschreibung||'(keine Beschreibung)').replace(/</g,'&lt;')}</div>
     </div>
+    ${f.ext_id ? `
+    <div class="auf-section">
+      <h3>ERP-Stammdaten <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:99px;background:rgba(59,130,246,.15);color:#1e40af;margin-left:6px">🔗 ${(f.ext_source||'aufzugshandwerk')}</span></h3>
+      ${f.ext_vorgangsnummer ? '<div class="auf-row"><span class="lbl">Vorgangsnummer</span><span class="val" style="font-family:monospace">'+f.ext_vorgangsnummer+'</span></div>' : ''}
+      ${f.kunde_firmenname ? '<div class="auf-row"><span class="lbl">Kunde</span><span class="val">'+f.kunde_firmenname.replace(/</g,'&lt;')+'</span></div>' : ''}
+      ${f.objekttyp ? '<div class="auf-row"><span class="lbl">Objekttyp</span><span class="val">'+f.objekttyp.replace(/</g,'&lt;')+'</span></div>' : ''}
+      ${f.bestellform ? '<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">'+f.bestellform+'</span></div>' : ''}
+      ${(f.stundensatz != null) ? '<div class="auf-row"><span class="lbl">Stundensatz</span><span class="val">'+Number(f.stundensatz).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
+      ${(f.einsatzpauschale != null) ? '<div class="auf-row"><span class="lbl">Einsatzpauschale</span><span class="val">'+Number(f.einsatzpauschale).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
+    </div>
+    ${(f.leistungsumfang || f.erlaeuterungen || f.angebot_typ) ? `
+    <div class="auf-section">
+      <h3>Angebot ${f.angebot_id ? '<span style="font-size:11px;font-weight:500;color:var(--txt2);font-family:monospace;margin-left:6px">#'+f.angebot_id+'</span>' : ''} ${f.angebot_typ ? '<span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:99px;background:rgba(124,58,237,.15);color:#5b21b6;margin-left:6px">'+f.angebot_typ+'</span>' : ''}</h3>
+      ${f.leistungsumfang ? '<div style="font-size:11px;color:var(--txt2);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600">Leistungsumfang</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">'+f.leistungsumfang.replace(/</g,'&lt;')+'</div>' : ''}
+      ${f.erlaeuterungen ? '<div style="font-size:11px;color:var(--txt2);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600">Erläuterungen</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">'+f.erlaeuterungen.replace(/</g,'&lt;')+'</div>' : ''}
+    </div>` : ''}
+    ` : ''}
     <div class="auf-section">
       <h3>Zugewiesene Techniker</h3>
       <div style="font-size:13px">${techNames ? techNames.split(',').map(n => '<span class="auf-tech-chip">'+n.trim().replace(/</g,'&lt;')+'</span>').join('') : '<span style="color:var(--txt3)">Niemand zugewiesen</span>'}</div>
@@ -5410,6 +5534,12 @@ function renderDashboard() {
         <div class="dash-tool-label">Firmen-Verwaltung</div>
         <div class="dash-tool-desc">Firmen anlegen, Nummernkreise und Kalkulator-Typ konfigurieren.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+      <button class="dash-tool" onclick="switchView('intg')">
+        <div class="dash-tool-icon">🔌</div>
+        <div class="dash-tool-label">Integrationen</div>
+        <div class="dash-tool-desc">Val.town-Proxy einrichten und ERP-Aufträge aus Aufzugshandwerk synchronisieren.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
       </button>`;
   }
   if (Object.keys(TOOLS).length === 0 && !isAdmin()) {
@@ -5853,6 +5983,548 @@ function showAdminPanel(section) {
   panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 }
 
+
+/* ════════════════════════════════════════════════════════════
+   VAL.TOWN-PROXY + AUFZUGSHANDWERK ERP-API
+   Setup analog Freshdesk Hero: Admin gibt vt_pat_ ein,
+   App pusht Proxy-Code via Val.town REST API.
+   ════════════════════════════════════════════════════════════ */
+const VALTOWN_API_BASE  = 'https://api.val.town';
+const VALTOWN_VAL_NAME  = 'elevatorServiceboxProxy';
+const VALTOWN_FILE_PATH = 'main.tsx';
+
+// Proxy-Code wird ins Val gepusht. Routes:
+//   POST /auth        → Login mit user_key → session_token
+//   POST /logout, GET /me, GET /health
+//   ANY  /aufzug/<firma>/<path> → forward zu Aufzugshandwerk-ERP
+const VALTOWN_PROXY_CODE = `// Elevator Servicebox · ERP-Proxy
+// ENV: AIRTABLE_READ_KEY, AIRTABLE_BASE_ID, AUFZUG_API_KEY
+import { blob } from "https://esm.town/v/std/blob";
+
+const TENANT_MAP = { aufzug: "1", aszendio: "4" };
+const USER_CACHE = new Map();
+const CACHE_TTL_MS = 60000;
+const SESSION_SHORT = 8 * 60 * 60 * 1000;
+const SESSION_LONG  = 30 * 24 * 60 * 60 * 1000;
+const SESSION_PREFIX = "esbx_session_";
+
+async function setSession(t, d) { await blob.setJSON(SESSION_PREFIX+t, d); }
+async function getSession(t) {
+  let d; try { d = await blob.getJSON(SESSION_PREFIX+t); } catch(_) { return null; }
+  if (!d) return null;
+  if (d.expires && d.expires < Date.now()) { try { await blob.delete(SESSION_PREFIX+t); } catch(_){} return null; }
+  return d;
+}
+async function deleteSession(t) { try { await blob.delete(SESSION_PREFIX+t); } catch(_){} }
+function genToken() {
+  const a = new Uint8Array(32); crypto.getRandomValues(a);
+  return Array.from(a).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
+async function lookupUser(userKey) {
+  const c = USER_CACHE.get(userKey);
+  if (c && c.expires > Date.now()) return c.user;
+  const baseId  = Deno.env.get("AIRTABLE_BASE_ID");
+  const readKey = Deno.env.get("AIRTABLE_READ_KEY");
+  if (!baseId || !readKey) throw new Error("AIRTABLE_BASE_ID/AIRTABLE_READ_KEY env var fehlt");
+  const formula = \\\`AND({api_key}='\\\${userKey.replace(/'/g,"\\\\\\\\'")}',{status}='aktiv')\\\`;
+  const url = \\\`https://api.airtable.com/v0/\\\${baseId}/User?filterByFormula=\\\${encodeURIComponent(formula)}&maxRecords=1\\\`;
+  const res = await fetch(url, { headers: { Authorization: "Bearer "+readKey } });
+  if (!res.ok) throw new Error("Airtable User-Lookup HTTP "+res.status);
+  const data = await res.json();
+  if (!data.records || !data.records.length) {
+    USER_CACHE.set(userKey, { user: null, expires: Date.now()+CACHE_TTL_MS });
+    return null;
+  }
+  const r = data.records[0];
+  const u = { id:r.id, api_key:r.fields.api_key, name:r.fields.name, role:r.fields.role, is_admin:r.fields.role==="admin" };
+  USER_CACHE.set(userKey, { user: u, expires: Date.now()+CACHE_TTL_MS });
+  return u;
+}
+async function resolveAuth(token) {
+  const s = await getSession(token);
+  if (s) return { kind:"session", api_key:s.userApiKey, name:s.name, role:s.role, is_admin:s.isAdmin };
+  try {
+    const u = await lookupUser(token);
+    if (u) return { kind:"direct", api_key:u.api_key, name:u.name, role:u.role, is_admin:u.is_admin };
+  } catch(_) {}
+  return null;
+}
+function json(d, s=200) {
+  return new Response(JSON.stringify(d), { status:s, headers: { "content-type":"application/json", "access-control-allow-origin":"*" } });
+}
+
+export default async function (req) {
+  if (req.method === "OPTIONS") return new Response(null, { status:204, headers: {
+    "access-control-allow-origin":"*",
+    "access-control-allow-headers":"authorization, content-type",
+    "access-control-allow-methods":"GET, POST, PATCH, PUT, DELETE, OPTIONS",
+    "access-control-max-age":"86400"
+  }});
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^\\/+/,"");
+
+  if (path === "auth" && req.method === "POST") {
+    let b = {}; try { b = await req.json(); } catch(_){}
+    const userKey = (b.user_key||"").toString().trim();
+    if (!userKey) return json({ error:"user_key fehlt" }, 400);
+    let user; try { user = await lookupUser(userKey); } catch(e) { return json({ error:e.message }, 500); }
+    if (!user) return json({ error:"Ungültiger Login-Key oder Account inaktiv" }, 401);
+    const t = genToken();
+    const ttl = b.long_lived ? SESSION_LONG : SESSION_SHORT;
+    await setSession(t, { userApiKey:user.api_key, name:user.name, role:user.role, isAdmin:user.is_admin, expires:Date.now()+ttl });
+    return json({ session_token:t, expires_in:Math.floor(ttl/1000), user });
+  }
+
+  const tok = (req.headers.get("authorization")||"").replace(/^Bearer\\s+/i,"").trim();
+  if (!tok) return json({ error:"Missing Bearer token" }, 401);
+  const user = await resolveAuth(tok);
+  if (!user) return json({ error:"Ungültiges Token" }, 401);
+
+  if (path === "logout" && req.method === "POST") {
+    if (user.kind === "session") await deleteSession(tok);
+    return json({ ok:true });
+  }
+  if (path === "me")     return json({ user });
+  if (path === "health") return json({ ok:true, user:{ name:user.name, is_admin:user.is_admin } });
+
+  if (path.startsWith("aufzug/")) {
+    const rest = path.replace(/^aufzug\\//,"");
+    const i = rest.indexOf("/");
+    if (i < 0) return json({ error:"Bad path. Erwartet: /aufzug/<firma>/<path>" }, 400);
+    const firma = rest.slice(0, i);
+    const up = rest.slice(i+1);
+    const tenant = TENANT_MAP[firma];
+    if (!tenant) return json({ error:"Unbekannte Firma: "+firma }, 404);
+    const apiKey = Deno.env.get("AUFZUG_API_KEY");
+    if (!apiKey) return json({ error:"AUFZUG_API_KEY env var fehlt" }, 500);
+    const baseUrl = Deno.env.get("AUFZUG_BASE_URL") || "https://verwaltung.api.aufzugshandwerk.de/v1";
+    const target = baseUrl + "/" + up + url.search;
+    const init = { method:req.method, headers: { APIKEY:apiKey, TENANT:tenant } };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      const t = await req.text();
+      if (t && t.length > 0) { init.body = t; init.headers["Content-Type"] = "application/json"; }
+    }
+    const up2 = await fetch(target, init);
+    const noBody = up2.status===101||up2.status===204||up2.status===205||up2.status===304;
+    const text = noBody ? null : await up2.text();
+    return new Response(text, { status:up2.status, headers: {
+      "content-type": up2.headers.get("content-type") || "application/json",
+      "access-control-allow-origin": "*"
+    }});
+  }
+
+  return json({ error:"Not found", path }, 404);
+}
+`;
+
+/* ── Val.town REST API client ── */
+async function valtownApi(token, method, path, body) {
+  if (!token) throw new Error('Val.town API-Key fehlt');
+  const init = { method, headers: { 'Authorization':'Bearer '+token, 'Accept':'application/json' } };
+  if (body) { init.body = JSON.stringify(body); init.headers['Content-Type'] = 'application/json'; }
+  const res = await fetch(VALTOWN_API_BASE + path, init);
+  let data = null; try { data = await res.json(); } catch(_){}
+  if (!res.ok) {
+    const msg = (data && (data.message || data.error)) || ('HTTP '+res.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+async function valtownMe(token) { return valtownApi(token, 'GET', '/v1/me'); }
+async function valtownCreateVal(token, name, description='', privacy='public') {
+  const body = { name, privacy };
+  if (description) body.description = description;
+  return valtownApi(token, 'POST', '/v2/vals', body);
+}
+async function valtownAddHttpFile(token, valId, code) {
+  return valtownApi(token, 'POST', '/v2/vals/'+valId+'/files?path='+encodeURIComponent(VALTOWN_FILE_PATH), {
+    content: code, type: 'http'
+  });
+}
+async function valtownUpdateFile(token, valId, code) {
+  return valtownApi(token, 'PUT', '/v2/vals/'+valId+'/files?path='+encodeURIComponent(VALTOWN_FILE_PATH), {
+    content: code
+  });
+}
+async function valtownSetEnvVar(token, valId, key, value, description='') {
+  try {
+    return await valtownApi(token, 'POST', '/v2/vals/'+valId+'/environment_variables', { key, value, description });
+  } catch(e) {
+    if (/already exists|409/.test(e.message)) {
+      return valtownApi(token, 'PUT', '/v2/vals/'+valId+'/environment_variables/'+encodeURIComponent(key), { value, description });
+    }
+    throw e;
+  }
+}
+
+/* ── Master-Base Keys helpers (für Val-ID + Proxy-URL persistieren) ── */
+async function writeMasterBaseKey(keyName, keyValue, existingId) {
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+  const body = { fields: { project_id: APP_CONFIG.PROJECT_ID, key_name: keyName, key_value: String(keyValue||'') } };
+  if (existingId) {
+    return fetch('https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys/'+existingId, {
+      method:'PATCH',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify(body)
+    }).then(r => r.json());
+  }
+  return fetch('https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys', {
+    method:'POST',
+    headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+    body: JSON.stringify(body)
+  }).then(r => r.json());
+}
+async function loadMasterKeys() {
+  const url = 'https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys?filterByFormula='+encodeURIComponent("{project_id}='"+APP_CONFIG.PROJECT_ID+"'");
+  const r = await fetch(url, { headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY } });
+  const d = await r.json();
+  return (d.records||[]).reduce((m,rec) => { m[rec.fields.key_name] = rec; return m; }, {});
+}
+
+/* ── Auto-Setup ── */
+function _vtLog(msg, cls='') {
+  const el = document.getElementById('intg-vt-log');
+  if (!el) return;
+  el.style.display = 'block';
+  const ts = new Date().toLocaleTimeString('de-DE');
+  el.innerHTML += '<div class="'+cls+'">['+ts+'] '+msg+'</div>';
+  el.scrollTop = el.scrollHeight;
+}
+async function valtownStartSetup(btn) {
+  const tokenInput = document.getElementById('intg-vt-key');
+  const erpInput   = document.getElementById('intg-erp-key');
+  const token = (tokenInput?.value || APP_KEYS.valtownKey || '').trim();
+  if (!token) return toast('Bitte Val.town-Token eintragen (vt_pat_…)', 'err');
+  const erpKey = (erpInput?.value || APP_KEYS.aufzugApiKey || '').trim();
+  if (!erpKey) return toast('Bitte Aufzugshandwerk-API-Key eintragen', 'err');
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ läuft…'; }
+  document.getElementById('intg-vt-log').innerHTML = '';
+  _vtLog('Setup gestartet…', 'info');
+
+  try {
+    _vtLog('Prüfe Val.town-Token…', 'info');
+    const me = await valtownMe(token);
+    _vtLog('✓ Eingeloggt als '+me.username+' (id '+me.id+')', 'ok');
+
+    let valId = APP_KEYS.valtownValId;
+    if (valId) {
+      _vtLog('Aktualisiere existierenden Val ('+valId.substring(0,8)+'…)…', 'info');
+      try {
+        await valtownUpdateFile(token, valId, VALTOWN_PROXY_CODE);
+        _vtLog('✓ Proxy-Code aktualisiert', 'ok');
+      } catch(e) {
+        _vtLog('Update fehlgeschlagen ('+e.message+'), erstelle neuen Val…', 'info');
+        valId = null;
+      }
+    }
+    if (!valId) {
+      let valName = VALTOWN_VAL_NAME;
+      let val;
+      try {
+        val = await valtownCreateVal(token, valName, 'Elevator Servicebox ERP-Proxy', 'public');
+      } catch(e) {
+        if (/already exists|name/i.test(e.message)) {
+          valName = VALTOWN_VAL_NAME + Date.now().toString(36).slice(-4);
+          _vtLog('Name belegt, verwende: '+valName, 'info');
+          val = await valtownCreateVal(token, valName, 'Elevator Servicebox ERP-Proxy', 'public');
+        } else { throw e; }
+      }
+      valId = val.id;
+      _vtLog('✓ Val erstellt: '+valName+' ('+valId.substring(0,8)+'…)', 'ok');
+      await valtownAddHttpFile(token, valId, VALTOWN_PROXY_CODE);
+      _vtLog('✓ HTTP-Endpoint angelegt', 'ok');
+    }
+
+    _vtLog('Setze Environment Variables…', 'info');
+    const envs = [
+      { k:'AIRTABLE_READ_KEY', v:APP_CONFIG.AIRTABLE_READ_KEY, d:'Read token for User-Tabelle' },
+      { k:'AIRTABLE_BASE_ID',  v:APP_KEYS.appBaseId||APP_CONFIG.APP_BASE_ID, d:'App-Base ID' },
+      { k:'AUFZUG_API_KEY',    v:erpKey, d:'Aufzugshandwerk ERP API-Key' },
+    ];
+    for (const env of envs) {
+      await valtownSetEnvVar(token, valId, env.k, env.v, env.d);
+      _vtLog('✓ '+env.k+' gesetzt', 'ok');
+    }
+
+    // Proxy-URL: Val.town vergibt eine pro Val
+    const val = await valtownApi(token, 'GET', '/v2/vals/'+valId);
+    let proxyUrl = val.links?.endpoint || ('https://'+me.username+'-'+(val.name||VALTOWN_VAL_NAME)+'.web.val.run');
+    proxyUrl = proxyUrl.replace(/\/$/,'');
+    _vtLog('✓ Proxy-URL: '+proxyUrl, 'ok');
+
+    // In Master-Keys speichern
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey('valtownKey',      token,    mk['valtownKey']?.id);
+    await writeMasterBaseKey('valtownValId',    valId,    mk['valtownValId']?.id);
+    await writeMasterBaseKey('valtownProxyUrl', proxyUrl, mk['valtownProxyUrl']?.id);
+    await writeMasterBaseKey('aufzugApiKey',    erpKey,   mk['aufzugApiKey']?.id);
+    _vtLog('✓ Keys in Master-Base gespeichert', 'ok');
+
+    APP_KEYS.valtownKey       = token;
+    APP_KEYS.valtownValId     = valId;
+    APP_KEYS.valtownProxyUrl  = proxyUrl;
+    APP_KEYS.aufzugApiKey     = erpKey;
+
+    _vtLog('🎉 Setup abgeschlossen!', 'ok');
+    toast('✅ Val.town-Proxy eingerichtet.', 'ok');
+    setTimeout(()=>renderIntegrationView(), 600);
+  } catch(e) {
+    console.error('Val.town-Setup:', e);
+    _vtLog('❌ Fehler: '+e.message, 'err');
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Setup starten / Aktualisieren'; }
+  }
+}
+
+async function valtownTestProxy() {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy noch nicht eingerichtet.', 'err');
+  try {
+    // Auto-login wenn nötig
+    await erpEnsureSession();
+    const r = await erpFetch('/health');
+    toast('✅ Proxy OK: '+(r.user?.name||'?')+(r.user?.is_admin?' (admin)':''), 'ok');
+  } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+/* ── ERP-API-Key updaten (im Proxy + Master-Base) ── */
+async function erpSaveKey(btn) {
+  const inp = document.getElementById('intg-erp-key');
+  const newKey = (inp?.value || '').trim();
+  if (!newKey) return toast('Bitte API-Key eintragen.', 'err');
+  if (newKey === APP_KEYS.aufzugApiKey) return toast('Key unverändert.', '');
+  if (btn) { btn.disabled = true; const orig = btn.textContent; btn.textContent = '⏳ speichere…'; btn._orig = orig; }
+  try {
+    // 1) Im Val.town-Proxy als Env-Var setzen (falls Proxy schon existiert)
+    if (APP_KEYS.valtownKey && APP_KEYS.valtownValId) {
+      await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'AUFZUG_API_KEY', newKey, 'Aufzugshandwerk ERP API-Key');
+    }
+    // 2) In Master-Base persistieren
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey('aufzugApiKey', newKey, mk['aufzugApiKey']?.id);
+    APP_KEYS.aufzugApiKey = newKey;
+    // 3) Bestehende Session invalidieren – beim nächsten erpFetch wird neu authentifiziert
+    erpClearSessionToken();
+    toast('✅ ERP-API-Key gespeichert.', 'ok');
+    renderIntegrationView();
+  } catch(e) {
+    console.error('erpSaveKey:', e);
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Key speichern'; }
+  }
+}
+
+/* ── ERP-Client (über Val.town Proxy) ── */
+let _erpSessionToken = null;
+function erpGetSessionToken() {
+  if (_erpSessionToken) return _erpSessionToken;
+  try { return localStorage.getItem('erp_session_'+APP_CONFIG.PROJECT_ID); } catch(_) { return null; }
+}
+function erpSetSessionToken(t) {
+  _erpSessionToken = t;
+  try { localStorage.setItem('erp_session_'+APP_CONFIG.PROJECT_ID, t); } catch(_){}
+}
+function erpClearSessionToken() {
+  _erpSessionToken = null;
+  try { localStorage.removeItem('erp_session_'+APP_CONFIG.PROJECT_ID); } catch(_){}
+}
+async function erpAuth() {
+  if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
+  if (!APP_KEYS.user?.api_key) throw new Error('Nicht eingeloggt');
+  const res = await fetch(APP_KEYS.valtownProxyUrl + '/auth', {
+    method:'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ user_key: APP_KEYS.user.api_key, long_lived: true })
+  });
+  const d = await res.json();
+  if (!res.ok) throw new Error(d.error || ('HTTP '+res.status));
+  erpSetSessionToken(d.session_token);
+  return d;
+}
+async function erpEnsureSession() {
+  if (erpGetSessionToken()) return;
+  await erpAuth();
+}
+async function erpFetch(path, options={}) {
+  if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet (Admin → Integrationen)');
+  await erpEnsureSession();
+  const url = APP_KEYS.valtownProxyUrl + path;
+  const init = {
+    method: options.method || 'GET',
+    headers: Object.assign({ 'Authorization':'Bearer '+erpGetSessionToken() }, options.headers||{}),
+  };
+  if (options.body) { init.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body); init.headers['Content-Type'] = 'application/json'; }
+  let res = await fetch(url, init);
+  if (res.status === 401) {
+    // Session abgelaufen → erneut anmelden
+    erpClearSessionToken();
+    await erpAuth();
+    init.headers['Authorization'] = 'Bearer '+erpGetSessionToken();
+    res = await fetch(url, init);
+  }
+  const noBody = res.status===204 || res.status===205;
+  const text = noBody ? '' : await res.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch(_){ data = text; }
+  if (!res.ok) {
+    const msg = (data && (data.error||data.message)) || ('HTTP '+res.status);
+    throw new Error(msg);
+  }
+  return data;
+}
+
+/* ── ERP-Aufträge importieren (Aufzugshandwerk) ── */
+const ERP_ACTIVE_STATUSES = ['Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen'];
+
+async function erpImportAuftraege(firmaSlug, onProgress) {
+  const log = (msg) => { console.log('[ERP-Sync]', msg); if (onProgress) onProgress(msg); };
+  log('Aufträge laden…');
+  const all = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
+  if (!Array.isArray(all)) throw new Error('Unerwartete Antwort: kein Array');
+  const active = all.filter(a => ERP_ACTIVE_STATUSES.includes(a.status));
+  log('Gesamt: '+all.length+' · Aktive: '+active.length);
+
+  // Vorhandene Aufträge mit ext_id für Dedup
+  const existing = await atRead('Auftraege', null);
+  const byExt = new Map();
+  for (const r of existing) {
+    if (r.fields.ext_id && (r.fields.firma||'') === firmaSlug) byExt.set(String(r.fields.ext_id), r);
+  }
+  log('Bestehende mit ext_id: '+byExt.size);
+
+  let created=0, updated=0, withAngebot=0, errors=0;
+  for (let i = 0; i < active.length; i++) {
+    const a = active[i];
+    log('['+(i+1)+'/'+active.length+'] #'+a.vorgangsnummer+' '+a.status);
+    try {
+      // Bei MITANGEBOT zusätzlich Angebot laden
+      let angebot = null;
+      if (a.bestellform === 'MITANGEBOT' && a.angebotid) {
+        try { angebot = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote/'+a.angebotid); withAngebot++; }
+        catch(e) { console.warn('Angebot '+a.angebotid+' nicht geladen:', e.message); }
+      }
+      const anlage = a.anlage || {};
+      const empf = a.empfaenger || {};
+      const kontaktText = [
+        [empf.anrede, empf.vorname, empf.nachname].filter(Boolean).join(' '),
+        empf.telefon ? 'Tel: '+empf.telefon : '',
+        empf.mobile  ? 'Mobil: '+empf.mobile : '',
+        empf.email   ? 'E-Mail: '+empf.email : '',
+        empf.rolle   ? 'Rolle: '+empf.rolle : '',
+      ].filter(Boolean).join('\n');
+
+      const fields = {
+        firma:                 firmaSlug,
+        auftrag_num:           a.vorgangsnummer || a.id,
+        ext_id:                a.id,
+        ext_source:            'aufzugshandwerk_v1',
+        ext_vorgangsnummer:    a.vorgangsnummer || null,
+        standort:              anlage.anzeigeAdresse || anlage.name || '',
+        fabriknummer:          anlage.fabriknummer || '',
+        kontakt:               kontaktText,
+        leistungsbeschreibung: a.leistungsbeschreibung || a.notizen || '',
+        status:                a.status || 'offen',
+        priority:              'normal',
+        due_date:              (a.ausfuehrungstermin||'').slice(0,10) || '',
+        created:               a.createdDate || new Date().toISOString(),
+        created_by:            APP_KEYS.user.api_key,
+        // Aus Auftrag-Stammdaten
+        stundensatz:           anlage.stundensatz || null,
+        einsatzpauschale:      anlage.einsatzPauschale || null,
+        objekttyp:             anlage.objektTyp || '',
+        kunde_firmenname:      anlage.kunde?.firmenname || '',
+        // Aus Angebot
+        leistungsumfang:       angebot?.serviceDescription || '',
+        erlaeuterungen:        angebot?.offerExplanation || '',
+        angebot_typ:           angebot?.typ || '',
+        angebot_id:            a.angebotid || null,
+        bestellform:           a.bestellform || '',
+      };
+      // tmpl-Default je Firma (für Bericht-Vorlage)
+      if (!fields.tmpl) fields.tmpl = (firmaSlug === 'aszendio') ? 'aszendio-arbeit' : 'aufzug-arbeit';
+
+      const existRec = byExt.get(String(a.id));
+      if (existRec) {
+        // Update
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+existRec.id, {
+          method:'PATCH',
+          headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields }),
+        }).then(r=>r.json());
+        if (r.error) throw new Error(r.error.message);
+        updated++;
+      } else {
+        await atWrite('Auftraege', fields);
+        created++;
+      }
+    } catch(e) {
+      errors++;
+      console.warn('Fehler bei #'+a.vorgangsnummer+':', e.message);
+      log('  ⚠ Fehler: '+e.message);
+    }
+  }
+  return { total: active.length, created, updated, errors, withAngebot };
+}
+
+async function runErpSync() {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Nur für Admins/Verwalter', 'err');
+  if (!APP_KEYS.valtownProxyUrl) return toast('Erst Val.town-Proxy einrichten (Admin → Integrationen)', 'err');
+  const firmaSlug = getCurrentFirmaSlug();
+  if (!confirm('ERP-Sync für Firma "'+firmaSlug+'" starten?\n\nAktive Aufträge werden aus dem Aufzugshandwerk-ERP geladen und in unsere Datenbank gespiegelt. Bestehende werden aktualisiert.')) return;
+
+  // Schema-Felder sicherstellen
+  toast('⏳ Schema prüfen…', '');
+  try {
+    await ensureField('Auftraege', 'ext_id',                'number');
+    await ensureField('Auftraege', 'ext_source',            'singleLineText');
+    await ensureField('Auftraege', 'ext_vorgangsnummer',    'number');
+    await ensureField('Auftraege', 'leistungsumfang',       'multilineText');
+    await ensureField('Auftraege', 'erlaeuterungen',        'multilineText');
+    await ensureField('Auftraege', 'angebot_typ',           'singleLineText');
+    await ensureField('Auftraege', 'angebot_id',            'number');
+    await ensureField('Auftraege', 'bestellform',           'singleLineText');
+    await ensureField('Auftraege', 'stundensatz',           'number');
+    await ensureField('Auftraege', 'einsatzpauschale',      'number');
+    await ensureField('Auftraege', 'objekttyp',             'singleLineText');
+    await ensureField('Auftraege', 'kunde_firmenname',      'singleLineText');
+  } catch(e) { console.warn('Schema:', e); }
+
+  const btn = document.getElementById('auf-erp-sync-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sync läuft…'; }
+  try {
+    const res = await erpImportAuftraege(firmaSlug, msg => {
+      if (btn) btn.textContent = '⏳ '+msg;
+    });
+    toast('✅ Sync fertig: '+res.created+' neu · '+res.updated+' aktualisiert · '+res.withAngebot+' mit Angebot · '+res.errors+' Fehler', 'ok');
+    trackEvent('auftraege', 'erp_sync', res);
+    await loadAuftraegeAndRender();
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 ERP-Sync'; }
+  }
+}
+
+/* ── Integration-View (Admin) ── */
+function renderIntegrationView() {
+  if (!isAdmin()) return;
+  const vtSet  = !!(APP_KEYS.valtownKey && APP_KEYS.valtownValId && APP_KEYS.valtownProxyUrl);
+  const erpSet = !!APP_KEYS.aufzugApiKey;
+  const vtStatus = vtSet
+    ? '<span class="intg-status ok">✓ Eingerichtet</span> <span style="font-size:11px;color:var(--txt2);margin-left:8px">Val: <code>'+APP_KEYS.valtownValId.substring(0,8)+'…</code> · URL: <code style="word-break:break-all">'+APP_KEYS.valtownProxyUrl+'</code></span>'
+    : '<span class="intg-status warn">⚠ Nicht eingerichtet</span>';
+  const erpStatus = erpSet
+    ? '<span class="intg-status ok">✓ Eingerichtet</span>'
+    : '<span class="intg-status warn">⚠ Kein API-Key gesetzt</span>';
+
+  document.getElementById('intg-vt-status').innerHTML  = vtStatus;
+  document.getElementById('intg-erp-status').innerHTML = erpStatus;
+  if (APP_KEYS.valtownKey) document.getElementById('intg-vt-key').value = APP_KEYS.valtownKey;
+  if (APP_KEYS.aufzugApiKey) document.getElementById('intg-erp-key').value = APP_KEYS.aufzugApiKey;
+  document.getElementById('intg-vt-setup-btn').textContent = vtSet ? '⚡ Proxy aktualisieren' : '⚡ Setup starten';
+}
 
 /* ════════════════════════════════════════════════════════════
    BERICHT ZUM BEARBEITEN LADEN
