@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.80</div>
+    <div class="login-version">Elevator Servicebox v2.81</div>
   </div>
 </div>
 
@@ -1976,6 +1976,20 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   </div>
 </div>
 
+<!-- BERICHT-PICKER-MODAL (vorhandenen Bericht zu einem Auftrag verknüpfen) -->
+<div class="auf-modal" id="bericht-picker-modal" onclick="if(event.target===this)closeBerichtPicker()">
+  <div class="auf-modal-panel" style="max-width:760px">
+    <div class="auf-modal-head">
+      <h2>📎 Vorhandenen Bericht verknüpfen</h2>
+      <button class="auf-modal-close" onclick="closeBerichtPicker()" title="Schließen">✕</button>
+    </div>
+    <div class="auf-modal-body" id="bericht-picker-body"></div>
+    <div class="auf-modal-foot">
+      <button class="btn" onclick="closeBerichtPicker()">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
 <!-- BULK-IMPORT-MODAL (Wizard) -->
 <div class="auf-modal" id="anl-bulk-modal" onclick="if(event.target===this)closeBulkImport()">
   <div class="auf-modal-panel" style="max-width:920px">
@@ -2200,7 +2214,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.80';
+const APP_VERSION = 'v2.81';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4821,7 +4835,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.80: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.81: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5043,10 +5057,11 @@ function openAuftragDetail(recId) {
     }
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')">🗑 Löschen</button>';
   }
-  // Bericht erfassen: zugewiesene Techniker + User mit Edit/View-All-Berechtigung (z.B. Admin/Verwalter)
+  // Bericht erfassen / verknüpfen: zugewiesene Techniker + User mit Edit/View-All-Berechtigung (z.B. Admin/Verwalter)
   const canStartBericht = _isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all');
   if (status !== 'abgeschlossen' && status !== 'abgerechnet' && canStartBericht) {
-    html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Bericht erfassen</button>';
+    html += '<button class="btn" onclick="openBerichtPicker(\''+rec.id+'\')" title="Vorhandenen Bericht aus der Übersicht zuweisen (z.B. konvertierter Subunternehmer-Bericht)">📎 Bericht verknüpfen</button>';
+    html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Neuer Bericht</button>';
   }
   if ((status === 'abgeschlossen' || status === 'abgerechnet') && f.bericht_id) {
     html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Ansehen</button>';
@@ -5731,6 +5746,166 @@ function openAnlageDetail(idx) {
 function closeAnlageDetailModal() {
   document.getElementById('anl-detail-modal').classList.remove('show');
   if (!document.querySelector('.auf-modal.show')) document.body.classList.remove('has-modal');
+}
+
+/* ══════════ BERICHT-PICKER (vorhandenen Bericht zu Auftrag verknüpfen) ══════════ */
+let _bpAuftragRec = null;   // Auftrag, dem ein Bericht zugewiesen wird
+let _bpBerichte   = [];     // gefilterte Berichte (firma-scoped)
+let _bpMatches    = [];     // aktuell sichtbare Treffer
+
+async function openBerichtPicker(auftragRecId) {
+  const rec = _auftragCache.find(r => r.id === auftragRecId);
+  if (!rec) return toast('Auftrag nicht gefunden.', 'err');
+  _bpAuftragRec = rec;
+  document.body.classList.add('has-modal');
+  document.getElementById('bericht-picker-modal').classList.add('show');
+  const body = document.getElementById('bericht-picker-body');
+  body.innerHTML = '<div style="text-align:center;padding:30px"><div class="spinner" style="margin:0 auto 12px;width:24px;height:24px"></div>Lade Berichte…</div>';
+  try {
+    const all = await atRead('Berichte', null);
+    const firmaSlug = rec.fields.firma || getCurrentFirmaSlug();
+    _bpBerichte = all
+      .filter(r => _firmaOfRec(r) === firmaSlug)
+      .sort((a,b) => (b.fields.bericht_num||0) - (a.fields.bericht_num||0));
+    _bpRender();
+  } catch(e) {
+    body.innerHTML = '<div style="color:var(--err);padding:20px">❌ Fehler: '+e.message.replace(/</g,'&lt;')+'</div>';
+  }
+}
+
+function closeBerichtPicker() {
+  document.getElementById('bericht-picker-modal').classList.remove('show');
+  if (!document.querySelector('.auf-modal.show')) document.body.classList.remove('has-modal');
+  _bpAuftragRec = null;
+  _bpBerichte = [];
+}
+
+function _bpRender() {
+  const body = document.getElementById('bericht-picker-body');
+  const auf = _bpAuftragRec.fields;
+  body.innerHTML = `
+    <div style="margin-bottom:12px;font-size:13px;color:var(--txt2);line-height:1.5">
+      Wähle einen vorhandenen Bericht aus der Übersicht, der zu diesem Auftrag verknüpft werden soll.<br>
+      <strong>Auftrag:</strong> #${auf.auftrag_num||'?'} · ${(auf.standort||'').replace(/</g,'&lt;')}
+    </div>
+    <div style="position:relative;margin-bottom:12px">
+      <input type="text" class="auf-input" id="bp-search"
+             placeholder="Suchen nach Berichts-Nr, Standort, Datum, Fabriknummer, Techniker…"
+             oninput="_bpSearch(this.value)" autocomplete="off">
+      <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--txt2);cursor:pointer">
+        <input type="checkbox" id="bp-only-free" checked onchange="_bpSearch(document.getElementById('bp-search').value)">
+        Nur noch nicht verknüpfte Berichte zeigen
+      </label>
+    </div>
+    <div id="bp-list" style="max-height:380px;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px;-webkit-overflow-scrolling:touch"></div>
+    <div style="font-size:11px;color:var(--txt3);margin-top:8px" id="bp-count"></div>
+  `;
+  _bpSearch('');
+  setTimeout(() => document.getElementById('bp-search')?.focus(), 100);
+}
+
+function _bpSearch(query) {
+  const q = (query||'').toLowerCase().trim();
+  const onlyFree = !!document.getElementById('bp-only-free')?.checked;
+  const auf = _bpAuftragRec.fields;
+  let items = _bpBerichte.slice();
+  if (onlyFree) {
+    items = items.filter(r => {
+      const f = r.fields;
+      // "Frei" = noch keinem Auftrag zugeordnet ODER bereits diesem Auftrag
+      return !f.auftrag_id || f.auftrag_id === _bpAuftragRec.id;
+    });
+  }
+  if (q) {
+    items = items.filter(r => {
+      const f = r.fields;
+      const hay = [
+        String(f.bericht_num||''), f.standort, f.fabriknummer, f.techniker, f.datum,
+        f.kunde, T[f.tmpl]?.label,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  items = items.slice(0, 200);
+  _bpMatches = items;
+
+  const list = document.getElementById('bp-list');
+  const cnt  = document.getElementById('bp-count');
+  if (items.length === 0) {
+    list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--txt3);font-size:13px">'
+      + (q ? 'Keine Berichte gefunden für „'+q.replace(/</g,'&lt;')+'".' : 'Keine Berichte verfügbar.')
+      + '</div>';
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  if (cnt) cnt.textContent = items.length+' Bericht'+(items.length!==1?'e':'')+(items.length === 200 ? ' (max 200 gezeigt – weiter tippen)' : '');
+
+  // Tmpl-Mismatch warnen
+  const auftragTmpl = auf.tmpl || '';
+  list.innerHTML = items.map((r, i) => {
+    const f = r.fields;
+    const isLinked = f.auftrag_id && f.auftrag_id !== _bpAuftragRec.id;
+    const tmplLabel = T[f.tmpl]?.label || f.tmpl || '–';
+    const tmplMismatch = f.tmpl && auftragTmpl && f.tmpl !== auftragTmpl;
+    const fnMismatch = f.fabriknummer && auf.fabriknummer && f.fabriknummer.toLowerCase() !== (auf.fabriknummer||'').toLowerCase();
+    const warnings = [];
+    if (isLinked) warnings.push('<span style="background:#FED7AA;color:#9A3412;padding:1px 7px;border-radius:99px;font-size:10px;font-weight:700">⚠ schon verknüpft #'+(f.auftrag_num||'?')+'</span>');
+    if (tmplMismatch) warnings.push('<span style="background:#FEF3C7;color:#92400E;padding:1px 7px;border-radius:99px;font-size:10px">Vorlage abweichend</span>');
+    if (fnMismatch) warnings.push('<span style="background:#FEF3C7;color:#92400E;padding:1px 7px;border-radius:99px;font-size:10px">Fabriknr abweichend</span>');
+    return '<div onclick="_bpSelect('+i+')" style="padding:11px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;display:flex;align-items:flex-start;gap:12px" onmouseover="this.style.background=\'#F8FAFC\'" onmouseout="this.style.background=\'\'">'
+      + '<div style="font-size:18px;font-weight:800;color:var(--navy);min-width:48px">'+(f.bericht_num||'?')+'</div>'
+      + '<div style="flex:1;min-width:0">'
+      +   '<div style="font-weight:600;color:var(--txt);font-size:13px;line-height:1.3">'+(f.standort||'(kein Standort)').replace(/</g,'&lt;')+'</div>'
+      +   '<div style="font-size:11px;color:var(--txt2);margin-top:3px;line-height:1.5">'
+      +     '📅 '+(f.datum||'–')
+      +     (f.fabriknummer ? ' · 🔧 '+f.fabriknummer.replace(/</g,'&lt;') : '')
+      +     (f.techniker ? ' · 👤 '+f.techniker.replace(/</g,'&lt;') : '')
+      +     ' · 🏷 '+tmplLabel.replace(/</g,'&lt;')
+      +   '</div>'
+      +   (warnings.length ? '<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:4px">'+warnings.join('')+'</div>' : '')
+      + '</div>'
+      + '</div>';
+  }).join('');
+}
+
+async function _bpSelect(idx) {
+  const r = _bpMatches[idx];
+  if (!r) return;
+  const f = r.fields;
+  const auf = _bpAuftragRec.fields;
+  // Already linked to a DIFFERENT auftrag? → confirm
+  if (f.auftrag_id && f.auftrag_id !== _bpAuftragRec.id) {
+    if (!confirm('Dieser Bericht ist bereits mit Auftrag #'+(f.auftrag_num||'?')+' verknüpft. Trotzdem auf #'+(auf.auftrag_num||'?')+' umhängen?')) return;
+  }
+  if (!confirm('Bericht Nr. '+f.bericht_num+'\n('+(f.standort||'')+')\n\nmit Auftrag #'+(auf.auftrag_num||'?')+' verknüpfen?\n\n→ Auftrag wird auf "abgeschlossen" gesetzt.')) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    // 1) Bericht patchen
+    await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+r.id, {
+      method:'PATCH',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: { auftrag_id: _bpAuftragRec.id, auftrag_num: +(auf.auftrag_num||0) || null } })
+    }).then(r=>r.json()).then(d => { if (d.error) throw new Error(d.error.message||'Bericht-Patch fehlgeschlagen'); });
+    // 2) Auftrag patchen
+    await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+_bpAuftragRec.id, {
+      method:'PATCH',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: {
+        bericht_id: r.id,
+        bericht_num: +f.bericht_num || null,
+        status: 'abgeschlossen',
+        completed_at: new Date().toISOString(),
+      }})
+    }).then(r=>r.json()).then(d => { if (d.error) throw new Error(d.error.message||'Auftrag-Patch fehlgeschlagen'); });
+    toast('✅ Bericht Nr. '+f.bericht_num+' mit Auftrag #'+auf.auftrag_num+' verknüpft.', 'ok');
+    closeBerichtPicker();
+    closeAuftragDetail();
+    await loadAuftraegeAndRender();
+  } catch(e) {
+    console.error('Bericht-Verknüpfung:', e);
+    toast('❌ '+e.message, 'err');
+  }
 }
 
 /* ══════════ BULK-IMPORT WIZARD ══════════ */
