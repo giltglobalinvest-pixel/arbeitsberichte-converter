@@ -2248,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.87';
+const APP_VERSION = 'v2.88';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9892,10 +9892,14 @@ async function erpFetch(path, options={}) {
       if (data.target)               extras.push('target='+data.target);
       if (data.tenant)               extras.push('tenant='+data.tenant);
       if (data.api_key_source)       extras.push('key='+data.api_key_source);
-      if (data.upstream_body_excerpt) extras.push('upstream='+String(data.upstream_body_excerpt).slice(0,180));
+      if (data.upstream_body_excerpt) extras.push('upstream='+String(data.upstream_body_excerpt).slice(0,600));
       if (extras.length) msg += ' [' + extras.join(' · ') + ']';
+      // Vollen Body zusätzlich in die Console — Toast schneidet ab, aber DevTools zeigt's komplett
+      console.error('[ERP-Fehler] '+path+' → HTTP '+res.status, data);
+      if (data.upstream_body_excerpt) console.error('[ERP-Fehler] Upstream-Body:', data.upstream_body_excerpt);
     } else if (typeof text==='string' && text) {
-      msg += ' – ' + text.slice(0,300);
+      msg += ' – ' + text.slice(0,600);
+      console.error('[ERP-Fehler] '+path+' → HTTP '+res.status, text);
     }
     const err = new Error('Proxy '+path+': '+msg);
     err.url = url; err.status = res.status; err.body = data || text;
