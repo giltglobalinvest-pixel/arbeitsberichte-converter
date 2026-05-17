@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.62</div>
+    <div class="login-version">Elevator Servicebox v2.63</div>
   </div>
 </div>
 
@@ -1578,6 +1578,25 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <div class="intg-hint">"🔬 Testen" ruft <code>/api/auftraege?limit=1</code> ab und zeigt HTTP-Status + Antwort-Body. Damit siehst du sofort, ob Key+Tenant passen.</div>
     </div>
 
+    <!-- GEPLANTER SYNC (CRON) -->
+    <div class="intg-card">
+      <h3>🕐 Geplanter Sync (Cron) <span id="intg-cron-status"><span class="intg-status">…</span></span></h3>
+      <p class="intg-desc">
+        Lass den ERP-Sync regelmäßig im Hintergrund auf Val.town laufen – ohne dass die App offen sein muss.
+        Der Cron-Job ruft <code>/sync/run-all</code> auf und synchronisiert alle aktiven Firmen mit gesetztem ERP-Tenant.
+        Der Status pro Firma erscheint dann automatisch im Banner der Aufträge-Ansicht.
+      </p>
+      <div class="intg-label">Zeitplan</div>
+      <div class="intg-row">
+        <select class="intg-input" id="intg-cron-schedule" style="max-width:280px"></select>
+        <button class="btn prim" onclick="applyCronSchedule(document.getElementById('intg-cron-schedule').value, this)">💾 Anwenden</button>
+      </div>
+      <div class="intg-hint">
+        ℹ️ "Inaktiv" entfernt den Cron-Job vollständig. Andere Werte legen ihn an bzw. ändern den Zeitplan.<br>
+        ℹ️ Free Tier von Val.town hat Limits beim Cron-Intervall – sehr kurze Intervalle (alle paar Min) können zusätzliche Compute-Minuten kosten.
+      </div>
+    </div>
+
     <!-- ERP-SYNC + DEBUG -->
     <div class="intg-card">
       <h3>🔄 Aufträge synchronisieren</h3>
@@ -1831,7 +1850,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.62';
+const APP_VERSION = 'v2.63';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -1843,6 +1862,8 @@ let APP_KEYS = {
   airtableWriteKey:null, anthropicKey:null, appBaseId:null, user:null,
   // Val.town-Proxy für ERP-API
   valtownKey:null, valtownValId:null, valtownProxyUrl:null,
+  // Geheimnis für serverseitige Cron-Jobs (Header X-Sync-Secret)
+  syncSecret:null,
   // Aufzugshandwerk-ERP-Token: globaler Fallback + pro Firma
   aufzugApiKey:null,
   aufzugApiKeys: {}, // { aufzug: '...', aszendio: '...' }
@@ -2179,6 +2200,7 @@ async function loginWithUserKey(userKey) {
     if (rec.fields.key_name==='airtableBaseId')  APP_KEYS.appBaseId       = rec.fields.key_value;
     if (rec.fields.key_name==='valtownKey')      APP_KEYS.valtownKey      = rec.fields.key_value;
     if (rec.fields.key_name==='valtownValId')    APP_KEYS.valtownValId    = rec.fields.key_value;
+    if (rec.fields.key_name==='syncSecret')      APP_KEYS.syncSecret      = rec.fields.key_value;
     if (rec.fields.key_name==='valtownProxyUrl') {
       const raw = rec.fields.key_value;
       const normalized = (typeof _normalizeProxyUrl === 'function') ? _normalizeProxyUrl(raw) : raw;
@@ -6562,7 +6584,7 @@ function json(d, s=200) {
 export default async function (req) {
   if (req.method === "OPTIONS") return new Response(null, { status:204, headers: {
     "access-control-allow-origin":"*",
-    "access-control-allow-headers":"authorization, content-type, x-erp-tenant",
+    "access-control-allow-headers":"authorization, content-type, x-erp-tenant, x-sync-secret",
     "access-control-allow-methods":"GET, POST, PATCH, PUT, DELETE, OPTIONS",
     "access-control-max-age":"86400"
   }});
@@ -6581,10 +6603,20 @@ export default async function (req) {
     return json({ session_token:t, expires_in:Math.floor(ttl/1000), user });
   }
 
-  const tok = (req.headers.get("authorization")||"").replace(/^Bearer\\s+/i,"").trim();
-  if (!tok) return json({ error:"Missing Bearer token" }, 401);
-  const user = await resolveAuth(tok);
-  if (!user) return json({ error:"Ungültiges Token" }, 401);
+  // Cron-Jobs authentifizieren sich via X-Sync-Secret Header statt Bearer-Token
+  const syncSecret = (req.headers.get("x-sync-secret")||"").trim();
+  const validSecret = Deno.env.get("SYNC_SECRET");
+  const isCron = !!(syncSecret && validSecret && syncSecret === validSecret);
+
+  let user;
+  if (isCron) {
+    user = { kind:"cron", api_key:"cron", name:"Cron", role:"system", is_admin:true };
+  } else {
+    const tok = (req.headers.get("authorization")||"").replace(/^Bearer\\s+/i,"").trim();
+    if (!tok) return json({ error:"Missing Bearer token" }, 401);
+    user = await resolveAuth(tok);
+    if (!user) return json({ error:"Ungültiges Token" }, 401);
+  }
 
   if (path === "logout" && req.method === "POST") {
     if (user.kind === "session") await deleteSession(tok);
@@ -6720,6 +6752,32 @@ export default async function (req) {
       } catch(_){}
     }
     return json({ statuses });
+  }
+
+  // Sync für ALLE aktiven Firmen (für Cron-Jobs)
+  if (path === "sync/run-all" && req.method === "POST") {
+    try {
+      const firmen = await atReadAll("Firmen");
+      const results = [];
+      for (const f of firmen) {
+        const slug = f.fields && f.fields.slug;
+        const tenant = f.fields && f.fields.erp_tenant;
+        const aktiv = (f.fields && f.fields.aktiv) !== false;
+        if (!slug || !tenant || !aktiv) continue;
+        try {
+          const r = await runSyncForFirma(slug, user.api_key || "cron");
+          results.push({ firma:slug, ok:true, created:r.created, updated:r.updated, skipped:r.skipped, errors:r.errors });
+        } catch(e) {
+          results.push({ firma:slug, ok:false, error: e.message });
+          try { await blob.setJSON("sync_status_"+slug, { firma:slug, error:e.message, finished:new Date().toISOString(), triggered_by:user.api_key||"cron" }); } catch(_){}
+        }
+      }
+      const summary = { ran: results.length, started: new Date().toISOString(), results };
+      try { await blob.setJSON("cron_last_run", summary); } catch(_){}
+      return json(summary);
+    } catch(e) {
+      return json({ error: e.message }, 500);
+    }
   }
 
   return json({ error:"Not found", path }, 404);
@@ -7118,9 +7176,16 @@ async function valtownStartSetup(btn) {
     }
 
     _vtLog('Setze Environment Variables…', 'info');
+    // SYNC_SECRET einmalig generieren wenn noch nicht da
+    if (!APP_KEYS.syncSecret) {
+      const arr = new Uint8Array(24); crypto.getRandomValues(arr);
+      APP_KEYS.syncSecret = Array.from(arr).map(b=>b.toString(16).padStart(2,'0')).join('');
+      _vtLog('🔐 Sync-Secret generiert', 'info');
+    }
     const envs = [
       { k:'AIRTABLE_READ_KEY', v:APP_CONFIG.AIRTABLE_READ_KEY, d:'Read token for User-Tabelle' },
       { k:'AIRTABLE_BASE_ID',  v:APP_KEYS.appBaseId||APP_CONFIG.APP_BASE_ID, d:'App-Base ID' },
+      { k:'SYNC_SECRET',       v:APP_KEYS.syncSecret, d:'Geheimnis für Cron-Jobs (X-Sync-Secret Header)' },
     ];
     if (APP_KEYS.airtableWriteKey) envs.push({ k:'AIRTABLE_WRITE_KEY', v:APP_KEYS.airtableWriteKey, d:'Write token (für Background-Sync)' });
     if (keyGlobal)   envs.push({ k:'AUFZUG_API_KEY',          v:keyGlobal,   d:'ERP-Key Fallback (global)' });
@@ -7153,6 +7218,7 @@ async function valtownStartSetup(btn) {
     await writeMasterBaseKey('valtownKey',      token,    mk['valtownKey']?.id);
     await writeMasterBaseKey('valtownValId',    valId,    mk['valtownValId']?.id);
     await writeMasterBaseKey('valtownProxyUrl', proxyUrl, mk['valtownProxyUrl']?.id);
+    await writeMasterBaseKey('syncSecret',      APP_KEYS.syncSecret, mk['syncSecret']?.id);
     if (keyGlobal)   await writeMasterBaseKey('aufzugApiKey',          keyGlobal,   mk['aufzugApiKey']?.id);
     if (keyAufzug)   await writeMasterBaseKey('aufzugApiKey_aufzug',   keyAufzug,   mk['aufzugApiKey_aufzug']?.id);
     if (keyAszendio) await writeMasterBaseKey('aufzugApiKey_aszendio', keyAszendio, mk['aufzugApiKey_aszendio']?.id);
@@ -7560,6 +7626,123 @@ async function _verifyOurVal(opLabel='Operation') {
 }
 
 /* ── Proxy-Code neu pushen (z.B. nach App-Update) ── */
+/* ── Cron-File Helpers (für regelmäßigen Hintergrund-Sync) ── */
+const VALTOWN_CRON_FILE_PATH = 'cron-sync.tsx';
+
+const SYNC_SCHEDULES = [
+  { id: 'off',      label: 'Inaktiv',           cron: null },
+  { id: '15min',    label: 'Alle 15 Minuten',   cron: '*/15 * * * *' },
+  { id: '30min',    label: 'Alle 30 Minuten',   cron: '*/30 * * * *' },
+  { id: 'hourly',   label: 'Stündlich (0. Min)', cron: '0 * * * *' },
+  { id: '3h',       label: 'Alle 3 Stunden',    cron: '0 */3 * * *' },
+  { id: '6h',       label: 'Alle 6 Stunden',    cron: '0 */6 * * *' },
+  { id: 'daily-03', label: 'Täglich um 03:00',  cron: '0 3 * * *' },
+  { id: 'daily-06', label: 'Täglich um 06:00',  cron: '0 6 * * *' },
+  { id: 'daily-22', label: 'Täglich um 22:00',  cron: '0 22 * * *' },
+];
+function _findScheduleByCron(c) { return SYNC_SCHEDULES.find(s => s.cron === c); }
+
+function _buildCronFileContent(proxyUrl, syncSecret) {
+  return `// Auto-generated by Elevator Servicebox · Cron-Sync
+// Ruft regelmäßig /sync/run-all am Proxy auf.
+const PROXY_URL = ${JSON.stringify(proxyUrl)};
+const SYNC_SECRET = ${JSON.stringify(syncSecret)};
+
+export default async function cron() {
+  const t0 = Date.now();
+  try {
+    const res = await fetch(PROXY_URL + "/sync/run-all", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Sync-Secret": SYNC_SECRET,
+      },
+    });
+    const text = await res.text();
+    let data; try { data = JSON.parse(text); } catch (_) { data = { _raw: text }; }
+    const dur = Date.now() - t0;
+    console.log("[Cron-Sync]", res.status, "in", dur+"ms", JSON.stringify(data).slice(0, 600));
+    if (!res.ok) throw new Error("HTTP " + res.status + ": " + (data && data.error || text.slice(0,150)));
+  } catch (e) {
+    console.error("[Cron-Sync] Fehler:", e.message);
+    throw e;
+  }
+}
+`;
+}
+
+async function valtownAddCronFile(token, valId, content, cronExpr) {
+  return valtownApi(token, 'POST', '/v2/vals/'+valId+'/files?path='+encodeURIComponent(VALTOWN_CRON_FILE_PATH), {
+    content, type: 'interval', cron: cronExpr
+  });
+}
+
+async function valtownUpdateCronFile(token, valId, content, cronExpr) {
+  return valtownApi(token, 'PUT', '/v2/vals/'+valId+'/files?path='+encodeURIComponent(VALTOWN_CRON_FILE_PATH), {
+    content, type: 'interval', cron: cronExpr
+  });
+}
+
+async function valtownGetCronFile(token, valId) {
+  try { return await valtownGetFile(token, valId, VALTOWN_CRON_FILE_PATH); }
+  catch(_) { return null; }
+}
+
+async function valtownDeleteCronFile(token, valId) {
+  try { return await valtownDeleteFile(token, valId, VALTOWN_CRON_FILE_PATH); }
+  catch(_) { return null; }
+}
+
+/* ── Plan-Sync aktivieren/deaktivieren/ändern ── */
+async function applyCronSchedule(scheduleId, btn) {
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Proxy nicht eingerichtet.', 'err');
+  if (!APP_KEYS.syncSecret) return toast('Sync-Secret fehlt – bitte erst Setup neu durchlaufen.', 'err');
+  const sched = SYNC_SCHEDULES.find(s => s.id === scheduleId);
+  if (!sched) return toast('Unbekannter Zeitplan.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ pushe…'; }
+  _erpLog('=== Cron-Schedule anwenden: '+sched.label+' ===', 'info');
+  try {
+    // Safety: nur unseren Val anfassen
+    await _verifyOurVal('Cron-Schedule');
+    if (!sched.cron) {
+      // Deaktivieren → Cron-File löschen
+      await valtownDeleteCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
+      _erpLog('✓ Cron-File entfernt (Auto-Sync deaktiviert)', 'ok');
+      toast('✅ Auto-Sync deaktiviert.', 'ok');
+    } else {
+      // Aktivieren oder Schedule ändern: existiert das File schon?
+      const content = _buildCronFileContent(APP_KEYS.valtownProxyUrl, APP_KEYS.syncSecret);
+      const existing = await valtownGetCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
+      if (existing) {
+        await valtownUpdateCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, content, sched.cron);
+        _erpLog('✓ Cron-File aktualisiert · neuer Schedule: '+sched.cron, 'ok');
+      } else {
+        await valtownAddCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, content, sched.cron);
+        _erpLog('✓ Cron-File angelegt · Schedule: '+sched.cron, 'ok');
+      }
+      toast('✅ Auto-Sync aktiv: '+sched.label, 'ok');
+    }
+    renderIntegrationView();
+  } catch(e) {
+    console.error('applyCronSchedule:', e);
+    _erpLog('❌ '+e.message, 'err');
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Speichern'; }
+  }
+}
+
+/* ── Aktuellen Cron-Schedule lesen ── */
+async function fetchCurrentCronSchedule() {
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return null;
+  try {
+    const f = await valtownGetCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
+    if (!f) return null;
+    const cronExpr = f.cron || f.interval || null;
+    return { cron: cronExpr, schedule: _findScheduleByCron(cronExpr), file: f };
+  } catch(_) { return null; }
+}
+
 async function valtownUpdateProxyCode(btn) {
   if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Proxy nicht eingerichtet.', 'err');
   if (!confirm('Proxy-Code aktualisieren? (überschreibt main.tsx im Val)')) return;
@@ -8210,6 +8393,39 @@ function renderIntegrationView() {
   if (eG && APP_KEYS.aufzugApiKey)    eG.value = APP_KEYS.aufzugApiKey;
   const setupBtn = document.getElementById('intg-vt-setup-btn');
   if (setupBtn) setupBtn.textContent = vtSet ? '⚡ Proxy aktualisieren' : '⚡ Setup starten';
+
+  // Cron-Status laden + Dropdown füllen
+  _renderCronSection();
+}
+
+async function _renderCronSection() {
+  const sel = document.getElementById('intg-cron-schedule');
+  const statusEl = document.getElementById('intg-cron-status');
+  if (!sel) return;
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) {
+    sel.innerHTML = '<option>Erst Val.town-Proxy einrichten…</option>';
+    sel.disabled = true;
+    if (statusEl) statusEl.innerHTML = '<span class="intg-status warn">⚠ Proxy fehlt</span>';
+    return;
+  }
+  sel.disabled = false;
+  // Optionen rendern
+  sel.innerHTML = SYNC_SCHEDULES.map(s => '<option value="'+s.id+'">'+s.label+'</option>').join('');
+  // Aktuellen Schedule abrufen + auswählen
+  if (statusEl) statusEl.innerHTML = '<span class="intg-status">⏳ prüfe…</span>';
+  try {
+    const cur = await fetchCurrentCronSchedule();
+    if (!cur || !cur.cron) {
+      sel.value = 'off';
+      if (statusEl) statusEl.innerHTML = '<span class="intg-status warn">○ Inaktiv</span>';
+    } else {
+      sel.value = cur.schedule?.id || 'off';
+      const label = cur.schedule?.label || ('Cron: '+cur.cron);
+      if (statusEl) statusEl.innerHTML = '<span class="intg-status ok">✓ Aktiv · '+label+'</span>';
+    }
+  } catch(e) {
+    if (statusEl) statusEl.innerHTML = '<span class="intg-status err">✗ Fehler: '+e.message.slice(0,80)+'</span>';
+  }
 }
 
 /* ════════════════════════════════════════════════════════════
