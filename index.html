@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.64</div>
+    <div class="login-version">Elevator Servicebox v2.65</div>
   </div>
 </div>
 
@@ -1641,7 +1641,6 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
   </div>
   <div class="auf-tabs" id="auf-tabs">
     <button class="auf-tab active" data-status="offen"          onclick="setAuftragTab('offen')">Offen <span class="auf-tab-count" id="auf-cnt-offen">0</span></button>
-    <button class="auf-tab"        data-status="in_bearbeitung" onclick="setAuftragTab('in_bearbeitung')">In Bearbeitung <span class="auf-tab-count" id="auf-cnt-in_bearbeitung">0</span></button>
     <button class="auf-tab"        data-status="abgeschlossen"  onclick="setAuftragTab('abgeschlossen')">Abgeschlossen <span class="auf-tab-count" id="auf-cnt-abgeschlossen">0</span></button>
     <button class="auf-tab"        data-status="abgerechnet"    onclick="setAuftragTab('abgerechnet')">Abgerechnet <span class="auf-tab-count" id="auf-cnt-abgerechnet">0</span></button>
     <button class="auf-tab"        data-status="all"            onclick="setAuftragTab('all')">Alle <span class="auf-tab-count" id="auf-cnt-all">0</span></button>
@@ -1850,7 +1849,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.64';
+const APP_VERSION = 'v2.65';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4451,21 +4450,22 @@ function setAuftragTab(status) {
   renderAuftraegeList();
 }
 
-/* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys) */
+/* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
+   Ab v2.65: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
   if (/abgerechnet/.test(t)) return 'abgerechnet';
   if (/abgeschlossen/.test(t)) return 'abgeschlossen';
-  if (/bearbeit/.test(t)) return 'in_bearbeitung';
-  if (/best.tigt|^offen$/.test(t)) return 'offen';
+  // Merged: 'In Bearbeitung' + 'Auftrag bestätigt' + legacy 'in_bearbeitung' → alles 'offen'
+  if (/bearbeit|best.tigt|^offen$|^in_bearbeitung$/.test(t)) return 'offen';
   return t;
 }
 
 function renderAuftraegeList() {
   const list = document.getElementById('auf-list');
-  // Counts (mit Status-Normalisierung)
-  const counts = { offen:0, in_bearbeitung:0, abgeschlossen:0, abgerechnet:0, all: 0 };
+  // Counts (mit Status-Normalisierung; 'in_bearbeitung' fällt unter 'offen')
+  const counts = { offen:0, abgeschlossen:0, abgerechnet:0, all: 0 };
   _auftragCache.forEach(r => {
     const s = _normAuftragStatus(r.fields.status);
     if (counts[s] !== undefined) counts[s]++;
@@ -4514,7 +4514,7 @@ function renderAuftraegeList() {
 function _auftragCardHtml(r) {
   const f = r.fields;
   const status = _normAuftragStatus(f.status);
-  const statusLabel = { offen:'Offen', in_bearbeitung:'In Arbeit', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
+  const statusLabel = { offen:'Offen', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
   const prio = f.priority || 'normal';
   const prioLabel = { normal:'Normal', hoch:'Hoch', dringend:'Dringend' }[prio] || prio;
   let techs = [];
@@ -4598,7 +4598,7 @@ function openAuftragDetail(recId) {
   try { techs = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techNames = f.techniker_namen || _techNamesByKeys(techs);
   const status = _normAuftragStatus(f.status);
-  const statusLabel = { offen:'Offen', in_bearbeitung:'In Bearbeitung', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
+  const statusLabel = { offen:'Offen', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
   const prio = f.priority || 'normal';
 
   // Kontakt: bevorzugt das neue Textfeld; Legacy-Felder als Fallback
@@ -6066,7 +6066,7 @@ async function loadDashboardStats() {
 
     // Bei Techniker: Aufträge-Stats statt System-Stats
     if (techMode) {
-      let myOpen = 0, myInProgress = 0, myDone = 0;
+      let myOpen = 0, myDone = 0;
       try {
         const auf = await atRead('Auftraege', null);
         const mine = auf.filter(r => {
@@ -6078,12 +6078,11 @@ async function loadDashboardStats() {
         mine.forEach(r => {
           const s = _normAuftragStatus(r.fields.status);
           if (s === 'offen') myOpen++;
-          else if (s === 'in_bearbeitung') myInProgress++;
           else if (s === 'abgeschlossen') myDone++;
         });
       } catch(e) { console.warn('Auftraege-Stats:', e); }
       c.innerHTML =
-        statCard('🛠', myOpen + myInProgress, 'Meine offenen Aufträge', myInProgress + ' in Arbeit') +
+        statCard('🛠', myOpen, 'Meine offenen Aufträge', '') +
         statCard('📋', reports.length, 'Meine Berichte gesamt', '') +
         statCard('📅', month, 'Diese 30 Tage', week + ' diese Woche') +
         statCard('✏', todayReports, 'Heute erstellt', '');
@@ -6792,8 +6791,8 @@ function normStatus(s) {
   if (!t) return "offen";
   if (/abgerechnet/.test(t)) return "abgerechnet";
   if (/abgeschlossen/.test(t)) return "abgeschlossen";
-  if (/bearbeit/.test(t)) return "in_bearbeitung";
-  if (/best.tigt|^offen$/.test(t)) return "offen";
+  // Merged: 'In Bearbeitung' + 'Auftrag bestätigt' + legacy → 'offen'
+  if (/bearbeit|best.tigt|^offen$|^in_bearbeitung$/.test(t)) return "offen";
   return t;
 }
 
