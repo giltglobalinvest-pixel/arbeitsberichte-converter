@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.55</div>
+    <div class="login-version">Elevator Servicebox v2.56</div>
   </div>
 </div>
 
@@ -1820,7 +1820,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.55';
+const APP_VERSION = 'v2.56';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3222,7 +3222,7 @@ async function renderOverview() {
   try {
     const allRecs=await atRead('Berichte', null);
     const firmaSlug = getCurrentFirmaSlug();
-    let recs = allRecs.filter(r => _firmaOfRec(r) === firmaSlug);
+    let recs = isFirmaAll() ? allRecs : allRecs.filter(r => _firmaOfRec(r) === firmaSlug);
     // Techniker-Only: nur eigene Berichte (created_by oder techniker-Feld === eigener User)
     if (isTechnikerOnly()) {
       const myKey  = APP_KEYS.user?.api_key;
@@ -3991,6 +3991,12 @@ function _firmaTmplPrefix(slug) {
   return slug;
 }
 
+const ALL_FIRMA_SLUG = '__all__';
+const ALL_FIRMA = { slug: ALL_FIRMA_SLUG, name: 'Alle Firmen', icon: '🌐', aktiv: true, kalk_typ: 'none' };
+
+function isFirmaAll() {
+  return getCurrentFirmaSlug() === ALL_FIRMA_SLUG;
+}
 function getCurrentFirmaSlug() {
   return (S.firma && S.firma.slug) || localStorage.getItem('firma_'+APP_CONFIG.PROJECT_ID) || 'aszendio';
 }
@@ -4059,20 +4065,27 @@ function pickInitialFirma() {
 }
 
 function setCurrentFirma(slug, opts = {}) {
-  const target = _firmenCache.find(f => f.fields.slug === slug);
-  if (!target) return toast('Firma nicht gefunden: '+slug, 'err');
+  // Spezial-Slug "__all__": Pseudo-Firma "Alle Firmen"
+  let targetFields;
+  if (slug === ALL_FIRMA_SLUG) {
+    targetFields = { ...ALL_FIRMA };
+  } else {
+    const target = _firmenCache.find(f => f.fields.slug === slug);
+    if (!target) return toast('Firma nicht gefunden: '+slug, 'err');
+    targetFields = target.fields;
+  }
   if ((S.firma?.slug) === slug) { hideFirmaDropdown(); return; }
 
   // Bestätigung wenn Konverter-Vorgang läuft
   if (!opts.force && (S.file || S.blob)) {
-    if (!confirm('Aktueller Vorgang im Konverter wird verworfen. Firma wechseln zu "'+target.fields.name+'"?')) {
+    if (!confirm('Aktueller Vorgang im Konverter wird verworfen. Firma wechseln zu "'+targetFields.name+'"?')) {
       hideFirmaDropdown();
       return;
     }
     try { resetApp(); } catch(e) {}
   }
 
-  S.firma = target.fields;
+  S.firma = targetFields;
   localStorage.setItem('firma_'+APP_CONFIG.PROJECT_ID, slug);
   updateFirmaPillUI();
   hideFirmaDropdown();
@@ -4083,7 +4096,7 @@ function setCurrentFirma(slug, opts = {}) {
   const activeBtn = document.querySelector('.tnav.active');
   const activeView = activeBtn ? activeBtn.id.replace('tnav-','') : 'dashboard';
   switchView(activeView);
-  toast('Firma: '+target.fields.icon+' '+target.fields.name, 'ok');
+  toast('Firma: '+targetFields.icon+' '+targetFields.name, 'ok');
 }
 
 function updateFirmaPillUI() {
@@ -4115,6 +4128,15 @@ function renderFirmaDropdown() {
       ${active?'<span class="check">✓</span>':''}
     </div>`;
   }).join('');
+  // Pseudo-Eintrag "Alle Firmen" oben anhängen (für Übersicht über alle Aufträge)
+  const allActive = cur === ALL_FIRMA_SLUG;
+  const allItem = `<div class="firma-item ${allActive?'active':''}" onclick="setCurrentFirma('${ALL_FIRMA_SLUG}')" title="Zeigt Aufträge und Berichte über alle Firmen hinweg">
+    <span style="font-size:16px">🌐</span>
+    <span style="font-weight:600">Alle Firmen</span>
+    ${allActive?'<span class="check">✓</span>':''}
+  </div>
+  <div class="firma-divider"></div>`;
+  const itemsWithAll = allItem + items;
   let admin = '';
   if (isAdmin()) {
     admin =
@@ -4122,7 +4144,7 @@ function renderFirmaDropdown() {
       '<button class="firma-action" onclick="createNewFirma()">+ Neue Firma anlegen</button>' +
       '<button class="firma-action" onclick="hideFirmaDropdown();switchView(\'firmen\')">⚙ Firmen verwalten</button>';
   }
-  dd.innerHTML = items + admin || '<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Firmen verfügbar.</div>';
+  dd.innerHTML = itemsWithAll + admin || '<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Firmen verfügbar.</div>';
 }
 
 /* Click outside + ESC schließen */
@@ -4322,12 +4344,13 @@ async function loadAuftraegeAndRender() {
   try {
     const allRecs = await atRead('Auftraege', null);
     const firmaSlug = getCurrentFirmaSlug();
+    const allMode = isFirmaAll();
     _auftragCache = allRecs
-      .filter(r => (r.fields.firma || '') === firmaSlug)
+      .filter(r => allMode ? true : (r.fields.firma || '') === firmaSlug)
       .filter(_canSeeAuftrag)
       .sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));
-    // Anlegen-Button sichtbar?
-    document.getElementById('auf-new-btn').style.display = hasPermission('auftraege_create') ? '' : 'none';
+    // Anlegen-Button: bei "Alle Firmen" ausgeblendet, weil Anlegen eine konkrete Firma braucht
+    document.getElementById('auf-new-btn').style.display = (hasPermission('auftraege_create') && !allMode) ? '' : 'none';
     // ERP-Sync-Button + Bulk-Rechnungs-Check: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
     const erpBtn = document.getElementById('auf-erp-sync-btn');
     const rechnBtn = document.getElementById('auf-rechn-check-btn');
@@ -4418,12 +4441,21 @@ function _auftragCardHtml(r) {
   try { techs = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techNames = f.techniker_namen || _techNamesByKeys(techs);
   const tmplLabel = T[f.tmpl]?.label || f.tmpl || '–';
+  // Im "Alle Firmen"-Modus: Firma-Icon zur Unterscheidung anzeigen
+  let firmaBadge = '';
+  if (isFirmaAll() && f.firma) {
+    const firmaRec = _firmenCache?.find(x => x.fields?.slug === f.firma);
+    const ic = firmaRec?.fields?.icon || '🏢';
+    const nm = firmaRec?.fields?.name || f.firma;
+    firmaBadge = '<span>'+ic+' '+nm.replace(/</g,'&lt;')+'</span>';
+  }
   return `
     <div class="auf-card" onclick="openAuftragDetail('${r.id}')">
       <div class="auf-card-num">#${f.auftrag_num || '–'}</div>
       <div class="auf-card-info">
         <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}</div>
         <div class="auf-card-meta">
+          ${firmaBadge}
           <span>🏷 ${tmplLabel}</span>
           ${f.fabriknummer ? '<span>🔧 '+f.fabriknummer.replace(/</g,'&lt;')+'</span>' : ''}
           ${f.due_date ? '<span>📅 '+f.due_date+'</span>' : ''}
@@ -4459,12 +4491,17 @@ function openAuftragDetail(recId) {
   }
 
   const body = document.getElementById('auf-detail-body');
+  // Bestellform-Label: "MITANGEBOT" → "pauschal", sonst Original
+  const bestellformLabel = f.bestellform
+    ? (/^MITANGEBOT$/i.test(f.bestellform) ? 'pauschal' : f.bestellform.toLowerCase())
+    : '';
   body.innerHTML = `
     <div class="auf-section">
       <h3>Status</h3>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <span class="auf-status ${status}">${statusLabel}</span>
         ${prio !== 'normal' ? '<span class="auf-prio '+prio+'">Priorität: '+prio+'</span>' : ''}
+        ${bestellformLabel ? '<span style="font-size:11px;font-weight:500;padding:3px 9px;border-radius:99px;background:rgba(124,58,237,.12);color:#5b21b6">📋 '+bestellformLabel+'</span>' : ''}
         ${f.due_date ? '<span style="font-size:12px;color:var(--txt2)">📅 fällig bis '+f.due_date+'</span>' : ''}
         ${f.completed_at ? '<span style="font-size:12px;color:var(--ok)">✅ '+f.completed_at.slice(0,10)+'</span>' : ''}
       </div>
@@ -4481,37 +4518,25 @@ function openAuftragDetail(recId) {
       <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(kontakt||'(keine Kontaktdaten hinterlegt)').replace(/</g,'&lt;')}</div>
     </div>
     <div class="auf-section">
-      <h3>Leistungsbeschreibung</h3>
-      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(f.leistungsbeschreibung||'(keine Beschreibung)').replace(/</g,'&lt;')}</div>
+      <h3>Leistungsumfang</h3>
+      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(f.leistungsumfang || f.leistungsbeschreibung || '(kein Leistungsumfang hinterlegt)').replace(/</g,'&lt;')}</div>
     </div>
+    ${f.erlaeuterungen && canSeePrices() ? `
+    <div class="auf-section">
+      <h3>Erläuterungen</h3>
+      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${f.erlaeuterungen.replace(/</g,'&lt;')}</div>
+    </div>` : ''}
     ${isSubunternehmer() && f.subunternehmer_preis ? `
     <div class="auf-section">
       <h3>💰 Deine Vergütung für diesen Auftrag</h3>
       <div style="font-size:14px;line-height:1.5;white-space:pre-wrap;background:#FEF3C7;padding:12px 14px;border-radius:6px;border:1px solid #FCD34D;color:#78350F;font-weight:500">${f.subunternehmer_preis.replace(/</g,'&lt;')}</div>
     </div>
     ` : ''}
-    ${f.ext_id ? `
-    <div class="auf-section">
-      <h3>ERP-Stammdaten <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:99px;background:rgba(59,130,246,.15);color:#1e40af;margin-left:6px">🔗 ${(f.ext_source||'aufzugshandwerk')}</span></h3>
-      ${f.ext_vorgangsnummer ? '<div class="auf-row"><span class="lbl">Vorgangsnummer</span><span class="val" style="font-family:monospace">'+f.ext_vorgangsnummer+'</span></div>' : ''}
-      ${f.kunde_firmenname ? '<div class="auf-row"><span class="lbl">Kunde</span><span class="val">'+f.kunde_firmenname.replace(/</g,'&lt;')+'</span></div>' : ''}
-      ${f.objekttyp ? '<div class="auf-row"><span class="lbl">Objekttyp</span><span class="val">'+f.objekttyp.replace(/</g,'&lt;')+'</span></div>' : ''}
-      ${f.bestellform ? '<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">'+f.bestellform+'</span></div>' : ''}
-      ${canSeePrices() && (f.stundensatz != null) ? '<div class="auf-row"><span class="lbl">Stundensatz</span><span class="val">'+Number(f.stundensatz).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
-      ${canSeePrices() && (f.einsatzpauschale != null) ? '<div class="auf-row"><span class="lbl">Einsatzpauschale</span><span class="val">'+Number(f.einsatzpauschale).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
-    </div>
-    ${canSeePrices() && (f.leistungsumfang || f.erlaeuterungen || f.angebot_typ) ? `
-    <div class="auf-section">
-      <h3>Angebot ${f.angebot_id ? '<span style="font-size:11px;font-weight:500;color:var(--txt2);font-family:monospace;margin-left:6px">#'+f.angebot_id+'</span>' : ''} ${f.angebot_typ ? '<span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:99px;background:rgba(124,58,237,.15);color:#5b21b6;margin-left:6px">'+f.angebot_typ+'</span>' : ''}</h3>
-      ${f.leistungsumfang ? '<div style="font-size:11px;color:var(--txt2);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600">Leistungsumfang</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">'+f.leistungsumfang.replace(/</g,'&lt;')+'</div>' : ''}
-      ${f.erlaeuterungen ? '<div style="font-size:11px;color:var(--txt2);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600">Erläuterungen</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">'+f.erlaeuterungen.replace(/</g,'&lt;')+'</div>' : ''}
-    </div>` : ''}
     ${canSeePrices() && f.subunternehmer_preis ? `
     <div class="auf-section">
       <h3>💰 Subunternehmer-Vergütung <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(intern · nur Admin/Verwalter sichtbar)</span></h3>
       <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:#FEF3C7;padding:10px 12px;border-radius:5px;border:1px solid #FCD34D;color:#78350F">${f.subunternehmer_preis.replace(/</g,'&lt;')}</div>
     </div>` : ''}
-    ` : ''}
     <div class="auf-section">
       <h3>Zugewiesene Techniker</h3>
       <div style="font-size:13px">${techNames ? techNames.split(',').map(n => '<span class="auf-tech-chip">'+n.trim().replace(/</g,'&lt;')+'</span>').join('') : '<span style="color:var(--txt3)">Niemand zugewiesen</span>'}</div>
@@ -4899,6 +4924,7 @@ async function checkAuftragInvoice(recId) {
 async function bulkCheckInvoices() {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
   if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  if (isFirmaAll()) return toast('Bulk-Check braucht eine konkrete Firma. Bitte oben rechts wählen.', 'err');
   const firmaSlug = getCurrentFirmaSlug();
   // Kandidaten: ext_id + NICHT bereits 'abgerechnet'
   const candidates = _auftragCache.filter(r => r.fields.ext_id && _normAuftragStatus(r.fields.status) !== 'abgerechnet');
@@ -5901,10 +5927,11 @@ async function loadDashboardStats() {
     const myKey  = APP_KEYS.user?.api_key;
     const myName = (APP_KEYS.user?.name||'').toLowerCase();
 
-    // Berichte laden (firma-scoped)
+    // Berichte laden (firma-scoped; "Alle Firmen" → ungefiltert)
     let allReports = [];
     try { allReports = await atRead('Berichte', null); } catch(e) { console.warn('Berichte:', e); }
-    let reports = allReports.filter(r => _firmaOfRec(r) === firmaSlug);
+    const allMode = isFirmaAll();
+    let reports = allMode ? allReports.slice() : allReports.filter(r => _firmaOfRec(r) === firmaSlug);
     if (techMode) {
       reports = reports.filter(r => {
         const f = r.fields;
@@ -5926,7 +5953,7 @@ async function loadDashboardStats() {
       try {
         const auf = await atRead('Auftraege', null);
         const mine = auf.filter(r => {
-          if ((r.fields.firma||'') !== firmaSlug) return false;
+          if (!allMode && (r.fields.firma||'') !== firmaSlug) return false;
           let keys = [];
           try { keys = JSON.parse(r.fields.techniker_keys||'[]'); } catch(_){}
           return Array.isArray(keys) && keys.includes(myKey);
@@ -7367,14 +7394,31 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         catch(e) { console.warn('Angebot '+a.angebotid+' nicht geladen:', e.message); }
       }
       const anlage = a.anlage || {};
+      // KONTAKT VOR ORT: kommt aus der Anlage (anlage.ansprechpartner), NICHT aus a.empfaenger (=Auftraggeber)
+      const ansp = anlage.ansprechpartner || {};
       const empf = a.empfaenger || {};
-      const kontaktText = [
-        [empf.anrede, empf.vorname, empf.nachname].filter(Boolean).join(' '),
-        empf.telefon ? 'Tel: '+empf.telefon : '',
-        empf.mobile  ? 'Mobil: '+empf.mobile : '',
-        empf.email   ? 'E-Mail: '+empf.email : '',
-        empf.rolle   ? 'Rolle: '+empf.rolle : '',
+      const buildKontakt = (k) => [
+        [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' '),
+        k.telefon ? 'Tel: '+k.telefon : '',
+        k.mobile  ? 'Mobil: '+k.mobile : '',
+        k.email   ? 'E-Mail: '+k.email : '',
+        k.rolle   ? 'Rolle: '+k.rolle : '',
       ].filter(Boolean).join('\n');
+      // Anlage-Ansprechpartner bevorzugt, fallback auf Empfänger wenn leer
+      const hasAnsp = !!(ansp.vorname || ansp.nachname || ansp.telefon || ansp.email || ansp.mobile);
+      const kontaktText = hasAnsp ? buildKontakt(ansp) : buildKontakt(empf);
+
+      // Vorlage: Wartungstermin → wartung-Template, sonst arbeit-Template
+      const haystack = [
+        a.bestellform, a.leistungsbeschreibung, a.notizen,
+        angebot?.typ, angebot?.serviceDescription, angebot?.title,
+        anlage.objektTyp,
+      ].filter(Boolean).join(' ').toLowerCase();
+      const isWartung = /wartung/.test(haystack);
+      const tmplKey   = firmaSlug + (isWartung ? '-wartung' : '-arbeit');
+
+      // Leistungsumfang: aus Angebot ODER (bei OHNEANGEBOT) aus a.leistungsbeschreibung
+      const leistungsumfang = (angebot?.serviceDescription || a.leistungsbeschreibung || a.notizen || '').trim();
 
       const fields = {
         firma:                 firmaSlug,
@@ -7391,20 +7435,19 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         due_date:              (a.ausfuehrungstermin||'').slice(0,10) || '',
         created:               a.createdDate || new Date().toISOString(),
         created_by:            APP_KEYS.user.api_key,
+        tmpl:                  tmplKey,
         // Aus Auftrag-Stammdaten
         stundensatz:           anlage.stundensatz || null,
         einsatzpauschale:      anlage.einsatzPauschale || null,
         objekttyp:             anlage.objektTyp || '',
         kunde_firmenname:      anlage.kunde?.firmenname || '',
-        // Aus Angebot
-        leistungsumfang:       angebot?.serviceDescription || '',
+        // Aus Angebot (mit Fallback)
+        leistungsumfang:       leistungsumfang,
         erlaeuterungen:        angebot?.offerExplanation || '',
         angebot_typ:           angebot?.typ || '',
         angebot_id:            a.angebotid || null,
         bestellform:           a.bestellform || '',
       };
-      // tmpl-Default je Firma (für Bericht-Vorlage)
-      if (!fields.tmpl) fields.tmpl = (firmaSlug === 'aszendio') ? 'aszendio-arbeit' : 'aufzug-arbeit';
 
       const existRec = byExt.get(String(a.id));
       if (existRec) {
@@ -7433,6 +7476,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
 async function runErpSync() {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Nur für Admins/Verwalter', 'err');
   if (!APP_KEYS.valtownProxyUrl) return toast('Erst Val.town-Proxy einrichten (Admin → Integrationen)', 'err');
+  if (isFirmaAll()) return toast('ERP-Sync braucht eine konkrete Firma. Bitte oben rechts wählen.', 'err');
   const firmaSlug = getCurrentFirmaSlug();
   const tenant    = _getErpTenantForFirma(firmaSlug);
   if (!tenant) {
