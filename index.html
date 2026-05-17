@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.77</div>
+    <div class="login-version">Elevator Servicebox v2.78</div>
   </div>
 </div>
 
@@ -2170,7 +2170,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.77';
+const APP_VERSION = 'v2.78';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4791,7 +4791,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.77: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.78: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5479,7 +5479,11 @@ function _renderAnlagenList() {
   items.sort((a,b) => (a.anzeigeAdresse||a.name||'').localeCompare(b.anzeigeAdresse||b.name||'','de'));
   _anlagenViewItems = items;
 
-  if (cnt) cnt.textContent = items.length+' Anlage'+(items.length!==1?'n':'')+(onlyWartung?' mit aktivem Wartungsvertrag':'');
+  const totalAufzuege = items.reduce((sum, a) => sum + (+a.anzahlAufzuege || 0), 0);
+  if (cnt) cnt.innerHTML =
+    '<strong>'+items.length+'</strong> Anlage'+(items.length!==1?'n':'')
+    + ' · <strong>'+totalAufzuege+'</strong> Aufzug'+(totalAufzuege!==1?'/Aufzüge':'')
+    + (onlyWartung?' <span style="color:#047857">· mit aktivem Wartungsvertrag</span>':'');
 
   if (items.length === 0) {
     let msg = 'Keine Anlagen vorhanden.';
