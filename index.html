@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.51</div>
+    <div class="login-version">Elevator Servicebox v2.52</div>
   </div>
 </div>
 
@@ -1815,7 +1815,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.51';
+const APP_VERSION = 'v2.52';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4438,7 +4438,7 @@ function openAuftragDetail(recId) {
       <div style="font-size:13px">${techNames ? techNames.split(',').map(n => '<span class="auf-tech-chip">'+n.trim().replace(/</g,'&lt;')+'</span>').join('') : '<span style="color:var(--txt3)">Niemand zugewiesen</span>'}</div>
     </div>
     ${f.bericht_num ? '<div class="auf-section"><h3>Verknüpfter Bericht</h3><div style="font-size:13px">📄 Nr. '+f.bericht_num+(f.completed_at?' (am '+f.completed_at.slice(0,10)+')':'')+'</div></div>' : ''}
-    ${status !== 'abgeschlossen' && _isAssignedToMe(rec) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
+    ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
   `;
 
   // Footer-Buttons abhängig von Permissions + Status
@@ -4452,7 +4452,9 @@ function openAuftragDetail(recId) {
     }
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')">🗑 Löschen</button>';
   }
-  if (status !== 'abgeschlossen' && status !== 'abgerechnet' && _isAssignedToMe(rec)) {
+  // Bericht erfassen: zugewiesene Techniker + User mit Edit/View-All-Berechtigung (z.B. Admin/Verwalter)
+  const canStartBericht = _isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all');
+  if (status !== 'abgeschlossen' && status !== 'abgerechnet' && canStartBericht) {
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Bericht erfassen</button>';
   }
   if ((status === 'abgeschlossen' || status === 'abgerechnet') && f.bericht_id) {
