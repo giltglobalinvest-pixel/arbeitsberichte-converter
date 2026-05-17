@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.82</div>
+    <div class="login-version">Elevator Servicebox v2.83</div>
   </div>
 </div>
 
@@ -1874,6 +1874,39 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       </div>
     </div>
 
+    <!-- FRESHDESK SETUP -->
+    <div class="intg-card">
+      <h3>🎫 Freshdesk-Integration <span id="intg-fd-status"><span class="intg-status">…</span></span></h3>
+      <p class="intg-desc">
+        Pro Firma ein eigenes Freshdesk-Konto. Nach jedem neuen Arbeitsbericht wird automatisch ein Ticket erstellt (mit PDF als Anhang).
+        Domain = der Teil vor <code>.freshdesk.com</code>, API-Key bekommst du in Freshdesk unter Profil → API-Key.
+      </p>
+
+      <div class="intg-label" style="margin-top:14px">🛗 Aufzugshandwerk</div>
+      <div class="intg-row">
+        <input type="text" class="intg-input" id="intg-fd-domain-aufzug" placeholder="Domain (z.B. aufzugshandwerk)" autocomplete="off" style="max-width:240px">
+        <input type="password" class="intg-input" id="intg-fd-key-aufzug" placeholder="API-Key" autocomplete="off">
+      </div>
+      <div class="intg-row" style="margin-top:6px">
+        <input type="email" class="intg-input" id="intg-fd-mail-aufzug" placeholder="Default-Requester-Email (z.B. service@aufzugshandwerk.de)" autocomplete="off">
+        <button class="btn" onclick="freshdeskSaveFirma('aufzug', this)">💾 Speichern</button>
+        <button class="btn" onclick="freshdeskTest('aufzug', this)">🔬 Testen</button>
+      </div>
+
+      <div class="intg-label" style="margin-top:14px">🏢 Aszendio</div>
+      <div class="intg-row">
+        <input type="text" class="intg-input" id="intg-fd-domain-aszendio" placeholder="Domain (z.B. aszendio)" autocomplete="off" style="max-width:240px">
+        <input type="password" class="intg-input" id="intg-fd-key-aszendio" placeholder="API-Key" autocomplete="off">
+      </div>
+      <div class="intg-row" style="margin-top:6px">
+        <input type="email" class="intg-input" id="intg-fd-mail-aszendio" placeholder="Default-Requester-Email (z.B. service@aszendio.com)" autocomplete="off">
+        <button class="btn" onclick="freshdeskSaveFirma('aszendio', this)">💾 Speichern</button>
+        <button class="btn" onclick="freshdeskTest('aszendio', this)">🔬 Testen</button>
+      </div>
+
+      <div class="intg-hint">Pro Firma sind drei Werte nötig: <strong>Domain</strong>, <strong>API-Key</strong> und <strong>Default-Requester-Email</strong> (wird beim Ticket als Anfrager gesetzt — meistens eine interne Service-Adresse).</div>
+    </div>
+
     <!-- ERP-SYNC + DEBUG -->
     <div class="intg-card">
       <h3>🔄 Aufträge synchronisieren</h3>
@@ -2215,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.82';
+const APP_VERSION = 'v2.83';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2232,6 +2265,10 @@ let APP_KEYS = {
   // Aufzugshandwerk-ERP-Token: globaler Fallback + pro Firma
   aufzugApiKey:null,
   aufzugApiKeys: {}, // { aufzug: '...', aszendio: '...' }
+  // Freshdesk-Konfiguration pro Firma
+  freshdeskDomains:        {}, // { aufzug: 'company1', aszendio: 'company2' }
+  freshdeskApiKeys:        {}, // { aufzug: 'key1', aszendio: 'key2' }
+  freshdeskRequesterEmails:{}, // Default-Requester pro Firma (z.B. service@aszendio.com)
 };
 
 /* ════════════════════════════════════════════════════════════
@@ -2587,6 +2624,16 @@ async function loginWithUserKey(userKey) {
     if (rec.fields.key_name && rec.fields.key_name.startsWith('aufzugApiKey_')) {
       const slug = rec.fields.key_name.replace('aufzugApiKey_','');
       APP_KEYS.aufzugApiKeys[slug] = rec.fields.key_value;
+    }
+    // Freshdesk pro Firma: freshdeskDomain_aufzug, freshdeskApiKey_aszendio, freshdeskRequester_aufzug
+    if (rec.fields.key_name && rec.fields.key_name.startsWith('freshdeskDomain_')) {
+      APP_KEYS.freshdeskDomains[rec.fields.key_name.replace('freshdeskDomain_','')] = rec.fields.key_value;
+    }
+    if (rec.fields.key_name && rec.fields.key_name.startsWith('freshdeskApiKey_')) {
+      APP_KEYS.freshdeskApiKeys[rec.fields.key_name.replace('freshdeskApiKey_','')] = rec.fields.key_value;
+    }
+    if (rec.fields.key_name && rec.fields.key_name.startsWith('freshdeskRequester_')) {
+      APP_KEYS.freshdeskRequesterEmails[rec.fields.key_name.replace('freshdeskRequester_','')] = rec.fields.key_value;
     }
   });
 
@@ -4502,6 +4549,9 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
   await ensureField('Berichte',     'bilder',      'multipleAttachments');
+  // Freshdesk-Ticket-Verknüpfung
+  await ensureField('Berichte',     'fd_ticket_id',  'number');
+  await ensureField('Berichte',     'fd_ticket_url', 'singleLineText');
   // Auftrag: Kontakt zusammenfassen + Notizen + Bilder + Subunternehmer-Vergütung + ERP-Sync Optimierungs-Felder
   await ensureField('Auftraege',    'kontakt',              'multilineText');
   await ensureField('Auftraege',    'notizen',              'multilineText');
@@ -4836,7 +4886,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.82: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.83: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -7582,6 +7632,44 @@ async function saveBerichtFromForm() {
       toast('✅ Bericht Nr. '+berichtNum+' erstellt – Auftrag abgeschlossen.', 'ok');
     }
 
+    // ── Freshdesk-Auto-Ticket nach erfolgreichem Bericht-Save ──
+    // Nur bei NEUEN Berichten (nicht beim Edit) und wenn Freshdesk konfiguriert ist.
+    if (_bfMode !== 'edit') {
+      const firmaSlug = af.firma || S.firma?.slug || getCurrentFirmaSlug();
+      if (freshdeskIsConfigured(firmaSlug)) {
+        btn.textContent = '🎫 erstelle Freshdesk-Ticket…';
+        try {
+          // Bericht-Record aus Cache zusammenbauen (für Subject/Description)
+          const stubRec = { id: recId, fields: {
+            bericht_num: berichtNum,
+            firma:       firmaSlug,
+            standort:    data.standort,
+            fabriknummer:data.fabriknummer,
+            datum:       data.datum,
+            techniker:   techName,
+            tmpl:        S.tmpl,
+          }};
+          const r = await freshdeskCreateTicketForBericht(stubRec, pdfBlob, auftrag);
+          if (r.skipped) {
+            toast('ℹ Freshdesk nicht konfiguriert für '+firmaSlug+' – kein Ticket erstellt.', '');
+          } else if (r.ticketId) {
+            // Ticket-Info zurück in den Bericht-Record speichern
+            try {
+              await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
+                method:'PATCH',
+                headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+                body: JSON.stringify({ fields:{ fd_ticket_id: r.ticketId, fd_ticket_url: r.ticketUrl||'' }}),
+              });
+            } catch(_){}
+            toast('🎫 Freshdesk-Ticket #'+r.ticketId+' erstellt.', 'ok');
+          }
+        } catch(fde) {
+          console.error('Freshdesk-Auto-Ticket:', fde);
+          toast('⚠ Bericht gespeichert, ABER Freshdesk-Ticket fehlgeschlagen: '+(fde.message||fde).slice(0,180), 'warn');
+        }
+      }
+    }
+
     closeBerichtForm();
     await loadAuftraegeAndRender();
   } catch(e) {
@@ -8423,6 +8511,53 @@ export default async function (req) {
     }});
   }
 
+  // ══════════ FRESHDESK PROXY ══════════
+  // Routes: /freshdesk/<firma>/api/v2/... → https://<domain>.freshdesk.com/<api/v2/...>
+  // Auth via FRESHDESK_API_KEY_<FIRMA> (Basic Auth, key:X)
+  if (path.startsWith("freshdesk/")) {
+    const rest = path.replace(/^freshdesk\\//, "");
+    const i = rest.indexOf("/");
+    if (i < 0) return json({ error:"Bad path. Erwartet: /freshdesk/<firma>/<fd-path>" }, 400);
+    const firma = rest.slice(0, i);
+    const fdPath = rest.slice(i+1);
+    const domainEnv = "FRESHDESK_DOMAIN_"+firma.toUpperCase();
+    const keyEnv    = "FRESHDESK_API_KEY_"+firma.toUpperCase();
+    const domain = Deno.env.get(domainEnv);
+    const apiKey = Deno.env.get(keyEnv);
+    if (!domain || !apiKey) return json({ error:"Freshdesk-Config fehlt für Firma "+firma, expected_env:[domainEnv, keyEnv] }, 500);
+    const target = "https://" + domain + ".freshdesk.com/" + fdPath + url.search;
+    const t0 = Date.now();
+    const basic = btoa(apiKey + ":X");
+    // Forward body as ArrayBuffer wenn vorhanden; Content-Type aus Request übernehmen (wichtig für multipart/form-data!)
+    const upstreamHeaders = { "Authorization": "Basic " + basic };
+    const originalCT = req.headers.get("content-type");
+    if (originalCT) upstreamHeaders["Content-Type"] = originalCT;
+    const fdInit = { method: req.method, headers: upstreamHeaders };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      fdInit.body = await req.arrayBuffer();
+    }
+    let r;
+    try { r = await fetch(target, fdInit); }
+    catch(e) { return json({ error:"Freshdesk-Verbindung fehlgeschlagen", target, message:e.message }, 502); }
+    const noBody = r.status===101||r.status===204||r.status===205||r.status===304;
+    const respText = noBody ? null : await r.text();
+    if (r.status >= 400) {
+      return json({
+        error: "Freshdesk HTTP "+r.status,
+        target,
+        firma,
+        method: req.method,
+        duration_ms: Date.now()-t0,
+        upstream_body_excerpt: respText ? respText.slice(0, 1500) : null,
+      }, r.status);
+    }
+    return new Response(respText, { status: r.status, headers: {
+      "content-type": r.headers.get("content-type") || "application/json",
+      "access-control-allow-origin": "*",
+      "x-fd-duration-ms": String(Date.now()-t0)
+    }});
+  }
+
   // ══════════ BACKGROUND-SYNC ENDPOINTS ══════════
 
   if (path === "sync/run" && req.method === "POST") {
@@ -8891,6 +9026,12 @@ async function valtownStartSetup(btn) {
     if (keyGlobal)   envs.push({ k:'AUFZUG_API_KEY',          v:keyGlobal,   d:'ERP-Key Fallback (global)' });
     if (keyAufzug)   envs.push({ k:'AUFZUG_API_KEY_AUFZUG',   v:keyAufzug,   d:'ERP-Key Aufzugshandwerk (Tenant 1)' });
     if (keyAszendio) envs.push({ k:'AUFZUG_API_KEY_ASZENDIO', v:keyAszendio, d:'ERP-Key Aszendio (Tenant 4)' });
+    // Freshdesk-Configs (falls schon in Master-Base persistiert)
+    ['aufzug','aszendio'].forEach(s => {
+      if (APP_KEYS.freshdeskDomains[s])         envs.push({ k:'FRESHDESK_DOMAIN_'+s.toUpperCase(),   v:APP_KEYS.freshdeskDomains[s],         d:'Freshdesk-Domain '+s });
+      if (APP_KEYS.freshdeskApiKeys[s])         envs.push({ k:'FRESHDESK_API_KEY_'+s.toUpperCase(),  v:APP_KEYS.freshdeskApiKeys[s],         d:'Freshdesk-API-Key '+s });
+      if (APP_KEYS.freshdeskRequesterEmails[s]) envs.push({ k:'FRESHDESK_REQUESTER_'+s.toUpperCase(),v:APP_KEYS.freshdeskRequesterEmails[s], d:'FD-Requester '+s });
+    });
     for (const env of envs) {
       await valtownSetEnvVar(token, valId, env.k, env.v, env.d);
       _vtLog('✓ '+env.k+' gesetzt', 'ok');
@@ -8984,6 +9125,119 @@ async function erpSaveKey(btn) {
 }
 
 /* ── ERP-API-Key updaten – pro Firma ── */
+/* ── FRESHDESK Setup-Helpers ─────────────────── */
+async function freshdeskSaveFirma(firmaSlug, btn) {
+  const domain = (document.getElementById('intg-fd-domain-'+firmaSlug)?.value || '').trim().replace(/\.freshdesk\.com\/?$/i,'').replace(/^https?:\/\//,'');
+  const apiKey = (document.getElementById('intg-fd-key-'+firmaSlug)?.value || '').trim();
+  const email  = (document.getElementById('intg-fd-mail-'+firmaSlug)?.value || '').trim();
+  if (!domain) return toast('Bitte Domain eintragen (z.B. "aufzugshandwerk")', 'err');
+  if (!apiKey) return toast('Bitte API-Key eintragen', 'err');
+  if (!email || !email.includes('@')) return toast('Bitte gültige Default-Requester-Email eintragen', 'err');
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Erst Val.town-Proxy einrichten.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳…'; }
+  const F = firmaSlug.toUpperCase();
+  try {
+    await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'FRESHDESK_DOMAIN_'+F,  domain, 'Freshdesk-Domain '+firmaSlug);
+    await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'FRESHDESK_API_KEY_'+F, apiKey, 'Freshdesk-API-Key '+firmaSlug);
+    await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'FRESHDESK_REQUESTER_'+F, email, 'Default-Requester-Email '+firmaSlug);
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey('freshdeskDomain_'+firmaSlug,    domain, mk['freshdeskDomain_'+firmaSlug]?.id);
+    await writeMasterBaseKey('freshdeskApiKey_'+firmaSlug,    apiKey, mk['freshdeskApiKey_'+firmaSlug]?.id);
+    await writeMasterBaseKey('freshdeskRequester_'+firmaSlug, email,  mk['freshdeskRequester_'+firmaSlug]?.id);
+    APP_KEYS.freshdeskDomains[firmaSlug]         = domain;
+    APP_KEYS.freshdeskApiKeys[firmaSlug]         = apiKey;
+    APP_KEYS.freshdeskRequesterEmails[firmaSlug] = email;
+    toast('✅ Freshdesk-Setup '+firmaSlug+' gespeichert.', 'ok');
+    renderIntegrationView();
+  } catch(e) {
+    console.error('freshdeskSaveFirma:', e);
+    toast('❌ '+e.message, 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Speichern'; }
+  }
+}
+
+async function freshdeskTest(firmaSlug, btn) {
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳…'; }
+  toast('🔬 Teste Freshdesk '+firmaSlug+'…', '');
+  try {
+    const r = await erpFetch('/freshdesk/'+firmaSlug+'/api/v2/tickets?per_page=1');
+    if (Array.isArray(r) || (r && (r.tickets || r.length !== undefined))) {
+      toast('✅ Freshdesk '+firmaSlug+' OK – Verbindung erfolgreich.', 'ok');
+    } else {
+      toast('⚠ Antwort unklar – evtl. Berechtigungs-Problem.', 'warn');
+    }
+  } catch(e) {
+    toast('❌ Freshdesk-Test fehlgeschlagen: '+e.message.slice(0,200), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔬 Testen'; }
+  }
+}
+
+/* Returns true if Freshdesk is configured for this firma. */
+function freshdeskIsConfigured(firmaSlug) {
+  return !!(APP_KEYS.freshdeskDomains[firmaSlug]
+         && APP_KEYS.freshdeskApiKeys[firmaSlug]
+         && APP_KEYS.freshdeskRequesterEmails[firmaSlug]
+         && APP_KEYS.valtownProxyUrl);
+}
+
+/* Build + POST Ticket to Freshdesk with PDF as multipart attachment. */
+async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec) {
+  const firmaSlug = berichtRec.fields.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) {
+    return { skipped:true, reason:'Freshdesk für Firma "'+firmaSlug+'" nicht konfiguriert.' };
+  }
+  const f = berichtRec.fields;
+  const af = auftragRec ? auftragRec.fields : {};
+  const subject = 'Arbeitsbericht Nr. '+(f.bericht_num||'?')+' – '+(f.standort||af.standort||'').slice(0,80);
+  const tplLabel = T[f.tmpl]?.label || f.tmpl || '';
+  const description = [
+    '<p>Arbeitsbericht wurde erstellt:</p>',
+    '<ul>',
+    f.bericht_num ? '<li><strong>Berichts-Nr.:</strong> '+f.bericht_num+'</li>' : '',
+    af.auftrag_num ? '<li><strong>Auftrags-Nr.:</strong> #'+af.auftrag_num+'</li>' : '',
+    f.standort ? '<li><strong>Standort:</strong> '+escapeHtml(f.standort)+'</li>' : '',
+    f.fabriknummer ? '<li><strong>Fabriknummer:</strong> '+escapeHtml(f.fabriknummer)+'</li>' : '',
+    f.datum ? '<li><strong>Datum:</strong> '+escapeHtml(f.datum)+'</li>' : '',
+    f.techniker ? '<li><strong>Techniker:</strong> '+escapeHtml(f.techniker)+'</li>' : '',
+    tplLabel ? '<li><strong>Vorlage:</strong> '+escapeHtml(tplLabel)+'</li>' : '',
+    '</ul>',
+    '<p>Vollständiger Bericht im Anhang.</p>',
+  ].filter(Boolean).join('');
+
+  const fd = new FormData();
+  fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
+  fd.append('subject', subject);
+  fd.append('description', description);
+  fd.append('priority', '1');     // 1=low, 2=med, 3=high, 4=urgent
+  fd.append('status', '2');       // 2=open, 3=pending, 4=resolved, 5=closed
+  fd.append('source', '2');       // 1=email, 2=portal, 3=phone, ...
+  fd.append('type', 'Bericht');
+  if (pdfBlob) {
+    const filename = 'arbeitsbericht-'+(f.bericht_num||'').toString().replace(/[^\w-]/g,'')+'.pdf';
+    fd.append('attachments[]', pdfBlob, filename);
+  }
+  await erpEnsureSession();
+  const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Authorization': 'Bearer '+erpGetSessionToken() }, // KEIN Content-Type setzen, fetch macht das für FormData
+    body: fd,
+  });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
+  if (!res.ok) {
+    const msg = (data && (data.error||data.message)) || ('HTTP '+res.status);
+    const err = new Error('Freshdesk: '+msg); err.status = res.status; err.body = data;
+    throw err;
+  }
+  const ticketId = data && data.id;
+  const ticketUrl = ticketId ? ('https://'+APP_KEYS.freshdeskDomains[firmaSlug]+'.freshdesk.com/a/tickets/'+ticketId) : null;
+  return { ticketId, ticketUrl, raw: data };
+}
+function escapeHtml(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
 async function erpSaveFirmaKey(firmaSlug, btn) {
   const inp = document.getElementById('intg-erp-key-'+firmaSlug);
   const newKey = (inp?.value || '').trim();
@@ -10220,6 +10474,25 @@ function renderIntegrationView() {
   if (eA && keys.aufzug)              eA.value = keys.aufzug;
   if (eZ && keys.aszendio)            eZ.value = keys.aszendio;
   if (eG && APP_KEYS.aufzugApiKey)    eG.value = APP_KEYS.aufzugApiKey;
+
+  // Freshdesk: pro Firma Domain/Key/Email vorbefüllen + Status
+  ['aufzug','aszendio'].forEach(slug => {
+    const fdD = document.getElementById('intg-fd-domain-'+slug);
+    const fdK = document.getElementById('intg-fd-key-'+slug);
+    const fdM = document.getElementById('intg-fd-mail-'+slug);
+    if (fdD && APP_KEYS.freshdeskDomains[slug])         fdD.value = APP_KEYS.freshdeskDomains[slug];
+    if (fdK && APP_KEYS.freshdeskApiKeys[slug])         fdK.value = APP_KEYS.freshdeskApiKeys[slug];
+    if (fdM && APP_KEYS.freshdeskRequesterEmails[slug]) fdM.value = APP_KEYS.freshdeskRequesterEmails[slug];
+  });
+  const fdStatusEl = document.getElementById('intg-fd-status');
+  if (fdStatusEl) {
+    const bits = [];
+    if (freshdeskIsConfigured('aufzug'))   bits.push('Aufzugshandwerk ✓');
+    if (freshdeskIsConfigured('aszendio')) bits.push('Aszendio ✓');
+    fdStatusEl.innerHTML = bits.length
+      ? '<span class="intg-status ok">'+bits.join(' · ')+'</span>'
+      : '<span class="intg-status warn">⚠ Nicht konfiguriert</span>';
+  }
   const setupBtn = document.getElementById('intg-vt-setup-btn');
   if (setupBtn) setupBtn.textContent = vtSet ? '⚡ Proxy aktualisieren' : '⚡ Setup starten';
 
