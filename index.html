@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.52</div>
+    <div class="login-version">Elevator Servicebox v2.53</div>
   </div>
 </div>
 
@@ -1815,7 +1815,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.52';
+const APP_VERSION = 'v2.53';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2329,9 +2329,11 @@ async function showApp() {
   renderTmplSelector();
 
   // Tool-Topbar-Buttons je nach Permission ein-/ausblenden
-  document.getElementById('tnav-conv').style.display      = hasPermission('tool_arbeitsberichte') ? '' : 'none';
+  // Techniker-Only: ausschließlich Aufträge + Übersicht (eigene Berichte) anzeigen
+  const techMode = isTechnikerOnly();
+  document.getElementById('tnav-conv').style.display      = (!techMode && hasPermission('tool_arbeitsberichte')) ? '' : 'none';
   document.getElementById('tnav-overview').style.display  = hasPermission('tool_overview') ? '' : 'none';
-  document.getElementById('tnav-wartung').style.display   = hasPermission('tool_wartung_kalk') ? '' : 'none';
+  document.getElementById('tnav-wartung').style.display   = (!techMode && hasPermission('tool_wartung_kalk')) ? '' : 'none';
   document.getElementById('tnav-auftraege').style.display = hasPermission('tool_auftraege') ? '' : 'none';
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
@@ -2735,6 +2737,10 @@ function goTo(n) {
 }
 
 function switchView(view) {
+  // Techniker-Only Gate: nur dashboard, auftraege, overview erlaubt
+  if (isTechnikerOnly() && !['dashboard','auftraege','overview'].includes(view)) {
+    return toast('🔒 Diese Ansicht ist im Techniker-Modus nicht verfügbar.', 'err');
+  }
   // Permission-Gates
   if (view==='users' && !isAdmin()) return;
   if (view==='firmen' && !isAdmin()) return;
@@ -3212,6 +3218,17 @@ async function renderOverview() {
     const allRecs=await atRead('Berichte', null);
     const firmaSlug = getCurrentFirmaSlug();
     let recs = allRecs.filter(r => _firmaOfRec(r) === firmaSlug);
+    // Techniker-Only: nur eigene Berichte (created_by oder techniker-Feld === eigener User)
+    if (isTechnikerOnly()) {
+      const myKey  = APP_KEYS.user?.api_key;
+      const myName = (APP_KEYS.user?.name||'').toLowerCase();
+      recs = recs.filter(r => {
+        const f = r.fields;
+        if (f.created_by && f.created_by === myKey) return true;
+        if (myName && (f.techniker||'').toLowerCase() === myName) return true;
+        return false;
+      });
+    }
     recs.sort((a,b)=>b.fields.bericht_num-a.fields.bericht_num);
     _ovRecords=recs;
     const filtered=recs.filter(r=>{
@@ -3673,6 +3690,20 @@ function delay(ms) { return new Promise(r=>setTimeout(r,ms)); }
 
 function isAdmin() {
   return APP_KEYS.user && APP_KEYS.user.role === 'admin';
+}
+
+/* Reiner Techniker (Außendienst): Auftrags-zentrierte Sicht.
+   Sieht NUR seine Aufträge + eigene Berichte. Keine anderen Tools/Admin-Features.
+   Trigger: User.techniker=true UND NICHT admin UND NICHT auftraege_view_all (Verwalter). */
+function isTechnikerOnly() {
+  if (!APP_KEYS.user) return false;
+  if (isAdmin()) return false;
+  if (APP_KEYS.user.techniker !== true) return false;
+  // Verwalter (mit auftraege_view_all) bekommen eine breitere Sicht
+  let p = {};
+  try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(_) {}
+  if (p.auftraege_view_all === true) return false;
+  return true;
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -5741,23 +5772,28 @@ function renderDashboard() {
   const f = getCurrentFirma();
   document.getElementById('dash-greet').textContent =
     'Willkommen, ' + (APP_KEYS.user?.name || '') + '! · ' + (f?.icon||'') + ' ' + (f?.name||'');
+  // Techniker-Only Modus: nur Aufträge + Übersicht (eigene Berichte)
+  const techMode = isTechnikerOnly();
+  const allowedKeysForTech = new Set(['tool_auftraege','tool_overview']);
   // Tools-Grid rendern
   const grid = document.getElementById('dash-tools');
-  let html = Object.entries(TOOLS).map(([key, t]) => {
-    const allowed = hasPermission(t.permission);
-    return `
-      <button class="dash-tool" data-tool-key="${key}" ${allowed ? '' : 'disabled'} onclick="launchTool('${key}')">
-        <div class="dash-tool-icon">${t.icon}</div>
-        <div class="dash-tool-label">${t.label}</div>
-        <div class="dash-tool-desc">${t.desc}</div>
-        ${allowed
-          ? '<div class="dash-tool-stat" data-tool="'+key+'">…</div>'
-          : '<div class="dash-tool-locked">🔒 Keine Berechtigung</div>'}
-      </button>
-    `;
-  }).join('');
-  // Admin-only Kacheln (Verwaltung)
-  if (isAdmin()) {
+  let html = Object.entries(TOOLS)
+    .filter(([key, t]) => !techMode || allowedKeysForTech.has(t.permission))
+    .map(([key, t]) => {
+      const allowed = hasPermission(t.permission);
+      return `
+        <button class="dash-tool" data-tool-key="${key}" ${allowed ? '' : 'disabled'} onclick="launchTool('${key}')">
+          <div class="dash-tool-icon">${t.icon}</div>
+          <div class="dash-tool-label">${t.label}</div>
+          <div class="dash-tool-desc">${t.desc}</div>
+          ${allowed
+            ? '<div class="dash-tool-stat" data-tool="'+key+'">…</div>'
+            : '<div class="dash-tool-locked">🔒 Keine Berechtigung</div>'}
+        </button>
+      `;
+    }).join('');
+  // Admin-only Kacheln (Verwaltung) – bei Techniker-Only komplett ausgeblendet
+  if (isAdmin() && !techMode) {
     html += `
       <button class="dash-tool" onclick="switchView('users')">
         <div class="dash-tool-icon">👥</div>
@@ -5803,11 +5839,54 @@ async function loadDashboardStats() {
     const since30 = Date.now() - 30*24*3600*1000;
     const firmaSlug = getCurrentFirmaSlug();
 
+    const techMode = isTechnikerOnly();
+    const myKey  = APP_KEYS.user?.api_key;
+    const myName = (APP_KEYS.user?.name||'').toLowerCase();
+
     // Berichte laden (firma-scoped)
     let allReports = [];
     try { allReports = await atRead('Berichte', null); } catch(e) { console.warn('Berichte:', e); }
-    const reports = allReports.filter(r => _firmaOfRec(r) === firmaSlug);
+    let reports = allReports.filter(r => _firmaOfRec(r) === firmaSlug);
+    if (techMode) {
+      reports = reports.filter(r => {
+        const f = r.fields;
+        if (f.created_by && f.created_by === myKey) return true;
+        if (myName && (f.techniker||'').toLowerCase() === myName) return true;
+        return false;
+      });
+    }
     const todayReports = reports.filter(r => (r.fields.created || '').slice(0,10) === todayISO).length;
+    // Diese Woche / Monat (für Techniker-Stats)
+    const since7d  = Date.now() - 7*24*3600*1000;
+    const since30d = Date.now() - 30*24*3600*1000;
+    const week  = reports.filter(r => Date.parse(r.fields.created||'') > since7d).length;
+    const month = reports.filter(r => Date.parse(r.fields.created||'') > since30d).length;
+
+    // Bei Techniker: Aufträge-Stats statt System-Stats
+    if (techMode) {
+      let myOpen = 0, myInProgress = 0, myDone = 0;
+      try {
+        const auf = await atRead('Auftraege', null);
+        const mine = auf.filter(r => {
+          if ((r.fields.firma||'') !== firmaSlug) return false;
+          let keys = [];
+          try { keys = JSON.parse(r.fields.techniker_keys||'[]'); } catch(_){}
+          return Array.isArray(keys) && keys.includes(myKey);
+        });
+        mine.forEach(r => {
+          const s = _normAuftragStatus(r.fields.status);
+          if (s === 'offen') myOpen++;
+          else if (s === 'in_bearbeitung') myInProgress++;
+          else if (s === 'abgeschlossen') myDone++;
+        });
+      } catch(e) { console.warn('Auftraege-Stats:', e); }
+      c.innerHTML =
+        statCard('🛠', myOpen + myInProgress, 'Meine offenen Aufträge', myInProgress + ' in Arbeit') +
+        statCard('📋', reports.length, 'Meine Berichte gesamt', '') +
+        statCard('📅', month, 'Diese 30 Tage', week + ' diese Woche') +
+        statCard('✏', todayReports, 'Heute erstellt', '');
+      return;
+    }
 
     // Statistik-Events laden (firma-scoped, Tabelle existiert evtl. noch nicht)
     let allEvents = [];
