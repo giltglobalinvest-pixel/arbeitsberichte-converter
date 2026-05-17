@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.54</div>
+    <div class="login-version">Elevator Servicebox v2.55</div>
   </div>
 </div>
 
@@ -1681,6 +1681,11 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
         <div class="auf-tech-pick" id="auf-f-techniker"></div>
         <div style="font-size:11px;color:var(--txt3);margin-top:5px">Ein oder mehrere User zuweisen. Nur zugewiesene Techniker (oder User mit "Alle anzeigen") sehen den Auftrag.</div>
       </div>
+      <div class="auf-section" id="auf-f-subprice-section">
+        <h3>💰 Subunternehmer-Vergütung <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(intern · sichtbar nur für zugewiesene Subunternehmer)</span></h3>
+        <textarea class="auf-textarea" id="auf-f-subprice" rows="3" placeholder="z.B. 'Pauschale 350 € netto inkl. An- und Abfahrt' oder 'Stundensatz 55 €/h + 30 € Anfahrt'"></textarea>
+        <div style="font-size:11px;color:var(--txt3);margin-top:5px">Dieses Feld wird dem Subunternehmer im Auftrags-Detail gezeigt – andere Techniker sehen es nicht. Leer = wird nicht angezeigt.</div>
+      </div>
     </div>
     <div class="auf-modal-foot">
       <button class="btn"      onclick="closeAuftragForm()">Abbrechen</button>
@@ -1815,7 +1820,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.54';
+const APP_VERSION = 'v2.55';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3692,13 +3697,30 @@ function isAdmin() {
   return APP_KEYS.user && APP_KEYS.user.role === 'admin';
 }
 
-/* Reiner Techniker (Außendienst): Auftrags-zentrierte Sicht.
+/* Subunternehmer: externer Techniker mit eigenen Vergütungs-Konditionen.
+   Sieht keine internen Preise, aber bekommt eine separate "Vergütung"-Notiz pro Auftrag angezeigt. */
+function isSubunternehmer() {
+  return !!(APP_KEYS.user && APP_KEYS.user.subunternehmer === true);
+}
+
+/* Wer darf interne Preise (Stundensatz, Einsatzpauschale, Angebots-Betrag) sehen?
+   Nur Admin + Verwalter (auftraege_view_all). Techniker + Subunternehmer NICHT. */
+function canSeePrices() {
+  if (!APP_KEYS.user) return false;
+  if (isAdmin()) return true;
+  let p = {};
+  try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(_) {}
+  return p.auftraege_view_all === true;
+}
+
+/* Reiner Techniker (Außendienst) ODER Subunternehmer: Auftrags-zentrierte Sicht.
    Sieht NUR seine Aufträge + eigene Berichte. Keine anderen Tools/Admin-Features.
-   Trigger: User.techniker=true UND NICHT admin UND NICHT auftraege_view_all (Verwalter). */
+   Trigger: User.techniker=true ODER User.subunternehmer=true,
+            UND NICHT admin UND NICHT auftraege_view_all (Verwalter). */
 function isTechnikerOnly() {
   if (!APP_KEYS.user) return false;
   if (isAdmin()) return false;
-  if (APP_KEYS.user.techniker !== true) return false;
+  if (APP_KEYS.user.techniker !== true && APP_KEYS.user.subunternehmer !== true) return false;
   // Verwalter (mit auftraege_view_all) bekommen eine breitere Sicht
   let p = {};
   try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(_) {}
@@ -3761,12 +3783,12 @@ const FEATURES = {
 function hasPermission(key) {
   if (!APP_KEYS.user) return false;
   if (isAdmin()) return true;
-  // Techniker bekommen ihre Kern-Berechtigungen IMMER (auch wenn permissions_json sie auf false hat).
-  // Sinn des Flags: ohne diese Tools macht "Techniker sein" keinen Sinn.
-  if (APP_KEYS.user.techniker === true) {
+  // Techniker UND Subunternehmer bekommen ihre Kern-Berechtigungen IMMER (auch wenn permissions_json sie auf false hat).
+  // Sinn der Flags: ohne diese Tools macht "Techniker/Subunternehmer sein" keinen Sinn.
+  if (APP_KEYS.user.techniker === true || APP_KEYS.user.subunternehmer === true) {
     if (key === 'tool_auftraege') return true;
     if (key === 'tool_overview')  return true;
-    if (key === 'delete_reports') return false; // Techniker dürfen keine Berichte löschen
+    if (key === 'delete_reports') return false; // dürfen keine Berichte löschen
   }
   let p = {};
   try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(e) {}
@@ -3840,15 +3862,17 @@ async function renderUsers() {
           <th>Rolle</th>
           <th>Status</th>
           <th title="Erscheint in der Techniker-Auswahl bei Aufträgen">Techniker</th>
+          <th title="Externer Subunternehmer – sieht eigenen Vergütungs-Text pro Auftrag statt interne Preise">Subunternehmer</th>
           ${hdrFeats}
           <th></th>
         </tr></thead>
         <tbody>${rows || '<tr><td colspan="99" style="padding:40px;text-align:center;color:var(--txt3)">Keine User vorhanden.</td></tr>'}</tbody>
       </table>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
-        ℹ️ <strong>Techniker</strong>: Nur User mit dieser Markierung erscheinen in der Techniker-Zuweisung bei Aufträgen.<br>
+        ℹ️ <strong>Techniker</strong>: Eigener Mitarbeiter im Außendienst. Sieht Aufträge + eigene Berichte, KEINE Preise.<br>
+        ℹ️ <strong>Subunternehmer</strong>: Externer Auftragnehmer. Wie Techniker, aber sieht pro Auftrag die individuell hinterlegte Vergütung (separates Textfeld am Auftrag).<br>
+        ℹ️ Admins + Verwalter (Berechtigung "Aufträge: Alle anzeigen") sehen alle internen Preise.<br>
         ℹ️ Admins haben automatisch Zugriff auf alle Features (Checkboxen ausgegraut).
-        Bei normalen Usern ist eine nicht gesetzte Checkbox = Default-Wert des Features.
       </div>
     `;
   } catch(e) {
@@ -3885,6 +3909,7 @@ function userRowHtml(u, featCols) {
         </select>
       </td>
       <td data-label="Techniker" style="text-align:center"><input type="checkbox" class="usr-inp" data-field="techniker" ${f.techniker?'checked':''}></td>
+      <td data-label="Subunternehmer" style="text-align:center"><input type="checkbox" class="usr-inp" data-field="subunternehmer" ${f.subunternehmer?'checked':''}></td>
       ${featCells}
       <td class="usr-action" style="text-align:right;white-space:nowrap">
         <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveUserRow('${u.id}')">💾 Speichern</button>
@@ -3900,18 +3925,21 @@ async function saveUserRow(recId) {
   const name      = row.querySelector('input[data-field="name"]').value.trim();
   const role      = row.querySelector('select[data-field="role"]').value;
   const status    = row.querySelector('select[data-field="status"]').value;
-  const techniker = !!row.querySelector('input[data-field="techniker"]')?.checked;
+  const techniker      = !!row.querySelector('input[data-field="techniker"]')?.checked;
+  const subunternehmer = !!row.querySelector('input[data-field="subunternehmer"]')?.checked;
   const perms = {};
   row.querySelectorAll('input[data-perm]').forEach(cb => {
     if (!cb.disabled) perms[cb.dataset.perm] = cb.checked;
   });
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   try {
+    // Schema sicherstellen
+    try { await ensureField('User', 'subunternehmer', 'checkbox'); } catch(_){}
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/User/'+recId, {
       method:'PATCH',
       headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-      body: JSON.stringify({ fields: { name, role, status, techniker, permissions_json: JSON.stringify(perms) } }),
+      body: JSON.stringify({ fields: { name, role, status, techniker, subunternehmer, permissions_json: JSON.stringify(perms) } }),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message || 'Fehler');
@@ -4009,12 +4037,14 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
   await ensureField('Berichte',     'bilder',      'multipleAttachments');
-  // Auftrag: Kontakt zusammenfassen + Notizen + Bilder
-  await ensureField('Auftraege',    'kontakt',  'multilineText');
-  await ensureField('Auftraege',    'notizen',  'multilineText');
-  await ensureField('Auftraege',    'bilder',   'multipleAttachments');
-  // User: Techniker-Flag
-  await ensureField('User',         'techniker', 'checkbox');
+  // Auftrag: Kontakt zusammenfassen + Notizen + Bilder + Subunternehmer-Vergütung
+  await ensureField('Auftraege',    'kontakt',             'multilineText');
+  await ensureField('Auftraege',    'notizen',             'multilineText');
+  await ensureField('Auftraege',    'bilder',              'multipleAttachments');
+  await ensureField('Auftraege',    'subunternehmer_preis','multilineText');
+  // User: Techniker-Flag + Subunternehmer-Flag
+  await ensureField('User',         'techniker',     'checkbox');
+  await ensureField('User',         'subunternehmer','checkbox');
 }
 
 function pickInitialFirma() {
@@ -4454,6 +4484,12 @@ function openAuftragDetail(recId) {
       <h3>Leistungsbeschreibung</h3>
       <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(f.leistungsbeschreibung||'(keine Beschreibung)').replace(/</g,'&lt;')}</div>
     </div>
+    ${isSubunternehmer() && f.subunternehmer_preis ? `
+    <div class="auf-section">
+      <h3>💰 Deine Vergütung für diesen Auftrag</h3>
+      <div style="font-size:14px;line-height:1.5;white-space:pre-wrap;background:#FEF3C7;padding:12px 14px;border-radius:6px;border:1px solid #FCD34D;color:#78350F;font-weight:500">${f.subunternehmer_preis.replace(/</g,'&lt;')}</div>
+    </div>
+    ` : ''}
     ${f.ext_id ? `
     <div class="auf-section">
       <h3>ERP-Stammdaten <span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:99px;background:rgba(59,130,246,.15);color:#1e40af;margin-left:6px">🔗 ${(f.ext_source||'aufzugshandwerk')}</span></h3>
@@ -4461,14 +4497,19 @@ function openAuftragDetail(recId) {
       ${f.kunde_firmenname ? '<div class="auf-row"><span class="lbl">Kunde</span><span class="val">'+f.kunde_firmenname.replace(/</g,'&lt;')+'</span></div>' : ''}
       ${f.objekttyp ? '<div class="auf-row"><span class="lbl">Objekttyp</span><span class="val">'+f.objekttyp.replace(/</g,'&lt;')+'</span></div>' : ''}
       ${f.bestellform ? '<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">'+f.bestellform+'</span></div>' : ''}
-      ${(f.stundensatz != null) ? '<div class="auf-row"><span class="lbl">Stundensatz</span><span class="val">'+Number(f.stundensatz).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
-      ${(f.einsatzpauschale != null) ? '<div class="auf-row"><span class="lbl">Einsatzpauschale</span><span class="val">'+Number(f.einsatzpauschale).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
+      ${canSeePrices() && (f.stundensatz != null) ? '<div class="auf-row"><span class="lbl">Stundensatz</span><span class="val">'+Number(f.stundensatz).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
+      ${canSeePrices() && (f.einsatzpauschale != null) ? '<div class="auf-row"><span class="lbl">Einsatzpauschale</span><span class="val">'+Number(f.einsatzpauschale).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €</span></div>' : ''}
     </div>
-    ${(f.leistungsumfang || f.erlaeuterungen || f.angebot_typ) ? `
+    ${canSeePrices() && (f.leistungsumfang || f.erlaeuterungen || f.angebot_typ) ? `
     <div class="auf-section">
       <h3>Angebot ${f.angebot_id ? '<span style="font-size:11px;font-weight:500;color:var(--txt2);font-family:monospace;margin-left:6px">#'+f.angebot_id+'</span>' : ''} ${f.angebot_typ ? '<span style="font-size:10px;font-weight:500;padding:2px 7px;border-radius:99px;background:rgba(124,58,237,.15);color:#5b21b6;margin-left:6px">'+f.angebot_typ+'</span>' : ''}</h3>
       ${f.leistungsumfang ? '<div style="font-size:11px;color:var(--txt2);margin:8px 0 4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600">Leistungsumfang</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">'+f.leistungsumfang.replace(/</g,'&lt;')+'</div>' : ''}
       ${f.erlaeuterungen ? '<div style="font-size:11px;color:var(--txt2);margin:10px 0 4px;text-transform:uppercase;letter-spacing:.5px;font-weight:600">Erläuterungen</div><div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">'+f.erlaeuterungen.replace(/</g,'&lt;')+'</div>' : ''}
+    </div>` : ''}
+    ${canSeePrices() && f.subunternehmer_preis ? `
+    <div class="auf-section">
+      <h3>💰 Subunternehmer-Vergütung <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(intern · nur Admin/Verwalter sichtbar)</span></h3>
+      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:#FEF3C7;padding:10px 12px;border-radius:5px;border:1px solid #FCD34D;color:#78350F">${f.subunternehmer_preis.replace(/</g,'&lt;')}</div>
     </div>` : ''}
     ` : ''}
     <div class="auf-section">
@@ -4636,6 +4677,11 @@ async function openAuftragForm(recId) {
   document.getElementById('auf-f-fabriknummer').value  = f.fabriknummer || '';
   document.getElementById('auf-f-due').value           = f.due_date || '';
   document.getElementById('auf-f-leistung').value      = f.leistungsbeschreibung || '';
+  // Subunternehmer-Vergütungs-Textfeld – nur für Admin/Verwalter sichtbar+editierbar
+  const subPriceInp     = document.getElementById('auf-f-subprice');
+  const subPriceSection = document.getElementById('auf-f-subprice-section');
+  if (subPriceInp) subPriceInp.value = f.subunternehmer_preis || '';
+  if (subPriceSection) subPriceSection.style.display = canSeePrices() ? '' : 'none';
   // Kontakt: bevorzugt das neue Textfeld; Fallback aus Legacy-Feldern aufbauen
   let kontakt = f.kontakt || '';
   if (!kontakt && (f.kontakt_name || f.kontakt_telefon || f.kontakt_email)) {
@@ -4648,14 +4694,15 @@ async function openAuftragForm(recId) {
   try { assigned = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techPick = document.getElementById('auf-f-techniker');
   const aktiveUser = _usersCache.filter(u =>
-    (u.fields.status === 'aktiv' || !u.fields.status) && u.fields.techniker === true
+    (u.fields.status === 'aktiv' || !u.fields.status) && (u.fields.techniker === true || u.fields.subunternehmer === true)
   );
   techPick.innerHTML = aktiveUser.length === 0
-    ? '<div style="color:var(--txt3);padding:10px;font-size:12px;text-align:center">Keine Techniker markiert. In der User-Verwaltung "Techniker" anhaken.</div>'
+    ? '<div style="color:var(--txt3);padding:10px;font-size:12px;text-align:center">Keine Techniker/Subunternehmer markiert. In der User-Verwaltung "Techniker" oder "Subunternehmer" anhaken.</div>'
     : aktiveUser.map(u => {
         const checked = assigned.includes(u.fields.api_key);
         const role = u.fields.role === 'admin' ? ' (Admin)' : '';
-        return '<label class="auf-tech-row"><input type="checkbox" data-key="'+u.fields.api_key+'" '+(checked?'checked':'')+'><span>'+(u.fields.name||u.fields.api_key).replace(/</g,'&lt;')+role+'</span></label>';
+        const tag  = u.fields.subunternehmer ? ' <span style="font-size:10px;background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:99px;margin-left:4px">Subunternehmer</span>' : '';
+        return '<label class="auf-tech-row"><input type="checkbox" data-key="'+u.fields.api_key+'" '+(checked?'checked':'')+'><span>'+(u.fields.name||u.fields.api_key).replace(/</g,'&lt;')+role+tag+'</span></label>';
       }).join('');
 
   document.getElementById('auf-form-modal').classList.add('show');
@@ -4706,6 +4753,10 @@ async function saveAuftrag() {
     techniker_keys:        JSON.stringify(techKeys),
     techniker_namen:       techNames,
   };
+  // Subunternehmer-Vergütung nur speichern wenn der User sie sehen/editieren darf (Admin/Verwalter)
+  if (canSeePrices()) {
+    fields.subunternehmer_preis = (document.getElementById('auf-f-subprice')?.value || '').trim();
+  }
 
   btn.disabled = true; btn.textContent = '☁ Speichere…';
   try {
