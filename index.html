@@ -1279,7 +1279,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.73</div>
+    <div class="login-version">Elevator Servicebox v2.74</div>
   </div>
 </div>
 
@@ -1948,6 +1948,11 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
             <label class="auf-label">Fällig bis (optional)</label>
             <input type="date" class="auf-input" id="auf-f-due">
           </div>
+          <div class="auf-field" id="auf-f-empfaenger-wrap" style="display:none;grid-column:1/-1">
+            <label class="auf-label">Auftraggeber-Kontakt (ERP) <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(Empfänger im ERP)</span></label>
+            <select class="auf-select" id="auf-f-empfaenger"></select>
+            <div style="font-size:11px;color:var(--txt3);margin-top:4px" id="auf-f-empfaenger-hint">Wird nach Anlage-Auswahl mit den Kunden-Kontakten befüllt.</div>
+          </div>
         </div>
       </div>
       <div class="auf-section">
@@ -2102,7 +2107,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.73';
+const APP_VERSION = 'v2.74';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4712,7 +4717,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.73: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.74: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5055,6 +5060,8 @@ async function removeAuftragBild(recId, index) {
 let _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _anlagenMatches = [];        // aktuell gefilterte Treffer für Index-Lookup beim Klick
 let _anlagenDebounceTimer = null;
+let _currentSelectedAnlage = null;  // ausgewählte Anlage für ERP-Auftragserstellung
+let _kontakteCache = new Map();     // kundenNr → Kontakte[]
 
 async function _loadAnlagenForFirma(firmaSlug) {
   // 5min Cache
@@ -5170,9 +5177,10 @@ async function _doSearchAnlagen(query) {
   dd.style.display = 'block';
 }
 
-function selectAnlage(idx) {
+async function selectAnlage(idx) {
   const a = _anlagenMatches[idx];
   if (!a) return;
+  _currentSelectedAnlage = a;  // merken für ERP-POST beim Speichern
   // Form-Felder befüllen
   const fStandort  = document.getElementById('auf-f-standort');
   const fFabrik    = document.getElementById('auf-f-fabriknummer');
@@ -5193,7 +5201,54 @@ function selectAnlage(idx) {
   // Dropdown zu
   const dd = document.getElementById('auf-f-anlage-dropdown');
   if (dd) dd.style.display = 'none';
+  // Kunden-Kontakte laden für Auftraggeber-Dropdown
+  await _loadKontakteForAnlage(a);
   toast('✓ Anlage übernommen: '+(a.anzeigeAdresse||a.name||''), 'ok');
+}
+
+async function _loadKontakteForAnlage(anlage) {
+  const wrap = document.getElementById('auf-f-empfaenger-wrap');
+  const sel  = document.getElementById('auf-f-empfaenger');
+  const hint = document.getElementById('auf-f-empfaenger-hint');
+  if (!wrap || !sel) return;
+  const kundenNr = anlage.kunde && (anlage.kunde.kundennummer || anlage.kunde.id);
+  if (!kundenNr) {
+    wrap.style.display = '';
+    sel.innerHTML = '<option value="">(kein Kunde an der Anlage hinterlegt – Auftraggeber nicht auswählbar)</option>';
+    hint.textContent = '⚠ Anlage hat keine Kundennummer – Erstellung über ERP nicht möglich.';
+    return;
+  }
+  wrap.style.display = '';
+  sel.innerHTML = '<option value="">⏳ Lade Kontakte…</option>';
+  hint.textContent = 'Lade Kontakte für Kunde '+kundenNr+'…';
+  const firmaSlug = getCurrentFirmaSlug();
+  try {
+    let kontakte = _kontakteCache.get(kundenNr);
+    if (!kontakte) {
+      kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+      if (!Array.isArray(kontakte)) kontakte = (kontakte && (kontakte.content || kontakte.items || kontakte.data)) || [];
+      _kontakteCache.set(kundenNr, kontakte);
+    }
+    if (kontakte.length === 0) {
+      sel.innerHTML = '<option value="">(Keine Kontakte für diesen Kunden im ERP)</option>';
+      hint.innerHTML = '⚠ Im ERP sind keine Kontakte zum Kunden hinterlegt. <strong>Erstellung über ERP nicht möglich.</strong>';
+      return;
+    }
+    sel.innerHTML = kontakte.map(k => {
+      const label = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim()
+                 + (k.rolle ? ' ('+k.rolle+')' : '')
+                 + (k.telefon ? ' · '+k.telefon : '');
+      return '<option value="'+k.id+'">'+label.replace(/</g,'&lt;')+'</option>';
+    }).join('');
+    hint.textContent = 'Wählt einen Kontakt der im ERP als Empfänger des neuen Auftrags hinterlegt wird.';
+    // Default: ersten Kontakt der zur ansprechpartner-Rolle passt, sonst ersten
+    const ansp = anlage.ansprechpartner || {};
+    const matchByName = kontakte.findIndex(k => k.vorname === ansp.vorname && k.nachname === ansp.nachname);
+    if (matchByName >= 0) sel.selectedIndex = matchByName;
+  } catch(e) {
+    sel.innerHTML = '<option value="">(Fehler beim Laden)</option>';
+    hint.innerHTML = '❌ Kontakte-Load fehlgeschlagen: '+e.message.slice(0,200);
+  }
 }
 
 /* Klick außerhalb → Dropdown schließen */
@@ -5214,6 +5269,12 @@ document.addEventListener('keydown', function(e) {
 async function openAuftragForm(recId) {
   if (!recId && !hasPermission('auftraege_create')) return toast('🔒 Keine Berechtigung','err');
   if (recId && !hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  // State zurücksetzen für neuen Auftrag
+  if (!recId) {
+    _currentSelectedAnlage = null;
+    const wrap = document.getElementById('auf-f-empfaenger-wrap');
+    if (wrap) wrap.style.display = 'none';
+  }
   await _ensureUsersLoaded();
 
   // Schließe Detail-Modal, falls offen
@@ -5337,18 +5398,74 @@ async function saveAuftrag() {
       }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message); });
       toast('✅ Auftrag aktualisiert.', 'ok');
     } else {
-      // Neue Nummer + status:offen + created
-      fields.auftrag_num = await _getNextAuftragNum();
-      fields.status      = 'offen';
-      fields.created     = new Date().toISOString();
-      fields.created_by  = APP_KEYS.user.api_key;
+      // ── NEU: Auftrag muss über die ERP-API erzeugt werden ──
+      // Voraussetzungen prüfen
+      if (!APP_KEYS.valtownProxyUrl) throw new Error('Val.town-Proxy nicht eingerichtet – ohne API kann kein Auftrag erzeugt werden (Admin → Integrationen).');
+      const firmaSlug = getCurrentFirmaSlug();
+      if (isFirmaAll()) throw new Error('Bitte erst eine konkrete Firma oben rechts wählen.');
+      if (!_currentSelectedAnlage) throw new Error('Bitte eine Anlage aus dem ERP über das Standort-Feld suchen und auswählen.');
+      if (!_currentSelectedAnlage.id) throw new Error('Ausgewählte Anlage hat keine ID – kann nicht ans ERP geschickt werden.');
+      const empfaengerId = +(document.getElementById('auf-f-empfaenger')?.value || 0);
+      if (!empfaengerId) throw new Error('Bitte einen Auftraggeber-Kontakt wählen.');
+      const leistung = document.getElementById('auf-f-leistung').value.trim();
+      if (!leistung) throw new Error('Bitte eine Leistungsbeschreibung eintragen – wird ans ERP übermittelt.');
+
+      // Datum-Felder
+      const heute    = new Date().toISOString().slice(0,10);
+      const dueDate  = document.getElementById('auf-f-due').value || heute;
+      const auftraggeberName = (_currentSelectedAnlage.kunde && _currentSelectedAnlage.kunde.firmenname) || '';
+
+      btn.textContent = '⏳ erstelle im ERP…';
+      const payload = {
+        anlageid:              _currentSelectedAnlage.id,
+        empfaengerid:          empfaengerId,
+        datumAuftragserteilung: heute,
+        ausfuehrungstermin:    dueDate,
+        leistungsbeschreibung: leistung,
+        kundeMail:             false,
+        titelemail:            '',
+        inhaltemail:           '',
+        status:                'Auftrag bestätigt',
+        auftraggeber:          auftraggeberName,
+      };
+      const candidates = ['api/auftraege/ohneangebot','auftraege/ohneangebot'];
+      let created = null, lastErr = null;
+      for (const p of candidates) {
+        try { created = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: payload }); break; }
+        catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
+      }
+      if (!created) throw (lastErr || new Error('ERP-Endpoint nicht erreichbar'));
+
+      // Vorgangsnummer vom ERP übernehmen
+      const erpAuftragNum = created.vorgangsnummer || created.id;
+      const erpId         = created.id || null;
+
+      // Lokal speichern mit ERP-Daten
+      fields.auftrag_num         = erpAuftragNum;
+      fields.ext_id              = erpId;
+      fields.ext_source          = 'aufzugshandwerk_v1';
+      fields.ext_vorgangsnummer  = created.vorgangsnummer || null;
+      fields.ext_last_modified   = created.lastmodifiedDate || '';
+      fields.bestellform         = created.bestellform || 'OHNEANGEBOT';
+      fields.status              = _normAuftragStatus(created.status || 'Auftrag bestätigt');
+      fields.created             = created.createdDate || new Date().toISOString();
+      fields.created_by          = APP_KEYS.user.api_key;
+      // Zusätzliche ERP-Daten
+      const anlage = _currentSelectedAnlage;
+      fields.objekttyp           = anlage.objektTyp || '';
+      fields.kunde_firmenname    = (anlage.kunde && anlage.kunde.firmenname) || '';
+      fields.stundensatz         = anlage.stundensatz || null;
+      fields.einsatzpauschale    = anlage.einsatzPauschale || null;
+      fields.leistungsumfang     = leistung;
+
       await atWrite('Auftraege', fields);
-      toast('✅ Auftrag #'+fields.auftrag_num+' angelegt.', 'ok');
-      trackEvent('auftraege', 'create', { num: fields.auftrag_num });
+      toast('✅ Auftrag #'+erpAuftragNum+' im ERP erstellt + lokal gespeichert.', 'ok');
+      trackEvent('auftraege', 'create', { num: erpAuftragNum, via: 'erp' });
     }
     closeAuftragForm();
     await loadAuftraegeAndRender();
   } catch(e) {
+    console.error('saveAuftrag:', e);
     toast('❌ '+e.message, 'err');
   } finally {
     btn.disabled = false; btn.textContent = '💾 Speichern';
