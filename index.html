@@ -1038,7 +1038,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.66</div>
+    <div class="login-version">Elevator Servicebox v2.67</div>
   </div>
 </div>
 
@@ -1855,7 +1855,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.66';
+const APP_VERSION = 'v2.67';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4457,7 +4457,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.66: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.67: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -8373,9 +8373,21 @@ function _renderLastSyncBanner() {
 }
 
 function _buildEmptyStateBlock() {
-  return '<div style="padding:12px 16px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;color:var(--txt2);line-height:1.5">'
-    + '⏳ <strong>Noch kein Sync durchgeführt.</strong> Klick auf <strong>🚀 Hintergrund-Sync</strong> oder <strong>🔄 ERP-Sync</strong> oben, um die Aufträge vom ERP zu laden.'
+  return '<div style="padding:8px 14px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:var(--txt2);line-height:1.5">'
+    + '⏳ Noch kein Sync durchgeführt. Klick oben auf <strong>🚀 Hintergrund-Sync</strong> oder <strong>🔄 ERP-Sync</strong>.'
     + '</div>';
+}
+
+function _isSyncBannerExpanded() {
+  try { return localStorage.getItem('sync_banner_expanded_'+APP_CONFIG.PROJECT_ID) === '1'; }
+  catch(_) { return false; }
+}
+function toggleSyncBanner() {
+  try {
+    const cur = _isSyncBannerExpanded();
+    localStorage.setItem('sync_banner_expanded_'+APP_CONFIG.PROJECT_ID, cur ? '0' : '1');
+  } catch(_){}
+  _renderLastSyncBanner();
 }
 
 function _buildSyncStatusBlock(firmaName, s) {
@@ -8393,44 +8405,65 @@ function _buildSyncStatusBlock(firmaName, s) {
     icon = '⚠️'; headline = 'Mit Warnungen abgeschlossen';
   }
 
-  const lines = [];
-  lines.push('<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">');
-  lines.push('<span style="font-size:18px">'+icon+'</span>');
-  lines.push('<strong style="font-size:14px;color:'+color+'">'+headline+'</strong>');
-  lines.push('<span style="color:'+color+';opacity:.7;font-size:13px">'+(firmaName||'')+'</span>');
-  lines.push('</div>');
+  const expanded = _isSyncBannerExpanded();
+  const chevron = expanded ? '▴' : '▾';
 
-  if (s.running) {
-    lines.push('<div style="font-size:12px;color:'+color+';margin-top:4px;line-height:1.5">');
-    lines.push('Gestartet '+_formatAbsTime(s.started)+' ('+_formatRelTime(s.started)+')');
-    lines.push('</div>');
-  } else if (s.error) {
-    lines.push('<div style="font-size:12px;color:'+color+';margin-top:4px;line-height:1.5">');
-    lines.push('Abgebrochen '+_formatAbsTime(s.finished)+' ('+_formatRelTime(s.finished)+')<br>');
-    lines.push('<code style="font-size:11px;background:rgba(0,0,0,.05);padding:2px 5px;border-radius:3px">'+String(s.error).replace(/</g,'&lt;').slice(0,200)+'</code>');
-    lines.push('</div>');
-  } else if (s.finished) {
-    const dur = Math.round((s.duration_ms||0)/1000);
-    const total = (s.skipped||0) + (s.created||0) + (s.updated||0) + (s.unchanged||0);
-    const stats = [
-      '<strong>'+(s.created||0)+'</strong> neu',
-      '<strong>'+(s.updated||0)+'</strong> aktualisiert',
-      '<strong>'+(s.unchanged||0)+'</strong> identisch',
-      '<strong>'+(s.skipped||0)+'</strong> unverändert',
-    ];
-    if ((s.errors||0) > 0) stats.push('<strong style="color:#B91C1C">'+s.errors+'</strong> Fehler');
-    lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.6">');
-    lines.push('🕐 <strong>'+_formatAbsTime(s.finished)+'</strong> ('+_formatRelTime(s.finished)+', Dauer '+dur+'s)<br>');
-    lines.push('📊 '+total+' Aufträge geprüft · '+stats.join(' · '));
-    if (s.triggered_by) {
-      const who = (s.triggered_by === 'cron') ? '🕐 Cron-Job' : (s.triggered_by === 'system') ? 'System' : ('User-Key '+String(s.triggered_by).slice(0,8)+'…');
-      lines.push('<br>👤 ausgelöst von: '+who);
+  // Kompakt-Zeile: immer sichtbar, eine Zeile
+  const compact = (() => {
+    let tail = '';
+    if (s.running) {
+      tail = ' · läuft seit '+_formatRelTime(s.started);
+    } else if (s.error) {
+      tail = ' · ' + _formatRelTime(s.finished);
+    } else if (s.finished) {
+      const counts = (s.updated||0) + (s.created||0);
+      tail = ' · '+_formatRelTime(s.finished)+' · '+counts+' aktualisiert';
     }
-    lines.push('</div>');
+    return '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick="toggleSyncBanner()">'
+      + '<span style="font-size:16px;flex:none">'+icon+'</span>'
+      + '<strong style="font-size:13px;color:'+color+';flex:none">'+headline+'</strong>'
+      + '<span style="color:'+color+';opacity:.75;font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(firmaName||'')+tail+'</span>'
+      + '<span style="color:'+color+';opacity:.6;font-size:14px;flex:none">'+chevron+'</span>'
+      + '</div>';
+  })();
+
+  // Details-Block: nur wenn expanded
+  let details = '';
+  if (expanded) {
+    const lines = [];
+    if (s.running) {
+      lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px solid '+border+'">');
+      lines.push('Gestartet '+_formatAbsTime(s.started)+' ('+_formatRelTime(s.started)+')');
+      lines.push('</div>');
+    } else if (s.error) {
+      lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.5;padding-top:6px;border-top:1px solid '+border+'">');
+      lines.push('Abgebrochen '+_formatAbsTime(s.finished)+' ('+_formatRelTime(s.finished)+')<br>');
+      lines.push('<code style="font-size:11px;background:rgba(0,0,0,.05);padding:2px 5px;border-radius:3px">'+String(s.error).replace(/</g,'&lt;').slice(0,200)+'</code>');
+      lines.push('</div>');
+    } else if (s.finished) {
+      const dur = Math.round((s.duration_ms||0)/1000);
+      const total = (s.skipped||0) + (s.created||0) + (s.updated||0) + (s.unchanged||0);
+      const stats = [
+        '<strong>'+(s.created||0)+'</strong> neu',
+        '<strong>'+(s.updated||0)+'</strong> aktualisiert',
+        '<strong>'+(s.unchanged||0)+'</strong> identisch',
+        '<strong>'+(s.skipped||0)+'</strong> unverändert',
+      ];
+      if ((s.errors||0) > 0) stats.push('<strong style="color:#B91C1C">'+s.errors+'</strong> Fehler');
+      lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.6;padding-top:6px;border-top:1px solid '+border+'">');
+      lines.push('🕐 <strong>'+_formatAbsTime(s.finished)+'</strong> ('+_formatRelTime(s.finished)+', Dauer '+dur+'s)<br>');
+      lines.push('📊 '+total+' Aufträge geprüft · '+stats.join(' · '));
+      if (s.triggered_by) {
+        const who = (s.triggered_by === 'cron') ? '🕐 Cron-Job' : (s.triggered_by === 'system') ? 'System' : ('User-Key '+String(s.triggered_by).slice(0,8)+'…');
+        lines.push('<br>👤 ausgelöst von: '+who);
+      }
+      lines.push('</div>');
+    }
+    details = lines.join('');
   }
 
-  return '<div style="padding:12px 16px;background:'+bg+';border:1px solid '+border+';border-radius:8px;margin-bottom:8px">'
-    + lines.join('') + '</div>';
+  return '<div style="padding:8px 14px;background:'+bg+';border:1px solid '+border+';border-radius:8px;margin-bottom:6px">'
+    + compact + details + '</div>';
 }
 
 function _formatRelTime(iso) {
