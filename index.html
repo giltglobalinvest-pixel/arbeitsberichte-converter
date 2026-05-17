@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.53</div>
+    <div class="login-version">Elevator Servicebox v2.54</div>
   </div>
 </div>
 
@@ -1815,7 +1815,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.53';
+const APP_VERSION = 'v2.54';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3761,6 +3761,13 @@ const FEATURES = {
 function hasPermission(key) {
   if (!APP_KEYS.user) return false;
   if (isAdmin()) return true;
+  // Techniker bekommen ihre Kern-Berechtigungen IMMER (auch wenn permissions_json sie auf false hat).
+  // Sinn des Flags: ohne diese Tools macht "Techniker sein" keinen Sinn.
+  if (APP_KEYS.user.techniker === true) {
+    if (key === 'tool_auftraege') return true;
+    if (key === 'tool_overview')  return true;
+    if (key === 'delete_reports') return false; // Techniker dürfen keine Berichte löschen
+  }
   let p = {};
   try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(e) {}
   if (key in p) return !!p[key];
