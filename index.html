@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.75</div>
+    <div class="login-version">Elevator Servicebox v2.76</div>
   </div>
 </div>
 
@@ -1936,6 +1936,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <span class="anl-search-ico">🔍</span>
       <input type="text" class="anl-search-inp" id="anl-search" placeholder="Suchen nach Adresse, Fabriknummer, Kundenname, Objekttyp…" oninput="_renderAnlagenList()">
     </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Filter: nur Anlagen mit Wartungsvertrag (aus /api/angebote/wartungNotruf)">
+      <input type="checkbox" id="anl-only-wartung" onchange="_onWartungFilterChange()"> 🔧 Nur mit Wartungsvertrag
+    </label>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer">
       <input type="checkbox" id="anl-show-archived" onchange="_renderAnlagenList()"> Archivierte zeigen
     </label>
@@ -2167,7 +2170,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.75';
+const APP_VERSION = 'v2.76';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4788,7 +4791,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.75: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.76: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5333,6 +5336,67 @@ document.addEventListener('click', function(e) {
 
 /* ══════════ ANLAGEN-VIEW (eigenständiges Menü) ══════════ */
 let _anlagenViewSelected = null;  // ausgewählte Anlage für Detail-Modal
+let _wartungsAnlagenCache = { firma:null, set:null, loadedAt:0, loading:false }; // Set<anlageId>
+
+/* Lädt die Wartungs-/Notruf-Angebote der Firma und gibt ein Set mit allen
+   referenzierten Anlage-IDs zurück. Cached 5min pro Firma. */
+async function _loadWartungsAnlagen(firmaSlug) {
+  const fresh = _wartungsAnlagenCache.firma === firmaSlug
+             && _wartungsAnlagenCache.set
+             && (Date.now() - _wartungsAnlagenCache.loadedAt) < 5*60*1000;
+  if (fresh) return _wartungsAnlagenCache.set;
+  if (_wartungsAnlagenCache.loading) {
+    while (_wartungsAnlagenCache.loading) await new Promise(r => setTimeout(r, 100));
+    return _wartungsAnlagenCache.set || new Set();
+  }
+  _wartungsAnlagenCache.loading = true;
+  try {
+    const candidates = ['api/angebote/wartungNotruf','angebote/wartungNotruf'];
+    let res = null, lastErr = null;
+    for (const p of candidates) {
+      try { res = await erpFetch('/aufzug/'+firmaSlug+'/'+p); break; }
+      catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
+    }
+    if (!res) throw (lastErr || new Error('wartungNotruf-Endpoint nicht erreichbar'));
+    let list = res;
+    if (!Array.isArray(list)) list = (res && (res.content || res.items || res.data)) || [];
+    const ids = new Set();
+    const today = new Date().toISOString().slice(0,10);
+    for (const w of list) {
+      const aid = w?.angebot?.anlage?.id;
+      if (!aid) continue;
+      // Optional: nur Verträge, die noch nicht abgelaufen sind
+      // (vertragsEnde leer = unbefristet)
+      const ende = (w.vertragsEnde||'').slice(0,10);
+      if (ende && ende < today) continue;
+      ids.add(String(aid));
+    }
+    _wartungsAnlagenCache = { firma:firmaSlug, set:ids, loadedAt:Date.now(), loading:false };
+    return ids;
+  } catch(e) {
+    _wartungsAnlagenCache.loading = false;
+    throw e;
+  }
+}
+
+async function _onWartungFilterChange() {
+  const cb = document.getElementById('anl-only-wartung');
+  if (!cb) return;
+  if (!cb.checked) { _renderAnlagenList(); return; }
+  // Erst-Aktivierung: Wartungs-Anlagen aus dem ERP laden falls nicht im Cache
+  const firmaSlug = getCurrentFirmaSlug();
+  const list = document.getElementById('anl-list');
+  if (!_wartungsAnlagenCache.set || _wartungsAnlagenCache.firma !== firmaSlug) {
+    if (list) list.innerHTML = '<div class="anl-empty"><div class="spinner" style="margin:0 auto 12px"></div>Lade Wartungsverträge…</div>';
+    try { await _loadWartungsAnlagen(firmaSlug); }
+    catch(e) {
+      if (list) list.innerHTML = '<div class="anl-empty" style="color:var(--err)">❌ Wartungsverträge laden: '+e.message.replace(/</g,'&lt;')+'</div>';
+      cb.checked = false;
+      return;
+    }
+  }
+  _renderAnlagenList();
+}
 
 async function renderAnlagenView(opts) {
   opts = opts || {};
@@ -5355,6 +5419,8 @@ async function renderAnlagenView(opts) {
   const firmaSlug = getCurrentFirmaSlug();
   try {
     await _loadAnlagenForFirma(firmaSlug);
+    // Wartungsverträge im Hintergrund laden (für Badge-Anzeige), Fehler tolerieren
+    _loadWartungsAnlagen(firmaSlug).then(() => _renderAnlagenList()).catch(()=>{});
     _renderAnlagenList();
   } catch(e) {
     list.innerHTML = '<div class="anl-empty" style="color:var(--err)">❌ Laden fehlgeschlagen: '+e.message.replace(/</g,'&lt;')+'</div>';
@@ -5369,9 +5435,14 @@ function _renderAnlagenList() {
   if (!_anlagenCache.items) return;
   const search = (document.getElementById('anl-search')?.value || '').toLowerCase().trim();
   const showArchived = !!document.getElementById('anl-show-archived')?.checked;
+  const onlyWartung  = !!document.getElementById('anl-only-wartung')?.checked;
+  const wartungsSet  = (onlyWartung || _wartungsAnlagenCache.set) ? (_wartungsAnlagenCache.set || new Set()) : null;
 
   let items = _anlagenCache.items.slice();
   if (!showArchived) items = items.filter(a => !a.archived);
+  if (onlyWartung && wartungsSet) {
+    items = items.filter(a => wartungsSet.has(String(a.id)));
+  }
   if (search) {
     items = items.filter(a => {
       const hay = [
@@ -5386,19 +5457,25 @@ function _renderAnlagenList() {
   items.sort((a,b) => (a.anzeigeAdresse||a.name||'').localeCompare(b.anzeigeAdresse||b.name||'','de'));
   _anlagenViewItems = items;
 
-  if (cnt) cnt.textContent = items.length+' Anlage'+(items.length!==1?'n':'');
+  if (cnt) cnt.textContent = items.length+' Anlage'+(items.length!==1?'n':'')+(onlyWartung?' mit Wartungsvertrag':'');
 
   if (items.length === 0) {
-    list.innerHTML = '<div class="anl-empty">'+(search?'Keine Treffer für „'+search.replace(/</g,'&lt;')+'".':'Keine Anlagen vorhanden.')+'</div>';
+    let msg = 'Keine Anlagen vorhanden.';
+    if (onlyWartung && search) msg = 'Keine Anlagen mit Wartungsvertrag für „'+search.replace(/</g,'&lt;')+'".';
+    else if (onlyWartung) msg = 'Keine Anlagen mit aktivem Wartungsvertrag gefunden.';
+    else if (search) msg = 'Keine Treffer für „'+search.replace(/</g,'&lt;')+'".';
+    list.innerHTML = '<div class="anl-empty">'+msg+'</div>';
     return;
   }
-  list.innerHTML = items.map((a,i) => _anlageCardHtml(a, i)).join('');
+  list.innerHTML = items.map((a,i) => _anlageCardHtml(a, i, wartungsSet)).join('');
 }
 
-function _anlageCardHtml(a, idx) {
+function _anlageCardHtml(a, idx, wartungsSet) {
   const archived = !!a.archived;
+  const hasWartung = wartungsSet && wartungsSet.has(String(a.id));
   const addr = (a.anzeigeAdresse || a.name || '(ohne Adresse)').replace(/</g,'&lt;');
   const metaParts = [];
+  if (hasWartung)          metaParts.push('<span style="background:#D1FAE5;color:#047857;border-radius:99px;padding:1px 7px;font-weight:700">🔧 Wartung</span>');
   if (a.fabriknummer)      metaParts.push('🔧 '+a.fabriknummer.replace(/</g,'&lt;'));
   if (a.kunde?.firmenname) metaParts.push('🏢 '+a.kunde.firmenname.replace(/</g,'&lt;'));
   if (a.objektTyp)         metaParts.push('🏗 '+a.objektTyp);
