@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.79</div>
+    <div class="login-version">Elevator Servicebox v2.80</div>
   </div>
 </div>
 
@@ -1929,6 +1929,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 <div class="anl-view" id="anl-view">
   <div class="anl-hdr">
     <h2>🏢 Anlagen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="anl-count">0 Anlagen</span></h2>
+    <button class="btn" onclick="openAnlDetailSettings()" title="Detail-Felder konfigurieren (welche Felder im Detail-Modal angezeigt werden)">⚙</button>
     <button class="btn" onclick="renderAnlagenView({force:true})" title="Frisch vom ERP laden">↻ Aktualisieren</button>
     <button class="btn prim" id="anl-bulk-btn" onclick="openBulkImport()" style="display:none" title="Mehrere Anlagen aus Excel mit KI-Assistent anlegen">📥 Bulk-Import</button>
   </div>
@@ -1956,6 +1957,22 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
     <div class="auf-modal-body" id="anl-detail-body"></div>
     <div class="auf-modal-foot" id="anl-detail-foot"></div>
+  </div>
+</div>
+
+<!-- ANLAGE-DETAIL FELDER-SETTINGS-MODAL -->
+<div class="auf-modal" id="anl-detail-settings-modal" onclick="if(event.target===this)closeAnlDetailSettings()">
+  <div class="auf-modal-panel" style="max-width:560px">
+    <div class="auf-modal-head">
+      <h2>⚙ Anlage-Detail: Felder konfigurieren</h2>
+      <button class="auf-modal-close" onclick="closeAnlDetailSettings()" title="Schließen">✕</button>
+    </div>
+    <div class="auf-modal-body" id="anl-detail-settings-body"></div>
+    <div class="auf-modal-foot">
+      <button class="btn" onclick="closeAnlDetailSettings()">Schließen</button>
+      <button class="btn" onclick="resetAnlDetailSettings()">↺ Auf Standard zurücksetzen</button>
+      <button class="btn prim" onclick="saveAnlDetailSettingsFromUI()">💾 Speichern</button>
+    </div>
   </div>
 </div>
 
@@ -2183,7 +2200,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.79';
+const APP_VERSION = 'v2.80';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4804,7 +4821,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.79: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.80: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5351,6 +5368,104 @@ document.addEventListener('click', function(e) {
 let _anlagenViewSelected = null;  // ausgewählte Anlage für Detail-Modal
 let _wartungsAnlagenCache = { firma:null, set:null, loadedAt:0, loading:false }; // Set<anlageId>
 
+/* Registry aller Detail-Felder mit Section + Default-Sichtbarkeit */
+const ANL_DETAIL_FIELDS = [
+  // Standort
+  { id:'st_anzeigeAdresse', section:'Standort',       label:'Adresse (Zeile in Section)', default:false }, // Header zeigt sie schon
+  { id:'st_name',           section:'Standort',       label:'Name',                       default:true  },
+  { id:'st_kennung',        section:'Standort',       label:'Kennung',                    default:true  },
+  { id:'st_fabriknummer',   section:'Standort',       label:'Fabriknummer',               default:true  },
+  { id:'st_objekttyp',      section:'Standort',       label:'Objekttyp',                  default:true  },
+  { id:'st_betreibertyp',   section:'Standort',       label:'Betreibertyp',               default:true  },
+  { id:'st_anzahl',         section:'Standort',       label:'Anzahl Aufzüge',             default:true  },
+  { id:'st_archived',       section:'Standort',       label:'Archiviert-Badge',           default:true  },
+  // Kunde
+  { id:'k_section',         section:'Kunde',          label:'Section gesamt anzeigen',    default:true,  isSection:true },
+  { id:'k_firmenname',      section:'Kunde',          label:'Firmenname',                 default:true  },
+  { id:'k_kundennummer',    section:'Kunde',          label:'Kundennummer',               default:true  },
+  { id:'k_telefon',         section:'Kunde',          label:'Telefon',                    default:true  },
+  { id:'k_email',           section:'Kunde',          label:'E-Mail',                     default:true  },
+  // Ansprechpartner vor Ort
+  { id:'ap_section',        section:'Ansprechpartner', label:'Section gesamt anzeigen',   default:true,  isSection:true },
+  { id:'ap_name',           section:'Ansprechpartner', label:'Name',                      default:true  },
+  { id:'ap_telefon',        section:'Ansprechpartner', label:'Telefon',                   default:true  },
+  { id:'ap_mobil',          section:'Ansprechpartner', label:'Mobil',                     default:true  },
+  { id:'ap_email',          section:'Ansprechpartner', label:'E-Mail',                    default:true  },
+  { id:'ap_rolle',          section:'Ansprechpartner', label:'Rolle',                     default:true  },
+  // Konditionen (intern)
+  { id:'kn_section',        section:'Konditionen',    label:'Section gesamt anzeigen (nur Admin/Verwalter)', default:true, isSection:true },
+  { id:'kn_stundensatz',    section:'Konditionen',    label:'Stundensatz',                default:true  },
+  { id:'kn_einsatzpauschale', section:'Konditionen',  label:'Einsatzpauschale',           default:true  },
+  { id:'kn_rechnungsempf',  section:'Konditionen',    label:'Rechnungsempfänger',         default:true  },
+  // Sonstiges
+  { id:'so_hinweis',        section:'Sonstiges',      label:'Hinweis-Block',              default:true  },
+  { id:'so_meta',           section:'Sonstiges',      label:'ERP-Meta (ID + letzte Änderung)', default:false },
+];
+
+function getAnlDetailSettings() {
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem('anl_detail_fields_'+APP_CONFIG.PROJECT_ID) || 'null'); } catch(_){}
+  const o = {};
+  for (const f of ANL_DETAIL_FIELDS) {
+    o[f.id] = (stored && f.id in stored) ? !!stored[f.id] : f.default;
+  }
+  return o;
+}
+function saveAnlDetailSettings(o) {
+  try { localStorage.setItem('anl_detail_fields_'+APP_CONFIG.PROJECT_ID, JSON.stringify(o)); } catch(_){}
+}
+function openAnlDetailSettings() {
+  const cur = getAnlDetailSettings();
+  // Gruppiert nach Section rendern
+  const sections = {};
+  for (const f of ANL_DETAIL_FIELDS) {
+    sections[f.section] = sections[f.section] || [];
+    sections[f.section].push(f);
+  }
+  const html = ['<div style="font-size:12px;color:var(--txt2);margin-bottom:14px;line-height:1.5">Wähle, welche Felder im Anlage-Detail-Modal angezeigt werden sollen. Die Einstellung wird lokal pro Gerät gespeichert.</div>'];
+  for (const [sec, fields] of Object.entries(sections)) {
+    html.push('<div class="auf-section" style="margin-bottom:14px"><h3>'+sec+'</h3>');
+    for (const f of fields) {
+      const checked = cur[f.id] ? 'checked' : '';
+      const note = f.isSection ? ' <span style="font-size:10px;color:var(--txt3);font-weight:500">(deaktivieren blendet ganze Sektion aus)</span>' : '';
+      html.push(
+        '<label style="display:flex;align-items:center;gap:10px;padding:6px 4px;cursor:pointer;border-bottom:1px solid #F1F5F9">'
+        + '<input type="checkbox" data-anlfield="'+f.id+'" '+checked+' style="width:16px;height:16px;cursor:pointer">'
+        + '<span style="flex:1;font-size:13px;color:var(--txt)">'+f.label.replace(/</g,'&lt;')+note+'</span>'
+        + '</label>'
+      );
+    }
+    html.push('</div>');
+  }
+  document.getElementById('anl-detail-settings-body').innerHTML = html.join('');
+  document.getElementById('anl-detail-settings-modal').classList.add('show');
+  document.body.classList.add('has-modal');
+}
+function closeAnlDetailSettings() {
+  document.getElementById('anl-detail-settings-modal').classList.remove('show');
+  if (!document.querySelector('.auf-modal.show')) document.body.classList.remove('has-modal');
+}
+function saveAnlDetailSettingsFromUI() {
+  const o = {};
+  document.querySelectorAll('#anl-detail-settings-body input[data-anlfield]').forEach(cb => {
+    o[cb.dataset.anlfield] = cb.checked;
+  });
+  saveAnlDetailSettings(o);
+  closeAnlDetailSettings();
+  // Re-render Detail-Modal falls offen
+  if (document.getElementById('anl-detail-modal').classList.contains('show') && _anlagenViewSelected) {
+    const idx = _anlagenViewItems.indexOf(_anlagenViewSelected);
+    if (idx >= 0) openAnlageDetail(idx);
+  }
+  toast('✓ Felder-Auswahl gespeichert.', 'ok');
+}
+function resetAnlDetailSettings() {
+  if (!confirm('Alle Felder-Einstellungen auf Standard zurücksetzen?')) return;
+  try { localStorage.removeItem('anl_detail_fields_'+APP_CONFIG.PROJECT_ID); } catch(_){}
+  openAnlDetailSettings(); // Re-render mit Defaults
+  toast('Zurückgesetzt auf Standard.', '');
+}
+
 /* Lädt die Wartungs-/Notruf-Angebote der Firma + die zugehörigen Aufträge.
    Gibt ein Set von Anlage-IDs zurück die einen TATSÄCHLICHEN, bestätigten
    Wartungs-Auftrag haben (nicht nur ein offenes Angebot). Cached 5min. */
@@ -5550,54 +5665,61 @@ function openAnlageDetail(idx) {
   const money = (n) => (n==null) ? null : Number(n).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
 
   const body = document.getElementById('anl-detail-body');
+  // Feld-Sichtbarkeits-Settings
+  const S = getAnlDetailSettings();
+  const sec = (sectionId, html) => S[sectionId] === false ? '' : html;
+  // Sub-Section-Inhalt: prüfen ob nach Settings überhaupt etwas drin ist (vermeidet leere Sections)
+  const standortInner = [
+    S.st_anzeigeAdresse ? row('Anzeige-Adresse', a.anzeigeAdresse) : '',
+    S.st_name           ? row('Name', a.name) : '',
+    S.st_kennung        ? row('Kennung', a.kennung) : '',
+    S.st_fabriknummer   ? row('Fabriknummer', a.fabriknummer) : '',
+    S.st_objekttyp      ? row('Objekttyp', a.objektTyp) : '',
+    S.st_betreibertyp   ? row('Betreibertyp', a.betreiberTyp) : '',
+    S.st_anzahl         ? row('Anzahl Aufzüge', a.anzahlAufzuege) : '',
+    (S.st_archived && a.archived) ? '<div class="auf-row"><span class="lbl">Status</span><span class="val"><span class="anl-archived-badge">archiviert</span></span></div>' : '',
+  ].filter(Boolean).join('');
+
+  const kundeInner = (S.k_section === false || (!kunde.firmenname && !kunde.kundennummer)) ? '' : [
+    S.k_firmenname    ? row('Firmenname', kunde.firmenname) : '',
+    S.k_kundennummer  ? row('Kunden-Nr.', kunde.kundennummer) : '',
+    S.k_telefon       ? row('Telefon', kunde.telefon) : '',
+    S.k_email         ? row('E-Mail', kunde.email) : '',
+  ].filter(Boolean).join('');
+
+  const apActive = (ansp.vorname || ansp.nachname || ansp.telefon || ansp.mobile);
+  const apInner = (S.ap_section === false || !apActive) ? '' : [
+    S.ap_name    ? row('Name', [ansp.vorname, ansp.nachname].filter(Boolean).join(' ')) : '',
+    S.ap_telefon ? row('Telefon', ansp.telefon) : '',
+    S.ap_mobil   ? row('Mobil', ansp.mobile) : '',
+    S.ap_email   ? row('E-Mail', ansp.email) : '',
+    S.ap_rolle   ? row('Rolle', ansp.rolle) : '',
+  ].filter(Boolean).join('');
+
+  const knInner = (S.kn_section === false || !canSeePrices()) ? '' : [
+    S.kn_stundensatz       ? row('Stundensatz', money(a.stundensatz)) : '',
+    S.kn_einsatzpauschale  ? row('Einsatzpauschale', money(a.einsatzPauschale)) : '',
+    S.kn_rechnungsempf     ? row('Rechnungsempfänger', a.rechnungsempfaenger) : '',
+  ].filter(Boolean).join('');
+
   body.innerHTML = `
-    <div class="auf-section">
-      <h3>Standort</h3>
-      ${row('Anzeige-Adresse', a.anzeigeAdresse)}
-      ${row('Name', a.name)}
-      ${row('Kennung', a.kennung)}
-      ${row('Fabriknummer', a.fabriknummer)}
-      ${row('Objekttyp', a.objektTyp)}
-      ${row('Betreibertyp', a.betreiberTyp)}
-      ${row('Anzahl Aufzüge', a.anzahlAufzuege)}
-      ${a.archived ? '<div class="auf-row"><span class="lbl">Status</span><span class="val"><span class="anl-archived-badge">archiviert</span></span></div>' : ''}
-    </div>
-    ${kunde.firmenname || kunde.kundennummer ? `
-    <div class="auf-section">
-      <h3>Kunde</h3>
-      ${row('Firmenname', kunde.firmenname)}
-      ${row('Kunden-Nr.', kunde.kundennummer)}
-      ${row('Telefon', kunde.telefon)}
-      ${row('E-Mail', kunde.email)}
-    </div>` : ''}
-    ${(ansp.vorname || ansp.nachname || ansp.telefon || ansp.mobile) ? `
-    <div class="auf-section">
-      <h3>Ansprechpartner vor Ort</h3>
-      ${row('Name', [ansp.vorname, ansp.nachname].filter(Boolean).join(' '))}
-      ${row('Telefon', ansp.telefon)}
-      ${row('Mobil', ansp.mobile)}
-      ${row('E-Mail', ansp.email)}
-      ${row('Rolle', ansp.rolle)}
-    </div>` : ''}
-    ${canSeePrices() ? `
-    <div class="auf-section">
-      <h3>💰 Konditionen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(intern · nur Admin/Verwalter)</span></h3>
-      ${row('Stundensatz', money(a.stundensatz))}
-      ${row('Einsatzpauschale', money(a.einsatzPauschale))}
-      ${row('Rechnungsempfänger', a.rechnungsempfaenger)}
-    </div>` : ''}
-    ${a.sonstigerHinweis ? `
+    ${standortInner ? `<div class="auf-section"><h3>Standort</h3>${standortInner}</div>` : ''}
+    ${kundeInner ? `<div class="auf-section"><h3>Kunde</h3>${kundeInner}</div>` : ''}
+    ${apInner ? `<div class="auf-section"><h3>Ansprechpartner vor Ort</h3>${apInner}</div>` : ''}
+    ${knInner ? `<div class="auf-section"><h3>💰 Konditionen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(intern · nur Admin/Verwalter)</span></h3>${knInner}</div>` : ''}
+    ${(S.so_hinweis !== false && a.sonstigerHinweis) ? `
     <div class="auf-section">
       <h3>Hinweis</h3>
       <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${a.sonstigerHinweis.replace(/</g,'&lt;')}</div>
     </div>` : ''}
-    <div class="auf-section" style="font-size:11px;color:var(--txt3)">
+    ${S.so_meta ? `<div class="auf-section" style="font-size:11px;color:var(--txt3)">
       ERP-ID: <code>${a.id||'?'}</code> · zuletzt geändert: ${(a.lastmodifiedDate||'').slice(0,16) || '–'}
-    </div>
+    </div>` : ''}
   `;
   // Footer-Buttons
   const foot = document.getElementById('anl-detail-foot');
   let html = '<button class="btn" onclick="closeAnlageDetailModal()">Schließen</button>';
+  html += '<button class="btn" onclick="openAnlDetailSettings()" title="Welche Felder werden hier angezeigt?">⚙ Felder</button>';
   if (hasPermission('auftraege_create') && !a.archived) {
     html += '<button class="btn prim" onclick="createAuftragForAnlage()">+ Auftrag für diese Anlage erstellen</button>';
   }
