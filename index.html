@@ -2248,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.89';
+const APP_VERSION = 'v2.90';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6637,10 +6637,12 @@ async function saveAuftrag() {
         auftraggeber:          auftraggeberName,
       };
       console.log('[ERP-Create] Payload:', JSON.stringify(payload, null, 2));
+      const createStartedAt = Date.now();
       // Pfad-Kandidaten: erst /api-prefix (Standard), dann ohne (Fallback)
       // Wichtig: NUR auf 404 fallthrough! Bei 400/500 echten Fehler zeigen.
       const candidates = ['api/auftraege/ohneangebot','auftraege/ohneangebot'];
       let created = null, firstErr = null;
+      let mailBugWorkaround = false;  // wenn true → Auftrag wurde erstellt, aber Mail-Generator crashte
       for (let i = 0; i < candidates.length; i++) {
         const p = candidates[i];
         try {
@@ -6652,7 +6654,34 @@ async function saveAuftrag() {
           if (!firstErr) firstErr = e;
           // Nur auf 404 (Endpoint nicht da) den nächsten Pfad probieren
           if (e.status === 404 && i < candidates.length - 1) continue;
-          // Alle anderen Fehler (400 Validation, 401, 403, 500 etc.) direkt werfen
+          // 500 + Mail-Generator-Bug: Auftrag wurde vermutlich trotzdem erstellt, nur Backoffice-Mail-PDF crashte
+          const trace = (e.body && e.body.upstream_body_excerpt) ? String(e.body.upstream_body_excerpt) : '';
+          const isMailGenBug = e.status === 500 && /PDFCreatorService|MailGeneratorAuftrag|sendAuftragToBackoffice/.test(trace);
+          if (isMailGenBug) {
+            console.warn('[ERP-Create] Mail-Generator-Bug erkannt — suche frisch erstellten Auftrag via GET …');
+            try {
+              // GET-Liste holen, frischsten Auftrag mit unserer anlageid + recent createdDate finden
+              const list = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
+              const items = Array.isArray(list) ? list : (list.content || list.items || list.data || []);
+              const myAnlageId = +_currentSelectedAnlage.id;
+              const recent = items
+                .filter(a => +(a.anlageid || (a.anlage && a.anlage.id)) === myAnlageId)
+                .map(a => ({ a, t: +new Date(a.createdDate || 0) }))
+                .filter(x => Date.now() - x.t < 5 * 60 * 1000)  // letzte 5 min
+                .sort((x,y) => y.t - x.t);
+              if (recent.length) {
+                created = recent[0].a;
+                mailBugWorkaround = true;
+                console.log('[ERP-Create] Workaround OK — gefunden:', created.id, created.vorgangsnummer);
+                break;
+              } else {
+                console.warn('[ERP-Create] Workaround fehlgeschlagen — kein passender Auftrag gefunden');
+              }
+            } catch(lookupErr) {
+              console.warn('[ERP-Create] Lookup nach Mail-Bug fehlgeschlagen:', lookupErr.message);
+            }
+          }
+          // Alle anderen Fehler (400 Validation, 401, 403, 500 ohne Mail-Bug etc.) direkt werfen
           throw e;
         }
       }
@@ -6681,8 +6710,12 @@ async function saveAuftrag() {
       fields.leistungsumfang     = leistung;
 
       await atWrite('Auftraege', fields);
-      toast('✅ Auftrag #'+erpAuftragNum+' im ERP erstellt + lokal gespeichert.', 'ok');
-      trackEvent('auftraege', 'create', { num: erpAuftragNum, via: 'erp' });
+      if (mailBugWorkaround) {
+        toast('✅ Auftrag #'+erpAuftragNum+' erstellt. ⚠ ERP konnte Backoffice-Mail nicht erzeugen (PDF-Generator-Bug) — Auftrag selbst ist OK.', 'warn');
+      } else {
+        toast('✅ Auftrag #'+erpAuftragNum+' im ERP erstellt + lokal gespeichert.', 'ok');
+      }
+      trackEvent('auftraege', 'create', { num: erpAuftragNum, via: 'erp', mailBug: mailBugWorkaround });
     }
     closeAuftragForm();
     await loadAuftraegeAndRender();
