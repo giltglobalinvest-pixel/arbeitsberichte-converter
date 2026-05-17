@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.76</div>
+    <div class="login-version">Elevator Servicebox v2.77</div>
   </div>
 </div>
 
@@ -1936,8 +1936,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <span class="anl-search-ico">🔍</span>
       <input type="text" class="anl-search-inp" id="anl-search" placeholder="Suchen nach Adresse, Fabriknummer, Kundenname, Objekttyp…" oninput="_renderAnlagenList()">
     </div>
-    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Filter: nur Anlagen mit Wartungsvertrag (aus /api/angebote/wartungNotruf)">
-      <input type="checkbox" id="anl-only-wartung" onchange="_onWartungFilterChange()"> 🔧 Nur mit Wartungsvertrag
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Filter: Anlagen mit bestätigtem Wartungsvertrag (Wartungs-Angebot + aktiver MITANGEBOT-Auftrag im ERP)">
+      <input type="checkbox" id="anl-only-wartung" onchange="_onWartungFilterChange()"> 🔧 Nur mit aktivem Wartungsvertrag
     </label>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer">
       <input type="checkbox" id="anl-show-archived" onchange="_renderAnlagenList()"> Archivierte zeigen
@@ -2170,7 +2170,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.76';
+const APP_VERSION = 'v2.77';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4791,7 +4791,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.76: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.77: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5338,8 +5338,9 @@ document.addEventListener('click', function(e) {
 let _anlagenViewSelected = null;  // ausgewählte Anlage für Detail-Modal
 let _wartungsAnlagenCache = { firma:null, set:null, loadedAt:0, loading:false }; // Set<anlageId>
 
-/* Lädt die Wartungs-/Notruf-Angebote der Firma und gibt ein Set mit allen
-   referenzierten Anlage-IDs zurück. Cached 5min pro Firma. */
+/* Lädt die Wartungs-/Notruf-Angebote der Firma + die zugehörigen Aufträge.
+   Gibt ein Set von Anlage-IDs zurück die einen TATSÄCHLICHEN, bestätigten
+   Wartungs-Auftrag haben (nicht nur ein offenes Angebot). Cached 5min. */
 async function _loadWartungsAnlagen(firmaSlug) {
   const fresh = _wartungsAnlagenCache.firma === firmaSlug
              && _wartungsAnlagenCache.set
@@ -5351,32 +5352,53 @@ async function _loadWartungsAnlagen(firmaSlug) {
   }
   _wartungsAnlagenCache.loading = true;
   try {
-    const candidates = ['api/angebote/wartungNotruf','angebote/wartungNotruf'];
-    let res = null, lastErr = null;
-    for (const p of candidates) {
-      try { res = await erpFetch('/aufzug/'+firmaSlug+'/'+p); break; }
-      catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
-    }
-    if (!res) throw (lastErr || new Error('wartungNotruf-Endpoint nicht erreichbar'));
-    let list = res;
-    if (!Array.isArray(list)) list = (res && (res.content || res.items || res.data)) || [];
-    const ids = new Set();
+    // 1) Wartungs-/Notruf-Angebote laden
+    const wRes = await _erpTryPaths(firmaSlug, ['api/angebote/wartungNotruf','angebote/wartungNotruf']);
+    let wartungList = Array.isArray(wRes) ? wRes : ((wRes && (wRes.content || wRes.items || wRes.data)) || []);
     const today = new Date().toISOString().slice(0,10);
-    for (const w of list) {
-      const aid = w?.angebot?.anlage?.id;
-      if (!aid) continue;
-      // Optional: nur Verträge, die noch nicht abgelaufen sind
-      // (vertragsEnde leer = unbefristet)
+    // Map: angebotId → { anlageId, vertragsEnde }
+    const wartungByAngebotId = new Map();
+    for (const w of wartungList) {
+      const angId = w?.angebot?.id;
+      const aid   = w?.angebot?.anlage?.id;
+      if (!angId || !aid) continue;
+      // Abgelaufene Verträge raus (leer = unbefristet ok)
       const ende = (w.vertragsEnde||'').slice(0,10);
       if (ende && ende < today) continue;
-      ids.add(String(aid));
+      wartungByAngebotId.set(String(angId), { anlageId: String(aid), w });
     }
-    _wartungsAnlagenCache = { firma:firmaSlug, set:ids, loadedAt:Date.now(), loading:false };
-    return ids;
+
+    // 2) Aufträge laden – nur MITANGEBOT mit angebotid auf einen Wartungs-Angebot
+    //    UND aktiver Status (Auftrag bestätigt / In Bearbeitung / Abgeschlossen)
+    const auftrRes = await _erpTryPaths(firmaSlug, ['api/auftraege','auftraege']);
+    let auftrList = Array.isArray(auftrRes) ? auftrRes : ((auftrRes && (auftrRes.content || auftrRes.items || auftrRes.data)) || []);
+    const ACTIVE = ['Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'];
+    const confirmedAnlageIds = new Set();
+    for (const a of auftrList) {
+      if (a.bestellform !== 'MITANGEBOT' || !a.angebotid) continue;
+      if (!ACTIVE.includes(a.status)) continue;
+      const match = wartungByAngebotId.get(String(a.angebotid));
+      if (!match) continue;
+      confirmedAnlageIds.add(match.anlageId);
+    }
+
+    _wartungsAnlagenCache = { firma:firmaSlug, set:confirmedAnlageIds, loadedAt:Date.now(), loading:false };
+    console.log('[Wartung] Angebote:', wartungByAngebotId.size, 'Aufträge gematcht:', confirmedAnlageIds.size);
+    return confirmedAnlageIds;
   } catch(e) {
     _wartungsAnlagenCache.loading = false;
     throw e;
   }
+}
+
+/* Helper: probiert mehrere Pfade, gibt ersten erfolgreichen Response zurück. */
+async function _erpTryPaths(firmaSlug, paths) {
+  let lastErr = null;
+  for (const p of paths) {
+    try { return await erpFetch('/aufzug/'+firmaSlug+'/'+p); }
+    catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
+  }
+  throw (lastErr || new Error('Endpoint nicht erreichbar'));
 }
 
 async function _onWartungFilterChange() {
@@ -5457,12 +5479,12 @@ function _renderAnlagenList() {
   items.sort((a,b) => (a.anzeigeAdresse||a.name||'').localeCompare(b.anzeigeAdresse||b.name||'','de'));
   _anlagenViewItems = items;
 
-  if (cnt) cnt.textContent = items.length+' Anlage'+(items.length!==1?'n':'')+(onlyWartung?' mit Wartungsvertrag':'');
+  if (cnt) cnt.textContent = items.length+' Anlage'+(items.length!==1?'n':'')+(onlyWartung?' mit aktivem Wartungsvertrag':'');
 
   if (items.length === 0) {
     let msg = 'Keine Anlagen vorhanden.';
-    if (onlyWartung && search) msg = 'Keine Anlagen mit Wartungsvertrag für „'+search.replace(/</g,'&lt;')+'".';
-    else if (onlyWartung) msg = 'Keine Anlagen mit aktivem Wartungsvertrag gefunden.';
+    if (onlyWartung && search) msg = 'Keine Anlagen mit aktivem Wartungsvertrag für „'+search.replace(/</g,'&lt;')+'".';
+    else if (onlyWartung) msg = 'Keine Anlagen mit aktivem Wartungsvertrag (Angebot + bestätigter Auftrag) gefunden.';
     else if (search) msg = 'Keine Treffer für „'+search.replace(/</g,'&lt;')+'".';
     list.innerHTML = '<div class="anl-empty">'+msg+'</div>';
     return;
