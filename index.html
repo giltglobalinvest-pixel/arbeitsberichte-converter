@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.60</div>
+    <div class="login-version">Elevator Servicebox v2.61</div>
   </div>
 </div>
 
@@ -1599,7 +1599,8 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
   <div class="auf-hdr">
     <h2>🛠 Aufträge</h2>
     <button class="btn" onclick="loadAuftraegeAndRender()">↻ Neu laden</button>
-    <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren">🔄 ERP-Sync</button>
+    <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren (im Browser, App muss offen bleiben)">🔄 ERP-Sync</button>
+    <button class="btn" id="auf-bg-sync-btn" onclick="startBackgroundSync()" style="display:none;color:#5b21b6;border-color:rgba(124,58,237,.4)" title="Hintergrund-Sync über Val.town – läuft serverseitig, App kann zu sein">🚀 Hintergrund-Sync</button>
     <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen">💶 Rechnungen prüfen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
   </div>
@@ -1608,6 +1609,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <div id="auf-sync-banner-text" style="flex:1;min-width:0">ERP-Sync läuft…</div>
     <button class="btn" style="padding:4px 12px;font-size:12px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="cancelErpSync()" title="Sync abbrechen">✕ Abbrechen</button>
   </div>
+  <div id="auf-last-sync" style="display:none;margin:0 24px 8px;padding:8px 14px;background:#F3F4F6;border-radius:8px;font-size:12px;color:var(--txt2);line-height:1.5"></div>
   <div class="auf-search-bar">
     <div class="auf-search-wrap">
       <span class="auf-search-ico">🔍</span>
@@ -1825,7 +1827,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.60';
+const APP_VERSION = 'v2.61';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4357,12 +4359,16 @@ async function loadAuftraegeAndRender() {
       .sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));
     // Anlegen-Button: bei "Alle Firmen" ausgeblendet, weil Anlegen eine konkrete Firma braucht
     document.getElementById('auf-new-btn').style.display = (hasPermission('auftraege_create') && !allMode) ? '' : 'none';
-    // ERP-Sync-Button + Bulk-Rechnungs-Check: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
-    const erpBtn = document.getElementById('auf-erp-sync-btn');
+    // ERP-Sync-Button + Bulk-Rechnungs-Check + BG-Sync: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
+    const erpBtn   = document.getElementById('auf-erp-sync-btn');
+    const bgBtn    = document.getElementById('auf-bg-sync-btn');
     const rechnBtn = document.getElementById('auf-rechn-check-btn');
-    const canSync = (isAdmin() || hasPermission('auftraege_edit')) && !!APP_KEYS.valtownProxyUrl;
+    const canSync  = (isAdmin() || hasPermission('auftraege_edit')) && !!APP_KEYS.valtownProxyUrl;
     if (erpBtn)   erpBtn.style.display   = canSync ? '' : 'none';
+    if (bgBtn)    bgBtn.style.display    = (canSync && !isFirmaAll()) ? '' : 'none';
     if (rechnBtn) rechnBtn.style.display = canSync ? '' : 'none';
+    // Letzten Sync-Status laden + anzeigen (passiert async, non-blocking)
+    if (canSync) loadLastSyncStatus().catch(()=>{});
     renderAuftraegeList();
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
@@ -6639,7 +6645,293 @@ export default async function (req) {
     }});
   }
 
+  // ══════════ BACKGROUND-SYNC ENDPOINTS ══════════
+
+  if (path === "sync/run" && req.method === "POST") {
+    let b = {}; try { b = await req.json(); } catch(_){}
+    const firma = (b.firma||"").toString();
+    if (!firma) return json({ error:"firma fehlt" }, 400);
+    try {
+      const result = await runSyncForFirma(firma, user.api_key || "system");
+      return json(result);
+    } catch(e) {
+      const errResult = { firma, error: e.message, finished: new Date().toISOString() };
+      try { await blob.setJSON("sync_status_"+firma, errResult); } catch(_){}
+      return json({ error: e.message, firma }, 500);
+    }
+  }
+
+  if (path === "sync/status" && req.method === "GET") {
+    let items = [];
+    try { items = await blob.list("sync_status_") || []; } catch(_){}
+    const statuses = {};
+    for (const item of items) {
+      const key = (item && item.key) ? item.key : item;
+      try {
+        const data = await blob.getJSON(key);
+        const firma = String(key).replace("sync_status_","");
+        statuses[firma] = data;
+      } catch(_){}
+    }
+    return json({ statuses });
+  }
+
   return json({ error:"Not found", path }, 404);
+}
+
+// ══════════ SYNC HELPERS (server-side TS) ══════════
+
+const ACTIVE_STATUSES = ["Auftrag bestätigt", "In Bearbeitung", "Abgeschlossen"];
+
+function normStatus(s) {
+  const t = String(s||"").toLowerCase().trim();
+  if (!t) return "offen";
+  if (/abgerechnet/.test(t)) return "abgerechnet";
+  if (/abgeschlossen/.test(t)) return "abgeschlossen";
+  if (/bearbeit/.test(t)) return "in_bearbeitung";
+  if (/best.tigt|^offen$/.test(t)) return "offen";
+  return t;
+}
+
+function buildKontakt(k) {
+  const name  = [k.vorname, k.nachname].filter(Boolean).join(" ").trim();
+  const phone = k.telefon || k.mobile || "";
+  const parts = [];
+  if (name) parts.push(name);
+  if (phone) parts.push("Tel: "+phone);
+  if (k.rolle) parts.push("Rolle: "+k.rolle);
+  return parts.join("\\n");
+}
+
+async function atReadAll(table, params) {
+  const baseId  = Deno.env.get("AIRTABLE_BASE_ID");
+  const readKey = Deno.env.get("AIRTABLE_READ_KEY");
+  if (!baseId || !readKey) throw new Error("AIRTABLE_BASE_ID/AIRTABLE_READ_KEY env-var fehlt");
+  let records = [];
+  let offset = null;
+  let safety = 0;
+  do {
+    let url = "https://api.airtable.com/v0/"+baseId+"/"+encodeURIComponent(table)+"?pageSize=100";
+    if (params) url += "&"+params;
+    if (offset) url += "&offset="+encodeURIComponent(offset);
+    const r = await fetch(url, { headers: { Authorization: "Bearer "+readKey } });
+    if (!r.ok) throw new Error("Airtable "+table+" GET "+r.status);
+    const d = await r.json();
+    records = records.concat(d.records || []);
+    offset = d.offset || null;
+    if (++safety > 50) break;
+  } while (offset);
+  return records;
+}
+
+async function atPatch(table, recId, fields) {
+  const baseId   = Deno.env.get("AIRTABLE_BASE_ID");
+  const writeKey = Deno.env.get("AIRTABLE_WRITE_KEY");
+  if (!baseId || !writeKey) throw new Error("AIRTABLE_WRITE_KEY env-var fehlt (Setup neu durchlaufen)");
+  const url = "https://api.airtable.com/v0/"+baseId+"/"+encodeURIComponent(table)+"/"+recId;
+  const r = await fetch(url, {
+    method: "PATCH",
+    headers: { Authorization: "Bearer "+writeKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields })
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error("Airtable PATCH "+r.status+": "+(d && d.error && d.error.message || ""));
+  return d;
+}
+
+async function atCreate(table, fields) {
+  const baseId   = Deno.env.get("AIRTABLE_BASE_ID");
+  const writeKey = Deno.env.get("AIRTABLE_WRITE_KEY");
+  if (!baseId || !writeKey) throw new Error("AIRTABLE_WRITE_KEY env-var fehlt (Setup neu durchlaufen)");
+  const url = "https://api.airtable.com/v0/"+baseId+"/"+encodeURIComponent(table);
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: "Bearer "+writeKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields })
+  });
+  const d = await r.json();
+  if (!r.ok) throw new Error("Airtable POST "+r.status+": "+(d && d.error && d.error.message || ""));
+  return d;
+}
+
+async function lookupTenant(firma) {
+  try {
+    const recs = await atReadAll("Firmen", "filterByFormula="+encodeURIComponent("{slug}='"+firma+"'")+"&maxRecords=1");
+    const t = recs[0] && recs[0].fields && recs[0].fields.erp_tenant;
+    if (t) return String(t).trim();
+  } catch(_){}
+  const LEGACY = { aufzug: "1", aszendio: "4" };
+  return LEGACY[firma] || null;
+}
+
+async function erpGet(firma, tenant, apiKey, p) {
+  const baseUrl = Deno.env.get("AUFZUG_BASE_URL") || "https://verwaltung.api.aufzugshandwerk.de/v1";
+  const url = baseUrl+"/"+p;
+  const r = await fetch(url, { headers: { APIKEY: apiKey, TENANT: tenant, Accept: "application/json" } });
+  if (!r.ok) {
+    const txt = await r.text().catch(()=>"");
+    throw new Error("ERP "+p+" HTTP "+r.status+(txt?" – "+txt.slice(0,150):""));
+  }
+  return r.json();
+}
+
+async function runSyncForFirma(firma, userKey) {
+  const t0 = Date.now();
+  try { await blob.setJSON("sync_status_"+firma, { firma, running: true, started: new Date(t0).toISOString(), triggered_by: userKey }); } catch(_){}
+
+  const tenant = await lookupTenant(firma);
+  if (!tenant) throw new Error("Kein ERP-Tenant fuer Firma '"+firma+"' (Firmen-Verwaltung).");
+  const apiKey = Deno.env.get("AUFZUG_API_KEY_"+firma.toUpperCase()) || Deno.env.get("AUFZUG_API_KEY");
+  if (!apiKey) throw new Error("Kein API-Key fuer Firma '"+firma+"'.");
+
+  const existing = await atReadAll("Auftraege");
+  const byExt = new Map();
+  for (const r of existing) {
+    if (r.fields && r.fields.ext_id && (r.fields.firma||"") === firma) {
+      byExt.set(String(r.fields.ext_id), r);
+    }
+  }
+
+  let all;
+  try { all = await erpGet(firma, tenant, apiKey, "api/auftraege"); }
+  catch(_) { all = await erpGet(firma, tenant, apiKey, "auftraege"); }
+  if (!Array.isArray(all)) all = (all && (all.content || all.items || all.data)) || [];
+  const active = all.filter(a => ACTIVE_STATUSES.indexOf(a.status) >= 0);
+
+  const toProcess = [];
+  let skipped = 0;
+  for (const a of active) {
+    const ex = byExt.get(String(a.id));
+    if (ex && a.lastmodifiedDate && ex.fields.ext_last_modified === a.lastmodifiedDate) {
+      skipped++;
+      continue;
+    }
+    toProcess.push(a);
+  }
+
+  const angebotCache = new Map();
+  const needsAngebot = [];
+  for (const a of toProcess) {
+    if (a.bestellform === "MITANGEBOT" && a.angebotid) {
+      const ex = byExt.get(String(a.id));
+      if (ex && String(ex.fields.angebot_id||"") === String(a.angebotid) && ex.fields.leistungsumfang) {
+        angebotCache.set(String(a.angebotid), {
+          serviceDescription: ex.fields.leistungsumfang,
+          offerExplanation:   ex.fields.erlaeuterungen,
+          typ:                ex.fields.angebot_typ
+        });
+      } else {
+        needsAngebot.push(a);
+      }
+    }
+  }
+  if (needsAngebot.length > 0) {
+    let idx = 0;
+    const worker = async () => {
+      while (idx < needsAngebot.length) {
+        const a = needsAngebot[idx++];
+        try {
+          const ang = await erpGet(firma, tenant, apiKey, "api/angebote/"+a.angebotid);
+          angebotCache.set(String(a.angebotid), ang);
+        } catch(_) {}
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(5, needsAngebot.length) }, () => worker()));
+  }
+
+  let created = 0, updated = 0, unchanged = 0, withAngebot = 0, errors = 0;
+  const USER_MANAGED = ["techniker_keys","techniker_namen","priority","tmpl","notizen","bilder","subunternehmer_preis","bericht_id","bericht_num","completed_at","created","created_by"];
+
+  for (const a of toProcess) {
+    try {
+      let ang = null;
+      if (a.bestellform === "MITANGEBOT" && a.angebotid) {
+        ang = angebotCache.get(String(a.angebotid)) || null;
+        if (ang) withAngebot++;
+      }
+      const anlage = a.anlage || {};
+      const ansp = anlage.ansprechpartner || {};
+      const empf = a.empfaenger || {};
+      const hasAnsp = !!(ansp.vorname || ansp.nachname || ansp.telefon || ansp.mobile);
+      const kontaktText = hasAnsp ? buildKontakt(ansp) : buildKontakt(empf);
+      const haystack = [a.bestellform, a.leistungsbeschreibung, a.notizen, ang && ang.typ, ang && ang.serviceDescription, ang && ang.title, anlage.objektTyp].filter(Boolean).join(" ").toLowerCase();
+      const isWartung = /wartung/.test(haystack);
+      const tmplKey = firma + (isWartung ? "-wartung" : "-arbeit");
+      const leistungsumfang = ((ang && ang.serviceDescription) || a.leistungsbeschreibung || a.notizen || "").toString().trim();
+
+      const fields = {
+        firma,
+        auftrag_num: a.vorgangsnummer || a.id,
+        ext_id: a.id,
+        ext_source: "aufzugshandwerk_v1",
+        ext_vorgangsnummer: a.vorgangsnummer || null,
+        ext_last_modified: a.lastmodifiedDate || "",
+        standort: anlage.anzeigeAdresse || anlage.name || "",
+        fabriknummer: anlage.fabriknummer || "",
+        kontakt: kontaktText,
+        leistungsbeschreibung: a.leistungsbeschreibung || a.notizen || "",
+        status: normStatus(a.status),
+        priority: "normal",
+        due_date: (a.ausfuehrungstermin || "").slice(0, 10) || "",
+        created: a.createdDate || new Date().toISOString(),
+        created_by: userKey,
+        tmpl: tmplKey,
+        stundensatz: anlage.stundensatz || null,
+        einsatzpauschale: anlage.einsatzPauschale || null,
+        objekttyp: anlage.objektTyp || "",
+        kunde_firmenname: (anlage.kunde && anlage.kunde.firmenname) || "",
+        leistungsumfang: leistungsumfang,
+        erlaeuterungen: (ang && ang.offerExplanation) || "",
+        angebot_typ: (ang && ang.typ) || "",
+        angebot_id: a.angebotid || null,
+        bestellform: a.bestellform || ""
+      };
+
+      const ex = byExt.get(String(a.id));
+      if (ex) {
+        const patch = Object.assign({}, fields);
+        for (const k of USER_MANAGED) {
+          const v = ex.fields[k];
+          const hasVal = v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
+          if (hasVal) delete patch[k];
+        }
+        if (ex.fields.status === "abgerechnet") delete patch.status;
+        const protectIfEmpty = ["kontakt","leistungsumfang","erlaeuterungen","standort","fabriknummer","due_date"];
+        for (const k of protectIfEmpty) {
+          if ((patch[k] === "" || patch[k] == null) && ex.fields[k]) delete patch[k];
+        }
+        const changed = {};
+        for (const k of Object.keys(patch)) {
+          const cur = ex.fields[k];
+          const curN = (cur === null || cur === undefined) ? "" : cur;
+          const newN = (patch[k] === null || patch[k] === undefined) ? "" : patch[k];
+          if (String(curN) !== String(newN)) changed[k] = patch[k];
+        }
+        if (a.lastmodifiedDate && ex.fields.ext_last_modified !== a.lastmodifiedDate) {
+          changed.ext_last_modified = a.lastmodifiedDate;
+        }
+        if (Object.keys(changed).length === 0) { unchanged++; continue; }
+        await atPatch("Auftraege", ex.id, changed);
+        updated++;
+      } else {
+        await atCreate("Auftraege", fields);
+        created++;
+      }
+    } catch(e) { errors++; }
+  }
+
+  const result = {
+    firma, running: false,
+    started: new Date(t0).toISOString(),
+    finished: new Date().toISOString(),
+    duration_ms: Date.now() - t0,
+    total: active.length,
+    toProcess: toProcess.length,
+    skipped, created, updated, unchanged, withAngebot, errors,
+    triggered_by: userKey
+  };
+  try { await blob.setJSON("sync_status_"+firma, result); } catch(_){}
+  return result;
 }
 `;
 
@@ -6784,6 +7076,7 @@ async function valtownStartSetup(btn) {
       { k:'AIRTABLE_READ_KEY', v:APP_CONFIG.AIRTABLE_READ_KEY, d:'Read token for User-Tabelle' },
       { k:'AIRTABLE_BASE_ID',  v:APP_KEYS.appBaseId||APP_CONFIG.APP_BASE_ID, d:'App-Base ID' },
     ];
+    if (APP_KEYS.airtableWriteKey) envs.push({ k:'AIRTABLE_WRITE_KEY', v:APP_KEYS.airtableWriteKey, d:'Write token (für Background-Sync)' });
     if (keyGlobal)   envs.push({ k:'AUFZUG_API_KEY',          v:keyGlobal,   d:'ERP-Key Fallback (global)' });
     if (keyAufzug)   envs.push({ k:'AUFZUG_API_KEY_AUFZUG',   v:keyAufzug,   d:'ERP-Key Aufzugshandwerk (Tenant 1)' });
     if (keyAszendio) envs.push({ k:'AUFZUG_API_KEY_ASZENDIO', v:keyAszendio, d:'ERP-Key Aszendio (Tenant 4)' });
@@ -7750,6 +8043,95 @@ async function runErpSync() {
     _hideSyncBanner();
     if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔄 ERP-Sync'; }
   }
+}
+
+/* ── Hintergrund-Sync (serverseitig in Val.town) ── */
+async function startBackgroundSync() {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Nur für Admins/Verwalter', 'err');
+  if (!APP_KEYS.valtownProxyUrl) return toast('Erst Val.town-Proxy einrichten (Admin → Integrationen)', 'err');
+  if (isFirmaAll()) return toast('Hintergrund-Sync braucht eine konkrete Firma. Bitte oben rechts wählen.', 'err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const tenant = _getErpTenantForFirma(firmaSlug);
+  if (!tenant) return toast('Firma "'+firmaSlug+'" hat keinen ERP-Tenant.', 'err');
+  if (!confirm('Hintergrund-Sync für "'+firmaSlug+'" starten?\n\nDer Sync läuft auf Val.town serverseitig – du kannst die App danach gefahrlos schließen. Beim nächsten Öffnen siehst du das Ergebnis.')) return;
+
+  const btn = document.getElementById('auf-bg-sync-btn');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '🚀 läuft auf Val.town…'; }
+  toast('🚀 Hintergrund-Sync gestartet auf Val.town. App kann jetzt geschlossen werden.', 'ok');
+  // Banner anzeigen – nicht abbrechbar, da serverseitig
+  const banner = document.getElementById('auf-sync-banner');
+  const text   = document.getElementById('auf-sync-banner-text');
+  if (banner) banner.style.display = 'flex';
+  if (text)   text.textContent = '🚀 Hintergrund-Sync läuft auf Val.town – läuft weiter wenn du die App schließt';
+
+  // Fire and forget – wir warten zwar, blockieren aber nicht
+  try {
+    const res = await erpFetch('/sync/run', { method:'POST', body:{ firma: firmaSlug } });
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🚀 Hintergrund-Sync'; }
+    if (banner) banner.style.display = 'none';
+    if (res && res.error) {
+      toast('❌ Hintergrund-Sync: '+res.error.slice(0,180), 'err');
+    } else {
+      const dur = Math.round((res.duration_ms||0)/1000);
+      toast('✅ Hintergrund-Sync fertig in '+dur+'s · '+(res.created||0)+' neu · '+(res.updated||0)+' aktualisiert · '+(res.skipped||0)+' unverändert', 'ok');
+      await loadAuftraegeAndRender();
+    }
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🚀 Hintergrund-Sync'; }
+    if (banner) banner.style.display = 'none';
+    // Auch wenn die HTTP-Connection fehlschlug: Sync läuft serverseitig weiter
+    toast('⏳ Verbindung verloren. Sync läuft serverseitig weiter. Status beim nächsten Öffnen prüfen.', 'warn');
+    console.warn('Background-Sync HTTP error:', e);
+  }
+}
+
+/* Letzten Sync-Status aus Val.town laden und im Aufträge-View anzeigen */
+async function loadLastSyncStatus() {
+  const el = document.getElementById('auf-last-sync');
+  if (!el) return;
+  if (!APP_KEYS.valtownProxyUrl) { el.style.display = 'none'; return; }
+  try {
+    const res = await erpFetch('/sync/status');
+    const statuses = res?.statuses || {};
+    const firmaSlug = getCurrentFirmaSlug();
+    const allMode = isFirmaAll();
+    // Welche Firmen-Statuses zeigen?
+    const showFor = allMode ? Object.keys(statuses) : [firmaSlug];
+    const parts = [];
+    for (const slug of showFor) {
+      const s = statuses[slug];
+      if (!s) continue;
+      const firmaName = (_firmenCache?.find(f => f.fields?.slug === slug)?.fields?.name) || slug;
+      if (s.running) {
+        parts.push('⏳ <strong>'+firmaName+'</strong>: Hintergrund-Sync läuft seit '+_formatRelTime(s.started));
+      } else if (s.error) {
+        parts.push('❌ <strong>'+firmaName+'</strong>: Sync-Fehler ('+_formatRelTime(s.finished)+'): '+String(s.error).slice(0,140));
+      } else if (s.finished) {
+        const dur = Math.round((s.duration_ms||0)/1000);
+        const counts = [
+          (s.created||0)+' neu',
+          (s.updated||0)+' aktualisiert',
+          (s.skipped||0)+' unverändert',
+          (s.errors||0)+' Fehler',
+        ].join(' · ');
+        parts.push('✅ <strong>'+firmaName+'</strong>: letzter Sync '+_formatRelTime(s.finished)+' (in '+dur+'s) · '+counts);
+      }
+    }
+    if (parts.length === 0) { el.style.display = 'none'; return; }
+    el.innerHTML = parts.join('<br>');
+    el.style.display = '';
+  } catch(_) { el.style.display = 'none'; }
+}
+
+function _formatRelTime(iso) {
+  if (!iso) return '?';
+  const t = Date.parse(iso);
+  if (!t) return iso;
+  const diff = Math.floor((Date.now() - t) / 1000);
+  if (diff < 60)     return 'vor '+diff+' Sek';
+  if (diff < 3600)   return 'vor '+Math.floor(diff/60)+' Min';
+  if (diff < 86400)  return 'vor '+Math.floor(diff/3600)+' Std';
+  return 'am '+iso.slice(0,10);
 }
 
 /* ── Integration-View (Admin) ── */
