@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.57</div>
+    <div class="login-version">Elevator Servicebox v2.58</div>
   </div>
 </div>
 
@@ -1820,7 +1820,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.57';
+const APP_VERSION = 'v2.58';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7490,12 +7490,37 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
 
       const existRec = byExt.get(String(a.id));
       if (existRec) {
-        // Update
+        // ── Schutz: user-managed Felder NIEMALS via Sync überschreiben ──
+        // Diese Felder gehören dem Benutzer (Zuweisung, manuelle Notizen, etc.) und
+        // werden aus dem PATCH entfernt wenn sie bereits einen Wert haben.
+        const USER_MANAGED = [
+          'techniker_keys','techniker_namen',     // Techniker-Zuweisung
+          'priority',                             // Manuelle Priorität
+          'tmpl',                                 // Manuell geänderte Vorlage
+          'notizen','bilder',                     // Manuelle Notizen/Bilder
+          'subunternehmer_preis',                 // Vergütungs-Text
+          'bericht_id','bericht_num','completed_at', // Bericht-Verknüpfung
+          'created','created_by',                 // Erstellungs-Metadaten nicht überschreiben
+        ];
+        const patchFields = { ...fields };
+        for (const k of USER_MANAGED) {
+          const v = existRec.fields[k];
+          const hasVal = v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0);
+          if (hasVal) delete patchFields[k];
+        }
+        // Status: terminal-Status 'abgerechnet' bleibt erhalten
+        if (existRec.fields.status === 'abgerechnet') delete patchFields.status;
+        // Auch kontakt/leistungsumfang/erlaeuterungen schützen wenn ERP keinen neuen Wert liefert
+        // (verhindert Überschreiben mit leerem String)
+        ['kontakt','leistungsumfang','erlaeuterungen','standort','fabriknummer','due_date'].forEach(k => {
+          if ((patchFields[k] === '' || patchFields[k] == null) && existRec.fields[k]) delete patchFields[k];
+        });
+
         const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
         const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+existRec.id, {
           method:'PATCH',
           headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-          body: JSON.stringify({ fields }),
+          body: JSON.stringify({ fields: patchFields }),
         }).then(r=>r.json());
         if (r.error) throw new Error(r.error.message);
         updated++;
