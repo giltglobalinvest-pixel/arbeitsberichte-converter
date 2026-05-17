@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.56</div>
+    <div class="login-version">Elevator Servicebox v2.57</div>
   </div>
 </div>
 
@@ -1820,7 +1820,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.56';
+const APP_VERSION = 'v2.57';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4470,6 +4470,43 @@ function _auftragCardHtml(r) {
   `;
 }
 
+/* Inline Vorlage-Picker (im Detail-Modal). Read-only Label wenn keine Edit-Permission. */
+function _renderTmplPicker(rec) {
+  const f = rec.fields || {};
+  const currentLabel = T[f.tmpl]?.label || f.tmpl || '–';
+  if (!hasPermission('auftraege_edit')) {
+    return currentLabel.replace(/</g,'&lt;');
+  }
+  // Verfügbare Vorlagen der jeweiligen Firma
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const tmpls = Object.entries(T).filter(([k]) => k.startsWith(firmaSlug + '-'));
+  if (tmpls.length === 0) return currentLabel.replace(/</g,'&lt;');
+  // Aktuelle Vorlage falls Firma ungültig – einfügen damit der Wert nicht weg ist
+  if (f.tmpl && !tmpls.find(([k]) => k === f.tmpl)) tmpls.unshift([f.tmpl, { label: f.tmpl }]);
+  const opts = tmpls.map(([k, v]) =>
+    '<option value="'+k+'"'+(k===f.tmpl?' selected':'')+'>'+(v.label||k).replace(/</g,'&lt;')+'</option>'
+  ).join('');
+  return '<select onchange="changeAuftragTmpl(\''+rec.id+'\', this.value)" style="font-size:13px;padding:4px 8px;border:1px solid var(--bdr);border-radius:5px;background:white;cursor:pointer;font-family:inherit">'+opts+'</select>';
+}
+
+async function changeAuftragTmpl(recId, newTmpl) {
+  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId);
+  if (!rec) return toast('Auftrag nicht gefunden.', 'err');
+  const oldTmpl = rec.fields.tmpl;
+  if (oldTmpl === newTmpl) return;
+  try {
+    await _patchAuftragFields(recId, { tmpl: newTmpl });
+    rec.fields.tmpl = newTmpl;
+    toast('✅ Vorlage geändert: '+(T[newTmpl]?.label || newTmpl), 'ok');
+    // Detail-Modal neu rendern + Liste aktualisieren
+    openAuftragDetail(recId);
+    renderAuftraegeList();
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+  }
+}
+
 /* ── DETAIL-MODAL ───────────────────────────── */
 function openAuftragDetail(recId) {
   const rec = _auftragCache.find(r => r.id === recId);
@@ -4511,7 +4548,7 @@ function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">Auftragsnummer</span><span class="val" style="font-family:monospace;font-weight:700;color:var(--amber)">#${f.auftrag_num || '–'}</span></div>
       <div class="auf-row"><span class="lbl">Standort</span><span class="val">${(f.standort||'–').replace(/</g,'&lt;')}</span></div>
       <div class="auf-row"><span class="lbl">Fabriknummer</span><span class="val">${(f.fabriknummer||'–').replace(/</g,'&lt;')}</span></div>
-      <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${T[f.tmpl]?.label || f.tmpl || '–'}</span></div>
+      <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${_renderTmplPicker(rec)}</span></div>
     </div>
     <div class="auf-section">
       <h3>Ansprechperson vor Ort</h3>
@@ -7397,15 +7434,17 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
       // KONTAKT VOR ORT: kommt aus der Anlage (anlage.ansprechpartner), NICHT aus a.empfaenger (=Auftraggeber)
       const ansp = anlage.ansprechpartner || {};
       const empf = a.empfaenger || {};
-      const buildKontakt = (k) => [
-        [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' '),
-        k.telefon ? 'Tel: '+k.telefon : '',
-        k.mobile  ? 'Mobil: '+k.mobile : '',
-        k.email   ? 'E-Mail: '+k.email : '',
-        k.rolle   ? 'Rolle: '+k.rolle : '',
-      ].filter(Boolean).join('\n');
-      // Anlage-Ansprechpartner bevorzugt, fallback auf Empfänger wenn leer
-      const hasAnsp = !!(ansp.vorname || ansp.nachname || ansp.telefon || ansp.email || ansp.mobile);
+      // Kontakt-Format: nur Name (OHNE Anrede), Tel/Mobil und Rolle. Keine Anrede, keine E-Mail.
+      const buildKontakt = (k) => {
+        const name  = [k.vorname, k.nachname].filter(Boolean).join(' ').trim();
+        const phone = k.telefon || k.mobile || '';
+        return [
+          name,
+          phone     ? 'Tel: '   + phone : '',
+          k.rolle   ? 'Rolle: ' + k.rolle : '',
+        ].filter(Boolean).join('\n');
+      };
+      const hasAnsp = !!(ansp.vorname || ansp.nachname || ansp.telefon || ansp.mobile);
       const kontaktText = hasAnsp ? buildKontakt(ansp) : buildKontakt(empf);
 
       // Vorlage: Wartungstermin → wartung-Template, sonst arbeit-Template
