@@ -2248,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.85';
+const APP_VERSION = 'v2.86';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6611,22 +6611,27 @@ async function saveAuftrag() {
       const leistung = document.getElementById('auf-f-leistung').value.trim();
       if (!leistung) throw new Error('Bitte eine Leistungsbeschreibung eintragen – wird ans ERP übermittelt.');
 
-      // Datum-Felder (ISO date YYYY-MM-DD)
-      const heute    = new Date().toISOString().slice(0,10);
-      const dueDate  = document.getElementById('auf-f-due').value || heute;
-      const kunde    = _currentSelectedAnlage.kunde || {};
+      // Datum-Felder: datumAuftragserteilung = date-time (full ISO), ausfuehrungstermin = beliebiger String (YYYY-MM-DD OK)
+      const heuteDate    = new Date().toISOString().slice(0,10);          // YYYY-MM-DD für Ausführung
+      const heuteISO     = new Date().toISOString();                       // full ISO für Auftragserteilung
+      const dueDate      = document.getElementById('auf-f-due').value || heuteDate;
+      const kunde        = _currentSelectedAnlage.kunde || {};
       const auftraggeberName = (kunde.firmenname || ('Kunde '+(kunde.kundennummer||''))).trim() || 'Unbekannt';
 
       btn.textContent = '⏳ erstelle im ERP…';
+      // Schema (AuftragOhneAngebotSETDTO):
+      //   datumAuftragserteilung: date-time  → muss full ISO 8601 sein (Spring/Jackson kann YYYY-MM-DD sonst nicht parsen)
+      //   titelemail/inhaltemail: required, minLength 1 → "-" als Platzhalter wenn kundeMail=false
+      //   leistungsbeschreibung/status/auftraggeber: required, minLength 1
       const payload = {
         anlageid:              +_currentSelectedAnlage.id,
         empfaengerid:          +empfaengerId,
-        datumAuftragserteilung: heute,
+        datumAuftragserteilung: heuteISO,
         ausfuehrungstermin:    dueDate,
         leistungsbeschreibung: leistung,
         kundeMail:             false,
-        titelemail:            '',
-        inhaltemail:           '',
+        titelemail:            '-',
+        inhaltemail:           '-',
         status:                'Auftrag bestätigt',
         auftraggeber:          auftraggeberName,
       };
