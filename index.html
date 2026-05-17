@@ -2248,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.84';
+const APP_VERSION = 'v2.85';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6611,15 +6611,16 @@ async function saveAuftrag() {
       const leistung = document.getElementById('auf-f-leistung').value.trim();
       if (!leistung) throw new Error('Bitte eine Leistungsbeschreibung eintragen – wird ans ERP übermittelt.');
 
-      // Datum-Felder
+      // Datum-Felder (ISO date YYYY-MM-DD)
       const heute    = new Date().toISOString().slice(0,10);
       const dueDate  = document.getElementById('auf-f-due').value || heute;
-      const auftraggeberName = (_currentSelectedAnlage.kunde && _currentSelectedAnlage.kunde.firmenname) || '';
+      const kunde    = _currentSelectedAnlage.kunde || {};
+      const auftraggeberName = (kunde.firmenname || ('Kunde '+(kunde.kundennummer||''))).trim() || 'Unbekannt';
 
       btn.textContent = '⏳ erstelle im ERP…';
       const payload = {
-        anlageid:              _currentSelectedAnlage.id,
-        empfaengerid:          empfaengerId,
+        anlageid:              +_currentSelectedAnlage.id,
+        empfaengerid:          +empfaengerId,
         datumAuftragserteilung: heute,
         ausfuehrungstermin:    dueDate,
         leistungsbeschreibung: leistung,
@@ -6629,13 +6630,27 @@ async function saveAuftrag() {
         status:                'Auftrag bestätigt',
         auftraggeber:          auftraggeberName,
       };
+      console.log('[ERP-Create] Payload:', JSON.stringify(payload, null, 2));
+      // Pfad-Kandidaten: erst /api-prefix (Standard), dann ohne (Fallback)
+      // Wichtig: NUR auf 404 fallthrough! Bei 400/500 echten Fehler zeigen.
       const candidates = ['api/auftraege/ohneangebot','auftraege/ohneangebot'];
-      let created = null, lastErr = null;
-      for (const p of candidates) {
-        try { created = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: payload }); break; }
-        catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
+      let created = null, firstErr = null;
+      for (let i = 0; i < candidates.length; i++) {
+        const p = candidates[i];
+        try {
+          created = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: payload });
+          console.log('[ERP-Create] OK via:', p);
+          break;
+        } catch(e) {
+          console.warn('[ERP-Create] Fehler via '+p+':', e.status, e.message);
+          if (!firstErr) firstErr = e;
+          // Nur auf 404 (Endpoint nicht da) den nächsten Pfad probieren
+          if (e.status === 404 && i < candidates.length - 1) continue;
+          // Alle anderen Fehler (400 Validation, 401, 403, 500 etc.) direkt werfen
+          throw e;
+        }
       }
-      if (!created) throw (lastErr || new Error('ERP-Endpoint nicht erreichbar'));
+      if (!created) throw (firstErr || new Error('ERP-Endpoint nicht erreichbar'));
 
       // Vorgangsnummer vom ERP übernehmen
       const erpAuftragNum = created.vorgangsnummer || created.id;
