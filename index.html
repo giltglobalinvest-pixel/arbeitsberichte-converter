@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.78</div>
+    <div class="login-version">Elevator Servicebox v2.79</div>
   </div>
 </div>
 
@@ -1930,6 +1930,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="anl-hdr">
     <h2>🏢 Anlagen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="anl-count">0 Anlagen</span></h2>
     <button class="btn" onclick="renderAnlagenView({force:true})" title="Frisch vom ERP laden">↻ Aktualisieren</button>
+    <button class="btn prim" id="anl-bulk-btn" onclick="openBulkImport()" style="display:none" title="Mehrere Anlagen aus Excel mit KI-Assistent anlegen">📥 Bulk-Import</button>
   </div>
   <div class="anl-search-bar">
     <div class="anl-search-wrap">
@@ -1955,6 +1956,18 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
     <div class="auf-modal-body" id="anl-detail-body"></div>
     <div class="auf-modal-foot" id="anl-detail-foot"></div>
+  </div>
+</div>
+
+<!-- BULK-IMPORT-MODAL (Wizard) -->
+<div class="auf-modal" id="anl-bulk-modal" onclick="if(event.target===this)closeBulkImport()">
+  <div class="auf-modal-panel" style="max-width:920px">
+    <div class="auf-modal-head">
+      <h2>📥 Bulk Anlagen-Import <span style="font-size:11px;font-weight:400;opacity:.7;margin-left:8px" id="anl-bulk-step-label">Schritt 1 / 6 · Setup</span></h2>
+      <button class="auf-modal-close" onclick="closeBulkImport()" title="Abbrechen">✕</button>
+    </div>
+    <div class="auf-modal-body" id="anl-bulk-body"></div>
+    <div class="auf-modal-foot" id="anl-bulk-foot"></div>
   </div>
 </div>
 
@@ -2170,7 +2183,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.78';
+const APP_VERSION = 'v2.79';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4791,7 +4804,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.78: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.79: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5444,6 +5457,9 @@ async function renderAnlagenView(opts) {
     // Wartungsverträge im Hintergrund laden (für Badge-Anzeige), Fehler tolerieren
     _loadWartungsAnlagen(firmaSlug).then(() => _renderAnlagenList()).catch(()=>{});
     _renderAnlagenList();
+    // Bulk-Import-Button: nur sichtbar für User mit auftraege_edit (Admin/Verwalter)
+    const bulkBtn = document.getElementById('anl-bulk-btn');
+    if (bulkBtn) bulkBtn.style.display = (isAdmin() || hasPermission('auftraege_edit')) ? '' : 'none';
   } catch(e) {
     list.innerHTML = '<div class="anl-empty" style="color:var(--err)">❌ Laden fehlgeschlagen: '+e.message.replace(/</g,'&lt;')+'</div>';
     if (cnt) cnt.textContent = '';
@@ -5594,6 +5610,475 @@ function closeAnlageDetailModal() {
   document.getElementById('anl-detail-modal').classList.remove('show');
   if (!document.querySelector('.auf-modal.show')) document.body.classList.remove('has-modal');
 }
+
+/* ══════════ BULK-IMPORT WIZARD ══════════ */
+let _bulkImport = null;  // State während des Wizards
+
+function _bulkResetState() {
+  _bulkImport = {
+    step: 'setup',  // setup → upload → analyze → preview → creating → done
+    firmaSlug: getCurrentFirmaSlug(),
+    kunden: null,
+    kunde: null,
+    defaults: { stundensatz: 70, einsatzpauschale: 50, objektTyp: 'Wohnen', betreiberTyp: 'Hausverwaltung', rechnungsempfaenger: '', isWartung: true },
+    excelRows: null,        // [[col1, col2, ...], ...] inkl. Header
+    excelHeaders: null,
+    parsed: null,           // [{ fabriknummer, anzeigeAdresse }]
+    duplicates: [],         // Fabriknummern die schon existieren
+    toCreate: [],           // Anlagen die wirklich neu sind
+    result: null,
+  };
+}
+
+async function openBulkImport() {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Val.town-Proxy nicht eingerichtet.', 'err');
+  if (isFirmaAll()) return toast('Erst eine konkrete Firma wählen.', 'err');
+  if (!APP_KEYS.anthropicKey) return toast('Anthropic-API-Key fehlt – KI-Analyse nicht möglich.', 'err');
+  _bulkResetState();
+  document.getElementById('anl-bulk-modal').classList.add('show');
+  document.body.classList.add('has-modal');
+  _bulkRender();
+  // Kunden im Hintergrund laden
+  _bulkLoadKunden().catch(e => console.warn('Kunden:', e));
+}
+
+function closeBulkImport() {
+  document.getElementById('anl-bulk-modal').classList.remove('show');
+  if (!document.querySelector('.auf-modal.show')) document.body.classList.remove('has-modal');
+  _bulkImport = null;
+}
+
+async function _bulkLoadKunden() {
+  try {
+    const res = await _erpTryPaths(_bulkImport.firmaSlug, ['api/kunden','kunden']);
+    let list = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+    _bulkImport.kunden = list;
+    _bulkRender();
+  } catch(e) { console.warn('Kunden-Load:', e); }
+}
+
+function _bulkRender() {
+  if (!_bulkImport) return;
+  const body = document.getElementById('anl-bulk-body');
+  const foot = document.getElementById('anl-bulk-foot');
+  const label = document.getElementById('anl-bulk-step-label');
+  const steps = ['setup','upload','analyze','preview','creating','done'];
+  const stepIdx = steps.indexOf(_bulkImport.step);
+  const stepNames = { setup:'Setup', upload:'Excel-Upload', analyze:'KI-Analyse', preview:'Vorschau & Duplikate', creating:'Erstellung läuft', done:'Fertig' };
+  if (label) label.textContent = 'Schritt '+(stepIdx+1)+' / '+steps.length+' · '+stepNames[_bulkImport.step];
+
+  if (_bulkImport.step === 'setup')    _bulkRenderSetup(body, foot);
+  else if (_bulkImport.step === 'upload')   _bulkRenderUpload(body, foot);
+  else if (_bulkImport.step === 'analyze')  _bulkRenderAnalyze(body, foot);
+  else if (_bulkImport.step === 'preview')  _bulkRenderPreview(body, foot);
+  else if (_bulkImport.step === 'creating') _bulkRenderCreating(body, foot);
+  else if (_bulkImport.step === 'done')     _bulkRenderDone(body, foot);
+}
+
+/* ── STEP 1: SETUP (Kunde + Defaults) ── */
+function _bulkRenderSetup(body, foot) {
+  const d = _bulkImport.defaults;
+  const kundenList = _bulkImport.kunden;
+  body.innerHTML = `
+    <div class="auf-section">
+      <h3>Kunde (alle Anlagen werden diesem Kunden zugeordnet)</h3>
+      <div class="auf-field" style="position:relative">
+        <label class="auf-label">Suche nach Firmenname oder Kundennummer</label>
+        <input type="text" class="auf-input" id="bulk-kunde-search"
+               placeholder="${kundenList ? 'Suche tippen…' : '⏳ Lade Kunden aus ERP…'}"
+               autocomplete="off" oninput="_bulkSearchKunden(this.value)" onfocus="_bulkSearchKunden(this.value)"
+               ${kundenList ? '' : 'disabled'}>
+        <div class="anlage-dropdown" id="bulk-kunde-dropdown" style="display:none"></div>
+      </div>
+      <div id="bulk-kunde-selected" style="font-size:12px;color:var(--ok);margin-top:6px"></div>
+    </div>
+    <div class="auf-section">
+      <h3>Gemeinsame Werte für alle Anlagen</h3>
+      <div class="auf-grid2">
+        <div class="auf-field">
+          <label class="auf-label">Stundensatz (€)</label>
+          <input type="number" class="auf-input" id="bulk-d-stundensatz" value="${d.stundensatz}" step="0.5" min="0">
+        </div>
+        <div class="auf-field">
+          <label class="auf-label">Einsatzpauschale (€)</label>
+          <input type="number" class="auf-input" id="bulk-d-einsatz" value="${d.einsatzpauschale}" step="0.5" min="0">
+        </div>
+        <div class="auf-field">
+          <label class="auf-label">Objekt-Typ</label>
+          <input type="text" class="auf-input" id="bulk-d-objekt" value="${d.objektTyp.replace(/"/g,'&quot;')}" placeholder="z.B. Wohnen, Büro, Gewerbe">
+        </div>
+        <div class="auf-field">
+          <label class="auf-label">Betreiber-Typ</label>
+          <input type="text" class="auf-input" id="bulk-d-betreiber" value="${d.betreiberTyp.replace(/"/g,'&quot;')}" placeholder="z.B. Hausverwaltung, WEG, Eigentümer">
+        </div>
+      </div>
+      <div class="auf-field">
+        <label class="auf-label">Rechnungsempfänger (optional)</label>
+        <input type="text" class="auf-input" id="bulk-d-rechn" value="${d.rechnungsempfaenger.replace(/"/g,'&quot;')}" placeholder="Leer = Kunde selbst">
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--txt);cursor:pointer;padding:10px;background:#D1FAE5;border:2px solid #86EFAC;border-radius:8px;margin-top:8px">
+        <input type="checkbox" id="bulk-d-wartung" ${d.isWartung?'checked':''} style="width:18px;height:18px">
+        <span><strong>🔧 Wartungsanlagen</strong> – wird im Hinweis-Feld der Anlage notiert</span>
+      </label>
+    </div>
+  `;
+  foot.innerHTML = `
+    <button class="btn" onclick="closeBulkImport()">Abbrechen</button>
+    <button class="btn prim" onclick="_bulkNextSetup()">Weiter →</button>
+  `;
+}
+
+function _bulkSearchKunden(query) {
+  const dd = document.getElementById('bulk-kunde-dropdown');
+  if (!dd) return;
+  const kunden = _bulkImport.kunden || [];
+  const q = (query||'').toLowerCase().trim();
+  let items = kunden;
+  if (q) items = kunden.filter(k => {
+    const hay = [k.firmenname, String(k.kundennummer||''), k.email, k.telefon].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  items = items.slice(0, 60);
+  if (items.length === 0) {
+    dd.innerHTML = '<div class="anlage-empty">Keine Kunden gefunden.</div>';
+  } else {
+    _bulkImport._kundenMatches = items;
+    dd.innerHTML = items.map((k, i) =>
+      '<div class="anlage-item" onclick="_bulkSelectKunde('+i+')">'
+      + '<div class="anlage-item-addr">'+(k.firmenname||'(ohne Name)').replace(/</g,'&lt;')+'</div>'
+      + '<div class="anlage-item-meta">Nr. '+(k.kundennummer||'?')+(k.telefon?' · '+k.telefon:'')+'</div>'
+      + '</div>'
+    ).join('');
+  }
+  dd.style.display = 'block';
+}
+
+function _bulkSelectKunde(idx) {
+  const k = _bulkImport._kundenMatches[idx];
+  if (!k) return;
+  _bulkImport.kunde = k;
+  document.getElementById('bulk-kunde-search').value = k.firmenname || ('Kunde #'+k.kundennummer);
+  document.getElementById('bulk-kunde-dropdown').style.display = 'none';
+  document.getElementById('bulk-kunde-selected').textContent = '✓ Kunde gewählt: '+(k.firmenname||'')+' (Nr. '+k.kundennummer+')';
+}
+
+function _bulkNextSetup() {
+  if (!_bulkImport.kunde) return toast('Bitte einen Kunden wählen.', 'err');
+  _bulkImport.defaults.stundensatz       = +document.getElementById('bulk-d-stundensatz').value || 0;
+  _bulkImport.defaults.einsatzpauschale  = +document.getElementById('bulk-d-einsatz').value || 0;
+  _bulkImport.defaults.objektTyp         = document.getElementById('bulk-d-objekt').value.trim() || 'Wohnen';
+  _bulkImport.defaults.betreiberTyp      = document.getElementById('bulk-d-betreiber').value.trim() || 'Hausverwaltung';
+  _bulkImport.defaults.rechnungsempfaenger = document.getElementById('bulk-d-rechn').value.trim();
+  _bulkImport.defaults.isWartung         = document.getElementById('bulk-d-wartung').checked;
+  _bulkImport.step = 'upload';
+  _bulkRender();
+}
+
+/* ── STEP 2: UPLOAD Excel ── */
+function _bulkRenderUpload(body, foot) {
+  body.innerHTML = `
+    <div class="auf-section">
+      <h3>Excel hochladen</h3>
+      <p style="font-size:13px;color:var(--txt2);margin-bottom:12px">
+        Datei mit den Anlagen-Daten. <strong>Pflicht-Spalten</strong>: Fabriknummer + Adresse (Straße, PLZ, Stadt). Weitere Spalten werden ignoriert.
+      </p>
+      <div style="border:2px dashed var(--bdr);border-radius:10px;padding:32px 20px;text-align:center;background:#F8FAFC">
+        <input type="file" id="bulk-excel-file" accept=".xlsx,.xls,.csv,.txt"
+               style="display:none" onchange="_bulkOnExcelFile(this.files[0])">
+        <button class="btn prim" onclick="document.getElementById('bulk-excel-file').click()">📤 Datei wählen…</button>
+        <div style="margin-top:10px;font-size:11px;color:var(--txt3)">.xlsx, .xls oder .csv</div>
+      </div>
+      <div id="bulk-upload-preview" style="margin-top:12px;font-size:12px;color:var(--txt2)"></div>
+    </div>
+  `;
+  foot.innerHTML = `
+    <button class="btn" onclick="_bulkImport.step='setup';_bulkRender()">← Zurück</button>
+    <button class="btn" onclick="closeBulkImport()">Abbrechen</button>
+  `;
+}
+
+async function _bulkOnExcelFile(file) {
+  if (!file) return;
+  const prev = document.getElementById('bulk-upload-preview');
+  prev.innerHTML = '⏳ Lade SheetJS + parse Excel…';
+  try {
+    await _loadSheetJS();
+    const ab = await file.arrayBuffer();
+    const wb = XLSX.read(ab, { type:'array' });
+    const sheetName = wb.SheetNames[0];
+    const sheet = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header:1, blankrows:false, defval:'' });
+    if (!rows || rows.length < 2) throw new Error('Datei hat zu wenig Zeilen (Header + min. 1 Datenzeile nötig).');
+    _bulkImport.excelHeaders = rows[0].map(c => String(c||'').trim());
+    _bulkImport.excelRows    = rows.slice(1).filter(r => r.some(c => String(c||'').trim() !== ''));
+    prev.innerHTML = '<strong>'+_bulkImport.excelRows.length+' Datenzeilen</strong> erkannt, <strong>'+_bulkImport.excelHeaders.length+' Spalten</strong>: '
+                   + _bulkImport.excelHeaders.map(h => '<code style="background:#E2E8F0;padding:1px 5px;border-radius:3px;margin:2px">'+h.replace(/</g,'&lt;')+'</code>').join(' ');
+    // Weiter zur Analyse
+    setTimeout(() => { _bulkImport.step = 'analyze'; _bulkRender(); _bulkRunAIAnalyze(); }, 500);
+  } catch(e) {
+    prev.innerHTML = '<span style="color:var(--err)">❌ '+e.message.replace(/</g,'&lt;')+'</span>';
+  }
+}
+
+async function _loadSheetJS() {
+  if (window.XLSX) return;
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = () => resolve();
+    s.onerror = () => reject(new Error('SheetJS konnte nicht geladen werden (Internet?)'));
+    document.head.appendChild(s);
+  });
+}
+
+/* ── STEP 3: KI-Analyse ── */
+function _bulkRenderAnalyze(body, foot) {
+  body.innerHTML = `
+    <div class="auf-section">
+      <h3>KI analysiert die Daten…</h3>
+      <div style="text-align:center;padding:40px 20px">
+        <div class="spinner" style="margin:0 auto 16px;width:30px;height:30px"></div>
+        <div style="font-size:13px;color:var(--txt2)">Claude analysiert ${_bulkImport.excelRows.length} Zeilen und extrahiert Fabriknummer + Adresse pro Aufzug…</div>
+      </div>
+      <div id="bulk-analyze-log" style="font-size:11px;color:var(--txt2);margin-top:14px;font-family:monospace;background:#F8FAFC;padding:10px;border-radius:6px;max-height:160px;overflow:auto"></div>
+    </div>
+  `;
+  foot.innerHTML = '<button class="btn" onclick="closeBulkImport()">Abbrechen</button>';
+}
+
+async function _bulkRunAIAnalyze() {
+  const log = (m) => { const el = document.getElementById('bulk-analyze-log'); if (el) el.innerHTML += m+'<br>'; };
+  try {
+    const headers = _bulkImport.excelHeaders;
+    const rows = _bulkImport.excelRows;
+    log('Sende '+rows.length+' Zeilen an Claude…');
+    // Beispiel-Tabelle als JSON
+    const sample = rows.slice(0, Math.min(rows.length, 80)).map(r => {
+      const obj = {};
+      headers.forEach((h, i) => obj[h] = r[i]);
+      return obj;
+    });
+    const prompt = `Du bist Daten-Mapping-Assistent für eine Aufzugswartungs-Firma. Analysiere folgende Excel-Daten und extrahiere pro Zeile EXAKT zwei Werte:
+
+1. "fabriknummer" – die eindeutige Fabriknummer / Seriennummer des Aufzugs (z.B. "KO-12345", "ABC123/9", "11696378")
+2. "anzeigeAdresse" – die komplette Standort-Adresse als ein String, Format: "Straße Hausnr, PLZ Stadt" (z.B. "Marktstr. 12, 70173 Stuttgart"). Füge die Spalten zusammen die du dafür brauchst.
+
+WICHTIG:
+- Wenn eine Zeile keine Fabriknummer hat → "fabriknummer": null
+- Wenn keine Adresse extrahierbar → "anzeigeAdresse": null
+- Adresse soll sauber formatiert sein (keine doppelten Kommas, keine leeren Teile)
+- Falls in einer Zeile MEHRERE Aufzüge mit unterschiedlichen Fabriknummern vorkommen, gib EINE Zeile pro Aufzug zurück
+
+Antworte AUSSCHLIESSLICH mit gültigem JSON:
+{"anlagen":[{"fabriknummer":"...","anzeigeAdresse":"..."},...]}
+
+Excel-Spalten: ${JSON.stringify(headers)}
+
+Datenzeilen (${sample.length} Zeilen):
+${JSON.stringify(sample, null, 2)}`;
+
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers: {
+        'x-api-key': APP_KEYS.anthropicKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 8000,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error('Claude HTTP '+resp.status+': '+errText.slice(0,200));
+    }
+    const data = await resp.json();
+    const text = (data.content && data.content[0] && data.content[0].text) || '';
+    log('Claude-Antwort erhalten ('+text.length+' Zeichen)');
+    // JSON extrahieren
+    let json;
+    const m = text.match(/\{[\s\S]*\}/);
+    if (!m) throw new Error('Keine JSON-Antwort von Claude.');
+    try { json = JSON.parse(m[0]); } catch(e) { throw new Error('JSON-Parse: '+e.message); }
+    const anlagen = json.anlagen || [];
+    if (anlagen.length === 0) throw new Error('Claude hat keine Anlagen gefunden.');
+    log('✓ '+anlagen.length+' Anlagen extrahiert');
+    _bulkImport.parsed = anlagen;
+    _bulkImport.step = 'preview';
+    _bulkCheckDuplicatesAndRender();
+  } catch(e) {
+    const body = document.getElementById('anl-bulk-body');
+    body.innerHTML = '<div class="auf-section"><h3 style="color:var(--err)">❌ Analyse fehlgeschlagen</h3>'
+      + '<p style="font-size:13px;color:var(--txt2)">'+e.message.replace(/</g,'&lt;')+'</p>'
+      + '<button class="btn" onclick="_bulkImport.step=\'upload\';_bulkRender()" style="margin-top:12px">← Zurück zum Upload</button>'
+      + '</div>';
+  }
+}
+
+async function _bulkCheckDuplicatesAndRender() {
+  // Lade alle Anlagen (oder Cache nutzen) und prüfe Fabriknummern
+  try {
+    if (!_anlagenCache.items || _anlagenCache.firma !== _bulkImport.firmaSlug) {
+      await _loadAnlagenForFirma(_bulkImport.firmaSlug);
+    }
+    const existing = new Set();
+    for (const a of (_anlagenCache.items||[])) {
+      if (a.fabriknummer) existing.add(String(a.fabriknummer).trim().toLowerCase());
+    }
+    _bulkImport.duplicates = [];
+    _bulkImport.toCreate = [];
+    for (const p of _bulkImport.parsed) {
+      const fn = (p.fabriknummer||'').toString().trim();
+      if (!fn) {
+        // Ohne Fabriknummer: trotzdem als "neu" einbeziehen, aber markieren
+        _bulkImport.toCreate.push({ ...p, _warning:'Keine Fabriknummer (Duplikat-Check unmöglich)' });
+        continue;
+      }
+      if (existing.has(fn.toLowerCase())) {
+        _bulkImport.duplicates.push(p);
+      } else {
+        _bulkImport.toCreate.push(p);
+      }
+    }
+    _bulkRender();
+  } catch(e) {
+    toast('❌ Duplikat-Check: '+e.message, 'err');
+    _bulkImport.step = 'upload';
+    _bulkRender();
+  }
+}
+
+/* ── STEP 4: Vorschau & Duplikate ── */
+function _bulkRenderPreview(body, foot) {
+  const toCreate = _bulkImport.toCreate;
+  const dupes = _bulkImport.duplicates;
+  const d = _bulkImport.defaults;
+  body.innerHTML = `
+    <div class="auf-section">
+      <h3>Vorschau: ${toCreate.length} neue Anlagen werden erstellt</h3>
+      <div style="font-size:13px;color:var(--txt2);margin-bottom:10px">
+        Kunde: <strong>${(_bulkImport.kunde.firmenname||'?').replace(/</g,'&lt;')}</strong> · Stundensatz <strong>${d.stundensatz} €</strong> · Einsatzpauschale <strong>${d.einsatzpauschale} €</strong> · ${d.objektTyp.replace(/</g,'&lt;')}/${d.betreiberTyp.replace(/</g,'&lt;')}
+        ${d.isWartung?' · <span style="background:#D1FAE5;color:#047857;border-radius:99px;padding:2px 8px;font-weight:700">🔧 Wartungsanlagen</span>':''}
+      </div>
+      <div style="max-height:280px;overflow:auto;border:1px solid var(--bdr);border-radius:6px">
+        <table style="width:100%;font-size:12px;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:#F8FAFC">
+            <tr><th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--bdr)">#</th>
+                <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--bdr)">Fabriknummer</th>
+                <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--bdr)">Adresse</th>
+                <th style="padding:6px 10px;border-bottom:1px solid var(--bdr)"></th></tr>
+          </thead>
+          <tbody>
+            ${toCreate.map((a,i) => `<tr>
+              <td style="padding:5px 10px;color:var(--txt3)">${i+1}</td>
+              <td style="padding:5px 10px;font-family:monospace">${(a.fabriknummer||'<em style="color:var(--txt3)">leer</em>').toString().replace(/</g,'&lt;')}</td>
+              <td style="padding:5px 10px">${(a.anzeigeAdresse||'<em style="color:var(--err)">FEHLT!</em>').toString().replace(/</g,'&lt;')}</td>
+              <td style="padding:5px 10px;color:#B45309;font-size:11px">${a._warning?'⚠ '+a._warning:''}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    ${dupes.length > 0 ? `
+    <div class="auf-section">
+      <h3 style="color:#B45309">⚠ ${dupes.length} Duplikate erkannt – werden übersprungen</h3>
+      <div style="font-size:12px;color:var(--txt2)">Diese Fabriknummern existieren bereits in deinem ERP:</div>
+      <div style="margin-top:6px;font-family:monospace;font-size:11px">${dupes.map(d => (d.fabriknummer||'?').toString().replace(/</g,'&lt;')).join(', ')}</div>
+    </div>` : ''}
+  `;
+  const canCreate = toCreate.length > 0 && toCreate.every(a => a.anzeigeAdresse);
+  foot.innerHTML = `
+    <button class="btn" onclick="_bulkImport.step='upload';_bulkRender()">← Andere Excel</button>
+    <button class="btn" onclick="closeBulkImport()">Abbrechen</button>
+    <button class="btn prim" onclick="_bulkStartCreating()" ${canCreate?'':'disabled'}>🚀 ${toCreate.length} Anlagen jetzt erstellen</button>
+  `;
+}
+
+/* ── STEP 5: Bulk-Create ── */
+async function _bulkStartCreating() {
+  _bulkImport.step = 'creating';
+  _bulkImport.result = { ok:[], errors:[], current:0, total:_bulkImport.toCreate.length };
+  _bulkRender();
+  const d = _bulkImport.defaults;
+  const kundenId = _bulkImport.kunde.kundennummer || _bulkImport.kunde.id;
+  const wartungsHinweis = d.isWartung ? 'Wartungsanlage (Bulk-Import '+new Date().toISOString().slice(0,10)+')' : '';
+
+  for (let i = 0; i < _bulkImport.toCreate.length; i++) {
+    const a = _bulkImport.toCreate[i];
+    _bulkImport.result.current = i+1;
+    document.getElementById('bulk-creating-current').textContent = (i+1)+' / '+_bulkImport.toCreate.length+' – '+(a.fabriknummer||'?');
+    document.getElementById('bulk-creating-bar').style.width = ((i+1)/_bulkImport.toCreate.length*100)+'%';
+    const payload = {
+      kundenId:           +kundenId,
+      adresseId:          a.anzeigeAdresse || '',
+      anzeigeAdresse:     a.anzeigeAdresse || '',
+      anzahlAufzuege:     1,
+      stundensatz:        d.stundensatz,
+      einsatzPauschale:   d.einsatzpauschale,
+      objektTyp:          d.objektTyp,
+      betreiberTyp:       d.betreiberTyp,
+      rechnungsempfaenger: d.rechnungsempfaenger || (_bulkImport.kunde.firmenname||''),
+      fabriknummer:       a.fabriknummer || '',
+      sonstigerHinweis:   wartungsHinweis,
+      archived:           false,
+    };
+    try {
+      const r = await erpFetch('/aufzug/'+_bulkImport.firmaSlug+'/api/anlagen', { method:'POST', body: payload });
+      _bulkImport.result.ok.push({ a, r });
+    } catch(e) {
+      _bulkImport.result.errors.push({ a, error: e.message });
+      console.warn('Bulk-Create Fehler:', a, e);
+    }
+  }
+  // Anlagen-Cache invalidieren damit die neuen sofort sichtbar sind
+  _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+  _bulkImport.step = 'done';
+  _bulkRender();
+}
+
+function _bulkRenderCreating(body, foot) {
+  const r = _bulkImport.result;
+  body.innerHTML = `
+    <div class="auf-section">
+      <h3>🚀 Erstelle Anlagen im ERP…</h3>
+      <div style="background:#E2E8F0;height:10px;border-radius:5px;overflow:hidden;margin:14px 0">
+        <div id="bulk-creating-bar" style="background:linear-gradient(90deg,var(--navy),var(--navy-l));height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div id="bulk-creating-current" style="font-size:13px;color:var(--txt2);text-align:center">Start…</div>
+      <div style="font-size:11px;color:var(--txt3);text-align:center;margin-top:6px">Bitte nicht schließen.</div>
+    </div>
+  `;
+  foot.innerHTML = '<button class="btn" disabled>⏳ läuft…</button>';
+}
+
+/* ── STEP 6: DONE ── */
+function _bulkRenderDone(body, foot) {
+  const r = _bulkImport.result;
+  body.innerHTML = `
+    <div class="auf-section">
+      <h3>${r.errors.length===0 ? '✅ Erfolg!' : '⚠ Mit Fehlern abgeschlossen'}</h3>
+      <div style="font-size:14px;color:var(--txt);margin:14px 0;line-height:1.8">
+        <div>✓ <strong>${r.ok.length}</strong> Anlagen erfolgreich im ERP erstellt</div>
+        ${_bulkImport.duplicates.length > 0 ? '<div>↪ <strong>'+_bulkImport.duplicates.length+'</strong> Duplikate übersprungen (Fabriknummer existierte)</div>' : ''}
+        ${r.errors.length > 0 ? '<div style="color:var(--err)">❌ <strong>'+r.errors.length+'</strong> Fehler</div>' : ''}
+      </div>
+      ${r.errors.length > 0 ? `
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;font-size:12px;color:var(--err);font-weight:600">Fehler-Details anzeigen</summary>
+        <div style="margin-top:8px;max-height:200px;overflow:auto;font-size:11px;font-family:monospace;background:#FEF2F2;padding:8px;border-radius:5px">
+          ${r.errors.map(e => '<div style="border-bottom:1px solid #FECACA;padding:4px 0">'
+            + '<strong>'+((e.a.fabriknummer||'?')+'').replace(/</g,'&lt;')+'</strong> ('+(e.a.anzeigeAdresse||'').replace(/</g,'&lt;')+')<br>'
+            + '<span style="color:#B91C1C">'+e.error.replace(/</g,'&lt;')+'</span></div>').join('')}
+        </div>
+      </details>` : ''}
+    </div>
+  `;
+  foot.innerHTML = '<button class="btn prim" onclick="closeBulkImport();renderAnlagenView({force:true})">✓ Schließen + Anlagen neu laden</button>';
+}
+
 
 async function createAuftragForAnlage() {
   if (!_anlagenViewSelected) return;
