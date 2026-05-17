@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.58</div>
+    <div class="login-version">Elevator Servicebox v2.59</div>
   </div>
 </div>
 
@@ -1820,7 +1820,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.58';
+const APP_VERSION = 'v2.59';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4043,11 +4043,12 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
   await ensureField('Berichte',     'bilder',      'multipleAttachments');
-  // Auftrag: Kontakt zusammenfassen + Notizen + Bilder + Subunternehmer-Vergütung
-  await ensureField('Auftraege',    'kontakt',             'multilineText');
-  await ensureField('Auftraege',    'notizen',             'multilineText');
-  await ensureField('Auftraege',    'bilder',              'multipleAttachments');
-  await ensureField('Auftraege',    'subunternehmer_preis','multilineText');
+  // Auftrag: Kontakt zusammenfassen + Notizen + Bilder + Subunternehmer-Vergütung + ERP-Sync Optimierungs-Felder
+  await ensureField('Auftraege',    'kontakt',              'multilineText');
+  await ensureField('Auftraege',    'notizen',              'multilineText');
+  await ensureField('Auftraege',    'bilder',               'multipleAttachments');
+  await ensureField('Auftraege',    'subunternehmer_preis', 'multilineText');
+  await ensureField('Auftraege',    'ext_last_modified',    'singleLineText');
   // User: Techniker-Flag + Subunternehmer-Flag
   await ensureField('User',         'techniker',     'checkbox');
   await ensureField('User',         'subunternehmer','checkbox');
@@ -7419,16 +7420,79 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
   }
   log('Bestehende mit ext_id: '+byExt.size);
 
-  let created=0, updated=0, withAngebot=0, errors=0;
-  for (let i = 0; i < active.length; i++) {
-    const a = active[i];
-    log('['+(i+1)+'/'+active.length+'] #'+a.vorgangsnummer+' '+a.status);
+  // ── INKREMENTELL: Aufträge filtern, deren lastmodifiedDate sich nicht geändert hat ──
+  const toProcess = [];
+  let skippedUnchanged = 0;
+  for (const a of active) {
+    const existRec = byExt.get(String(a.id));
+    if (existRec && a.lastmodifiedDate && existRec.fields.ext_last_modified === a.lastmodifiedDate) {
+      skippedUnchanged++;
+      continue;
+    }
+    toProcess.push(a);
+  }
+  log('🚀 Inkrementell: '+skippedUnchanged+' unverändert (übersprungen) · '+toProcess.length+' zu verarbeiten');
+
+  if (toProcess.length === 0) {
+    return { total: active.length, created: 0, updated: 0, errors: 0, withAngebot: 0, skipped: skippedUnchanged };
+  }
+
+  // ── PARALLEL: Angebote für MITANGEBOT vorab laden (Concurrency=5) ──
+  // Skip wenn bereits gecached (gleicher angebot_id + leistungsumfang vorhanden)
+  const needsAngebot = toProcess.filter(a => {
+    if (a.bestellform !== 'MITANGEBOT' || !a.angebotid) return false;
+    const existRec = byExt.get(String(a.id));
+    if (existRec
+        && String(existRec.fields.angebot_id||'') === String(a.angebotid)
+        && existRec.fields.leistungsumfang) {
+      return false; // Angebot schon im Cache
+    }
+    return true;
+  });
+  const angebotCache = new Map(); // angebot_id → angebot
+  // Schon-gecachte angebote aus existRec wiederverwenden
+  for (const a of toProcess) {
+    if (a.bestellform === 'MITANGEBOT' && a.angebotid) {
+      const existRec = byExt.get(String(a.id));
+      if (existRec && String(existRec.fields.angebot_id||'') === String(a.angebotid) && existRec.fields.leistungsumfang) {
+        angebotCache.set(String(a.angebotid), {
+          serviceDescription: existRec.fields.leistungsumfang,
+          offerExplanation:   existRec.fields.erlaeuterungen,
+          typ:                existRec.fields.angebot_typ,
+        });
+      }
+    }
+  }
+  if (needsAngebot.length > 0) {
+    log('📥 Lade '+needsAngebot.length+' Angebot'+(needsAngebot.length!==1?'e':'')+' parallel (Concurrency 5)…');
+    const CONCURRENCY = 5;
+    let aIdx = 0, angebotErrors = 0;
+    async function angebotWorker() {
+      while (aIdx < needsAngebot.length) {
+        const a = needsAngebot[aIdx++];
+        try {
+          const angebot = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote/'+a.angebotid);
+          angebotCache.set(String(a.angebotid), angebot);
+        } catch(e) {
+          angebotErrors++;
+          console.warn('Angebot '+a.angebotid+' nicht geladen:', e.message);
+        }
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(CONCURRENCY, needsAngebot.length)}, () => angebotWorker()));
+    log('✓ Angebote geladen ('+(needsAngebot.length-angebotErrors)+'/'+needsAngebot.length+(angebotErrors?' · '+angebotErrors+' Fehler':'')+')');
+  }
+
+  let created=0, updated=0, unchanged=0, withAngebot=0, errors=0;
+  for (let i = 0; i < toProcess.length; i++) {
+    const a = toProcess[i];
+    log('['+(i+1)+'/'+toProcess.length+'] #'+a.vorgangsnummer+' '+a.status);
     try {
-      // Bei MITANGEBOT zusätzlich Angebot laden
+      // Angebot aus Cache holen
       let angebot = null;
       if (a.bestellform === 'MITANGEBOT' && a.angebotid) {
-        try { angebot = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote/'+a.angebotid); withAngebot++; }
-        catch(e) { console.warn('Angebot '+a.angebotid+' nicht geladen:', e.message); }
+        angebot = angebotCache.get(String(a.angebotid)) || null;
+        if (angebot) withAngebot++;
       }
       const anlage = a.anlage || {};
       // KONTAKT VOR ORT: kommt aus der Anlage (anlage.ansprechpartner), NICHT aus a.empfaenger (=Auftraggeber)
@@ -7465,6 +7529,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         ext_id:                a.id,
         ext_source:            'aufzugshandwerk_v1',
         ext_vorgangsnummer:    a.vorgangsnummer || null,
+        ext_last_modified:     a.lastmodifiedDate || '',  // ← für Inkrementell-Sync
         standort:              anlage.anzeigeAdresse || anlage.name || '',
         fabriknummer:          anlage.fabriknummer || '',
         kontakt:               kontaktText,
@@ -7516,11 +7581,31 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
           if ((patchFields[k] === '' || patchFields[k] == null) && existRec.fields[k]) delete patchFields[k];
         });
 
+        // ── DIFF-ONLY: Nur Felder behalten, die sich tatsächlich ändern ──
+        // Spart Airtable-API-Calls bei No-Op Updates.
+        const changedFields = {};
+        for (const [k, v] of Object.entries(patchFields)) {
+          const cur = existRec.fields[k];
+          // Normalisiere für Vergleich: null/undefined/'' werden gleich behandelt
+          const curN = (cur === null || cur === undefined) ? '' : cur;
+          const newN = (v   === null || v   === undefined) ? '' : v;
+          if (String(curN) !== String(newN)) changedFields[k] = v;
+        }
+        // ext_last_modified ALWAYS mitsenden (auch wenn sonst nichts ändert) damit nächster Sync skippen kann
+        if (a.lastmodifiedDate && existRec.fields.ext_last_modified !== a.lastmodifiedDate) {
+          changedFields.ext_last_modified = a.lastmodifiedDate;
+        }
+
+        if (Object.keys(changedFields).length === 0) {
+          unchanged++;
+          continue;
+        }
+
         const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
         const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+existRec.id, {
           method:'PATCH',
           headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-          body: JSON.stringify({ fields: patchFields }),
+          body: JSON.stringify({ fields: changedFields }),
         }).then(r=>r.json());
         if (r.error) throw new Error(r.error.message);
         updated++;
@@ -7534,7 +7619,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
       log('  ⚠ Fehler: '+e.message);
     }
   }
-  return { total: active.length, created, updated, errors, withAngebot };
+  return { total: active.length, created, updated, unchanged, skipped: skippedUnchanged, errors, withAngebot };
 }
 
 async function runErpSync() {
@@ -7562,6 +7647,7 @@ async function runErpSync() {
     await ensureField('Auftraege', 'ext_id',                'number');
     await ensureField('Auftraege', 'ext_source',            'singleLineText');
     await ensureField('Auftraege', 'ext_vorgangsnummer',    'number');
+    await ensureField('Auftraege', 'ext_last_modified',     'singleLineText');
     await ensureField('Auftraege', 'leistungsumfang',       'multilineText');
     await ensureField('Auftraege', 'erlaeuterungen',        'multilineText');
     await ensureField('Auftraege', 'angebot_typ',           'singleLineText');
@@ -7587,8 +7673,16 @@ async function runErpSync() {
     const dur = Math.round((Date.now()-t0)/1000);
     _erpLog('================================', 'ok');
     _erpLog('✅ Sync fertig in '+dur+'s', 'ok');
-    _erpLog('  '+res.created+' neu · '+res.updated+' aktualisiert · '+res.withAngebot+' mit Angebot · '+res.errors+' Fehler', 'ok');
-    toast('✅ Sync fertig: '+res.created+' neu · '+res.updated+' aktualisiert · '+res.errors+' Fehler', 'ok');
+    const parts = [
+      res.created+' neu',
+      res.updated+' aktualisiert',
+      (res.unchanged||0)+' identisch',
+      (res.skipped||0)+' unverändert (übersprungen)',
+      (res.withAngebot||0)+' mit Angebot',
+      res.errors+' Fehler',
+    ];
+    _erpLog('  '+parts.join(' · '), 'ok');
+    toast('✅ Sync fertig in '+dur+'s: '+res.created+' neu · '+res.updated+' aktualisiert · '+(res.skipped||0)+' übersprungen', 'ok');
     trackEvent('auftraege', 'erp_sync', res);
     await loadAuftraegeAndRender();
   } catch(e) {
