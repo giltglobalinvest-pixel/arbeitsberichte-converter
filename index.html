@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.59</div>
+    <div class="login-version">Elevator Servicebox v2.60</div>
   </div>
 </div>
 
@@ -1603,6 +1603,11 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen">💶 Rechnungen prüfen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
   </div>
+  <div id="auf-sync-banner" style="display:none;margin:0 24px 8px;padding:10px 14px;background:#EAF2FE;border:1px solid #BFD6FB;border-radius:8px;font-size:13px;color:var(--navy-d);align-items:center;gap:10px;flex-wrap:wrap">
+    <div class="spinner" style="width:14px;height:14px;border-width:2px;flex:none"></div>
+    <div id="auf-sync-banner-text" style="flex:1;min-width:0">ERP-Sync läuft…</div>
+    <button class="btn" style="padding:4px 12px;font-size:12px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="cancelErpSync()" title="Sync abbrechen">✕ Abbrechen</button>
+  </div>
   <div class="auf-search-bar">
     <div class="auf-search-wrap">
       <span class="auf-search-ico">🔍</span>
@@ -1820,7 +1825,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.59';
+const APP_VERSION = 'v2.60';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7381,6 +7386,27 @@ async function erpFetch(path, options={}) {
 /* ── ERP-Aufträge importieren (Aufzugshandwerk) ── */
 const ERP_ACTIVE_STATUSES = ['Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen'];
 
+/* Sync-State: erlaubt das Abbrechen mitten im Lauf */
+let _erpSyncCancelled = false;
+class ErpSyncAborted extends Error { constructor() { super('Sync abgebrochen.'); this.aborted = true; } }
+function _checkSyncCancelled() { if (_erpSyncCancelled) throw new ErpSyncAborted(); }
+function cancelErpSync() {
+  _erpSyncCancelled = true;
+  const t = document.getElementById('auf-sync-banner-text');
+  if (t) t.textContent = '⏹ Abbruch angefordert… (laufender Schritt wird beendet)';
+}
+function _showSyncBanner(text) {
+  const b = document.getElementById('auf-sync-banner');
+  const t = document.getElementById('auf-sync-banner-text');
+  if (b) b.style.display = 'flex';
+  if (t) t.textContent = text;
+}
+function _hideSyncBanner() {
+  const b = document.getElementById('auf-sync-banner');
+  if (b) b.style.display = 'none';
+}
+function _truncate(s, n) { s = String(s||''); return s.length > n ? s.slice(0, n-1)+'…' : s; }
+
 async function erpImportAuftraege(firmaSlug, onProgress) {
   const log = (msg) => { console.log('[ERP-Sync]', msg); if (onProgress) onProgress(msg); };
 
@@ -7466,9 +7492,10 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
   if (needsAngebot.length > 0) {
     log('📥 Lade '+needsAngebot.length+' Angebot'+(needsAngebot.length!==1?'e':'')+' parallel (Concurrency 5)…');
     const CONCURRENCY = 5;
-    let aIdx = 0, angebotErrors = 0;
+    let aIdx = 0, angebotErrors = 0, angebotDone = 0;
     async function angebotWorker() {
       while (aIdx < needsAngebot.length) {
+        _checkSyncCancelled();
         const a = needsAngebot[aIdx++];
         try {
           const angebot = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote/'+a.angebotid);
@@ -7476,6 +7503,11 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         } catch(e) {
           angebotErrors++;
           console.warn('Angebot '+a.angebotid+' nicht geladen:', e.message);
+        }
+        angebotDone++;
+        // Alle 3 Angebote ein Progress-Update
+        if (angebotDone % 3 === 0 || angebotDone === needsAngebot.length) {
+          log('📥 Angebote '+angebotDone+'/'+needsAngebot.length+'…');
         }
       }
     }
@@ -7485,6 +7517,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
 
   let created=0, updated=0, unchanged=0, withAngebot=0, errors=0;
   for (let i = 0; i < toProcess.length; i++) {
+    _checkSyncCancelled();
     const a = toProcess[i];
     log('['+(i+1)+'/'+toProcess.length+'] #'+a.vorgangsnummer+' '+a.status);
     try {
@@ -7664,11 +7697,15 @@ async function runErpSync() {
 
   const btn = document.getElementById('auf-erp-sync-btn');
   if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ Sync…'; }
+  _erpSyncCancelled = false;
+  _showSyncBanner('ERP-Sync gestartet…');
   try {
     const t0 = Date.now();
     const res = await erpImportAuftraege(firmaSlug, msg => {
       _erpLog(msg, 'info');
-      if (btn && msg.length < 40) btn.textContent = '⏳ '+msg;
+      const short = _truncate(msg, 60);
+      _showSyncBanner('🔄 '+short);
+      if (btn) btn.textContent = '⏳ '+_truncate(msg, 30);
     });
     const dur = Math.round((Date.now()-t0)/1000);
     _erpLog('================================', 'ok');
@@ -7686,24 +7723,31 @@ async function runErpSync() {
     trackEvent('auftraege', 'erp_sync', res);
     await loadAuftraegeAndRender();
   } catch(e) {
+    const aborted = !!e.aborted;
     console.error('ERP-Sync Fehler:', e);
     _erpLog('================================', 'err');
-    _erpLog('❌ SYNC ABGEBROCHEN', 'err');
-    _erpLog('Fehler: '+e.message, 'err');
-    if (e.status) _erpLog('HTTP-Status: '+e.status, 'err');
-    if (e.url)    _erpLog('URL: '+e.url, 'err');
-    if (e.body && typeof e.body === 'object') {
-      _erpLog('Antwort-Details:', 'err');
-      Object.entries(e.body).forEach(([k,v]) => _erpLog('  '+k+': '+JSON.stringify(v).slice(0,300), 'err'));
+    _erpLog(aborted ? '⏹ SYNC ABGEBROCHEN (durch Nutzer)' : '❌ SYNC ABGEBROCHEN', 'err');
+    if (!aborted) {
+      _erpLog('Fehler: '+e.message, 'err');
+      if (e.status) _erpLog('HTTP-Status: '+e.status, 'err');
+      if (e.url)    _erpLog('URL: '+e.url, 'err');
+      if (e.body && typeof e.body === 'object') {
+        _erpLog('Antwort-Details:', 'err');
+        Object.entries(e.body).forEach(([k,v]) => _erpLog('  '+k+': '+JSON.stringify(v).slice(0,300), 'err'));
+      }
+      _erpLog('---', 'err');
+      _erpLog('💡 Tipps zur Diagnose:', 'info');
+      _erpLog('  • Admin → Integrationen → "🔍 Env-Status anzeigen"', 'info');
+      _erpLog('  • Admin → Integrationen → "🔬 Testen" pro Firma', 'info');
+      _erpLog('  • Bei HTTP 401: API-Key passt nicht zum Tenant', 'info');
+      _erpLog('  • Bei HTTP 404: Pfad evtl. ohne /api/-Prefix', 'info');
+      toast('❌ '+e.message.slice(0,180), 'err');
+    } else {
+      toast('⏹ Sync abgebrochen.', 'warn');
     }
-    _erpLog('---', 'err');
-    _erpLog('💡 Tipps zur Diagnose:', 'info');
-    _erpLog('  • Admin → Integrationen → "🔍 Env-Status anzeigen"', 'info');
-    _erpLog('  • Admin → Integrationen → "🔬 Testen" pro Firma', 'info');
-    _erpLog('  • Bei HTTP 401: API-Key passt nicht zum Tenant', 'info');
-    _erpLog('  • Bei HTTP 404: Pfad evtl. ohne /api/-Prefix', 'info');
-    toast('❌ '+e.message.slice(0,180), 'err');
   } finally {
+    _erpSyncCancelled = false;
+    _hideSyncBanner();
     if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔄 ERP-Sync'; }
   }
 }
