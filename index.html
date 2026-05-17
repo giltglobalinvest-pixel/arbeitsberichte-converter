@@ -1308,7 +1308,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.83</div>
+    <div class="login-version">Elevator Servicebox v2.84</div>
   </div>
 </div>
 
@@ -2248,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.83';
+const APP_VERSION = 'v2.84';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4886,7 +4886,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.83: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.84: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -9647,6 +9647,14 @@ async function valtownDeleteCronFile(token, valId) {
   catch(_) { return null; }
 }
 
+/* ── Persistierter Schedule-Status (umgeht Val.town-API-Inkonsistenzen beim Auslesen) ── */
+function _saveCronScheduleId(scheduleId) {
+  try { localStorage.setItem('cron_schedule_'+APP_CONFIG.PROJECT_ID, scheduleId || ''); } catch(_){}
+}
+function _loadCronScheduleId() {
+  try { return localStorage.getItem('cron_schedule_'+APP_CONFIG.PROJECT_ID) || null; } catch(_){ return null; }
+}
+
 /* ── Plan-Sync aktivieren/deaktivieren/ändern ── */
 async function applyCronSchedule(scheduleId, btn) {
   if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return toast('Proxy nicht eingerichtet.', 'err');
@@ -9661,6 +9669,7 @@ async function applyCronSchedule(scheduleId, btn) {
     if (!sched.cron) {
       // Deaktivieren → Cron-File löschen
       await valtownDeleteCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
+      _saveCronScheduleId('off');
       _erpLog('✓ Cron-File entfernt (Auto-Sync deaktiviert)', 'ok');
       toast('✅ Auto-Sync deaktiviert.', 'ok');
     } else {
@@ -9674,6 +9683,7 @@ async function applyCronSchedule(scheduleId, btn) {
         await valtownAddCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, content, sched.cron);
         _erpLog('✓ Cron-File angelegt · Schedule: '+sched.cron, 'ok');
       }
+      _saveCronScheduleId(scheduleId);
       toast('✅ Auto-Sync aktiv: '+sched.label, 'ok');
     }
     renderIntegrationView();
@@ -9686,15 +9696,29 @@ async function applyCronSchedule(scheduleId, btn) {
   }
 }
 
-/* ── Aktuellen Cron-Schedule lesen ── */
+/* ── Aktuellen Cron-Schedule lesen ──
+   Strategie: File-Existenz im Val.town prüft "aktiv". Schedule-Label/Cron-Expr
+   kommt aus localStorage (Val.town's Response liefert Cron-Field nicht konsistent). */
 async function fetchCurrentCronSchedule() {
   if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) return null;
+  let file = null;
   try {
-    const f = await valtownGetCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
-    if (!f) return null;
-    const cronExpr = f.cron || f.interval || null;
-    return { cron: cronExpr, schedule: _findScheduleByCron(cronExpr), file: f };
-  } catch(_) { return null; }
+    file = await valtownGetCronFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId);
+  } catch(_){}
+  if (!file) {
+    // Kein File → inaktiv
+    _saveCronScheduleId('off');
+    return { exists:false, schedule: SYNC_SCHEDULES.find(s => s.id === 'off'), file:null };
+  }
+  // File existiert → versuche cron aus File-Response (verschiedene Feldnamen)
+  const cronExpr = file.cron || file.crontab || file.schedule || file.interval || null;
+  // Aus localStorage: gespeicherte Schedule-ID (nach applyCronSchedule)
+  const savedId = _loadCronScheduleId();
+  let sched = null;
+  if (savedId && savedId !== 'off') sched = SYNC_SCHEDULES.find(s => s.id === savedId);
+  if (!sched && cronExpr) sched = _findScheduleByCron(cronExpr);
+  if (!sched) sched = { id:'__custom__', label:'Aktiv (Schedule unbekannt)'+(cronExpr?' · '+cronExpr:''), cron: cronExpr };
+  return { exists:true, cron: cronExpr || (sched.cron || null), schedule: sched, file: file };
 }
 
 async function valtownUpdateProxyCode(btn) {
@@ -10517,11 +10541,19 @@ async function _renderCronSection() {
   if (statusEl) statusEl.innerHTML = '<span class="intg-status">⏳ prüfe…</span>';
   try {
     const cur = await fetchCurrentCronSchedule();
-    if (!cur || !cur.cron) {
+    if (!cur || !cur.exists) {
       sel.value = 'off';
       if (statusEl) statusEl.innerHTML = '<span class="intg-status warn">○ Inaktiv</span>';
     } else {
-      sel.value = cur.schedule?.id || 'off';
+      const id = cur.schedule?.id;
+      // Stelle sicher dass die Option im Dropdown existiert (bei __custom__ adden)
+      if (id === '__custom__' && !Array.from(sel.options).some(o => o.value === '__custom__')) {
+        const o = document.createElement('option');
+        o.value = '__custom__';
+        o.textContent = cur.schedule.label;
+        sel.insertBefore(o, sel.firstChild);
+      }
+      sel.value = id || 'off';
       const label = cur.schedule?.label || ('Cron: '+cur.cron);
       if (statusEl) statusEl.innerHTML = '<span class="intg-status ok">✓ Aktiv · '+label+'</span>';
     }
