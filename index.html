@@ -522,8 +522,17 @@ body.has-modal .topbar{pointer-events:auto}
   .auf-row .val{text-align:left}
   .auf-row .val select{width:100%}
 }
-.auf-field{margin-bottom:11px}
+.auf-field{margin-bottom:11px;position:relative}
 .auf-field:last-child{margin-bottom:0}
+/* Anlage-Suche Dropdown (Combobox) */
+.anlage-dropdown{position:absolute;top:100%;left:0;right:0;background:#fff;border:1.5px solid var(--bdr);border-radius:8px;max-height:280px;overflow-y:auto;z-index:1000;box-shadow:0 12px 28px rgba(0,0,0,.18);margin-top:4px;-webkit-overflow-scrolling:touch}
+.anlage-item{padding:10px 14px;cursor:pointer;border-bottom:1px solid #F1F5F9;font-size:13px;color:var(--txt);background:#fff;transition:background .1s}
+.anlage-item:last-child{border-bottom:none}
+.anlage-item:hover,.anlage-item.active{background:#EFF6FF}
+.anlage-item-addr{font-weight:600;color:var(--navy);line-height:1.35;word-break:break-word}
+.anlage-item-meta{font-size:11px;color:var(--txt2);margin-top:3px;line-height:1.4}
+.anlage-empty{padding:16px 14px;text-align:center;color:var(--txt3);font-size:12px}
+.anlage-hint{padding:8px 12px;font-size:11px;color:var(--txt2);background:#F8FAFC;border-bottom:1px solid #E5E7EB;position:sticky;top:0}
 .auf-label{font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:5px;display:block}
 .auf-input,.auf-textarea,.auf-select{width:100%;border:1.5px solid var(--bdr);border-radius:var(--rs);padding:9px 11px;font-size:14px;font-family:inherit;outline:none;background:white;transition:border-color .15s}
 .auf-input:focus,.auf-textarea:focus,.auf-select:focus{border-color:var(--amber);box-shadow:0 0 0 3px rgba(224,123,16,.08)}
@@ -1270,7 +1279,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.72</div>
+    <div class="login-version">Elevator Servicebox v2.73</div>
   </div>
 </div>
 
@@ -1922,8 +1931,14 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
             </select>
           </div>
           <div class="auf-field">
-            <label class="auf-label">Standort</label>
-            <input type="text" class="auf-input" id="auf-f-standort" placeholder="z.B. Beispielstr. 12, 12345 Berlin">
+            <label class="auf-label">Standort <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(Anlage aus ERP suchen)</span></label>
+            <input type="text" class="auf-input" id="auf-f-standort"
+                   placeholder="Suche nach Adresse, Fabriknummer, Kunde…"
+                   oninput="searchAnlagen(this.value)"
+                   onfocus="searchAnlagen(this.value)"
+                   autocomplete="off">
+            <div class="anlage-dropdown" id="auf-f-anlage-dropdown" style="display:none"></div>
+            <div style="font-size:11px;color:var(--txt3);margin-top:4px">💡 Klick auf einen Treffer befüllt Standort, Fabriknummer und Kontakt-Daten automatisch.</div>
           </div>
           <div class="auf-field">
             <label class="auf-label">Fabriknummer</label>
@@ -2087,7 +2102,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.72';
+const APP_VERSION = 'v2.73';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4697,7 +4712,7 @@ function setAuftragTab(status) {
 }
 
 /* Status-Normalisierung (ERP liefert 'Auftrag bestätigt', 'In Bearbeitung', 'Abgeschlossen', 'Abgerechnet'; intern lowercase Keys)
-   Ab v2.72: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
+   Ab v2.73: 'In Bearbeitung' wird zu 'offen' zusammengefasst – die Trennung wurde im ERP nie konsequent gepflegt. */
 function _normAuftragStatus(s) {
   const t = String(s||'').toLowerCase().trim();
   if (!t) return 'offen';
@@ -5034,6 +5049,168 @@ async function removeAuftragBild(recId, index) {
 }
 
 /* ── ANLEGEN / BEARBEITEN-FORM ───────────────────────────── */
+/* ── ANLAGE-SUCHE (Combobox im Standort-Feld) ──────────────────
+   Holt Anlagen aus dem ERP (/api/anlagen via Val.town Proxy),
+   cached pro Firma, filtert live nach Adresse/Fabriknummer/Kunde/Kennung. */
+let _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+let _anlagenMatches = [];        // aktuell gefilterte Treffer für Index-Lookup beim Klick
+let _anlagenDebounceTimer = null;
+
+async function _loadAnlagenForFirma(firmaSlug) {
+  // 5min Cache
+  const fresh = _anlagenCache.firma === firmaSlug
+             && _anlagenCache.items
+             && (Date.now() - _anlagenCache.loadedAt) < 5*60*1000;
+  if (fresh) return _anlagenCache.items;
+  if (_anlagenCache.loading) {
+    // warte bis Load fertig
+    while (_anlagenCache.loading) await new Promise(r => setTimeout(r, 100));
+    return _anlagenCache.items || [];
+  }
+  _anlagenCache.loading = true;
+  try {
+    const candidates = ['api/anlagen','anlagen'];
+    let res = null, lastErr = null;
+    for (const p of candidates) {
+      try { res = await erpFetch('/aufzug/'+firmaSlug+'/'+p); break; }
+      catch(e) { lastErr = e; if (e.status === 401 || e.status === 403) throw e; }
+    }
+    if (!res) throw (lastErr || new Error('Anlagen-Endpoint nicht erreichbar'));
+    let list = res;
+    if (!Array.isArray(list)) list = res.content || res.data || res.items || [];
+    _anlagenCache = { firma:firmaSlug, items:list, loadedAt:Date.now(), loading:false };
+    return list;
+  } catch(e) {
+    _anlagenCache.loading = false;
+    throw e;
+  }
+}
+
+function searchAnlagen(query) {
+  // Debounce für sanfteres Tippen
+  if (_anlagenDebounceTimer) clearTimeout(_anlagenDebounceTimer);
+  _anlagenDebounceTimer = setTimeout(() => _doSearchAnlagen(query), 120);
+}
+
+async function _doSearchAnlagen(query) {
+  const dd = document.getElementById('auf-f-anlage-dropdown');
+  if (!dd) return;
+
+  // Voraussetzung: konkrete Firma + Proxy eingerichtet
+  if (isFirmaAll()) {
+    dd.innerHTML = '<div class="anlage-empty">⚠ Erst eine konkrete Firma wählen (oben rechts), um Anlagen aus dem ERP zu suchen.</div>';
+    dd.style.display = 'block';
+    return;
+  }
+  if (!APP_KEYS.valtownProxyUrl) {
+    dd.innerHTML = '<div class="anlage-empty">⚠ Val.town-Proxy nicht eingerichtet. Standort kann nur manuell eingegeben werden (Admin → Integrationen).</div>';
+    dd.style.display = 'block';
+    return;
+  }
+
+  const firmaSlug = getCurrentFirmaSlug();
+
+  // Erst-Laden anzeigen
+  if (!_anlagenCache.items || _anlagenCache.firma !== firmaSlug) {
+    dd.innerHTML = '<div class="anlage-empty"><span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:8px"></span>Lade Anlagen aus dem ERP…</div>';
+    dd.style.display = 'block';
+    try { await _loadAnlagenForFirma(firmaSlug); }
+    catch(e) {
+      dd.innerHTML = '<div class="anlage-empty" style="color:var(--err)">❌ Anlagen-Liste fehlgeschlagen: '+e.message.slice(0,200)+'</div>';
+      return;
+    }
+  }
+
+  // Filter
+  const q = (query||'').toLowerCase().trim();
+  let items = (_anlagenCache.items||[]).filter(a => !a.archived);
+  if (q) {
+    items = items.filter(a => {
+      const hay = [
+        a.anzeigeAdresse, a.fabriknummer, a.name, a.kennung, a.objektTyp,
+        a.kunde && a.kunde.firmenname,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    });
+  }
+  // Sortierung: Treffer mit Fabriknummer-Match zuerst, sonst nach anzeigeAdresse
+  if (q) items.sort((a,b) => {
+    const af = (a.fabriknummer||'').toLowerCase().includes(q) ? 0 : 1;
+    const bf = (b.fabriknummer||'').toLowerCase().includes(q) ? 0 : 1;
+    if (af !== bf) return af - bf;
+    return (a.anzeigeAdresse||'').localeCompare(b.anzeigeAdresse||'','de');
+  });
+  const limited = items.slice(0, 100);
+  _anlagenMatches = limited;
+
+  if (limited.length === 0) {
+    dd.innerHTML = '<div class="anlage-empty">Keine Anlagen gefunden'+(q?' für „'+q.replace(/</g,'&lt;')+'"':'')+'.</div>';
+    dd.style.display = 'block';
+    return;
+  }
+
+  const total = _anlagenCache.items?.length || 0;
+  const showingNote = items.length > limited.length
+    ? '<div class="anlage-hint">'+limited.length+' von '+items.length+' Treffern · weiter tippen zum Eingrenzen</div>'
+    : '<div class="anlage-hint">'+limited.length+' Anlage'+(limited.length!==1?'n':'')+(q?'':' insgesamt')+'</div>';
+
+  const rows = limited.map((a, i) => {
+    const addr = (a.anzeigeAdresse || a.name || '(ohne Adresse)').replace(/</g,'&lt;');
+    const metaParts = [];
+    if (a.fabriknummer) metaParts.push('🔧 '+a.fabriknummer.replace(/</g,'&lt;'));
+    if (a.kunde?.firmenname) metaParts.push('🏢 '+a.kunde.firmenname.replace(/</g,'&lt;'));
+    if (a.objektTyp) metaParts.push(a.objektTyp);
+    return '<div class="anlage-item" onclick="selectAnlage('+i+')">'
+      + '<div class="anlage-item-addr">'+addr+'</div>'
+      + (metaParts.length ? '<div class="anlage-item-meta">'+metaParts.join(' · ')+'</div>' : '')
+      + '</div>';
+  }).join('');
+
+  dd.innerHTML = showingNote + rows;
+  dd.style.display = 'block';
+}
+
+function selectAnlage(idx) {
+  const a = _anlagenMatches[idx];
+  if (!a) return;
+  // Form-Felder befüllen
+  const fStandort  = document.getElementById('auf-f-standort');
+  const fFabrik    = document.getElementById('auf-f-fabriknummer');
+  const fKontakt   = document.getElementById('auf-f-kontakt');
+  if (fStandort) fStandort.value = a.anzeigeAdresse || a.name || '';
+  if (fFabrik && !fFabrik.value.trim()) fFabrik.value = a.fabriknummer || '';
+  // Kontakt aus Anlagen-Ansprechpartner (nicht überschreiben wenn bereits ausgefüllt)
+  if (fKontakt && !fKontakt.value.trim()) {
+    const ansp = a.ansprechpartner || {};
+    const name  = [ansp.vorname, ansp.nachname].filter(Boolean).join(' ').trim();
+    const phone = ansp.telefon || ansp.mobile || '';
+    const parts = [];
+    if (name) parts.push(name);
+    if (phone) parts.push('Tel: '+phone);
+    if (ansp.rolle) parts.push('Rolle: '+ansp.rolle);
+    fKontakt.value = parts.join('\n');
+  }
+  // Dropdown zu
+  const dd = document.getElementById('auf-f-anlage-dropdown');
+  if (dd) dd.style.display = 'none';
+  toast('✓ Anlage übernommen: '+(a.anzeigeAdresse||a.name||''), 'ok');
+}
+
+/* Klick außerhalb → Dropdown schließen */
+document.addEventListener('click', function(e) {
+  const dd = document.getElementById('auf-f-anlage-dropdown');
+  if (!dd || dd.style.display === 'none') return;
+  if (e.target.closest('.anlage-dropdown')) return;
+  if (e.target.id === 'auf-f-standort') return;
+  dd.style.display = 'none';
+});
+/* ESC schließt Dropdown */
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Escape') return;
+  const dd = document.getElementById('auf-f-anlage-dropdown');
+  if (dd && dd.style.display !== 'none') dd.style.display = 'none';
+});
+
 async function openAuftragForm(recId) {
   if (!recId && !hasPermission('auftraege_create')) return toast('🔒 Keine Berechtigung','err');
   if (recId && !hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
@@ -5099,6 +5276,9 @@ async function openAuftragForm(recId) {
 
 function closeAuftragForm() {
   document.getElementById('auf-form-modal').classList.remove('show');
+  // Anlage-Dropdown ggf. mit-schliessen
+  const dd = document.getElementById('auf-f-anlage-dropdown');
+  if (dd) dd.style.display = 'none';
   _currentAuftragForm = null;
   if (!document.getElementById('auf-detail-modal').classList.contains('show')) {
     document.body.classList.remove('has-modal');
