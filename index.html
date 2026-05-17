@@ -1032,7 +1032,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
       <input type="password" class="login-input" id="login-key" placeholder="Zugangscode eingeben…" autocomplete="off">
     </div>
     <button class="login-btn" id="login-btn" onclick="doLogin()">Einloggen</button>
-    <div class="login-version">Elevator Servicebox v2.63</div>
+    <div class="login-version">Elevator Servicebox v2.64</div>
   </div>
 </div>
 
@@ -1632,7 +1632,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
     <div id="auf-sync-banner-text" style="flex:1;min-width:0">ERP-Sync läuft…</div>
     <button class="btn" style="padding:4px 12px;font-size:12px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="cancelErpSync()" title="Sync abbrechen">✕ Abbrechen</button>
   </div>
-  <div id="auf-last-sync" style="display:none;margin:0 24px 8px;padding:8px 14px;background:#F3F4F6;border-radius:8px;font-size:12px;color:var(--txt2);line-height:1.5"></div>
+  <div id="auf-last-sync" style="display:none;margin:0 24px 10px"></div>
   <div class="auf-search-bar">
     <div class="auf-search-wrap">
       <span class="auf-search-ico">🔍</span>
@@ -1850,7 +1850,7 @@ body.theme-modern .wkalk-slider::-moz-range-thumb{background:var(--navy)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.63';
+const APP_VERSION = 'v2.64';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -8315,41 +8315,117 @@ async function startBackgroundSync() {
 }
 
 /* Letzten Sync-Status aus Val.town laden und im Aufträge-View anzeigen */
+let _lastSyncStatusCache = null;     // letzte API-Antwort, für Refresh ohne erneuten Call
+let _lastSyncRefreshTimer = null;    // setInterval Handle
+
 async function loadLastSyncStatus() {
   const el = document.getElementById('auf-last-sync');
   if (!el) return;
   if (!APP_KEYS.valtownProxyUrl) { el.style.display = 'none'; return; }
   try {
     const res = await erpFetch('/sync/status');
-    const statuses = res?.statuses || {};
-    const firmaSlug = getCurrentFirmaSlug();
-    const allMode = isFirmaAll();
-    // Welche Firmen-Statuses zeigen?
-    const showFor = allMode ? Object.keys(statuses) : [firmaSlug];
-    const parts = [];
-    for (const slug of showFor) {
-      const s = statuses[slug];
-      if (!s) continue;
-      const firmaName = (_firmenCache?.find(f => f.fields?.slug === slug)?.fields?.name) || slug;
-      if (s.running) {
-        parts.push('⏳ <strong>'+firmaName+'</strong>: Hintergrund-Sync läuft seit '+_formatRelTime(s.started));
-      } else if (s.error) {
-        parts.push('❌ <strong>'+firmaName+'</strong>: Sync-Fehler ('+_formatRelTime(s.finished)+'): '+String(s.error).slice(0,140));
-      } else if (s.finished) {
-        const dur = Math.round((s.duration_ms||0)/1000);
-        const counts = [
-          (s.created||0)+' neu',
-          (s.updated||0)+' aktualisiert',
-          (s.skipped||0)+' unverändert',
-          (s.errors||0)+' Fehler',
-        ].join(' · ');
-        parts.push('✅ <strong>'+firmaName+'</strong>: letzter Sync '+_formatRelTime(s.finished)+' (in '+dur+'s) · '+counts);
+    _lastSyncStatusCache = res?.statuses || {};
+    _renderLastSyncBanner();
+    // Auto-Refresh alle 60s (nur Anzeige neu rendern, kein neuer API-Call)
+    if (_lastSyncRefreshTimer) clearInterval(_lastSyncRefreshTimer);
+    _lastSyncRefreshTimer = setInterval(() => {
+      const vis = document.getElementById('auf-view')?.classList.contains('show');
+      if (!vis) { clearInterval(_lastSyncRefreshTimer); _lastSyncRefreshTimer = null; return; }
+      _renderLastSyncBanner();
+    }, 60000);
+  } catch(_) { el.style.display = 'none'; }
+}
+
+function _renderLastSyncBanner() {
+  const el = document.getElementById('auf-last-sync');
+  if (!el || !_lastSyncStatusCache) return;
+  const statuses = _lastSyncStatusCache;
+  const firmaSlug = getCurrentFirmaSlug();
+  const allMode = isFirmaAll();
+  const showFor = allMode ? Object.keys(statuses).sort() : [firmaSlug];
+  const blocks = [];
+  for (const slug of showFor) {
+    const s = statuses[slug];
+    if (!s) continue;
+    const firmaName = (_firmenCache?.find(f => f.fields?.slug === slug)?.fields?.name) || slug;
+    blocks.push(_buildSyncStatusBlock(firmaName, s));
+  }
+  if (blocks.length === 0) {
+    // Noch nie gesynct → Hinweis nur wenn aktuelle Firma einen ERP-Tenant hat
+    if (!allMode) {
+      const tenant = _getErpTenantForFirma(firmaSlug);
+      if (tenant) {
+        el.innerHTML = _buildEmptyStateBlock();
+        el.style.display = '';
+        return;
       }
     }
-    if (parts.length === 0) { el.style.display = 'none'; return; }
-    el.innerHTML = parts.join('<br>');
-    el.style.display = '';
-  } catch(_) { el.style.display = 'none'; }
+    el.style.display = 'none';
+    return;
+  }
+  el.innerHTML = blocks.join('');
+  el.style.display = '';
+}
+
+function _buildEmptyStateBlock() {
+  return '<div style="padding:12px 16px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:8px;font-size:13px;color:var(--txt2);line-height:1.5">'
+    + '⏳ <strong>Noch kein Sync durchgeführt.</strong> Klick auf <strong>🚀 Hintergrund-Sync</strong> oder <strong>🔄 ERP-Sync</strong> oben, um die Aufträge vom ERP zu laden.'
+    + '</div>';
+}
+
+function _buildSyncStatusBlock(firmaName, s) {
+  // running → blau, error → rot, success (errors=0) → grün, success-with-errors → gelb
+  let bg = '#D1FAE5', border = '#86EFAC', color = '#065F46';      // grün (Default success)
+  let icon = '✅', headline = 'Vollständig synchronisiert';
+  if (s.running) {
+    bg = '#DBEAFE'; border = '#93C5FD'; color = '#1E3A8A';
+    icon = '⏳'; headline = 'Sync läuft gerade';
+  } else if (s.error) {
+    bg = '#FEE2E2'; border = '#FCA5A5'; color = '#991B1B';
+    icon = '❌'; headline = 'Sync-Fehler';
+  } else if (s.finished && (s.errors||0) > 0) {
+    bg = '#FEF3C7'; border = '#FCD34D'; color = '#78350F';
+    icon = '⚠️'; headline = 'Mit Warnungen abgeschlossen';
+  }
+
+  const lines = [];
+  lines.push('<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">');
+  lines.push('<span style="font-size:18px">'+icon+'</span>');
+  lines.push('<strong style="font-size:14px;color:'+color+'">'+headline+'</strong>');
+  lines.push('<span style="color:'+color+';opacity:.7;font-size:13px">'+(firmaName||'')+'</span>');
+  lines.push('</div>');
+
+  if (s.running) {
+    lines.push('<div style="font-size:12px;color:'+color+';margin-top:4px;line-height:1.5">');
+    lines.push('Gestartet '+_formatAbsTime(s.started)+' ('+_formatRelTime(s.started)+')');
+    lines.push('</div>');
+  } else if (s.error) {
+    lines.push('<div style="font-size:12px;color:'+color+';margin-top:4px;line-height:1.5">');
+    lines.push('Abgebrochen '+_formatAbsTime(s.finished)+' ('+_formatRelTime(s.finished)+')<br>');
+    lines.push('<code style="font-size:11px;background:rgba(0,0,0,.05);padding:2px 5px;border-radius:3px">'+String(s.error).replace(/</g,'&lt;').slice(0,200)+'</code>');
+    lines.push('</div>');
+  } else if (s.finished) {
+    const dur = Math.round((s.duration_ms||0)/1000);
+    const total = (s.skipped||0) + (s.created||0) + (s.updated||0) + (s.unchanged||0);
+    const stats = [
+      '<strong>'+(s.created||0)+'</strong> neu',
+      '<strong>'+(s.updated||0)+'</strong> aktualisiert',
+      '<strong>'+(s.unchanged||0)+'</strong> identisch',
+      '<strong>'+(s.skipped||0)+'</strong> unverändert',
+    ];
+    if ((s.errors||0) > 0) stats.push('<strong style="color:#B91C1C">'+s.errors+'</strong> Fehler');
+    lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.6">');
+    lines.push('🕐 <strong>'+_formatAbsTime(s.finished)+'</strong> ('+_formatRelTime(s.finished)+', Dauer '+dur+'s)<br>');
+    lines.push('📊 '+total+' Aufträge geprüft · '+stats.join(' · '));
+    if (s.triggered_by) {
+      const who = (s.triggered_by === 'cron') ? '🕐 Cron-Job' : (s.triggered_by === 'system') ? 'System' : ('User-Key '+String(s.triggered_by).slice(0,8)+'…');
+      lines.push('<br>👤 ausgelöst von: '+who);
+    }
+    lines.push('</div>');
+  }
+
+  return '<div style="padding:12px 16px;background:'+bg+';border:1px solid '+border+';border-radius:8px;margin-bottom:8px">'
+    + lines.join('') + '</div>';
 }
 
 function _formatRelTime(iso) {
@@ -8360,7 +8436,27 @@ function _formatRelTime(iso) {
   if (diff < 60)     return 'vor '+diff+' Sek';
   if (diff < 3600)   return 'vor '+Math.floor(diff/60)+' Min';
   if (diff < 86400)  return 'vor '+Math.floor(diff/3600)+' Std';
-  return 'am '+iso.slice(0,10);
+  return 'vor '+Math.floor(diff/86400)+' Tagen';
+}
+
+function _formatAbsTime(iso) {
+  if (!iso) return '?';
+  const t = Date.parse(iso);
+  if (!t) return iso;
+  const d = new Date(t);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const yest = new Date(now); yest.setDate(yest.getDate()-1);
+  const isYesterday = d.toDateString() === yest.toDateString();
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  if (sameDay) return 'heute um '+hh+':'+mm+' Uhr';
+  if (isYesterday) return 'gestern um '+hh+':'+mm+' Uhr';
+  // Sonst: 15.05.2026 09:00 Uhr
+  const dd  = String(d.getDate()).padStart(2,'0');
+  const mo  = String(d.getMonth()+1).padStart(2,'0');
+  const yyyy= d.getFullYear();
+  return dd+'.'+mo+'.'+yyyy+' um '+hh+':'+mm+' Uhr';
 }
 
 /* ── Integration-View (Admin) ── */
