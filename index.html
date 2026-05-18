@@ -304,16 +304,22 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .usr-hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:14px 24px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .usr-hdr h2{font-size:15px;font-weight:600;color:var(--navy);margin:0;flex:1}
 .usr-body{flex:1;overflow:auto;padding:20px 24px}
-.usr-tbl{width:100%;border-collapse:collapse;background:var(--surf);border:1px solid var(--bdr);border-radius:var(--r);box-shadow:0 1px 3px rgba(0,0,0,.06);font-size:13px}
-.usr-tbl th{background:var(--bg);padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--bdr)}
+.usr-tbl-wrap{overflow-x:auto;border:1px solid var(--bdr);border-radius:var(--r);background:var(--surf);box-shadow:0 1px 3px rgba(0,0,0,.06)}
+.usr-tbl{width:100%;border-collapse:collapse;font-size:13px;min-width:900px}
+.usr-tbl th{background:var(--bg);padding:10px 12px;text-align:left;font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--bdr);white-space:nowrap}
 .usr-tbl td{padding:8px 12px;border-bottom:1px solid var(--bdr);vertical-align:middle}
+.usr-tbl td.usr-col-name{min-width:170px}
+.usr-tbl td.usr-col-phone{min-width:150px}
 .usr-tbl tr:last-child td{border-bottom:none}
 .usr-tbl tr.me{background:rgba(224,123,16,.04)}
-.usr-inp{padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-family:inherit;background:white;outline:none;width:100%;max-width:180px}
+.usr-inp{padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-family:inherit;background:white;outline:none;width:100%;min-width:0}
 .usr-inp:focus{border-color:var(--amber)}
 .usr-inp[type="checkbox"]{width:auto;cursor:pointer}
 .usr-tbl select.usr-inp{cursor:pointer}
 .usr-tbl code{background:var(--bg);padding:2px 6px;border-radius:3px;font-size:11px;color:var(--txt2)}
+.usr-btn-wa{padding:5px 10px;font-size:12px;background:#10B981;color:#fff;border:1px solid #059669;border-radius:4px;cursor:pointer;font-weight:500}
+.usr-btn-wa:hover{background:#059669}
+.usr-btn-wa:disabled{background:#9CA3AF;border-color:#9CA3AF;cursor:not-allowed}
 
 /* ── Dashboard ── */
 .dash-view{display:none;position:fixed;inset:var(--tb-safe) 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:auto}
@@ -776,6 +782,7 @@ body.has-modal .topbar{pointer-events:auto}
   .usr-hdr,.firma-hdr{padding:10px 14px;flex-wrap:wrap;gap:8px}
   .usr-hdr h2,.firma-hdr h2{font-size:14px;flex-basis:100%;margin-bottom:4px}
   .usr-body,.firma-body{padding:12px}
+  .usr-tbl-wrap{overflow:visible;border:none;background:none;box-shadow:none;border-radius:0}
   .usr-tbl,.firma-tbl{min-width:0;width:100%;border:none;background:none;box-shadow:none}
   .usr-tbl thead,.firma-tbl thead{display:none}
   .usr-tbl tbody,.firma-tbl tbody{display:block}
@@ -2258,7 +2265,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.92';
+const APP_VERSION = 'v2.93';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4382,24 +4389,28 @@ async function renderUsers() {
     const rows = _usersCache.map(u => userRowHtml(u, featCols)).join('');
 
     list.innerHTML = `
-      <table class="usr-tbl">
-        <thead><tr>
-          <th>Name</th>
-          <th>Login-Code</th>
-          <th>Rolle</th>
-          <th>Status</th>
-          <th title="Erscheint in der Techniker-Auswahl bei Aufträgen">Techniker</th>
-          <th title="Externer Subunternehmer – sieht eigenen Vergütungs-Text pro Auftrag statt interne Preise">Subunternehmer</th>
-          ${hdrFeats}
-          <th></th>
-        </tr></thead>
-        <tbody>${rows || '<tr><td colspan="99" style="padding:40px;text-align:center;color:var(--txt3)">Keine User vorhanden.</td></tr>'}</tbody>
-      </table>
+      <div class="usr-tbl-wrap">
+        <table class="usr-tbl">
+          <thead><tr>
+            <th>Name</th>
+            <th title="Mobilnummer für WhatsApp-Einladungen. Format: +491701234567 oder 01701234567">Telefon</th>
+            <th>Login-Code</th>
+            <th>Rolle</th>
+            <th>Status</th>
+            <th title="Erscheint in der Techniker-Auswahl bei Aufträgen">Techniker</th>
+            <th title="Externer Subunternehmer – sieht eigenen Vergütungs-Text pro Auftrag statt interne Preise">Subunternehmer</th>
+            ${hdrFeats}
+            <th></th>
+          </tr></thead>
+          <tbody>${rows || '<tr><td colspan="99" style="padding:40px;text-align:center;color:var(--txt3)">Keine User vorhanden.</td></tr>'}</tbody>
+        </table>
+      </div>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
         ℹ️ <strong>Techniker</strong>: Eigener Mitarbeiter im Außendienst. Sieht Aufträge + eigene Berichte, KEINE Preise.<br>
         ℹ️ <strong>Subunternehmer</strong>: Externer Auftragnehmer. Wie Techniker, aber sieht pro Auftrag die individuell hinterlegte Vergütung (separates Textfeld am Auftrag).<br>
         ℹ️ Admins + Verwalter (Berechtigung "Aufträge: Alle anzeigen") sehen alle internen Preise.<br>
-        ℹ️ Admins haben automatisch Zugriff auf alle Features (Checkboxen ausgegraut).
+        ℹ️ Admins haben automatisch Zugriff auf alle Features (Checkboxen ausgegraut).<br>
+        ℹ️ 💬 <strong>WhatsApp-Einladung</strong>: Fertige Setup-Nachricht mit Loader-URL + Login-Code wird vorbereitet. Editierbar. Mit Telefonnummer wird der Empfänger direkt vorgewählt.
       </div>
     `;
   } catch(e) {
@@ -4419,9 +4430,11 @@ function userRowHtml(u, featCols) {
     const checked = isUserAdmin ? true : (explicit ? !!perms[k] : !!fe.default);
     return `<td data-label="${esc(fe.label||k)}" style="text-align:center"><input type="checkbox" data-perm="${k}" ${checked?'checked':''} ${isUserAdmin?'disabled':''}></td>`;
   }).join('');
+  const hasPhone = !!(f.phone && String(f.phone).trim());
   return `
     <tr data-rec="${u.id}" class="${isMe?'me':''}">
-      <td data-label="Name"><input class="usr-inp" data-field="name" value="${esc(f.name)}"></td>
+      <td data-label="Name" class="usr-col-name"><input class="usr-inp" data-field="name" value="${esc(f.name)}"></td>
+      <td data-label="Telefon" class="usr-col-phone"><input class="usr-inp" data-field="phone" value="${esc(f.phone)}" placeholder="+49170…" inputmode="tel"></td>
       <td data-label="Login-Code"><code>${esc(f.api_key)}</code></td>
       <td data-label="Rolle">
         <select class="usr-inp" data-field="role" style="max-width:90px">
@@ -4439,7 +4452,8 @@ function userRowHtml(u, featCols) {
       <td data-label="Subunternehmer" style="text-align:center"><input type="checkbox" class="usr-inp" data-field="subunternehmer" ${f.subunternehmer?'checked':''}></td>
       ${featCells}
       <td class="usr-action" style="text-align:right;white-space:nowrap">
-        <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveUserRow('${u.id}')">💾 Speichern</button>
+        <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveUserRow('${u.id}')">💾</button>
+        <button class="usr-btn-wa" onclick="openWhatsAppInvite('${u.id}')" title="${hasPhone?'WhatsApp-Einladung an '+esc(f.phone):'WhatsApp-Einladung (ohne hinterlegte Nummer)'}">💬 WhatsApp</button>
         ${isMe ? '<div style="font-size:10px;color:var(--txt3);margin-top:3px;text-align:right">eigener Account</div>' : ''}
       </td>
     </tr>
@@ -4450,6 +4464,7 @@ async function saveUserRow(recId) {
   const row = document.querySelector('tr[data-rec="'+recId+'"]');
   if (!row) return;
   const name      = row.querySelector('input[data-field="name"]').value.trim();
+  const phone     = (row.querySelector('input[data-field="phone"]')?.value || '').trim();
   const role      = row.querySelector('select[data-field="role"]').value;
   const status    = row.querySelector('select[data-field="status"]').value;
   const techniker      = !!row.querySelector('input[data-field="techniker"]')?.checked;
@@ -4462,14 +4477,18 @@ async function saveUserRow(recId) {
   try {
     // Schema sicherstellen
     try { await ensureField('User', 'subunternehmer', 'checkbox'); } catch(_){}
+    try { await ensureField('User', 'phone', 'singleLineText'); } catch(_){}
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/User/'+recId, {
       method:'PATCH',
       headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-      body: JSON.stringify({ fields: { name, role, status, techniker, subunternehmer, permissions_json: JSON.stringify(perms) } }),
+      body: JSON.stringify({ fields: { name, phone, role, status, techniker, subunternehmer, permissions_json: JSON.stringify(perms) } }),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message || 'Fehler');
+    // Cache aktualisieren (sonst nimmt das WhatsApp-Modal die alte Phone)
+    const cacheIdx = _usersCache.findIndex(x => x.id === recId);
+    if (cacheIdx >= 0 && d.fields) _usersCache[cacheIdx] = d;
     // Falls ich mich selbst bearbeitet habe: lokale Permissions aktualisieren
     if (recId && d.fields && d.fields.api_key === APP_KEYS.user?.api_key) {
       APP_KEYS.user = d.fields;
@@ -4478,6 +4497,102 @@ async function saveUserRow(recId) {
   } catch(e) {
     toast('❌ '+e.message, 'err');
   }
+}
+
+/* ── WhatsApp-Einladung für einen User ──────────────────────────────────────
+   Generiert eine Setup-Nachricht (App-Zweck, Loader-URL, Login-Code, Homescreen-
+   Anleitung iOS/Android) und öffnet WhatsApp. Mit hinterlegter Telefonnummer
+   wird der Empfänger direkt vorgewählt; sonst wählt der Sender in WhatsApp. */
+function openWhatsAppInvite(recId) {
+  const u = _usersCache.find(x => x.id === recId);
+  if (!u) return toast('User nicht gefunden','err');
+  const f = u.fields || {};
+  const name     = (f.name || '').trim();
+  const apiKey   = (f.api_key || '').trim();
+  const phoneRaw = (f.phone || '').trim();
+  const phone    = phoneRaw.replace(/\D/g, '');  // nur Ziffern für wa.me
+  // Loader-URL aus Live-Repo-Pfad ableiten
+  const baseUrl = 'https://giltglobalinvest-pixel.github.io/arbeitsberichte-converter/';
+  const loaderUrl = baseUrl + 'loader.html';
+  const firstName = name ? name.split(/\s+/)[0] : '';
+  const defaultText =
+    'Hallo' + (firstName ? ' ' + firstName : '') + ',\n\n' +
+    'du bist eingeladen für *Elevator Servicebox* — unsere mobile App für Wartungs- und Reparaturaufträge, Arbeitsberichte und ERP-Synchronisation (Aufzugshandwerk).\n\n' +
+    '*So loggst du dich ein:*\n' +
+    '1. Öffne diesen Link auf dem Handy in Safari/Chrome:\n' +
+    loaderUrl + '\n\n' +
+    '2. Gib deinen Login-Code ein (genau so):\n' +
+    apiKey + '\n\n' +
+    '3. *Auf dem iPhone (App-Icon auf dem Homescreen):*\n' +
+    '   Safari → Teilen-Symbol → "Zum Home-Bildschirm" → dann öffnest du sie wie eine richtige App.\n\n' +
+    '   *Auf Android:*\n' +
+    '   Chrome → 3-Punkte-Menü → "Zum Startbildschirm hinzufügen".\n\n' +
+    'Bei Fragen melde dich. Viel Erfolg!';
+
+  // Modal direkt ins document.body
+  const old = document.getElementById('wa-invite-modal');
+  if (old) old.remove();
+  const modal = document.createElement('div');
+  modal.id = 'wa-invite-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;max-height:90vh;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.4)">'+
+      '<div style="padding:14px 18px;background:#10B981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>💬 WhatsApp-Einladung an '+escapeHtml(name||'(unbenannt)')+(phoneRaw?' · '+escapeHtml(phoneRaw):'')+'</span>'+
+        '<button onclick="closeWhatsAppInvite()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:14px 18px;flex:1;overflow-y:auto">'+
+        '<div style="font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Nachricht (editierbar)</div>'+
+        '<textarea id="wa-invite-text" rows="14" style="width:100%;padding:10px;border:1px solid var(--bdr);border-radius:8px;font-size:13px;font-family:inherit;line-height:1.45;resize:vertical;background:#fff;color:var(--txt)">'+escapeHtml(defaultText)+'</textarea>'+
+        (!phoneRaw ?
+          '<div style="margin-top:10px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px;font-size:12px;color:#92400E">'+
+            'ℹ️ Keine Telefonnummer im Profil hinterlegt — beim Senden wählst du in WhatsApp den Empfänger. Oder oben in der Telefon-Spalte eintragen + 💾 Speichern, damit es direkt geht.'+
+          '</div>'
+        :
+          '<div style="margin-top:10px;background:#D1FAE5;border:1px solid #6EE7B7;border-radius:8px;padding:10px;font-size:12px;color:#065F46">'+
+            '✓ WhatsApp wird mit Empfänger '+escapeHtml(phoneRaw)+' geöffnet.'+
+          '</div>'
+        )+
+        '<div style="margin-top:10px;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;padding:10px;font-size:11px;color:#7F1D1D">'+
+          '🔐 Login-Code ist im Text enthalten — nur an vertrauenswürdige Empfänger senden.'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button class="btn" onclick="copyWhatsAppText(this)">📋 Nur kopieren</button>'+
+        '<button class="usr-btn-wa" onclick="sendWhatsAppInvite(\''+phone+'\')">'+(phone?'➤ An '+escapeHtml(phoneRaw)+' senden':'➤ In WhatsApp öffnen')+'</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal.onclick = (ev) => { if (ev.target === modal) closeWhatsAppInvite(); };
+}
+
+function closeWhatsAppInvite() {
+  const m = document.getElementById('wa-invite-modal');
+  if (m) m.remove();
+}
+
+async function copyWhatsAppText(btnEl) {
+  const txt = document.getElementById('wa-invite-text')?.value || '';
+  if (!txt) return toast('Text ist leer','warn');
+  try {
+    await navigator.clipboard.writeText(txt);
+    toast('✓ In Zwischenablage kopiert','ok');
+  } catch(_) {
+    // Fallback: select + execCommand
+    const ta = document.getElementById('wa-invite-text');
+    if (ta) { ta.focus(); ta.select(); try { document.execCommand('copy'); toast('Kopiert ✓','ok'); } catch(__){ toast('Kopieren fehlgeschlagen','warn'); } }
+  }
+}
+
+function sendWhatsAppInvite(phoneDigits) {
+  const txt = (document.getElementById('wa-invite-text')?.value || '').trim();
+  if (!txt) return toast('Text ist leer','warn');
+  // wa.me akzeptiert nur Ziffern (kein +, keine Leerzeichen)
+  const url = phoneDigits
+    ? 'https://wa.me/' + phoneDigits + '?text=' + encodeURIComponent(txt)
+    : 'https://wa.me/?text=' + encodeURIComponent(txt);
+  window.open(url, '_blank');
+  closeWhatsAppInvite();
 }
 
 async function createNewUser() {
