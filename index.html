@@ -2265,7 +2265,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.93';
+const APP_VERSION = 'v2.94';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5687,7 +5687,7 @@ document.addEventListener('click', function(e) {
 
 /* ══════════ ANLAGEN-VIEW (eigenständiges Menü) ══════════ */
 let _anlagenViewSelected = null;  // ausgewählte Anlage für Detail-Modal
-let _wartungsAnlagenCache = { firma:null, set:null, loadedAt:0, loading:false }; // Set<anlageId>
+let _wartungsAnlagenCache = { firma:null, set:null, angebotIds:null, loadedAt:0, loading:false }; // set:Set<anlageId>, angebotIds:Set<angebotId>
 
 /* Registry aller Detail-Felder mit Section + Default-Sichtbarkeit */
 const ANL_DETAIL_FIELDS = [
@@ -5831,7 +5831,9 @@ async function _loadWartungsAnlagen(firmaSlug) {
       confirmedAnlageIds.add(match.anlageId);
     }
 
-    _wartungsAnlagenCache = { firma:firmaSlug, set:confirmedAnlageIds, loadedAt:Date.now(), loading:false };
+    // Set der Wartungs-Angebot-IDs (für direkte Auftrag-Filter via angebot_id)
+    const wartungAngebotIdSet = new Set(wartungByAngebotId.keys());
+    _wartungsAnlagenCache = { firma:firmaSlug, set:confirmedAnlageIds, angebotIds:wartungAngebotIdSet, loadedAt:Date.now(), loading:false };
     console.log('[Wartung] Angebote:', wartungByAngebotId.size, 'Aufträge gematcht:', confirmedAnlageIds.size);
     return confirmedAnlageIds;
   } catch(e) {
@@ -7106,6 +7108,19 @@ async function checkAuftragInvoice(recId) {
   if (!f.ext_id) return toast('Dieser Auftrag stammt nicht aus dem ERP (keine ext_id).', 'err');
   const firmaSlug = f.firma || getCurrentFirmaSlug();
 
+  // Wartungsvertrag-Schutz: Aufträge auf einem Wartungs-Angebot dürfen nicht
+  // automatisch geschlossen werden — sie laufen über Jahre mit vielen Rechnungen.
+  try {
+    await _loadWartungsAnlagen(firmaSlug);
+    const wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set();
+    if (_isWartungsvertragAuftrag(rec, wartungsAngebotIds)) {
+      if (!confirm('🛡 Dies ist ein Wartungsvertrag-Auftrag (MITANGEBOT auf Wartungs-/Notruf-Angebot).\n\nWartungsverträge haben über Jahre viele Rechnungen, sind aber dauerhaft offen. Trotzdem prüfen + ggf. schließen?\n\n(Empfehlung: Abbrechen)')) return;
+    }
+  } catch(e) {
+    console.warn('[checkAuftragInvoice] Wartungs-Check fehlgeschlagen:', e.message);
+    // weiter ohne Schutz — der User entscheidet im nächsten Dialog
+  }
+
   toast('⏳ Prüfe Rechnungen für #'+(f.auftrag_num||'?')+'…', '');
   try {
     const list = await _fetchErpRechnungen(firmaSlug);
@@ -7147,19 +7162,64 @@ async function checkAuftragInvoice(recId) {
   }
 }
 
+/* Prüft, ob ein Auftrag-Record ein laufender Wartungsvertrag ist (MITANGEBOT
+   + angebot_id zeigt auf ein Wartungs-/Notruf-Angebot). Solche Aufträge dürfen
+   NICHT durch Rechnungs-Check automatisch geschlossen werden — sie haben über
+   Jahre viele Rechnungen, sind aber dauerhaft offen. */
+function _isWartungsvertragAuftrag(rec, wartungsAngebotIds) {
+  const f = rec.fields || {};
+  if (f.bestellform !== 'MITANGEBOT') return false;
+  if (!f.angebot_id) return false;
+  return wartungsAngebotIds && wartungsAngebotIds.has(String(f.angebot_id));
+}
+
 /* ── Bulk: alle Aufträge der aktuellen Firma auf Rechnungen prüfen ── */
 async function bulkCheckInvoices() {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
   if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
   if (isFirmaAll()) return toast('Bulk-Check braucht eine konkrete Firma. Bitte oben rechts wählen.', 'err');
   const firmaSlug = getCurrentFirmaSlug();
-  // Kandidaten: ext_id + NICHT bereits 'abgerechnet'
-  const candidates = _auftragCache.filter(r => r.fields.ext_id && _normAuftragStatus(r.fields.status) !== 'abgerechnet');
-  if (candidates.length === 0) return toast('Keine Aufträge mit ERP-ID zu prüfen.', '');
-  if (!confirm('Bulk-Check für '+candidates.length+' Aufträge starten?\n\nFür jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert. Treffer werden automatisch auf "abgerechnet" gesetzt (kein einzelner Bestätigungs-Dialog).')) return;
 
   const btn = document.getElementById('auf-rechn-check-btn');
-  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ lade Rechnungen…'; }
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ lade Wartungsverträge…'; }
+
+  // Schritt 1: Wartungs-/Notruf-Angebote laden, um Wartungsverträge auszunehmen
+  let wartungsAngebotIds = new Set();
+  try {
+    await _loadWartungsAnlagen(firmaSlug);
+    wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set();
+    console.log('[bulkCheckInvoices] Wartungs-Angebote im Cache:', wartungsAngebotIds.size);
+  } catch(e) {
+    // Falls Wartungs-Endpoint nicht erreichbar: weiter ohne Schutz, aber User warnen
+    console.warn('[bulkCheckInvoices] Wartungsverträge konnten nicht geladen werden:', e.message);
+    if (!confirm('⚠ Wartungsverträge konnten nicht aus dem ERP geladen werden:\n'+e.message+'\n\nOhne diese Info kann der Bulk-Check Wartungsverträge versehentlich als "abgerechnet" markieren. Trotzdem fortfahren?')) {
+      if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+      return;
+    }
+  }
+
+  // Kandidaten: ext_id + NICHT bereits 'abgerechnet'
+  const allCandidates = _auftragCache.filter(r => r.fields.ext_id && _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+  const skipped       = allCandidates.filter(r => _isWartungsvertragAuftrag(r, wartungsAngebotIds));
+  const candidates    = allCandidates.filter(r => !_isWartungsvertragAuftrag(r, wartungsAngebotIds));
+
+  if (candidates.length === 0) {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+    return toast(skipped.length
+      ? 'Keine Aufträge zu prüfen. '+skipped.length+' Wartungsverträge ausgenommen.'
+      : 'Keine Aufträge mit ERP-ID zu prüfen.', '');
+  }
+
+  let confirmMsg = 'Bulk-Check für '+candidates.length+' Aufträge starten?\n\n';
+  confirmMsg += 'Für jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert. Treffer werden automatisch auf "abgerechnet" gesetzt.\n\n';
+  if (skipped.length) confirmMsg += '🛡 '+skipped.length+' Wartungsvertrag-Aufträge sind ausgenommen (MITANGEBOT auf Wartungs-/Notruf-Angebot) — diese bleiben unverändert offen.';
+  else confirmMsg += '(Keine Wartungsverträge erkannt.)';
+  if (!confirm(confirmMsg)) {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+    return;
+  }
+
+  if (btn) btn.textContent = '⏳ lade Rechnungen…';
   toast('⏳ Lade Rechnungen aus ERP…', '');
   try {
     const list = await _fetchErpRechnungen(firmaSlug);
@@ -7180,7 +7240,11 @@ async function bulkCheckInvoices() {
         }
       }
     }
-    toast('✅ Bulk-Check fertig: '+marked+' als abgerechnet markiert · '+(candidates.length-marked-errors)+' offen · '+errors+' Fehler', 'ok');
+    const offenBleibt = candidates.length - marked - errors;
+    let msg = '✅ Bulk-Check fertig: '+marked+' als abgerechnet · '+offenBleibt+' offen';
+    if (skipped.length) msg += ' · 🛡 '+skipped.length+' Wartungsverträge ausgenommen';
+    if (errors) msg += ' · '+errors+' Fehler';
+    toast(msg, 'ok');
     await loadAuftraegeAndRender();
   } catch(e) {
     console.error('bulkCheckInvoices:', e);
