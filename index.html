@@ -1965,6 +1965,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <span class="auf-search-ico">🔍</span>
       <input type="text" class="auf-search-inp" id="auf-search" placeholder="Suchen nach Auftragsnummer, Standort, Fabriknummer, Kontakt …" oninput="renderAuftraegeList()">
     </div>
+    <select id="auf-typ-filter" onchange="renderAuftraegeList()" title="Nach Angebots-Typ filtern (aus dem ERP-Angebot)" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
+      <option value="">Alle Typen</option>
+    </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die per Rechnungs-Check als 'hat bereits Rechnung im ERP' markiert wurden, wieder anzeigen">
       <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"> 🙈 Ausgeblendete zeigen
     </label>
@@ -2268,7 +2271,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.99';
+const APP_VERSION = 'v3.00';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5046,6 +5049,9 @@ function renderAuftraegeList() {
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
   // Cache nach hidden_invoiced vorfiltern (außer Toggle ist aktiv)
   const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced);
+  // Dropdown-Optionen für Angebots-Typ aus dem (gesamten) Cache zusammensuchen
+  _refreshAngebotTypFilter();
+  const typFilter = (document.getElementById('auf-typ-filter')?.value || '').trim();
   // Hidden-Counter für Toggle-Label-Hinweis
   const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced).length;
   const hiddenLbl = document.querySelector('label[for]')?.textContent; // placeholder, see DOM update below
@@ -5081,6 +5087,14 @@ function renderAuftraegeList() {
     filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
     filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
+  }
+  // Angebots-Typ-Filter anwenden (leer = alle; "__none__" = Aufträge ohne Typ)
+  if (typFilter) {
+    if (typFilter === '__none__') {
+      filtered = filtered.filter(r => !r.fields.angebot_typ);
+    } else {
+      filtered = filtered.filter(r => String(r.fields.angebot_typ||'') === typFilter);
+    }
   }
 
   if (search) {
@@ -5143,6 +5157,7 @@ function _auftragCardHtml(r) {
         <div class="auf-card-meta">
           ${firmaBadge}
           <span>🏷 ${tmplLabel}</span>
+          ${f.angebot_typ ? '<span>'+_fmtAngebotTyp(f.angebot_typ)+'</span>' : ''}
           ${f.fabriknummer ? '<span>🔧 '+f.fabriknummer.replace(/</g,'&lt;')+'</span>' : ''}
           ${f.due_date ? '<span>📅 '+f.due_date+'</span>' : ''}
           ${techNames ? '<span>👥 '+techNames.replace(/</g,'&lt;')+'</span>' : '<span style="color:var(--txt3)">👥 nicht zugewiesen</span>'}
@@ -5351,6 +5366,8 @@ function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">Auftragsnummer</span><span class="val" style="font-family:monospace;font-weight:700;color:var(--amber)">#${f.auftrag_num || '–'}</span></div>
       <div class="auf-row"><span class="lbl">Standort</span><span class="val">${(f.standort||'–').replace(/</g,'&lt;')}</span></div>
       <div class="auf-row"><span class="lbl">Fabriknummer</span><span class="val">${(f.fabriknummer||'–').replace(/</g,'&lt;')}</span></div>
+      ${f.angebot_typ ? `<div class="auf-row"><span class="lbl">Angebots-Typ</span><span class="val">${_fmtAngebotTyp(f.angebot_typ)}</span></div>` : ''}
+      ${f.bestellform ? `<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">${String(f.bestellform).replace(/</g,'&lt;')}</span></div>` : ''}
       <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${_renderTmplPicker(rec)}</span></div>
     </div>
     <div class="auf-section">
@@ -7298,6 +7315,48 @@ async function unhideAuftragInvoice(recId) {
    + angebot_id zeigt auf ein Wartungs-/Notruf-Angebot). Solche Aufträge dürfen
    NICHT durch Rechnungs-Check automatisch geschlossen werden — sie haben über
    Jahre viele Rechnungen, sind aber dauerhaft offen. */
+/* Befüllt das Angebots-Typ-Filter-Dropdown mit allen Typen, die im aktuellen Cache vorkommen. */
+function _refreshAngebotTypFilter() {
+  const sel = document.getElementById('auf-typ-filter');
+  if (!sel) return;
+  const counts = new Map();
+  let noneCount = 0;
+  for (const r of _auftragCache) {
+    const t = String(r.fields.angebot_typ || '').trim();
+    if (!t) { noneCount++; continue; }
+    counts.set(t, (counts.get(t)||0)+1);
+  }
+  // Aktuelle Auswahl merken, damit Re-Render sie nicht verliert
+  const current = sel.value;
+  const sortedTypes = Array.from(counts.keys()).sort();
+  const opts = ['<option value="">Alle Typen</option>'];
+  for (const t of sortedTypes) opts.push('<option value="'+escapeHtml(t)+'">'+_fmtAngebotTyp(t)+' ('+counts.get(t)+')</option>');
+  if (noneCount > 0) opts.push('<option value="__none__">— ohne Typ ('+noneCount+')</option>');
+  sel.innerHTML = opts.join('');
+  // Auswahl wiederherstellen falls noch gültig
+  if (current && (current === '__none__' || counts.has(current))) sel.value = current;
+}
+
+/* Macht aus ERP-Werten wie "WARTUNG_NOTRUF" → "Wartung & Notruf" lesbar */
+function _fmtAngebotTyp(t) {
+  if (!t) return '';
+  const s = String(t).trim();
+  // Bekannte ERP-Enums (best-effort, fallback ist Title-Case)
+  const map = {
+    'WARTUNG_NOTRUF':   '🔧 Wartung & Notruf',
+    'WARTUNG':          '🔧 Wartung',
+    'NOTRUF':           '☎ Notruf',
+    'PAUSCHAL':         '💼 Pauschal',
+    'AUFWAND':          '⏱ Nach Aufwand',
+    'MODERNISIERUNG':   '🏗 Modernisierung',
+    'REPARATUR':        '🛠 Reparatur',
+    'MONTAGE':          '🔩 Montage',
+  };
+  if (map[s.toUpperCase()]) return map[s.toUpperCase()];
+  // Fallback: Underscore → Leerzeichen + Title-Case
+  return s.toLowerCase().replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).replace(/</g,'&lt;');
+}
+
 function _isWartungsvertragAuftrag(rec, wartungsAngebotIds) {
   const f = rec.fields || {};
   if (f.bestellform !== 'MITANGEBOT') return false;
