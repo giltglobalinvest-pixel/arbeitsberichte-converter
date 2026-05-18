@@ -2265,7 +2265,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.94';
+const APP_VERSION = 'v2.95';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7066,6 +7066,75 @@ async function _patchAuftragFields(recId, fieldsPatch) {
   return d;
 }
 
+/* Setzt den Status eines Auftrags AUCH im ERP via PUT.
+   Strategie: GET /api/auftraege/{id} → Body in SETDTO konvertieren →
+   status ändern → PUT auf richtigen Endpoint (mitangebot/ohneangebot).
+   Wirft, wenn ERP nicht erreichbar / DTO nicht baubar — Aufrufer entscheidet,
+   ob trotzdem nur lokal markiert werden soll. */
+async function _setErpAuftragStatus(rec, newErpStatus) {
+  if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const extId = f.ext_id;
+  if (!extId) throw new Error('Auftrag hat keine ERP-ID');
+
+  // 1) Aktuellen Auftrag aus dem ERP holen (Vollformat für PUT)
+  const erpAuftrag = await _erpTryPaths(firmaSlug, ['api/auftraege/'+extId, 'auftraege/'+extId]);
+  if (!erpAuftrag || !erpAuftrag.id) throw new Error('GET liefert kein Auftrag-Objekt');
+
+  // 2) Bestellform bestimmt Endpoint
+  const isMitAngebot = String(erpAuftrag.bestellform||f.bestellform||'').toUpperCase() === 'MITANGEBOT';
+  const putPath = isMitAngebot ? 'api/auftraege/mitangebot' : 'api/auftraege/ohneangebot';
+
+  // 3) GETDTO → SETDTO konvertieren (nested anlage/empfaenger → IDs)
+  const anlageid     = erpAuftrag.anlage?.id     ?? erpAuftrag.anlageid    ?? null;
+  const empfaengerid = erpAuftrag.empfaenger?.id ?? erpAuftrag.empfaengerid ?? null;
+  const angebotid    = erpAuftrag.angebot?.id    ?? erpAuftrag.angebotid    ?? null;
+  if (!anlageid)     throw new Error('ERP-Auftrag ohne anlage.id');
+  if (!empfaengerid) throw new Error('ERP-Auftrag ohne empfaenger.id');
+
+  // Pflichtfelder mit Fallback wenn aus ERP leer (sonst Validation 400)
+  const auftraggeber  = (erpAuftrag.auftraggeber || f.kunde_firmenname || 'Unbekannt').toString().trim() || 'Unbekannt';
+  const ausfuehrtmn   = (erpAuftrag.ausfuehrungstermin || f.due_date || new Date().toISOString().slice(0,10)).toString();
+  const datumAuftrErt = erpAuftrag.datumAuftragserteilung || new Date().toISOString();
+  const leistung      = (erpAuftrag.leistungsbeschreibung || f.leistungsbeschreibung || '-').toString().trim() || '-';
+  const titelemail    = (erpAuftrag.titelemail || '-').toString().trim() || '-';
+  const inhaltemail   = (erpAuftrag.inhaltemail || '-').toString().trim() || '-';
+  const notizen       = (erpAuftrag.notizen || '').toString();
+
+  const payload = {
+    id:                    +extId,
+    anlageid:              +anlageid,
+    empfaengerid:          +empfaengerid,
+    notizen:               notizen,
+    ausfuehrungstermin:    ausfuehrtmn,
+    datumAuftragserteilung: datumAuftrErt,
+    leistungsbeschreibung: leistung,
+    kundeMail:             false,
+    titelemail:            titelemail,
+    inhaltemail:           inhaltemail,
+    status:                newErpStatus,
+    auftraggeber:          auftraggeber,
+  };
+  if (isMitAngebot) payload.angebotid = +angebotid;
+  console.log('[ERP-Status-Update] PUT', putPath, 'id='+extId, 'newStatus='+newErpStatus);
+
+  // 4) PUT — selbe NPE-Workaround-Logik wie beim POST (PDF-Generator-Bug)
+  try {
+    return await erpFetch('/aufzug/'+firmaSlug+'/'+putPath, { method:'PUT', body: payload });
+  } catch(e) {
+    const trace = (e.body && e.body.upstream_body_excerpt) ? String(e.body.upstream_body_excerpt) : '';
+    const isMailGenBug = e.status === 500 && /PDFCreatorService|MailGeneratorAuftrag|sendAuftragToBackoffice/.test(trace);
+    if (isMailGenBug) {
+      // PUT triggert evtl. auch eine Backoffice-Mail mit PDF — wenn der PDF-Bug zuschlägt, ist
+      // die Status-Änderung trotzdem persistiert. Wir geben einen "OK mit Warnung" zurück.
+      console.warn('[ERP-Status-Update] PDF-Generator-Bug — Status ist vermutlich trotzdem gesetzt');
+      return { __mailBug: true };
+    }
+    throw e;
+  }
+}
+
 /* ── Rechnungen für eine Firma aus ERP holen (gecached pro Aufruf) ── */
 async function _fetchErpRechnungen(firmaSlug) {
   const candidates = ['api/rechnungen','rechnungen'];
@@ -7146,14 +7215,30 @@ async function checkAuftragInvoice(recId) {
     ].filter(Boolean).join('\n');
 
     if (confirm(lines)) {
-      // Löschen
+      // Löschen aus Airtable + ERP-Status auf "Abgerechnet" setzen (damit's beim ERP-Sync nicht zurückkommt)
+      let erpWarn = '';
+      try { await _setErpAuftragStatus(rec, 'Abgerechnet'); }
+      catch(e) {
+        console.warn('[checkAuftragInvoice] ERP-Update fehlgeschlagen:', e.message);
+        erpWarn = ' (⚠ ERP-Status nicht aktualisiert: '+e.message.slice(0,80)+')';
+      }
       await atDelete('Auftraege', recId);
-      toast('🗑 Auftrag #'+(f.auftrag_num||'?')+' entfernt.', 'warn');
+      toast('🗑 Auftrag #'+(f.auftrag_num||'?')+' entfernt.'+erpWarn, erpWarn ? 'warn' : 'warn');
       closeAuftragDetail();
     } else {
-      // Status setzen
+      // Status setzen — lokal + im ERP
+      let erpOk = true, erpMsg = '';
+      try { await _setErpAuftragStatus(rec, 'Abgerechnet'); }
+      catch(e) {
+        erpOk = false;
+        erpMsg = e.message.slice(0,100);
+        console.warn('[checkAuftragInvoice] ERP-Update fail:', e.message);
+      }
       await _patchAuftragFields(recId, { status: 'abgerechnet' });
-      toast('✓ Auftrag #'+(f.auftrag_num||'?')+' als "abgerechnet" markiert.', 'ok');
+      toast(erpOk
+        ? '✓ Auftrag #'+(f.auftrag_num||'?')+' lokal + ERP auf "Abgerechnet" gesetzt.'
+        : '✓ #'+(f.auftrag_num||'?')+' lokal abgerechnet · ⚠ ERP-Update fehlgeschlagen: '+erpMsg,
+        erpOk ? 'ok' : 'warn');
     }
     await loadAuftraegeAndRender();
   } catch(e) {
@@ -7211,7 +7296,8 @@ async function bulkCheckInvoices() {
   }
 
   let confirmMsg = 'Bulk-Check für '+candidates.length+' Aufträge starten?\n\n';
-  confirmMsg += 'Für jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert. Treffer werden automatisch auf "abgerechnet" gesetzt.\n\n';
+  confirmMsg += 'Für jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert.\n';
+  confirmMsg += 'Treffer werden auf "Abgerechnet" gesetzt — sowohl lokal als auch im ERP (PUT /api/auftraege/…).\n\n';
   if (skipped.length) confirmMsg += '🛡 '+skipped.length+' Wartungsvertrag-Aufträge sind ausgenommen (MITANGEBOT auf Wartungs-/Notruf-Angebot) — diese bleiben unverändert offen.';
   else confirmMsg += '(Keine Wartungsverträge erkannt.)';
   if (!confirm(confirmMsg)) {
@@ -7225,26 +7311,36 @@ async function bulkCheckInvoices() {
     const list = await _fetchErpRechnungen(firmaSlug);
     const idx  = _indexRechnungenByAuftrag(list);
     if (btn) btn.textContent = '⏳ prüfe '+candidates.length+'…';
-    let marked = 0, errors = 0;
+    let marked = 0, erpFails = 0, atFails = 0;
     for (let i = 0; i < candidates.length; i++) {
       const rec = candidates[i];
       const f   = rec.fields;
       if (btn) btn.textContent = '⏳ '+(i+1)+'/'+candidates.length;
-      if (idx.has(String(f.ext_id))) {
-        try {
-          await _patchAuftragFields(rec.id, { status: 'abgerechnet' });
-          marked++;
-        } catch(e) {
-          errors++;
-          console.warn('Patch fail für #'+f.auftrag_num+':', e.message);
-        }
+      if (!idx.has(String(f.ext_id))) continue;
+      // 1) ERP-Status setzen
+      let erpOk = false;
+      try {
+        await _setErpAuftragStatus(rec, 'Abgerechnet');
+        erpOk = true;
+      } catch(e) {
+        erpFails++;
+        console.warn('[bulkCheckInvoices] ERP-Update fail #'+f.auftrag_num+':', e.message);
+      }
+      // 2) Lokal patchen (egal ob ERP OK oder nicht — User sieht den Stand)
+      try {
+        await _patchAuftragFields(rec.id, { status: 'abgerechnet' });
+        marked++;
+      } catch(e) {
+        atFails++;
+        console.warn('[bulkCheckInvoices] Airtable Patch fail #'+f.auftrag_num+':', e.message);
       }
     }
-    const offenBleibt = candidates.length - marked - errors;
-    let msg = '✅ Bulk-Check fertig: '+marked+' als abgerechnet · '+offenBleibt+' offen';
-    if (skipped.length) msg += ' · 🛡 '+skipped.length+' Wartungsverträge ausgenommen';
-    if (errors) msg += ' · '+errors+' Fehler';
-    toast(msg, 'ok');
+    const offenBleibt = candidates.length - marked - atFails;
+    let msg = '✅ Bulk-Check: '+marked+' abgerechnet · '+offenBleibt+' offen';
+    if (skipped.length)  msg += ' · 🛡 '+skipped.length+' Wartungsverträge ausgenommen';
+    if (erpFails)        msg += ' · ⚠ '+erpFails+' ERP-Update fehlgeschlagen (nur lokal)';
+    if (atFails)         msg += ' · ❌ '+atFails+' Airtable-Fehler';
+    toast(msg, erpFails || atFails ? 'warn' : 'ok');
     await loadAuftraegeAndRender();
   } catch(e) {
     console.error('bulkCheckInvoices:', e);
