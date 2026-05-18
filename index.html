@@ -2283,7 +2283,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.09';
+const APP_VERSION = 'v3.10';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9642,8 +9642,12 @@ async function runSyncForFirma(firma, userKey) {
   for (const a of active) {
     const ex = byExt.get(String(a.id));
     if (ex && a.lastmodifiedDate && ex.fields.ext_last_modified === a.lastmodifiedDate) {
-      skipped++;
-      continue;
+      // ÜBERSPRINGEN — außer 'auftragswert_netto' fehlt noch (Migration nach v3.09)
+      const needsValueBackfill = a.bestellform === "MITANGEBOT" && a.angebotid && (ex.fields.auftragswert_netto == null);
+      if (!needsValueBackfill) {
+        skipped++;
+        continue;
+      }
     }
     toProcess.push(a);
   }
@@ -9653,11 +9657,15 @@ async function runSyncForFirma(firma, userKey) {
   for (const a of toProcess) {
     if (a.bestellform === "MITANGEBOT" && a.angebotid) {
       const ex = byExt.get(String(a.id));
-      if (ex && String(ex.fields.angebot_id||"") === String(a.angebotid) && ex.fields.leistungsumfang) {
+      if (ex
+          && String(ex.fields.angebot_id||"") === String(a.angebotid)
+          && ex.fields.leistungsumfang
+          && ex.fields.auftragswert_netto != null) {
         angebotCache.set(String(a.angebotid), {
           serviceDescription: ex.fields.leistungsumfang,
           offerExplanation:   ex.fields.erlaeuterungen,
-          typ:                ex.fields.angebot_typ
+          typ:                ex.fields.angebot_typ,
+          netPrice:           ex.fields.auftragswert_netto
         });
       } else {
         needsAngebot.push(a);
@@ -10857,8 +10865,13 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
   for (const a of active) {
     const existRec = byExt.get(String(a.id));
     if (existRec && a.lastmodifiedDate && existRec.fields.ext_last_modified === a.lastmodifiedDate) {
-      skippedUnchanged++;
-      continue;
+      // ÜBERSPRINGEN — außer das neue Feld 'auftragswert_netto' fehlt noch (Migration nach v3.09)
+      // Bei MITANGEBOT mit angebotid laden wir den Auftrag neu, um den Wert nachträglich zu setzen
+      const needsValueBackfill = a.bestellform === 'MITANGEBOT' && a.angebotid && (existRec.fields.auftragswert_netto == null);
+      if (!needsValueBackfill) {
+        skippedUnchanged++;
+        continue;
+      }
     }
     toProcess.push(a);
   }
@@ -10870,26 +10883,34 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
 
   // ── PARALLEL: Angebote für MITANGEBOT vorab laden (Concurrency=5) ──
   // Skip wenn bereits gecached (gleicher angebot_id + leistungsumfang vorhanden)
+  // ABER: bei fehlendem auftragswert_netto trotzdem frisch laden (Migration nach v3.09)
   const needsAngebot = toProcess.filter(a => {
     if (a.bestellform !== 'MITANGEBOT' || !a.angebotid) return false;
     const existRec = byExt.get(String(a.id));
     if (existRec
         && String(existRec.fields.angebot_id||'') === String(a.angebotid)
-        && existRec.fields.leistungsumfang) {
-      return false; // Angebot schon im Cache
+        && existRec.fields.leistungsumfang
+        && existRec.fields.auftragswert_netto != null) {
+      return false; // Angebot schon im Cache (mit Preis)
     }
     return true;
   });
   const angebotCache = new Map(); // angebot_id → angebot
-  // Schon-gecachte angebote aus existRec wiederverwenden
+  // Schon-gecachte angebote aus existRec wiederverwenden — nur wenn auftragswert_netto bekannt ist
   for (const a of toProcess) {
     if (a.bestellform === 'MITANGEBOT' && a.angebotid) {
       const existRec = byExt.get(String(a.id));
-      if (existRec && String(existRec.fields.angebot_id||'') === String(a.angebotid) && existRec.fields.leistungsumfang) {
+      if (existRec
+          && String(existRec.fields.angebot_id||'') === String(a.angebotid)
+          && existRec.fields.leistungsumfang
+          && existRec.fields.auftragswert_netto != null) {
         angebotCache.set(String(a.angebotid), {
           serviceDescription: existRec.fields.leistungsumfang,
           offerExplanation:   existRec.fields.erlaeuterungen,
           typ:                existRec.fields.angebot_typ,
+          // netPrice bewusst NICHT setzen — der existRec hat den Roh-Wert in auftragswert_netto,
+          // _extractAuftragswertNetto() würde ohne diesen Wert null liefern. Stattdessen netPrice rekonstruieren:
+          netPrice:           existRec.fields.auftragswert_netto,
         });
       }
     }
