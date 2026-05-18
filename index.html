@@ -1975,7 +1975,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <input type="checkbox" id="auf-hide-wartung" onchange="_onHideWartungChange()"> 🔧 Wartung ausblenden
     </label>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die manuell oder per Rechnungs-Check ausgeblendet wurden, wieder anzeigen">
-      <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"> 🙈 Ausgeblendete zeigen
+      <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"><span id="auf-show-hidden-lbl">🙈 Ausgeblendete zeigen</span>
     </label>
   </div>
   <div class="auf-tabs" id="auf-tabs">
@@ -2277,7 +2277,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.07';
+const APP_VERSION = 'v3.08';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5066,17 +5066,13 @@ function renderAuftraegeList() {
   const typFilter = (document.getElementById('auf-typ-filter')?.value || '').trim();
   // Hidden-Counter für Toggle-Label-Hinweis (inkl. manuell ausgeblendete)
   const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced || r.fields.hidden_manual).length;
-  const hiddenLbl = document.querySelector('label[for]')?.textContent; // placeholder, see DOM update below
   const hiddenChk = document.getElementById('auf-show-hidden');
+  const hiddenLblSpan = document.getElementById('auf-show-hidden-lbl');
   if (hiddenChk && hiddenChk.parentElement) {
     hiddenChk.parentElement.style.display = hiddenCount > 0 ? '' : 'none';
-    const txt = hiddenChk.parentElement;
-    // Letztes TextNode (das nach <input>) updaten
-    for (const node of txt.childNodes) {
-      if (node.nodeType === 3) {
-        node.nodeValue = ' 🙈 Ausgeblendete zeigen ('+hiddenCount+')';
-      }
-    }
+  }
+  if (hiddenLblSpan) {
+    hiddenLblSpan.textContent = '🙈 Ausgeblendete zeigen ('+hiddenCount+')';
   }
   // Counts (mit Status-Normalisierung; 'in_bearbeitung' fällt unter 'offen').
   // Counter respektieren den hide_wartung-Filter, damit Tab-Zahlen mit der sichtbaren Liste konsistent sind.
