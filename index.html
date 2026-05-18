@@ -1941,7 +1941,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" onclick="loadAuftraegeAndRender()">↻ Neu laden</button>
     <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren (im Browser, App muss offen bleiben)">🔄 ERP-Sync</button>
     <button class="btn" id="auf-bg-sync-btn" onclick="startBackgroundSync()" style="display:none;color:#5b21b6;border-color:rgba(124,58,237,.4)" title="Hintergrund-Sync über Val.town – läuft serverseitig, App kann zu sein">🚀 Hintergrund-Sync</button>
-    <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen">💶 Rechnungen prüfen</button>
+    <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen — Treffer werden NUR lokal ausgeblendet, ERP bleibt unverändert">🙈 Rechnungen prüfen + ausblenden</button>
     <button class="btn" id="auf-select-btn" onclick="toggleAuftragSelectMode()" style="display:none" title="Mehrere Aufträge auswählen, um sie zu löschen">☑ Auswählen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
   </div>
@@ -1965,6 +1965,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <span class="auf-search-ico">🔍</span>
       <input type="text" class="auf-search-inp" id="auf-search" placeholder="Suchen nach Auftragsnummer, Standort, Fabriknummer, Kontakt …" oninput="renderAuftraegeList()">
     </div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die per Rechnungs-Check als 'hat bereits Rechnung im ERP' markiert wurden, wieder anzeigen">
+      <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"> 🙈 Ausgeblendete zeigen
+    </label>
   </div>
   <div class="auf-tabs" id="auf-tabs">
     <button class="auf-tab active" data-status="offen"          onclick="setAuftragTab('offen')">Offen <span class="auf-tab-count" id="auf-cnt-offen">0</span></button>
@@ -2265,7 +2268,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.97';
+const APP_VERSION = 'v2.98';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5040,9 +5043,26 @@ function _normAuftragStatus(s) {
 
 function renderAuftraegeList() {
   const list = document.getElementById('auf-list');
+  const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
+  // Cache nach hidden_invoiced vorfiltern (außer Toggle ist aktiv)
+  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced);
+  // Hidden-Counter für Toggle-Label-Hinweis
+  const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced).length;
+  const hiddenLbl = document.querySelector('label[for]')?.textContent; // placeholder, see DOM update below
+  const hiddenChk = document.getElementById('auf-show-hidden');
+  if (hiddenChk && hiddenChk.parentElement) {
+    hiddenChk.parentElement.style.display = hiddenCount > 0 ? '' : 'none';
+    const txt = hiddenChk.parentElement;
+    // Letztes TextNode (das nach <input>) updaten
+    for (const node of txt.childNodes) {
+      if (node.nodeType === 3) {
+        node.nodeValue = ' 🙈 Ausgeblendete zeigen ('+hiddenCount+')';
+      }
+    }
+  }
   // Counts (mit Status-Normalisierung; 'in_bearbeitung' fällt unter 'offen')
   const counts = { offen:0, abgeschlossen:0, abgerechnet:0, all: 0 };
-  _auftragCache.forEach(r => {
+  visibleCache.forEach(r => {
     const s = _normAuftragStatus(r.fields.status);
     if (counts[s] !== undefined) counts[s]++;
     // 'Alle' zählt explizit OHNE abgerechnete (die haben einen eigenen Tab)
@@ -5058,9 +5078,9 @@ function renderAuftraegeList() {
   let filtered;
   if (_auftragTab === 'all') {
     // Alle außer abgerechnet
-    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+    filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
-    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
+    filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
   }
 
   if (search) {
@@ -5111,7 +5131,9 @@ function _auftragCardHtml(r) {
   const checkbox = inSelect
     ? `<div class="auf-card-check" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:2px solid ${isSel?'var(--err,#dc2626)':'var(--bdr,#d1d5db)'};background:${isSel?'var(--err,#dc2626)':'transparent'};color:#fff;font-size:14px;flex:none;margin-right:8px">${isSel?'✓':''}</div>`
     : '';
-  const cardStyle = inSelect && isSel ? 'background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.3)' : '';
+  const hiddenStyle = f.hidden_invoiced ? 'opacity:.55;background:repeating-linear-gradient(135deg,rgba(0,0,0,.02) 0,rgba(0,0,0,.02) 6px,transparent 6px,transparent 12px);' : '';
+  const cardStyle = (inSelect && isSel ? 'background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.3);' : '') + hiddenStyle;
+  const hiddenBadge = f.hidden_invoiced ? '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">🙈 Rechnung im ERP'+(f.invoice_num?' · '+String(f.invoice_num).replace(/</g,'&lt;'):'')+'</span>' : '';
   return `
     <div class="auf-card" style="${cardStyle}" onclick="${onClick}">
       ${checkbox}
@@ -5129,6 +5151,7 @@ function _auftragCardHtml(r) {
       <div class="auf-card-side">
         <span class="auf-status ${status}">${statusLabel}</span>
         ${prio !== 'normal' ? '<span class="auf-prio '+prio+'">'+prioLabel+'</span>' : ''}
+        ${hiddenBadge}
       </div>
     </div>
   `;
@@ -5167,11 +5190,13 @@ function _toggleAuftragSelection(recId) {
 function _getCurrentlyVisibleAuftraege() {
   // Alles, was im aktiven Tab + Suchfilter sichtbar wäre. Reproduziert die Filter aus renderAuftraegeList.
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
+  const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
+  const base = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced);
   let filtered;
   if (_auftragTab === 'all') {
-    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+    filtered = base.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
-    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
+    filtered = base.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
   }
   if (search) {
     filtered = filtered.filter(r => {
@@ -5312,6 +5337,13 @@ function openAuftragDetail(recId) {
         ${f.due_date ? '<span style="font-size:12px;color:var(--txt2)">📅 fällig bis '+f.due_date+'</span>' : ''}
         ${f.completed_at ? '<span style="font-size:12px;color:var(--ok)">✅ '+f.completed_at.slice(0,10)+'</span>' : ''}
       </div>
+      ${f.hidden_invoiced ? `
+        <div style="margin-top:10px;padding:10px 12px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;font-size:12px;color:#78350F;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <span style="font-weight:600">🙈 In der App ausgeblendet (Rechnung im ERP gefunden)</span>
+          ${f.invoice_num  ? '<span>· Nr. '+String(f.invoice_num).replace(/</g,'&lt;')+'</span>' : ''}
+          ${f.invoice_date ? '<span>· '+String(f.invoice_date).replace(/</g,'&lt;')+'</span>' : ''}
+          ${hasPermission('auftraege_edit') ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="unhideAuftragInvoice(\''+rec.id+'\')">↺ Wieder einblenden</button>' : ''}
+        </div>` : ''}
       ${hasPermission('auftraege_edit') && f.ext_id && APP_KEYS.valtownProxyUrl ? _renderAuftragStatusPicker(rec) : ''}
     </div>
     <div class="auf-section">
@@ -5359,8 +5391,8 @@ function openAuftragDetail(recId) {
   if (hasPermission('auftraege_edit')) {
     html += '<button class="btn" onclick="openAuftragForm(\''+rec.id+'\')">✏ Bearbeiten</button>';
     // Rechnungs-Check: nur wenn ERP-Auftrag + Proxy eingerichtet + nicht bereits abgerechnet
-    if (f.ext_id && APP_KEYS.valtownProxyUrl && status !== 'abgerechnet') {
-      html += '<button class="btn" style="color:#4338ca;border-color:rgba(99,102,241,.4)" onclick="checkAuftragInvoice(\''+rec.id+'\')" title="Im ERP prüfen, ob Rechnung existiert">💶 Rechnung prüfen</button>';
+    if (f.ext_id && APP_KEYS.valtownProxyUrl && !f.hidden_invoiced) {
+      html += '<button class="btn" style="color:#4338ca;border-color:rgba(99,102,241,.4)" onclick="checkAuftragInvoice(\''+rec.id+'\')" title="Im ERP prüfen, ob Rechnung existiert — Treffer wird nur lokal ausgeblendet">💶 Rechnung prüfen</button>';
     }
     // Hinweis: Status-Änderungen jetzt direkt über Dropdown im Body (siehe _renderAuftragStatusPicker)
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')">🗑 Löschen</button>';
@@ -7212,41 +7244,54 @@ async function checkAuftragInvoice(recId) {
       invDate ? 'Datum:          '+invDate : '',
       invTotal != null ? 'Betrag:         '+Number(invTotal).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €' : '',
       '',
-      'Soll dieser Auftrag aus der App entfernt werden?',
-      '(Abbrechen = Status auf "abgerechnet" setzen, Auftrag bleibt aber sichtbar im "Abgerechnet"-Tab.)'
+      'Aus der App ENTFERNEN? (löscht den Datensatz hier — ERP bleibt unverändert)',
+      '',
+      'Abbrechen = nur ausblenden (Markierung setzen, jederzeit wieder einblendbar).'
     ].filter(Boolean).join('\n');
 
+    // Schema sicherstellen
+    try {
+      await ensureField('Auftraege', 'hidden_invoiced',  'checkbox');
+      await ensureField('Auftraege', 'invoice_num',      'singleLineText');
+      await ensureField('Auftraege', 'invoice_date',     'singleLineText');
+      await ensureField('Auftraege', 'invoice_id',       'singleLineText');
+    } catch(_){}
+
     if (confirm(lines)) {
-      // Löschen aus Airtable + ERP-Status auf "Abgerechnet" setzen (damit's beim ERP-Sync nicht zurückkommt)
-      let erpWarn = '';
-      try { await _setErpAuftragStatus(rec, 'Abgerechnet'); }
-      catch(e) {
-        console.warn('[checkAuftragInvoice] ERP-Update fehlgeschlagen:', e.message);
-        erpWarn = ' (⚠ ERP-Status nicht aktualisiert: '+e.message.slice(0,80)+')';
-      }
-      await atDelete('Auftraege', recId);
-      toast('🗑 Auftrag #'+(f.auftrag_num||'?')+' entfernt.'+erpWarn, erpWarn ? 'warn' : 'warn');
+      // "Aus der App entfernen" → Hard-Delete in Airtable (ERP wird NICHT angefasst)
+      try { await atDelete('Auftraege', recId); }
+      catch(e) { return toast('❌ Löschen fehlgeschlagen: '+e.message,'err'); }
+      toast('🗑 Auftrag #'+(f.auftrag_num||'?')+' aus der App entfernt. (ERP unverändert)', 'warn');
       closeAuftragDetail();
     } else {
-      // Status setzen — lokal + im ERP
-      let erpOk = true, erpMsg = '';
-      try { await _setErpAuftragStatus(rec, 'Abgerechnet'); }
-      catch(e) {
-        erpOk = false;
-        erpMsg = e.message.slice(0,100);
-        console.warn('[checkAuftragInvoice] ERP-Update fail:', e.message);
-      }
-      await _patchAuftragFields(recId, { status: 'abgerechnet' });
-      toast(erpOk
-        ? '✓ Auftrag #'+(f.auftrag_num||'?')+' lokal + ERP auf "Abgerechnet" gesetzt.'
-        : '✓ #'+(f.auftrag_num||'?')+' lokal abgerechnet · ⚠ ERP-Update fehlgeschlagen: '+erpMsg,
-        erpOk ? 'ok' : 'warn');
+      // "Nur ausblenden" → Markierung setzen, ERP unverändert, keine Mails
+      try {
+        await _patchAuftragFields(recId, {
+          hidden_invoiced: true,
+          invoice_num:     String(invNum || ''),
+          invoice_date:    String(invDate || ''),
+          invoice_id:      String(inv.id || ''),
+        });
+      } catch(e) { return toast('❌ Airtable-Patch fehlgeschlagen: '+e.message,'err'); }
+      toast('🙈 Auftrag #'+(f.auftrag_num||'?')+' ausgeblendet (Rechnung im ERP gefunden). ERP unverändert.', 'ok');
+      closeAuftragDetail();
     }
     await loadAuftraegeAndRender();
   } catch(e) {
     console.error('checkAuftragInvoice:', e);
     toast('❌ '+e.message, 'err');
   }
+}
+
+/* Hebt die "hidden_invoiced"-Markierung wieder auf, sodass der Auftrag wieder in den Listen erscheint. */
+async function unhideAuftragInvoice(recId) {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  try {
+    await _patchAuftragFields(recId, { hidden_invoiced: false });
+    toast('↺ Markierung entfernt — Auftrag ist wieder sichtbar.', 'ok');
+    closeAuftragDetail();
+    await loadAuftraegeAndRender();
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /* Prüft, ob ein Auftrag-Record ein laufender Wartungsvertrag ist (MITANGEBOT
@@ -7362,18 +7407,18 @@ async function bulkCheckInvoices() {
     // Falls Wartungs-Endpoint nicht erreichbar: weiter ohne Schutz, aber User warnen
     console.warn('[bulkCheckInvoices] Wartungsverträge konnten nicht geladen werden:', e.message);
     if (!confirm('⚠ Wartungsverträge konnten nicht aus dem ERP geladen werden:\n'+e.message+'\n\nOhne diese Info kann der Bulk-Check Wartungsverträge versehentlich als "abgerechnet" markieren. Trotzdem fortfahren?')) {
-      if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+      if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🙈 Rechnungen prüfen + ausblenden'; }
       return;
     }
   }
 
-  // Kandidaten: ext_id + NICHT bereits 'abgerechnet'
-  const allCandidates = _auftragCache.filter(r => r.fields.ext_id && _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+  // Kandidaten: ext_id + nicht schon als "hat Rechnung" markiert
+  const allCandidates = _auftragCache.filter(r => r.fields.ext_id && !r.fields.hidden_invoiced);
   const skipped       = allCandidates.filter(r => _isWartungsvertragAuftrag(r, wartungsAngebotIds));
   const candidates    = allCandidates.filter(r => !_isWartungsvertragAuftrag(r, wartungsAngebotIds));
 
   if (candidates.length === 0) {
-    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🙈 Rechnungen prüfen + ausblenden'; }
     return toast(skipped.length
       ? 'Keine Aufträge zu prüfen. '+skipped.length+' Wartungsverträge ausgenommen.'
       : 'Keine Aufträge mit ERP-ID zu prüfen.', '');
@@ -7381,13 +7426,21 @@ async function bulkCheckInvoices() {
 
   let confirmMsg = 'Bulk-Check für '+candidates.length+' Aufträge starten?\n\n';
   confirmMsg += 'Für jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert.\n';
-  confirmMsg += 'Treffer werden auf "Abgerechnet" gesetzt — sowohl lokal als auch im ERP (PUT /api/auftraege/…).\n\n';
-  if (skipped.length) confirmMsg += '🛡 '+skipped.length+' Wartungsvertrag-Aufträge sind ausgenommen (MITANGEBOT auf Wartungs-/Notruf-Angebot) — diese bleiben unverändert offen.';
+  confirmMsg += '🙈 Treffer werden NUR in der App ausgeblendet (Markierung "hat Rechnung") — der Status im ERP bleibt unverändert und es werden KEINE Mails ausgelöst.\n\n';
+  if (skipped.length) confirmMsg += '🛡 '+skipped.length+' Wartungsvertrag-Aufträge sind ausgenommen (MITANGEBOT auf Wartungs-/Notruf-Angebot).';
   else confirmMsg += '(Keine Wartungsverträge erkannt.)';
   if (!confirm(confirmMsg)) {
-    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🙈 Rechnungen prüfen + ausblenden'; }
     return;
   }
+
+  // Schema sicherstellen (idempotent, nur beim ersten Lauf relevant)
+  try {
+    await ensureField('Auftraege', 'hidden_invoiced',  'checkbox');
+    await ensureField('Auftraege', 'invoice_num',      'singleLineText');
+    await ensureField('Auftraege', 'invoice_date',     'singleLineText');
+    await ensureField('Auftraege', 'invoice_id',       'singleLineText');
+  } catch(_){}
 
   if (btn) btn.textContent = '⏳ lade Rechnungen…';
   toast('⏳ Lade Rechnungen aus ERP…', '');
@@ -7395,42 +7448,41 @@ async function bulkCheckInvoices() {
     const list = await _fetchErpRechnungen(firmaSlug);
     const idx  = _indexRechnungenByAuftrag(list);
     if (btn) btn.textContent = '⏳ prüfe '+candidates.length+'…';
-    let marked = 0, erpFails = 0, atFails = 0;
+    let hidden = 0, atFails = 0;
     for (let i = 0; i < candidates.length; i++) {
       const rec = candidates[i];
       const f   = rec.fields;
       if (btn) btn.textContent = '⏳ '+(i+1)+'/'+candidates.length;
-      if (!idx.has(String(f.ext_id))) continue;
-      // 1) ERP-Status setzen
-      let erpOk = false;
+      const inv = idx.get(String(f.ext_id));
+      if (!inv) continue;
+      // Rechnungs-Info zur späteren Anzeige merken
+      const invNum  = String(inv.rechnungsnummer || inv.id || '');
+      const invDate = String(inv.rechnungsdatum || inv.createdDate || inv.leistungszeitraum || '').slice(0,10);
+      const invId   = String(inv.id || '');
       try {
-        await _setErpAuftragStatus(rec, 'Abgerechnet');
-        erpOk = true;
-      } catch(e) {
-        erpFails++;
-        console.warn('[bulkCheckInvoices] ERP-Update fail #'+f.auftrag_num+':', e.message);
-      }
-      // 2) Lokal patchen (egal ob ERP OK oder nicht — User sieht den Stand)
-      try {
-        await _patchAuftragFields(rec.id, { status: 'abgerechnet' });
-        marked++;
+        await _patchAuftragFields(rec.id, {
+          hidden_invoiced: true,
+          invoice_num:     invNum,
+          invoice_date:    invDate,
+          invoice_id:      invId,
+        });
+        hidden++;
       } catch(e) {
         atFails++;
         console.warn('[bulkCheckInvoices] Airtable Patch fail #'+f.auftrag_num+':', e.message);
       }
     }
-    const offenBleibt = candidates.length - marked - atFails;
-    let msg = '✅ Bulk-Check: '+marked+' abgerechnet · '+offenBleibt+' offen';
+    const offenBleibt = candidates.length - hidden - atFails;
+    let msg = '🙈 Bulk-Check: '+hidden+' ausgeblendet (Rechnung gefunden) · '+offenBleibt+' offen ohne Rechnung';
     if (skipped.length)  msg += ' · 🛡 '+skipped.length+' Wartungsverträge ausgenommen';
-    if (erpFails)        msg += ' · ⚠ '+erpFails+' ERP-Update fehlgeschlagen (nur lokal)';
     if (atFails)         msg += ' · ❌ '+atFails+' Airtable-Fehler';
-    toast(msg, erpFails || atFails ? 'warn' : 'ok');
+    toast(msg, atFails ? 'warn' : 'ok');
     await loadAuftraegeAndRender();
   } catch(e) {
     console.error('bulkCheckInvoices:', e);
     toast('❌ '+e.message, 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💶 Rechnungen prüfen'; }
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🙈 Rechnungen prüfen + ausblenden'; }
   }
 }
 
@@ -10713,6 +10765,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
           'subunternehmer_preis',                 // Vergütungs-Text
           'bericht_id','bericht_num','completed_at', // Bericht-Verknüpfung
           'created','created_by',                 // Erstellungs-Metadaten nicht überschreiben
+          'hidden_invoiced','invoice_num','invoice_date','invoice_id', // Rechnungs-Check-Markierung
         ];
         const patchFields = { ...fields };
         for (const k of USER_MANAGED) {
