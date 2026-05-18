@@ -2294,7 +2294,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.12';
+const APP_VERSION = 'v3.13';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4851,15 +4851,16 @@ async function renderFirmaView() {
     list.innerHTML = `
       <table class="firma-tbl">
         <thead><tr>
-          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>ERP-Tenant</th><th>Aktiv</th><th></th>
+          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>ERP-Tenant</th><th title="URL-Prefix zum Auftrag im ERP — Auftragsnummer wird automatisch angehängt">ERP-Auftrag-URL</th><th>Aktiv</th><th></th>
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="9" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
       </table>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
         ℹ️ <strong>Slug</strong> ist der eindeutige Schlüssel (z.B. <code>aszendio</code>) – wird intern für Berichts-Filter und Template-Zuordnung verwendet, nicht ändern wenn schon Berichte existieren.<br>
         ℹ️ <strong>Kalkulator-Typ</strong>: <code>kone</code> = KONE-Preisliste (Aszendio), <code>none</code> = Kalkulator nicht verfügbar (Platzhalter), <code>custom</code> = ausstehend.<br>
         ℹ️ <strong>Bericht-Start</strong> / <strong>Auftrag-Start</strong>: Startwerte für die jeweiligen Nummernkreise pro Firma. Aszendio: Berichte ab 50000, Aufträge ab 1001. Neue Firmen jeweils ab 1.<br>
-        ℹ️ <strong>ERP-Tenant</strong>: Mandanten-ID im Aufzugshandwerk-ERP (z.B. <code>1</code> = Aufzugshandwerk, <code>4</code> = Aszendio). Leer lassen, wenn die Firma kein ERP nutzt. Der zugehörige API-Key wird in Admin → 🔌 Integrationen pro Mandant hinterlegt.
+        ℹ️ <strong>ERP-Tenant</strong>: Mandanten-ID im Aufzugshandwerk-ERP (z.B. <code>1</code> = Aufzugshandwerk, <code>4</code> = Aszendio). Leer lassen, wenn die Firma kein ERP nutzt.<br>
+        ℹ️ <strong>ERP-Auftrag-URL</strong>: URL-Prefix zum Auftrag im ERP — die Auftragsnummer wird automatisch angehängt. Beispiel: <code>https://verwaltung.aufzugshandwerk.de/auftraege</code> → ergibt <code>…/auftraege/1003</code>. Wird in Freshdesk-Tickets als Direkt-Link genutzt.
       </div>
     `;
   } catch(e) {
@@ -4887,6 +4888,7 @@ function firmaRowHtml(f) {
       <td data-label="Bericht-Start"><input type="number" class="firma-inp" data-field="start_num" value="${+fl.start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
       <td data-label="Auftrag-Start"><input type="number" class="firma-inp" data-field="auftrag_start_num" value="${+fl.auftrag_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
       <td data-label="ERP-Tenant"><input class="firma-inp" data-field="erp_tenant" value="${esc(fl.erp_tenant)}" placeholder="z.B. 1 oder 4" style="max-width:80px;font-family:monospace;text-align:center" title="Mandanten-ID im Aufzugshandwerk-ERP"></td>
+      <td data-label="ERP-Auftrag-URL"><input class="firma-inp" data-field="erp_auftrag_url" value="${esc(fl.erp_auftrag_url)}" placeholder="https://verwaltung.aufzugshandwerk.de/auftraege" style="min-width:280px;font-family:monospace;font-size:11px" title="URL-Prefix — Auftragsnummer wird angehängt"></td>
       <td data-label="Aktiv" style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
       <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
@@ -4909,9 +4911,12 @@ async function saveFirmaRow(recId) {
   });
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   try {
-    // Schema-Sicherstellung: erp_tenant ggf. anlegen
+    // Schema-Sicherstellung: erp_tenant + erp_auftrag_url ggf. anlegen
     if ('erp_tenant' in f) {
       try { await ensureField('Firmen', 'erp_tenant', 'singleLineText'); } catch(_){}
+    }
+    if ('erp_auftrag_url' in f) {
+      try { await ensureField('Firmen', 'erp_auftrag_url', 'singleLineText'); } catch(_){}
     }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+recId, {
@@ -8663,7 +8668,17 @@ async function saveBerichtFromForm() {
             techniker:   techName,
             tmpl:        S.tmpl,
           }};
-          const r = await freshdeskCreateTicketForBericht(stubRec, pdfBlob, auftrag);
+          // PDF-URL aus Airtable nachladen (das PDF wurde gerade hochgeladen)
+          let berichtPdfUrl = '';
+          try {
+            const rRead = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
+              headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+            });
+            const dRead = await rRead.json();
+            const url = dRead && dRead.fields && dRead.fields.out_pdf && dRead.fields.out_pdf[0] && dRead.fields.out_pdf[0].url;
+            if (url) berichtPdfUrl = url;
+          } catch(_){}
+          const r = await freshdeskCreateTicketForBericht(stubRec, pdfBlob, auftrag, berichtPdfUrl);
           if (r.skipped) {
             toast('ℹ Freshdesk nicht konfiguriert für '+firmaSlug+' – kein Ticket erstellt.', '');
           } else if (r.ticketId) {
@@ -10207,7 +10222,7 @@ function freshdeskIsConfigured(firmaSlug) {
 }
 
 /* Build + POST Ticket to Freshdesk with PDF as multipart attachment. */
-async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec) {
+async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, berichtPdfUrl) {
   const firmaSlug = berichtRec.fields.firma || getCurrentFirmaSlug();
   if (!freshdeskIsConfigured(firmaSlug)) {
     return { skipped:true, reason:'Freshdesk für Firma "'+firmaSlug+'" nicht konfiguriert.' };
@@ -10216,8 +10231,25 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec) 
   const af = auftragRec ? auftragRec.fields : {};
   const subject = 'Arbeitsbericht Nr. '+(f.bericht_num||'?')+' – '+(f.standort||af.standort||'').slice(0,80);
   const tplLabel = T[f.tmpl]?.label || f.tmpl || '';
+
+  // ERP-Auftrag-Link aus Firmen-Konfiguration bauen
+  const firmaRec  = (_firmenCache||[]).find(x => x.fields.slug === firmaSlug);
+  const erpPrefix = (firmaRec && firmaRec.fields && firmaRec.fields.erp_auftrag_url || '').trim();
+  let erpUrl = '';
+  if (erpPrefix && af.auftrag_num) {
+    erpUrl = erpPrefix.replace(/\/+$/, '') + '/' + String(af.auftrag_num);
+  }
+
+  // Standardtext (Auftrag-Abrechnungs-Hinweis) + Links
+  const introLines = [];
+  introLines.push('<p>Auftrag kann abgerechnet werden.</p>');
+  if (erpUrl)        introLines.push('<p>🔗 <strong>Link zum Auftrag im ERP:</strong> <a href="'+escapeHtml(erpUrl)+'">'+escapeHtml(erpUrl)+'</a></p>');
+  if (berichtPdfUrl) introLines.push('<p>📄 <strong>Link zum Bericht (PDF):</strong> <a href="'+escapeHtml(berichtPdfUrl)+'">'+escapeHtml(berichtPdfUrl)+'</a></p>');
+
   const description = [
-    '<p>Arbeitsbericht wurde erstellt:</p>',
+    introLines.join(''),
+    '<hr>',
+    '<p>Arbeitsbericht-Details:</p>',
     '<ul>',
     f.bericht_num ? '<li><strong>Berichts-Nr.:</strong> '+f.bericht_num+'</li>' : '',
     af.auftrag_num ? '<li><strong>Auftrags-Nr.:</strong> #'+af.auftrag_num+'</li>' : '',
