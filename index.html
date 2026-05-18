@@ -1968,6 +1968,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <select id="auf-typ-filter" onchange="renderAuftraegeList()" title="Nach Angebots-Typ filtern (aus dem ERP-Angebot)" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
       <option value="">Alle Typen</option>
     </select>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Alle Aufträge mit Angebots-Typ 'Wartung' / 'Wartung & Notruf' aus der Liste ausblenden">
+      <input type="checkbox" id="auf-hide-wartung" onchange="_onHideWartungChange()"> 🔧 Wartung ausblenden
+    </label>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die per Rechnungs-Check als 'hat bereits Rechnung im ERP' markiert wurden, wieder anzeigen">
       <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"> 🙈 Ausgeblendete zeigen
     </label>
@@ -2271,7 +2274,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.01';
+const APP_VERSION = 'v3.02';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4993,6 +4996,12 @@ async function _ensureUsersLoaded() {
 
 async function loadAuftraegeAndRender() {
   await _ensureUsersLoaded();
+  // Persisted Filter-State auf die Checkbox anwenden (falls noch nicht initialisiert)
+  const hwCb = document.getElementById('auf-hide-wartung');
+  if (hwCb && !hwCb._initialized) {
+    try { hwCb.checked = localStorage.getItem('auf_hide_wartung_'+APP_CONFIG.PROJECT_ID) === '1'; } catch(_){}
+    hwCb._initialized = true;
+  }
   const list = document.getElementById('auf-list');
   list.innerHTML = '<div class="auf-empty"><div class="spinner" style="margin:0 auto 12px"></div>Lade Aufträge…</div>';
   try {
@@ -5095,6 +5104,11 @@ function renderAuftraegeList() {
     } else {
       filtered = filtered.filter(r => String(r.fields.angebot_typ||'') === typFilter);
     }
+  }
+  // "Wartung ausblenden"-Toggle: alles mit angebot_typ matching /wartung/i raus
+  const hideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
+  if (hideWartung) {
+    filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
   }
 
   if (search) {
@@ -7317,6 +7331,13 @@ async function unhideAuftragInvoice(recId) {
    + angebot_id zeigt auf ein Wartungs-/Notruf-Angebot). Solche Aufträge dürfen
    NICHT durch Rechnungs-Check automatisch geschlossen werden — sie haben über
    Jahre viele Rechnungen, sind aber dauerhaft offen. */
+/* Toggle "Wartung ausblenden": Auswahl persistieren + Liste neu rendern. */
+function _onHideWartungChange() {
+  const cb = document.getElementById('auf-hide-wartung');
+  try { localStorage.setItem('auf_hide_wartung_'+APP_CONFIG.PROJECT_ID, cb?.checked ? '1' : '0'); } catch(_){}
+  renderAuftraegeList();
+}
+
 /* Befüllt das Angebots-Typ-Filter-Dropdown mit allen Typen, die im aktuellen Cache vorkommen. */
 function _refreshAngebotTypFilter() {
   const sel = document.getElementById('auf-typ-filter');
