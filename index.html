@@ -2265,7 +2265,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.95';
+const APP_VERSION = 'v2.96';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5360,6 +5360,11 @@ function openAuftragDetail(recId) {
     // Rechnungs-Check: nur wenn ERP-Auftrag + Proxy eingerichtet + nicht bereits abgerechnet
     if (f.ext_id && APP_KEYS.valtownProxyUrl && status !== 'abgerechnet') {
       html += '<button class="btn" style="color:#4338ca;border-color:rgba(99,102,241,.4)" onclick="checkAuftragInvoice(\''+rec.id+'\')" title="Im ERP prüfen, ob Rechnung existiert">💶 Rechnung prüfen</button>';
+      html += '<button class="btn" style="color:#065f46;border-color:rgba(16,185,129,.45);background:#ECFDF5" onclick="markAuftragAbgerechnet(\''+rec.id+'\')" title="Status manuell auf Abgerechnet setzen — lokal + im ERP. Ohne Rechnungs-Lookup.">✓ Als abgerechnet markieren</button>';
+    }
+    // Wenn schon abgerechnet: Re-Open-Button bauen, falls Edit-Permission da ist
+    if (f.ext_id && APP_KEYS.valtownProxyUrl && status === 'abgerechnet') {
+      html += '<button class="btn" style="color:var(--txt2)" onclick="reopenAuftrag(\''+rec.id+'\')" title="Status zurück auf Offen setzen (lokal + ERP auf \'Auftrag bestätigt\')">↺ Wieder öffnen</button>';
     }
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')">🗑 Löschen</button>';
   }
@@ -7256,6 +7261,71 @@ function _isWartungsvertragAuftrag(rec, wartungsAngebotIds) {
   if (f.bestellform !== 'MITANGEBOT') return false;
   if (!f.angebot_id) return false;
   return wartungsAngebotIds && wartungsAngebotIds.has(String(f.angebot_id));
+}
+
+/* Manuelles Markieren eines einzelnen Auftrags als "Abgerechnet" — lokal + im ERP.
+   Kein Rechnungs-Lookup, nur direkte Status-Setzung. Mit Wartungsvertrag-Warnung. */
+async function markAuftragAbgerechnet(recId) {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId);
+  if (!rec) return toast('Auftrag nicht gefunden.', 'err');
+  const f = rec.fields;
+  if (!f.ext_id) return toast('Dieser Auftrag stammt nicht aus dem ERP — kein ERP-Update möglich.', 'err');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+
+  // Wartungsvertrag-Warnung (analog zum automatischen Check)
+  try {
+    await _loadWartungsAnlagen(firmaSlug);
+    const wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set();
+    if (_isWartungsvertragAuftrag(rec, wartungsAngebotIds)) {
+      if (!confirm('🛡 Dies ist ein Wartungsvertrag-Auftrag.\n\nWartungsverträge laufen über Jahre mit vielen Rechnungen und sollten dauerhaft offen bleiben. Trotzdem auf "Abgerechnet" setzen?\n\n(Empfehlung: Abbrechen)')) return;
+    }
+  } catch(_){}
+
+  if (!confirm('Auftrag #'+(f.auftrag_num||'?')+' auf "Abgerechnet" setzen?\n\n• Lokal (in Airtable)\n• Im ERP via PUT (Aufzugshandwerk)\n\nFortfahren?')) return;
+
+  toast('⏳ Setze Status für #'+(f.auftrag_num||'?')+'…','');
+  let erpOk = true, erpMsg = '';
+  try { await _setErpAuftragStatus(rec, 'Abgerechnet'); }
+  catch(e) {
+    erpOk = false;
+    erpMsg = e.message.slice(0,120);
+    console.warn('[markAuftragAbgerechnet] ERP-Update fail:', e.message);
+  }
+  try { await _patchAuftragFields(recId, { status: 'abgerechnet' }); }
+  catch(e) { return toast('❌ Airtable-Patch fehlgeschlagen: '+e.message,'err'); }
+
+  toast(erpOk
+    ? '✓ #'+(f.auftrag_num||'?')+' lokal + ERP auf "Abgerechnet" gesetzt.'
+    : '✓ #'+(f.auftrag_num||'?')+' lokal abgerechnet · ⚠ ERP-Update fehlgeschlagen: '+erpMsg,
+    erpOk ? 'ok' : 'warn');
+  closeAuftragDetail();
+  await loadAuftraegeAndRender();
+}
+
+/* Status zurück auf "Offen" / "Auftrag bestätigt" — lokal + ERP.
+   Wird im Detail angeboten, wenn der Status bereits 'abgerechnet' ist. */
+async function reopenAuftrag(recId) {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId);
+  if (!rec) return toast('Auftrag nicht gefunden.', 'err');
+  const f = rec.fields;
+  if (!f.ext_id) return toast('Kein ERP-Auftrag — nur lokal möglich.', 'err');
+  if (!confirm('Auftrag #'+(f.auftrag_num||'?')+' wieder öffnen?\n\n• Lokal: Status → "offen"\n• ERP: Status → "Auftrag bestätigt"\n\nFortfahren?')) return;
+
+  toast('⏳ Öffne #'+(f.auftrag_num||'?')+' wieder…','');
+  let erpOk = true, erpMsg = '';
+  try { await _setErpAuftragStatus(rec, 'Auftrag bestätigt'); }
+  catch(e) { erpOk = false; erpMsg = e.message.slice(0,120); }
+  try { await _patchAuftragFields(recId, { status: 'Auftrag bestätigt' }); }
+  catch(e) { return toast('❌ Airtable-Patch fehlgeschlagen: '+e.message,'err'); }
+
+  toast(erpOk
+    ? '↺ #'+(f.auftrag_num||'?')+' wieder geöffnet (lokal + ERP).'
+    : '↺ #'+(f.auftrag_num||'?')+' lokal geöffnet · ⚠ ERP: '+erpMsg,
+    erpOk ? 'ok' : 'warn');
+  closeAuftragDetail();
+  await loadAuftraegeAndRender();
 }
 
 /* ── Bulk: alle Aufträge der aktuellen Firma auf Rechnungen prüfen ── */
