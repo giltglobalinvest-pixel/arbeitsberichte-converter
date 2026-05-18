@@ -1935,7 +1935,17 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren (im Browser, App muss offen bleiben)">🔄 ERP-Sync</button>
     <button class="btn" id="auf-bg-sync-btn" onclick="startBackgroundSync()" style="display:none;color:#5b21b6;border-color:rgba(124,58,237,.4)" title="Hintergrund-Sync über Val.town – läuft serverseitig, App kann zu sein">🚀 Hintergrund-Sync</button>
     <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen">💶 Rechnungen prüfen</button>
+    <button class="btn" id="auf-select-btn" onclick="toggleAuftragSelectMode()" style="display:none" title="Mehrere Aufträge auswählen, um sie zu löschen">☑ Auswählen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
+  </div>
+  <!-- Bulk-Action-Bar (sticky bottom) — sichtbar nur im Select-Mode -->
+  <div id="auf-bulk-bar" style="display:none;position:fixed;left:0;right:0;bottom:0;background:var(--surf,#fff);border-top:2px solid var(--err,#dc2626);padding:12px 22px;box-shadow:0 -4px 16px rgba(0,0,0,.1);z-index:100;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-weight:600;color:var(--txt)" id="auf-bulk-count">0 ausgewählt</span>
+    <div style="flex:1"></div>
+    <button class="btn" onclick="auftragSelectAll()" title="Alle in der aktuellen Ansicht auswählen">☑ Alle</button>
+    <button class="btn" onclick="auftragSelectNone()" title="Auswahl aufheben">☐ Keine</button>
+    <button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.4)" onclick="bulkDeleteAuftraege()">🗑 Löschen</button>
+    <button class="btn" onclick="cancelAuftragSelectMode()">Abbrechen</button>
   </div>
   <div id="auf-sync-banner" style="display:none;margin:0 24px 8px;padding:10px 14px;background:#EAF2FE;border:1px solid #BFD6FB;border-radius:8px;font-size:13px;color:var(--navy-d);align-items:center;gap:10px;flex-wrap:wrap">
     <div class="spinner" style="width:14px;height:14px;border-width:2px;flex:none"></div>
@@ -2248,7 +2258,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.91';
+const APP_VERSION = 'v2.92';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4829,6 +4839,8 @@ let _auftragCache = [];       // alle geladenen Auftraege-Records (gefiltert auf
 let _auftragTab   = 'offen';  // aktiver Status-Tab: offen|in_bearbeitung|abgeschlossen|all
 let _currentAuftragForm = null;  // beim Bearbeiten: rec.id; bei neu: null
 let _currentBerichtAuftragId = null;
+let _auftragSelectMode = false;            // Bulk-Auswahl-Modus aktiv
+const _auftragSelected = new Set();        // ausgewählte rec.ids
 
 function _auftragOfRec(r) { return r.fields || {}; }
 
@@ -4872,6 +4884,9 @@ async function loadAuftraegeAndRender() {
       .sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));
     // Anlegen-Button: bei "Alle Firmen" ausgeblendet, weil Anlegen eine konkrete Firma braucht
     document.getElementById('auf-new-btn').style.display = (hasPermission('auftraege_create') && !allMode) ? '' : 'none';
+    // Select-Button: sichtbar wenn User löschen darf (auftraege_edit-Permission)
+    const selBtn = document.getElementById('auf-select-btn');
+    if (selBtn) selBtn.style.display = hasPermission('auftraege_edit') ? '' : 'none';
     // ERP-Sync-Button + Bulk-Rechnungs-Check + BG-Sync: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
     const erpBtn   = document.getElementById('auf-erp-sync-btn');
     const bgBtn    = document.getElementById('auf-bg-sync-btn');
@@ -4975,8 +4990,16 @@ function _auftragCardHtml(r) {
     const nm = firmaRec?.fields?.name || f.firma;
     firmaBadge = '<span>'+ic+' '+nm.replace(/</g,'&lt;')+'</span>';
   }
+  const inSelect = _auftragSelectMode;
+  const isSel    = _auftragSelected.has(r.id);
+  const onClick  = inSelect ? `_toggleAuftragSelection('${r.id}')` : `openAuftragDetail('${r.id}')`;
+  const checkbox = inSelect
+    ? `<div class="auf-card-check" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:2px solid ${isSel?'var(--err,#dc2626)':'var(--bdr,#d1d5db)'};background:${isSel?'var(--err,#dc2626)':'transparent'};color:#fff;font-size:14px;flex:none;margin-right:8px">${isSel?'✓':''}</div>`
+    : '';
+  const cardStyle = inSelect && isSel ? 'background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.3)' : '';
   return `
-    <div class="auf-card" onclick="openAuftragDetail('${r.id}')">
+    <div class="auf-card" style="${cardStyle}" onclick="${onClick}">
+      ${checkbox}
       <div class="auf-card-num">#${f.auftrag_num || '–'}</div>
       <div class="auf-card-info">
         <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}</div>
@@ -4994,6 +5017,112 @@ function _auftragCardHtml(r) {
       </div>
     </div>
   `;
+}
+
+/* ── Bulk-Select / Bulk-Delete für Aufträge ── */
+function toggleAuftragSelectMode() {
+  _auftragSelectMode = !_auftragSelectMode;
+  _auftragSelected.clear();
+  _updateAuftragBulkBar();
+  const btn = document.getElementById('auf-select-btn');
+  if (btn) {
+    btn.textContent = _auftragSelectMode ? '✕ Auswahl beenden' : '☑ Auswählen';
+    btn.style.background = _auftragSelectMode ? 'rgba(220,38,38,.08)' : '';
+    btn.style.borderColor = _auftragSelectMode ? 'rgba(220,38,38,.4)' : '';
+  }
+  renderAuftraegeList();
+}
+
+function cancelAuftragSelectMode() {
+  _auftragSelectMode = false;
+  _auftragSelected.clear();
+  _updateAuftragBulkBar();
+  const btn = document.getElementById('auf-select-btn');
+  if (btn) { btn.textContent = '☑ Auswählen'; btn.style.background = ''; btn.style.borderColor = ''; }
+  renderAuftraegeList();
+}
+
+function _toggleAuftragSelection(recId) {
+  if (_auftragSelected.has(recId)) _auftragSelected.delete(recId);
+  else _auftragSelected.add(recId);
+  _updateAuftragBulkBar();
+  renderAuftraegeList();
+}
+
+function _getCurrentlyVisibleAuftraege() {
+  // Alles, was im aktiven Tab + Suchfilter sichtbar wäre. Reproduziert die Filter aus renderAuftraegeList.
+  const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
+  let filtered;
+  if (_auftragTab === 'all') {
+    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+  } else {
+    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
+  }
+  if (search) {
+    filtered = filtered.filter(r => {
+      const f = r.fields;
+      const haystack = [
+        String(f.auftrag_num || ''), f.standort || '', f.fabriknummer || '',
+        f.kontakt || '', f.kontakt_name || '', f.kontakt_telefon || '',
+        f.leistungsbeschreibung || '', f.techniker_namen || '',
+      ].join(' ').toLowerCase();
+      return haystack.includes(search);
+    });
+  }
+  return filtered;
+}
+
+function auftragSelectAll() {
+  _getCurrentlyVisibleAuftraege().forEach(r => _auftragSelected.add(r.id));
+  _updateAuftragBulkBar();
+  renderAuftraegeList();
+}
+function auftragSelectNone() {
+  _auftragSelected.clear();
+  _updateAuftragBulkBar();
+  renderAuftraegeList();
+}
+
+function _updateAuftragBulkBar() {
+  const bar = document.getElementById('auf-bulk-bar');
+  const cnt = document.getElementById('auf-bulk-count');
+  if (!bar) return;
+  if (_auftragSelectMode) {
+    bar.style.display = 'flex';
+    if (cnt) cnt.textContent = _auftragSelected.size + ' ausgewählt';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+async function bulkDeleteAuftraege() {
+  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  const ids = Array.from(_auftragSelected);
+  if (ids.length === 0) return toast('Keine Aufträge ausgewählt.', 'warn');
+  if (!confirm(ids.length + ' Auftrag/Aufträge wirklich aus Airtable löschen?\n\nHinweis: Im ERP bleiben sie erhalten. Beim nächsten Sync kommen sie evtl. zurück, falls Status noch aktiv.')) return;
+  let ok = 0, fail = 0;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  toast('🗑 Lösche '+ids.length+' Aufträge…', 'info');
+  // Airtable erlaubt Batch-Delete bis zu 10 records per request via records[]=...
+  for (let i = 0; i < ids.length; i += 10) {
+    const batch = ids.slice(i, i+10);
+    const qs = batch.map(id => 'records[]='+encodeURIComponent(id)).join('&');
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege?'+qs, {
+        method: 'DELETE',
+        headers: { 'Authorization': 'Bearer '+APP_KEYS.airtableWriteKey },
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message);
+      ok += (d.records||[]).length;
+    } catch(e) {
+      console.warn('[Bulk-Delete] Batch fehlgeschlagen:', e.message);
+      fail += batch.length;
+    }
+  }
+  cancelAuftragSelectMode();
+  toast('✓ '+ok+' gelöscht'+(fail?' · '+fail+' fehlgeschlagen':''), fail ? 'warn' : 'ok');
+  await loadAuftraegeAndRender();
 }
 
 /* Inline Vorlage-Picker (im Detail-Modal). Read-only Label wenn keine Edit-Permission. */
