@@ -2248,7 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v2.90';
+const APP_VERSION = 'v2.91';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2327,13 +2327,24 @@ let editMode = { active: false, recId: null, num: null };
    AIRTABLE HELPERS
    ════════════════════════════════════════════════════════════ */
 async function atRead(table, filter) {
+  // Paginiert über offset → liefert ALLE Records (nicht nur erste 100)
   const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-  let url = 'https://api.airtable.com/v0/' + baseId + '/' + encodeURIComponent(table);
-  if (filter) url += '?filterByFormula=' + encodeURIComponent(filter);
-  const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + APP_CONFIG.AIRTABLE_READ_KEY } });
-  const d = await r.json();
-  if (d.error) throw new Error(d.error.message || 'Airtable Lesefehler');
-  return d.records || [];
+  const baseUrl = 'https://api.airtable.com/v0/' + baseId + '/' + encodeURIComponent(table);
+  let records = [];
+  let offset = null;
+  let safety = 0;
+  do {
+    let url = baseUrl + '?pageSize=100';
+    if (filter) url += '&filterByFormula=' + encodeURIComponent(filter);
+    if (offset) url += '&offset=' + encodeURIComponent(offset);
+    const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + APP_CONFIG.AIRTABLE_READ_KEY } });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message || 'Airtable Lesefehler');
+    records = records.concat(d.records || []);
+    offset = d.offset || null;
+    if (++safety > 50) { console.warn('atRead Pagination-Safety bei 50 Pages erreicht für', table); break; }
+  } while (offset);
+  return records;
 }
 
 async function atWrite(table, fields) {
@@ -6709,7 +6720,8 @@ async function saveAuftrag() {
       fields.einsatzpauschale    = anlage.einsatzPauschale || null;
       fields.leistungsumfang     = leistung;
 
-      await atWrite('Auftraege', fields);
+      const writeResult = await atWrite('Auftraege', fields);
+      console.log('[ERP-Create] Airtable Write OK, neue rec-id:', writeResult && writeResult.id);
       if (mailBugWorkaround) {
         toast('✅ Auftrag #'+erpAuftragNum+' erstellt. ⚠ ERP konnte Backoffice-Mail nicht erzeugen (PDF-Generator-Bug) — Auftrag selbst ist OK.', 'warn');
       } else {
