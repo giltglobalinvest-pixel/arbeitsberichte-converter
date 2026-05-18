@@ -1951,6 +1951,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <div style="flex:1"></div>
     <button class="btn" onclick="auftragSelectAll()" title="Alle in der aktuellen Ansicht auswählen">☑ Alle</button>
     <button class="btn" onclick="auftragSelectNone()" title="Auswahl aufheben">☐ Keine</button>
+    <button class="btn" style="color:#3730A3;border-color:#A5B4FC" onclick="bulkHideAuftraege()" title="Ausgewählte Aufträge aus der Liste ausblenden (Datensatz bleibt, ERP unverändert)">🙈 Ausblenden</button>
     <button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.4)" onclick="bulkDeleteAuftraege()">🗑 Löschen</button>
     <button class="btn" onclick="cancelAuftragSelectMode()">Abbrechen</button>
   </div>
@@ -1971,7 +1972,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Alle Aufträge mit Angebots-Typ 'Wartung' / 'Wartung & Notruf' aus der Liste ausblenden">
       <input type="checkbox" id="auf-hide-wartung" onchange="_onHideWartungChange()"> 🔧 Wartung ausblenden
     </label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die per Rechnungs-Check als 'hat bereits Rechnung im ERP' markiert wurden, wieder anzeigen">
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die manuell oder per Rechnungs-Check ausgeblendet wurden, wieder anzeigen">
       <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"> 🙈 Ausgeblendete zeigen
     </label>
   </div>
@@ -2274,7 +2275,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.04';
+const APP_VERSION = 'v3.05';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5056,13 +5057,13 @@ function _normAuftragStatus(s) {
 function renderAuftraegeList() {
   const list = document.getElementById('auf-list');
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
-  // Cache nach hidden_invoiced vorfiltern (außer Toggle ist aktiv)
-  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced);
+  // Cache nach hidden_invoiced ODER hidden_manual vorfiltern (außer Toggle ist aktiv)
+  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
   // Dropdown-Optionen für Angebots-Typ aus dem (gesamten) Cache zusammensuchen
   _refreshAngebotTypFilter();
   const typFilter = (document.getElementById('auf-typ-filter')?.value || '').trim();
-  // Hidden-Counter für Toggle-Label-Hinweis
-  const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced).length;
+  // Hidden-Counter für Toggle-Label-Hinweis (inkl. manuell ausgeblendete)
+  const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced || r.fields.hidden_manual).length;
   const hiddenLbl = document.querySelector('label[for]')?.textContent; // placeholder, see DOM update below
   const hiddenChk = document.getElementById('auf-show-hidden');
   if (hiddenChk && hiddenChk.parentElement) {
@@ -5164,9 +5165,12 @@ function _auftragCardHtml(r) {
   const checkbox = inSelect
     ? `<div class="auf-card-check" style="display:flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:6px;border:2px solid ${isSel?'var(--err,#dc2626)':'var(--bdr,#d1d5db)'};background:${isSel?'var(--err,#dc2626)':'transparent'};color:#fff;font-size:14px;flex:none;margin-right:8px">${isSel?'✓':''}</div>`
     : '';
-  const hiddenStyle = f.hidden_invoiced ? 'opacity:.55;background:repeating-linear-gradient(135deg,rgba(0,0,0,.02) 0,rgba(0,0,0,.02) 6px,transparent 6px,transparent 12px);' : '';
+  const isHidden = f.hidden_invoiced || f.hidden_manual;
+  const hiddenStyle = isHidden ? 'opacity:.55;background:repeating-linear-gradient(135deg,rgba(0,0,0,.02) 0,rgba(0,0,0,.02) 6px,transparent 6px,transparent 12px);' : '';
   const cardStyle = (inSelect && isSel ? 'background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.3);' : '') + hiddenStyle;
-  const hiddenBadge = f.hidden_invoiced ? '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">🙈 Rechnung im ERP'+(f.invoice_num?' · '+String(f.invoice_num).replace(/</g,'&lt;'):'')+'</span>' : '';
+  let hiddenBadge = '';
+  if (f.hidden_invoiced) hiddenBadge += '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">🙈 Rechnung im ERP'+(f.invoice_num?' · '+String(f.invoice_num).replace(/</g,'&lt;'):'')+'</span>';
+  if (f.hidden_manual)   hiddenBadge += '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:#E0E7FF;color:#3730A3;border:1px solid #A5B4FC">🙈 manuell</span>';
   return `
     <div class="auf-card" style="${cardStyle}" onclick="${onClick}">
       ${checkbox}
@@ -5225,7 +5229,7 @@ function _getCurrentlyVisibleAuftraege() {
   // Alles, was im aktiven Tab + Suchfilter sichtbar wäre. Reproduziert die Filter aus renderAuftraegeList.
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
-  const base = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced);
+  const base = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
   let filtered;
   if (_auftragTab === 'all') {
     filtered = base.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
@@ -5296,6 +5300,40 @@ async function bulkDeleteAuftraege() {
   }
   cancelAuftragSelectMode();
   toast('✓ '+ok+' gelöscht'+(fail?' · '+fail+' fehlgeschlagen':''), fail ? 'warn' : 'ok');
+  await loadAuftraegeAndRender();
+}
+
+/* Mehrere Aufträge gleichzeitig manuell ausblenden (hidden_manual = true).
+   Datensatz bleibt in Airtable + ERP — nur die Liste filtert sie raus. */
+async function bulkHideAuftraege() {
+  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  const ids = Array.from(_auftragSelected);
+  if (ids.length === 0) return toast('Keine Aufträge ausgewählt.', 'warn');
+  if (!confirm(ids.length + ' Auftrag/Aufträge aus der Liste ausblenden?\n\n• Datensatz bleibt in Airtable\n• ERP bleibt komplett unverändert\n• Über "🙈 Ausgeblendete zeigen" wieder sichtbar')) return;
+  try { await ensureField('Auftraege', 'hidden_manual', 'checkbox'); } catch(_){}
+  let ok = 0, fail = 0;
+  toast('🙈 Blende '+ids.length+' Aufträge aus…', '');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  // Airtable Batch-PATCH bis zu 10 Records pro Request
+  for (let i = 0; i < ids.length; i += 10) {
+    const batch = ids.slice(i, i+10);
+    const records = batch.map(id => ({ id, fields: { hidden_manual: true } }));
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege', {
+        method: 'PATCH',
+        headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ records })
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message);
+      ok += (d.records||[]).length;
+    } catch(e) {
+      console.warn('[Bulk-Hide] Batch fehlgeschlagen:', e.message);
+      fail += batch.length;
+    }
+  }
+  cancelAuftragSelectMode();
+  toast('🙈 '+ok+' ausgeblendet'+(fail?' · '+fail+' fehlgeschlagen':''), fail ? 'warn' : 'ok');
   await loadAuftraegeAndRender();
 }
 
@@ -5380,6 +5418,16 @@ function openAuftragDetail(recId) {
           ${f.invoice_date ? '<span>· '+String(f.invoice_date).replace(/</g,'&lt;')+'</span>' : ''}
           ${hasPermission('auftraege_edit') ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="unhideAuftragInvoice(\''+rec.id+'\')">↺ Wieder einblenden</button>' : ''}
         </div>` : ''}
+      ${f.hidden_manual ? `
+        <div style="margin-top:10px;padding:10px 12px;background:#E0E7FF;border:1px solid #A5B4FC;border-radius:6px;font-size:12px;color:#3730A3;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
+          <span style="font-weight:600">🙈 Manuell ausgeblendet</span>
+          ${hasPermission('auftraege_edit') ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="toggleHideAuftragManual(\''+rec.id+'\',false)">↺ Wieder einblenden</button>' : ''}
+        </div>
+      ` : (hasPermission('auftraege_edit') ? `
+        <label style="margin-top:10px;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt2);cursor:pointer" title="Aus der App-Liste ausblenden (im ERP bleibt der Auftrag erhalten)">
+          <input type="checkbox" onchange="toggleHideAuftragManual('${rec.id}', this.checked)" style="width:16px;height:16px;cursor:pointer">
+          <span>🙈 Diesen Auftrag aus der Liste ausblenden</span>
+        </label>` : '')}
       ${hasPermission('auftraege_edit') && f.ext_id && APP_KEYS.valtownProxyUrl ? _renderAuftragStatusPicker(rec) : ''}
     </div>
     <div class="auf-section">
@@ -7319,6 +7367,18 @@ async function checkAuftragInvoice(recId) {
     console.error('checkAuftragInvoice:', e);
     toast('❌ '+e.message, 'err');
   }
+}
+
+/* Setzt/Entfernt die manuelle Ausblende-Markierung eines Auftrags. */
+async function toggleHideAuftragManual(recId, hide) {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  try { await ensureField('Auftraege', 'hidden_manual', 'checkbox'); } catch(_){}
+  try {
+    await _patchAuftragFields(recId, { hidden_manual: !!hide });
+    toast(hide ? '🙈 Auftrag ausgeblendet.' : '↺ Auftrag wieder sichtbar.', 'ok');
+    if (hide) closeAuftragDetail();
+    await loadAuftraegeAndRender();
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /* Hebt die "hidden_invoiced"-Markierung wieder auf, sodass der Auftrag wieder in den Listen erscheint. */
@@ -10866,6 +10926,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
           'bericht_id','bericht_num','completed_at', // Bericht-Verknüpfung
           'created','created_by',                 // Erstellungs-Metadaten nicht überschreiben
           'hidden_invoiced','invoice_num','invoice_date','invoice_id', // Rechnungs-Check-Markierung
+          'hidden_manual',                         // Manuell ausgeblendet
         ];
         const patchFields = { ...fields };
         for (const k of USER_MANAGED) {
