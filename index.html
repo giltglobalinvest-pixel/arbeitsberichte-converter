@@ -2277,7 +2277,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.06';
+const APP_VERSION = 'v3.07';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5285,6 +5285,7 @@ async function bulkDeleteAuftraege() {
   const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
   toast('🗑 Lösche '+ids.length+' Aufträge…', 'info');
   // Airtable erlaubt Batch-Delete bis zu 10 records per request via records[]=...
+  const deletedIds = new Set();
   for (let i = 0; i < ids.length; i += 10) {
     const batch = ids.slice(i, i+10);
     const qs = batch.map(id => 'records[]='+encodeURIComponent(id)).join('&');
@@ -5296,14 +5297,17 @@ async function bulkDeleteAuftraege() {
       const d = await r.json();
       if (d.error) throw new Error(d.error.message);
       ok += (d.records||[]).length;
+      // Aus lokalem Cache entfernen
+      for (const rec of (d.records||[])) deletedIds.add(rec.id);
     } catch(e) {
       console.warn('[Bulk-Delete] Batch fehlgeschlagen:', e.message);
       fail += batch.length;
     }
   }
+  if (deletedIds.size) _auftragCache = _auftragCache.filter(r => !deletedIds.has(r.id));
   cancelAuftragSelectMode();
   toast('✓ '+ok+' gelöscht'+(fail?' · '+fail+' fehlgeschlagen':''), fail ? 'warn' : 'ok');
-  await loadAuftraegeAndRender();
+  renderAuftraegeList();  // KEIN Reload
 }
 
 /* Mehrere Aufträge gleichzeitig manuell ausblenden (hidden_manual = true).
@@ -5330,6 +5334,8 @@ async function bulkHideAuftraege() {
       const d = await r.json();
       if (d.error) throw new Error(d.error.message);
       ok += (d.records||[]).length;
+      // Lokal patchen (kein Reload)
+      for (const id of batch) _updateAuftragCacheLocal(id, { hidden_manual: true });
     } catch(e) {
       console.warn('[Bulk-Hide] Batch fehlgeschlagen:', e.message);
       fail += batch.length;
@@ -5337,7 +5343,7 @@ async function bulkHideAuftraege() {
   }
   cancelAuftragSelectMode();
   toast('🙈 '+ok+' ausgeblendet'+(fail?' · '+fail+' fehlgeschlagen':''), fail ? 'warn' : 'ok');
-  await loadAuftraegeAndRender();
+  renderAuftraegeList();  // KEIN Reload
 }
 
 /* Inline Vorlage-Picker (im Detail-Modal). Read-only Label wenn keine Edit-Permission. */
@@ -7169,9 +7175,10 @@ async function deleteAuftrag(recId, num) {
   if (!confirm('Auftrag #'+num+' wirklich löschen?')) return;
   try {
     await atDelete('Auftraege', recId);
+    _auftragCache = _auftragCache.filter(r => r.id !== recId);
     toast('Auftrag #'+num+' gelöscht.', 'warn');
     closeAuftragDetail();
-    await loadAuftraegeAndRender();
+    renderAuftraegeList();
   } catch(e) { toast('❌ '+e.message, 'err'); }
 }
 
@@ -7372,15 +7379,27 @@ async function checkAuftragInvoice(recId) {
   }
 }
 
+/* Patcht ein Feld nur im lokalen Cache (für sofortige UI-Updates ohne Reload).
+   Erwartet das tatsächlich geschriebene Feld-Objekt. */
+function _updateAuftragCacheLocal(recId, fieldsPatch) {
+  const idx = _auftragCache.findIndex(r => r.id === recId);
+  if (idx < 0) return;
+  _auftragCache[idx] = {
+    ..._auftragCache[idx],
+    fields: { ..._auftragCache[idx].fields, ...fieldsPatch },
+  };
+}
+
 /* Setzt/Entfernt die manuelle Ausblende-Markierung eines Auftrags. */
 async function toggleHideAuftragManual(recId, hide) {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
   try { await ensureField('Auftraege', 'hidden_manual', 'checkbox'); } catch(_){}
   try {
     await _patchAuftragFields(recId, { hidden_manual: !!hide });
+    _updateAuftragCacheLocal(recId, { hidden_manual: !!hide });
     toast(hide ? '🙈 Auftrag ausgeblendet.' : '↺ Auftrag wieder sichtbar.', 'ok');
     if (hide) closeAuftragDetail();
-    await loadAuftraegeAndRender();
+    renderAuftraegeList();  // KEIN loadAuftraegeAndRender — Cache wurde lokal aktualisiert
   } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
@@ -7389,9 +7408,10 @@ async function unhideAuftragInvoice(recId) {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
   try {
     await _patchAuftragFields(recId, { hidden_invoiced: false });
+    _updateAuftragCacheLocal(recId, { hidden_invoiced: false });
     toast('↺ Markierung entfernt — Auftrag ist wieder sichtbar.', 'ok');
     closeAuftragDetail();
-    await loadAuftraegeAndRender();
+    renderAuftraegeList();
   } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
