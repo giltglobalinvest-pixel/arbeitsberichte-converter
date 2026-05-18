@@ -2294,7 +2294,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.11';
+const APP_VERSION = 'v3.12';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5233,7 +5233,11 @@ function _auftragCardHtml(r) {
           ${f.angebot_typ ? '<span>'+_fmtAngebotTyp(f.angebot_typ)+'</span>' : ''}
           ${f.fabriknummer ? '<span>🔧 '+f.fabriknummer.replace(/</g,'&lt;')+'</span>' : ''}
           ${f.due_date ? '<span>📅 '+f.due_date+'</span>' : ''}
-          ${techNames ? '<span>👥 '+techNames.replace(/</g,'&lt;')+'</span>' : '<span style="color:var(--txt3)">👥 nicht zugewiesen</span>'}
+          ${techNames
+            ? '<span class="auf-tech-clickable" onclick="event.stopPropagation();openTechnikerQuickPicker(\''+r.id+'\',event)" style="cursor:pointer;text-decoration:underline;text-decoration-color:rgba(0,0,0,.15);text-underline-offset:3px" title="Tippe zum Ändern der Zuweisung">👥 '+techNames.replace(/</g,'&lt;')+' ✏</span>'
+            : (hasPermission('auftraege_edit')
+                ? '<span class="auf-tech-clickable" onclick="event.stopPropagation();openTechnikerQuickPicker(\''+r.id+'\',event)" style="color:#4338CA;cursor:pointer;font-weight:600;background:#EEF2FF;padding:2px 8px;border-radius:6px;border:1px dashed #A5B4FC" title="Techniker zuweisen">+ 👥 Zuweisen</span>'
+                : '<span style="color:var(--txt3)">👥 nicht zugewiesen</span>')}
         </div>
       </div>
       ${priceHtml}
@@ -5524,7 +5528,7 @@ function openAuftragDetail(recId) {
     </div>` : ''}
     <div class="auf-section">
       <h3>Zugewiesene Techniker</h3>
-      <div style="font-size:13px">${techNames ? techNames.split(',').map(n => '<span class="auf-tech-chip">'+n.trim().replace(/</g,'&lt;')+'</span>').join('') : '<span style="color:var(--txt3)">Niemand zugewiesen</span>'}</div>
+      <div id="auf-detail-techniker">${_renderInlineTechnikerPicker(rec)}</div>
     </div>
     ${f.bericht_num ? '<div class="auf-section"><h3>Verknüpfter Bericht</h3><div style="font-size:13px">📄 Nr. '+f.bericht_num+(f.completed_at?' (am '+f.completed_at.slice(0,10)+')':'')+'</div></div>' : ''}
     ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
@@ -7427,6 +7431,95 @@ async function checkAuftragInvoice(recId) {
     console.error('checkAuftragInvoice:', e);
     toast('❌ '+e.message, 'err');
   }
+}
+
+/* Quick-Picker: Popover für Schnell-Zuweisung direkt aus der Liste, ohne Detail zu öffnen. */
+function openTechnikerQuickPicker(recId, ev) {
+  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId);
+  if (!rec) return;
+  // Vorhandenen Picker entfernen
+  const old = document.getElementById('tech-quick-picker'); if (old) old.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'tech-quick-picker';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML = '<div style="background:var(--surf,#fff);max-width:420px;width:100%;max-height:80vh;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 8px 40px rgba(0,0,0,.4)">'+
+    '<div style="padding:14px 18px;background:var(--navy,#234A75);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+      '<span>👥 Techniker zuweisen · #'+(rec.fields.auftrag_num||'?')+'</span>'+
+      '<button onclick="document.getElementById(\'tech-quick-picker\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:12px 16px;flex:1;overflow-y:auto" id="tech-quick-picker-body">'+_renderInlineTechnikerPicker(rec)+'</div>'+
+    '<div style="padding:10px 18px;background:var(--bg,#f8fafc);border-top:1px solid var(--bdr);text-align:right">'+
+      '<button class="btn prim" onclick="document.getElementById(\'tech-quick-picker\').remove()">Fertig</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(modal);
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+}
+
+/* Rendert eine Inline-Techniker-Liste mit Checkboxen direkt im Detail-Modal —
+   beim Toggle wird ohne Bearbeiten-Klick gespeichert. */
+function _renderInlineTechnikerPicker(rec) {
+  const f = rec.fields || {};
+  let assigned = [];
+  try { assigned = JSON.parse(f.techniker_keys || '[]'); } catch(_){}
+  const canEdit = hasPermission('auftraege_edit');
+  const aktive = (_usersCache || []).filter(u =>
+    (u.fields.status === 'aktiv' || !u.fields.status) &&
+    (u.fields.techniker === true || u.fields.subunternehmer === true)
+  );
+  if (aktive.length === 0) {
+    return '<div style="color:var(--txt3);padding:8px;font-size:12px">Keine Techniker/Subunternehmer markiert. In der User-Verwaltung "Techniker" oder "Subunternehmer" anhaken.</div>';
+  }
+  if (!canEdit) {
+    // Nur Anzeige (read-only)
+    return assigned.length === 0
+      ? '<span style="color:var(--txt3)">Niemand zugewiesen</span>'
+      : assigned.map(k => {
+          const u = (_usersCache||[]).find(x => x.fields.api_key === k);
+          const nm = u ? (u.fields.name || k) : k;
+          return '<span class="auf-tech-chip">'+nm.replace(/</g,'&lt;')+'</span>';
+        }).join('');
+  }
+  // Interaktive Liste mit Checkboxen
+  return '<div style="display:flex;flex-direction:column;gap:6px;padding:8px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px">'+
+    aktive.map(u => {
+      const k = u.fields.api_key;
+      const checked = assigned.includes(k);
+      const role = u.fields.role === 'admin' ? ' (Admin)' : '';
+      const tag = u.fields.subunternehmer ? ' <span style="font-size:10px;background:#FEF3C7;color:#92400E;padding:1px 6px;border-radius:99px;margin-left:4px">Subunternehmer</span>' : '';
+      return '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;padding:4px 6px;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+        '<input type="checkbox" '+(checked?'checked':'')+' onchange="toggleTechnikerAssignment(\''+rec.id+'\',\''+k+'\',this.checked)" style="width:16px;height:16px;cursor:pointer">'+
+        '<span>'+(u.fields.name||k).replace(/</g,'&lt;')+role+tag+'</span>'+
+        '</label>';
+    }).join('')+
+  '</div>';
+}
+
+/* Toggle eines Technikers für einen Auftrag — sofort speichern. */
+async function toggleTechnikerAssignment(recId, techKey, checked) {
+  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId);
+  if (!rec) return;
+  let keys = [];
+  try { keys = JSON.parse(rec.fields.techniker_keys || '[]'); } catch(_){}
+  const had = keys.includes(techKey);
+  if (checked && !had) keys.push(techKey);
+  else if (!checked && had) keys = keys.filter(k => k !== techKey);
+  const names = _techNamesByKeys(keys);
+  try {
+    await _patchAuftragFields(recId, { techniker_keys: JSON.stringify(keys), techniker_namen: names });
+    _updateAuftragCacheLocal(recId, { techniker_keys: JSON.stringify(keys), techniker_namen: names });
+    const updated = _auftragCache.find(r => r.id === recId);
+    // Detail-Sektion neu rendern (falls offen)
+    const dtech = document.getElementById('auf-detail-techniker');
+    if (dtech && updated) dtech.innerHTML = _renderInlineTechnikerPicker(updated);
+    // Quick-Picker neu rendern (falls offen)
+    const qbody = document.getElementById('tech-quick-picker-body');
+    if (qbody && updated) qbody.innerHTML = _renderInlineTechnikerPicker(updated);
+    renderAuftraegeList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /* Patcht ein Feld nur im lokalen Cache (für sofortige UI-Updates ohne Reload).
@@ -9737,7 +9830,8 @@ async function runSyncForFirma(firma, userKey) {
         standort: anlage.anzeigeAdresse || anlage.name || "",
         fabriknummer: anlage.fabriknummer || "",
         kontakt: kontaktText,
-        leistungsbeschreibung: a.leistungsbeschreibung || a.notizen || "",
+        // Leistungsbeschreibung bevorzugt aus Angebot (leistungsumfang), sonst aus Auftrag/Notizen
+        leistungsbeschreibung: leistungsumfang || a.leistungsbeschreibung || a.notizen || "",
         status: normStatus(a.status),
         priority: "normal",
         due_date: (a.ausfuehrungstermin || "").slice(0, 10) || "",
@@ -11013,7 +11107,8 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         standort:              anlage.anzeigeAdresse || anlage.name || '',
         fabriknummer:          anlage.fabriknummer || '',
         kontakt:               kontaktText,
-        leistungsbeschreibung: a.leistungsbeschreibung || a.notizen || '',
+        // Leistungsbeschreibung bevorzugt aus Angebot (leistungsumfang), sonst aus Auftrag/Notizen
+        leistungsbeschreibung: leistungsumfang || a.leistungsbeschreibung || a.notizen || '',
         status:                _normAuftragStatus(a.status),
         priority:              'normal',
         due_date:              (a.ausfuehrungstermin||'').slice(0,10) || '',
