@@ -1971,6 +1971,12 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <select id="auf-typ-filter" onchange="renderAuftraegeList()" title="Nach Angebots-Typ filtern (aus dem ERP-Angebot)" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
       <option value="">Alle Typen</option>
     </select>
+    <select id="auf-sort" onchange="_onAuftragSortChange()" title="Sortierung der Liste" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
+      <option value="num_desc">Nr. neu → alt</option>
+      <option value="num_asc">Nr. alt → neu</option>
+      <option value="wert_desc" data-needs-prices="1">💰 Wert hoch → niedrig</option>
+      <option value="wert_asc"  data-needs-prices="1">💰 Wert niedrig → hoch</option>
+    </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Alle Aufträge mit Angebots-Typ 'Wartung' / 'Wartung & Notruf' aus der Liste ausblenden">
       <input type="checkbox" id="auf-hide-wartung" onchange="_onHideWartungChange()"> 🔧 Wartung ausblenden
     </label>
@@ -2277,7 +2283,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.08';
+const APP_VERSION = 'v3.09';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5005,6 +5011,19 @@ async function loadAuftraegeAndRender() {
     try { hwCb.checked = localStorage.getItem('auf_hide_wartung_'+APP_CONFIG.PROJECT_ID) === '1'; } catch(_){}
     hwCb._initialized = true;
   }
+  const sortSel = document.getElementById('auf-sort');
+  if (sortSel && !sortSel._initialized) {
+    try {
+      const saved = localStorage.getItem('auf_sort_'+APP_CONFIG.PROJECT_ID);
+      if (saved && [...sortSel.options].some(o => o.value === saved)) sortSel.value = saved;
+    } catch(_){}
+    // Wert-Optionen ausgrauen wenn keine Preis-Berechtigung
+    if (!canSeePrices()) {
+      [...sortSel.options].forEach(o => { if (o.dataset.needsPrices === '1') o.disabled = true; });
+      if (sortSel.value === 'wert_asc' || sortSel.value === 'wert_desc') sortSel.value = 'num_desc';
+    }
+    sortSel._initialized = true;
+  }
   const list = document.getElementById('auf-list');
   list.innerHTML = '<div class="auf-empty"><div class="spinner" style="margin:0 auto 12px"></div>Lade Aufträge…</div>';
   try {
@@ -5114,6 +5133,18 @@ function renderAuftraegeList() {
   if (hideWartung) {
     filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
   }
+  // Sortierung explizit anwenden (filtered erbt vom Cache, daher konsistent neu sortieren)
+  const sortMode = document.getElementById('auf-sort')?.value || 'num_desc';
+  if (sortMode === 'num_asc')        filtered.sort((a,b) => (a.fields.auftrag_num||0) - (b.fields.auftrag_num||0));
+  else if (sortMode === 'wert_desc') filtered.sort((a,b) => (b.fields.auftragswert_netto||0) - (a.fields.auftragswert_netto||0));
+  else if (sortMode === 'wert_asc')  filtered.sort((a,b) => {
+    const av = a.fields.auftragswert_netto, bv = b.fields.auftragswert_netto;
+    if (av == null && bv == null) return 0;
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    return av - bv;
+  });
+  else                               filtered.sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));  // num_desc
 
   if (search) {
     filtered = filtered.filter(r => {
@@ -5179,6 +5210,7 @@ function _auftragCardHtml(r) {
           ${firmaBadge}
           <span>🏷 ${tmplLabel}</span>
           ${f.angebot_typ ? '<span>'+_fmtAngebotTyp(f.angebot_typ)+'</span>' : ''}
+          ${(canSeePrices() && f.auftragswert_netto != null) ? '<span style="font-weight:600;color:#065f46">💰 '+_fmtEUR(f.auftragswert_netto)+' netto</span>' : ''}
           ${f.fabriknummer ? '<span>🔧 '+f.fabriknummer.replace(/</g,'&lt;')+'</span>' : ''}
           ${f.due_date ? '<span>📅 '+f.due_date+'</span>' : ''}
           ${techNames ? '<span>👥 '+techNames.replace(/</g,'&lt;')+'</span>' : '<span style="color:var(--txt3)">👥 nicht zugewiesen</span>'}
@@ -5442,6 +5474,7 @@ function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">Fabriknummer</span><span class="val">${(f.fabriknummer||'–').replace(/</g,'&lt;')}</span></div>
       ${f.angebot_typ ? `<div class="auf-row"><span class="lbl">Angebots-Typ</span><span class="val">${_fmtAngebotTyp(f.angebot_typ)}</span></div>` : ''}
       ${f.bestellform ? `<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">${String(f.bestellform).replace(/</g,'&lt;')}</span></div>` : ''}
+      ${(canSeePrices() && f.auftragswert_netto != null) ? `<div class="auf-row"><span class="lbl">💰 Auftragswert (netto)</span><span class="val" style="font-weight:700;color:#065f46">${_fmtEUR(f.auftragswert_netto)}</span></div>` : ''}
       <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${_renderTmplPicker(rec)}</span></div>
     </div>
     <div class="auf-section">
@@ -7422,6 +7455,13 @@ function _onHideWartungChange() {
   renderAuftraegeList();
 }
 
+/* Sortierung wechseln + persistieren */
+function _onAuftragSortChange() {
+  const sel = document.getElementById('auf-sort');
+  try { localStorage.setItem('auf_sort_'+APP_CONFIG.PROJECT_ID, sel?.value || 'num_desc'); } catch(_){}
+  renderAuftraegeList();
+}
+
 /* Befüllt das Angebots-Typ-Filter-Dropdown mit allen Typen, die im aktuellen Cache vorkommen. */
 function _refreshAngebotTypFilter() {
   const sel = document.getElementById('auf-typ-filter');
@@ -7442,6 +7482,25 @@ function _refreshAngebotTypFilter() {
   sel.innerHTML = opts.join('');
   // Auswahl wiederherstellen falls noch gültig
   if (current && (current === '__none__' || counts.has(current))) sel.value = current;
+}
+
+/* Extrahiert den Netto-Auftragswert aus einem Angebot. Je nach Angebots-Typ:
+   - Pauschal:        netPrice
+   - Modernisierung:  gesamtpreis
+   - Wartung+Notruf:  annualPrice (Jahrespreis)
+   - Aufwand:         null (Stundensatz, kein Festpreis)
+*/
+function _extractAuftragswertNetto(ang) {
+  if (!ang) return null;
+  const v = ang.netPrice ?? ang.gesamtpreis ?? ang.annualPrice ?? null;
+  if (v == null || isNaN(+v)) return null;
+  return +v;
+}
+
+/* Formatiert einen Euro-Betrag (de-DE, 2 Dezimalstellen). */
+function _fmtEUR(n) {
+  if (n == null || isNaN(+n)) return '';
+  return Number(n).toLocaleString('de-DE', { style:'currency', currency:'EUR', minimumFractionDigits:2, maximumFractionDigits:2 });
 }
 
 /* Macht aus ERP-Werten wie "WARTUNG_NOTRUF" → "Wartung & Notruf" lesbar */
@@ -9664,7 +9723,8 @@ async function runSyncForFirma(firma, userKey) {
         erlaeuterungen: (ang && ang.offerExplanation) || "",
         angebot_typ: (ang && ang.typ) || "",
         angebot_id: a.angebotid || null,
-        bestellform: a.bestellform || ""
+        bestellform: a.bestellform || "",
+        auftragswert_netto: ang ? ((ang.netPrice != null ? +ang.netPrice : null) ?? (ang.gesamtpreis != null ? +ang.gesamtpreis : null) ?? (ang.annualPrice != null ? +ang.annualPrice : null)) : null
       };
 
       const ex = byExt.get(String(a.id));
@@ -10929,6 +10989,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         angebot_typ:           angebot?.typ || '',
         angebot_id:            a.angebotid || null,
         bestellform:           a.bestellform || '',
+        auftragswert_netto:    _extractAuftragswertNetto(angebot),
       };
 
       const existRec = byExt.get(String(a.id));
@@ -11035,6 +11096,7 @@ async function runErpSync() {
     await ensureField('Auftraege', 'bestellform',           'singleLineText');
     await ensureField('Auftraege', 'stundensatz',           'number');
     await ensureField('Auftraege', 'einsatzpauschale',      'number');
+    await ensureField('Auftraege', 'auftragswert_netto',    'number');
     await ensureField('Auftraege', 'objekttyp',             'singleLineText');
     await ensureField('Auftraege', 'kunde_firmenname',      'singleLineText');
     _erpLog('✓ Schema OK', 'ok');
