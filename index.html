@@ -2271,7 +2271,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.00';
+const APP_VERSION = 'v3.01';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5338,10 +5338,12 @@ function openAuftragDetail(recId) {
   }
 
   const body = document.getElementById('auf-detail-body');
-  // Bestellform-Label: "MITANGEBOT" → "pauschal", sonst Original
-  const bestellformLabel = f.bestellform
-    ? (/^MITANGEBOT$/i.test(f.bestellform) ? 'pauschal' : f.bestellform.toLowerCase())
-    : '';
+  // Badge in Status-Zeile: bevorzugt der konkrete Angebots-Typ (z.B. "Wartung & Notruf"),
+  // sonst die rohe Bestellform (MITANGEBOT / OHNEANGEBOT). Frühere Hardcode-Mapping
+  // "MITANGEBOT → pauschal" war falsch, weil MITANGEBOT auch Wartungsverträge sein können.
+  const bestellformLabel = f.angebot_typ
+    ? _fmtAngebotTyp(f.angebot_typ)
+    : (f.bestellform ? String(f.bestellform).replace(/</g,'&lt;') : '');
   body.innerHTML = `
     <div class="auf-section">
       <h3>Status</h3>
