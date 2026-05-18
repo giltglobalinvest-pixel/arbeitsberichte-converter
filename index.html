@@ -2274,7 +2274,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.03';
+const APP_VERSION = 'v3.04';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5075,9 +5075,14 @@ function renderAuftraegeList() {
       }
     }
   }
-  // Counts (mit Status-Normalisierung; 'in_bearbeitung' fällt unter 'offen')
+  // Counts (mit Status-Normalisierung; 'in_bearbeitung' fällt unter 'offen').
+  // Counter respektieren den hide_wartung-Filter, damit Tab-Zahlen mit der sichtbaren Liste konsistent sind.
+  const hideWartungForCounts = !!document.getElementById('auf-hide-wartung')?.checked;
+  const countCache = hideWartungForCounts
+    ? visibleCache.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')))
+    : visibleCache;
   const counts = { offen:0, abgeschlossen:0, abgerechnet:0, all: 0 };
-  visibleCache.forEach(r => {
+  countCache.forEach(r => {
     const s = _normAuftragStatus(r.fields.status);
     if (counts[s] !== undefined) counts[s]++;
     // 'Alle' zählt explizit OHNE abgerechnete (die haben einen eigenen Tab)
@@ -7495,11 +7500,15 @@ async function bulkCheckInvoices() {
   }
 
   // Kandidaten: ext_id + nur offene Aufträge (kein abgerechnet/abgeschlossen) + noch nicht ausgeblendet
+  // Respektiert auch UI-Filter "Wartung ausblenden" — wenn aktiv, sind die schon weggefiltert
+  const uiHideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
   const allCandidates = _auftragCache.filter(r => {
     const f = r.fields;
     if (!f.ext_id || f.hidden_invoiced) return false;
     const s = _normAuftragStatus(f.status);
-    return s !== 'abgerechnet' && s !== 'abgeschlossen';
+    if (s === 'abgerechnet' || s === 'abgeschlossen') return false;
+    if (uiHideWartung && /wartung/i.test(String(f.angebot_typ||''))) return false;
+    return true;
   });
   const skipped       = allCandidates.filter(r => _isWartungsvertragAuftrag(r, wartungsAngebotIds));
   const candidates    = allCandidates.filter(r => !_isWartungsvertragAuftrag(r, wartungsAngebotIds));
@@ -7511,14 +7520,11 @@ async function bulkCheckInvoices() {
       : 'Keine Aufträge mit ERP-ID zu prüfen.', '');
   }
 
-  // Transparente Aufschlüsselung: offen total / Wartung / Rest
-  const totalOpen = _auftragCache.filter(r => {
-    const s = _normAuftragStatus(r.fields.status);
-    return r.fields.ext_id && !r.fields.hidden_invoiced && s !== 'abgerechnet' && s !== 'abgeschlossen';
-  }).length;
+  // Transparente Aufschlüsselung passend zur aktuellen Liste-Ansicht
+  const totalBase = allCandidates.length;  // = offen, respektiert UI-Filter "Wartung ausblenden"
   let confirmMsg = 'Bulk-Check für '+candidates.length+' Aufträge starten?\n\n';
   confirmMsg += 'Rechnung:\n';
-  confirmMsg += '  • '+totalOpen+' offene Aufträge gesamt\n';
+  confirmMsg += '  • '+totalBase+' offene Aufträge'+(uiHideWartung?' (ohne Wartung, da ausgeblendet)':'')+'\n';
   if (skipped.length) confirmMsg += '  − '+skipped.length+' Wartungsverträge (MITANGEBOT auf Wartungs-/Notruf-Angebot) ausgenommen 🛡\n';
   confirmMsg += '  = '+candidates.length+' zu prüfen\n\n';
   confirmMsg += 'Für jeden Auftrag wird im ERP geprüft, ob eine Rechnung existiert.\n';
