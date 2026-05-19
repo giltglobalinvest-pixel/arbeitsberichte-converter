@@ -2249,7 +2249,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.26';
+const APP_VERSION = 'v3.27';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9486,8 +9486,24 @@ function _openCreateAnlageForm(recId) {
   const f = detailModal._record.fields || {};
   const firmaSlug = f.firma || getCurrentFirmaSlug();
 
+  // Default-Werte aus der Preisliste ziehen (KUNDEN-Konditionen, da im ERP die abrechnungsrelevanten Werte stehen)
+  let plData = null;
+  try { plData = JSON.parse(f.data_json || 'null'); } catch(_){}
+  const defaultStundensatz   = (plData && plData.stundensatz)   ? +plData.stundensatz   : 70;
+  // Einsatzpauschale: erste sonstige-Position mit "Pauschale" oder "Anfahrt" im Label
+  let defaultEinsatzPausch = 50;
+  if (plData && Array.isArray(plData.sonstiges)) {
+    const ep = plData.sonstiges.find(s => /pauschal|anfahrt|einsatz/i.test(s.label||''));
+    if (ep && ep.preis != null) defaultEinsatzPausch = +ep.preis;
+  }
+
   // Default-Adresse aus Empfänger-Anschrift
   const empfAdr = (f.empfaenger_adresse || '').trim();
+
+  // Bekannte Objekttypen + Betreibertypen aus dem Anlagen-Cache extrahieren (Datalist für Autocomplete)
+  const allAnlagen = (picker && picker._allAnlagen) || _anlagenCache.items || [];
+  const objektTypen = [...new Set(allAnlagen.map(a => String(a.objektTyp||'').trim()).filter(Boolean))].sort();
+  const betreiberTypen = [...new Set(allAnlagen.map(a => String(a.betreiberTyp||'').trim()).filter(Boolean))].sort();
 
   const old = document.getElementById('pl-create-anlage'); if (old) old.remove();
   const modal = document.createElement('div');
@@ -9501,7 +9517,7 @@ function _openCreateAnlageForm(recId) {
       '</div>'+
       '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
         '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px;font-size:11px;color:#78350F;margin-bottom:14px">'+
-          '⚠ Die Anlage wird sofort im ERP angelegt (POST /api/anlagen) und dem Kunden <strong>'+escapeHtml(f.kunde_name||'?')+'</strong> ('+escapeHtml(f.kunde_nummer||'?')+') zugeordnet.'+
+          '⚠ Die Anlage wird sofort im ERP angelegt (POST /api/anlagen) und dem Kunden <strong>'+escapeHtml(f.kunde_name||'?')+'</strong> ('+escapeHtml(f.kunde_nummer||'?')+') zugeordnet. Stundensatz und Einsatzpauschale sind mit den Werten der Preisliste vorbefüllt.'+
         '</div>'+
         '<div style="display:grid;gap:10px">'+
           '<div><strong>Standort / Anzeige-Adresse *</strong><br>'+
@@ -9510,30 +9526,24 @@ function _openCreateAnlageForm(recId) {
             '<input id="pl-new-fabriknr" type="text" placeholder="z.B. 12345" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
             '<div><strong>Objekt-Typ *</strong><br>'+
-              '<select id="pl-new-objekttyp" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
-                '<option value="Wohnen">Wohnen</option>'+
-                '<option value="Gewerbe">Gewerbe</option>'+
-                '<option value="Industrie">Industrie</option>'+
-                '<option value="Hotel">Hotel</option>'+
-                '<option value="Sonstiges">Sonstiges</option>'+
-              '</select></div>'+
+              '<input id="pl-new-objekttyp" type="text" list="pl-new-objekttyp-list" placeholder="aus ERP wählen oder eintippen" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+              '<datalist id="pl-new-objekttyp-list">'+objektTypen.map(t => '<option value="'+escapeHtml(t)+'">').join('')+'</datalist>'+
+              '<div style="font-size:10px;color:var(--txt3);margin-top:2px">'+(objektTypen.length?objektTypen.length+' Optionen aus ERP':'Keine Vorschläge — frei eintippen')+'</div>'+
+            '</div>'+
             '<div><strong>Betreiber-Typ *</strong><br>'+
-              '<select id="pl-new-betreibertyp" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
-                '<option value="Hausverwaltung">Hausverwaltung</option>'+
-                '<option value="Eigentümer">Eigentümer</option>'+
-                '<option value="Mieter">Mieter</option>'+
-                '<option value="Gewerbebetrieb">Gewerbebetrieb</option>'+
-                '<option value="Sonstiges">Sonstiges</option>'+
-              '</select></div>'+
+              '<input id="pl-new-betreibertyp" type="text" list="pl-new-betreibertyp-list" placeholder="aus ERP wählen oder eintippen" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+              '<datalist id="pl-new-betreibertyp-list">'+betreiberTypen.map(t => '<option value="'+escapeHtml(t)+'">').join('')+'</datalist>'+
+              '<div style="font-size:10px;color:var(--txt3);margin-top:2px">'+(betreiberTypen.length?betreiberTypen.length+' Optionen aus ERP':'Keine Vorschläge — frei eintippen')+'</div>'+
+            '</div>'+
           '</div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-            '<div><strong>Stundensatz €</strong><br>'+
-              '<input id="pl-new-stundensatz" type="number" step="0.01" value="70" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
-            '<div><strong>Einsatzpauschale €</strong><br>'+
-              '<input id="pl-new-einsatzpauschale" type="number" step="0.01" value="50" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Stundensatz €</strong> <span style="font-size:10px;color:var(--txt3)">(aus Preisliste)</span><br>'+
+              '<input id="pl-new-stundensatz" type="number" step="0.01" value="'+defaultStundensatz+'" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Einsatzpauschale €</strong> <span style="font-size:10px;color:var(--txt3)">(aus Preisliste)</span><br>'+
+              '<input id="pl-new-einsatzpauschale" type="number" step="0.01" value="'+defaultEinsatzPausch+'" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '</div>'+
-          '<div><strong>Sonstiger Hinweis</strong><br>'+
-            '<input id="pl-new-hinweis" type="text" value="Wartungsanlage (manuell '+new Date().toISOString().slice(0,10)+')" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '<div><strong>Sonstiger Hinweis</strong> <span style="font-size:10px;color:var(--txt3)">(optional)</span><br>'+
+            '<input id="pl-new-hinweis" type="text" value="" placeholder="" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
         '</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
