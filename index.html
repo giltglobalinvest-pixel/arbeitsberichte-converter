@@ -2249,7 +2249,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.23';
+const APP_VERSION = 'v3.24';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9372,17 +9372,29 @@ function _renderKundenPickerList() {
     return;
   }
   out.innerHTML = filtered.map(k =>
-    '<div onclick="_selectKundeFromPicker('+k.id+')" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+    '<div data-kp-kid="'+escapeHtml(String(k.id))+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
       '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
       '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
       (k.kundennummer ? '<div style="font-size:11px;color:var(--txt3)">Kd-Nr.: '+escapeHtml(k.kundennummer)+'</div>' : '')+
     '</div>'
   ).join('');
+  // Event-Delegation: Klick auf einen Listen-Eintrag → Auswahl
+  out.onclick = (ev) => {
+    const item = ev.target.closest('[data-kp-kid]');
+    if (!item) return;
+    const id = item.dataset.kpKid;
+    console.log('[KundenPicker] Klick auf id:', id);
+    _selectKundeFromPicker(id).catch(e => {
+      console.error('[KundenPicker] Fehler beim Auswählen:', e);
+      toast('❌ '+e.message,'err');
+    });
+  };
 }
 
 async function _selectKundeFromPicker(kundeId) {
-  const k = (_kundenCache.items||[]).find(x => +x.id === +kundeId);
-  if (!k) return;
+  // ID kann String oder Number kommen — beide Vergleiche probieren
+  const k = (_kundenCache.items||[]).find(x => String(x.id) === String(kundeId));
+  if (!k) { console.warn('[KundenPicker] ID nicht im Cache gefunden:', kundeId); return; }
   const firmaSlug = getCurrentFirmaSlug();
   const modal = document.getElementById('kunden-pl-modal');
   if (!modal) { document.getElementById('kp-picker-modal').remove(); return; }
@@ -9415,7 +9427,7 @@ function _openKontaktPicker(kontakte) {
   const rows = kontakte.map(k => {
     const name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim();
     return ''+
-      '<div onclick="_selectKontaktFromPicker('+k.id+')" data-kontakt-id="'+k.id+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+      '<div data-kontakt-id="'+escapeHtml(String(k.id))+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
         '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(name||'(ohne Namen)')+'</div>'+
         '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([k.rolle, k.email, k.telefon||k.mobile].filter(Boolean).join(' · '))+'</div>'+
       '</div>';
@@ -9434,12 +9446,18 @@ function _openKontaktPicker(kontakte) {
   document.body.appendChild(modal);
   modal._kontakte = kontakte;
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+  // Event-Delegation für die Kontakt-Auswahl
+  document.getElementById('kp-kontakt-list').onclick = (ev) => {
+    const item = ev.target.closest('[data-kontakt-id]');
+    if (!item) return;
+    _selectKontaktFromPicker(item.dataset.kontaktId);
+  };
 }
 
 function _selectKontaktFromPicker(kontaktId) {
   const modal = document.getElementById('kp-kontakt-modal');
   if (!modal) return;
-  const k = (modal._kontakte||[]).find(x => +x.id === +kontaktId);
+  const k = (modal._kontakte||[]).find(x => String(x.id) === String(kontaktId));
   modal.remove();
   if (!k) return;
   const ed = document.getElementById('kunden-pl-modal');
