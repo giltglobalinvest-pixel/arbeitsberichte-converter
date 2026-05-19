@@ -2238,7 +2238,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.20';
+const APP_VERSION = 'v3.21';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9388,8 +9388,15 @@ async function _generateKundenpreislistePDF() {
     doc.text(txt, ml, y); y += 1;
     doc.setDrawColor(26,51,83); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 5;
   };
+  let _rowIdx = 0;
   const tableRow = (cols, widths, bold) => {
-    if (y > H - 18) { doc.addPage(); y = 14; }
+    if (y > H - 22) { doc.addPage(); y = 14; _rowIdx = 0; }
+    const rowH = 6.5;
+    // Zebra-Streifen (jede zweite Zeile leicht grau hinterlegt)
+    if (!bold && _rowIdx % 2 === 1) {
+      doc.setFillColor(248,250,252);
+      doc.rect(ml-1, y-4.5, (mr-ml)+2, rowH, 'F');
+    }
     doc.setFont('helvetica', bold?'bold':'normal'); doc.setFontSize(10); doc.setTextColor(40,40,40);
     let x = ml;
     for (let i = 0; i < cols.length; i++) {
@@ -9398,21 +9405,25 @@ async function _generateKundenpreislistePDF() {
       doc.text(String(cols[i]), tx, y, { align });
       x += widths[i];
     }
-    y += 5;
-    doc.setDrawColor(220,220,220); doc.setLineWidth(0.2); doc.line(ml, y-1.5, mr, y-1.5);
+    y += rowH;
+    _rowIdx++;
   };
+  const tableReset = () => { _rowIdx = 0; };
 
   drawSectionTitle('Wartung pro Haltestellen (Basis 4× pro Jahr)');
+  tableReset();
   tableRow(['Haltestellen','Pro Wartung','Pro Jahr (4×)'], [60,60,62], true);
   data.wartung.forEach(w => tableRow([w.haltestellen, eur(w.proWartung), eur((+w.proWartung)*4)], [60,60,62]));
-  y += 3;
+  y += 4;
 
   drawSectionTitle('Stundenverrechnung bei Störungseinsätzen');
+  tableReset();
   tableRow(['Stundensatz pro Monteur', eur(data.stundensatz)], [120,62], true);
   data.aufschlaege.forEach(a => tableRow(['Aufschlag '+a.label, '+'+a.pct+' %'], [120,62]));
-  y += 3;
+  y += 4;
 
   drawSectionTitle('Sonstiges');
+  tableReset();
   data.sonstiges.forEach(s => {
     const preisTxt = eur(s.preis) + (s.einheit && s.einheit !== '€' ? (' / '+String(s.einheit).replace('€/','').replace('€','').trim()) : '');
     tableRow([s.label, preisTxt], [120,62]);
