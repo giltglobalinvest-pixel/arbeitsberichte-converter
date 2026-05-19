@@ -2249,7 +2249,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.22';
+const APP_VERSION = 'v3.23';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9221,28 +9221,45 @@ function renderWartungKalk() {
 }
 
 /* ── Kundenpreislisten-Übersicht ─────────────────────────────────────── */
+async function _ensurePreislistenTable() {
+  // Tabelle "Preislisten" mit allen Feldern auf einmal anlegen (idempotent durch ensureTable)
+  try {
+    await ensureTable('Preislisten', [
+      { name:'kunde_id',           type:'singleLineText' },
+      { name:'kunde_name',         type:'singleLineText' },
+      { name:'kunde_nummer',       type:'singleLineText' },
+      { name:'firma',              type:'singleLineText' },
+      { name:'titel',              type:'singleLineText' },
+      { name:'gueltig_bis',        type:'singleLineText' },
+      { name:'markup_pct',         type:'number', options:{ precision:0 } },
+      { name:'empfaenger_name',    type:'singleLineText' },
+      { name:'empfaenger_adresse', type:'multilineText' },
+      { name:'kontakt_name',       type:'singleLineText' },
+      { name:'kontakt_email',      type:'singleLineText' },
+      { name:'kontakt_telefon',    type:'singleLineText' },
+      { name:'data_json',          type:'multilineText' },
+      { name:'pdf',                type:'multipleAttachments' },
+      { name:'created',            type:'singleLineText' },
+      { name:'created_by',         type:'singleLineText' },
+    ]);
+  } catch(e) {
+    console.warn('[Preislisten] Tabellen-Setup:', e.message);
+  }
+}
+
 async function renderPreislistenView() {
   if (!isAdmin()) return;
   const list = document.getElementById('pl-list');
   list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Preislisten…</div>';
   try {
-    await ensureField('Preislisten', 'kunde_id',          'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'kunde_name',        'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'kunde_nummer',      'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'firma',             'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'titel',             'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'gueltig_bis',       'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'markup_pct',        'number').catch(()=>{});
-    await ensureField('Preislisten', 'empfaenger_name',   'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'empfaenger_adresse','multilineText').catch(()=>{});
-    await ensureField('Preislisten', 'kontakt_name',      'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'kontakt_email',     'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'kontakt_telefon',   'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'data_json',         'multilineText').catch(()=>{});
-    await ensureField('Preislisten', 'pdf',               'multipleAttachments').catch(()=>{});
-    await ensureField('Preislisten', 'created',           'singleLineText').catch(()=>{});
-    await ensureField('Preislisten', 'created_by',        'singleLineText').catch(()=>{});
-    const records = await atRead('Preislisten', null);
+    await _ensurePreislistenTable();
+    let records;
+    try { records = await atRead('Preislisten', null); }
+    catch(e) {
+      // Tabelle frisch angelegt → leere Liste, kein Fehler
+      console.warn('[Preislisten] Read fehlgeschlagen, vermutlich leere/neue Tabelle:', e.message);
+      records = [];
+    }
     const firmaSlug = getCurrentFirmaSlug();
     const allMode   = isFirmaAll();
     const filtered  = records.filter(r => allMode ? true : (r.fields.firma||'') === firmaSlug)
@@ -9616,9 +9633,8 @@ async function _saveAndDownloadKundenpreisliste() {
       created:            new Date().toISOString(),
       created_by:         APP_KEYS.user?.api_key || '',
     };
-    // Schema sicherstellen
-    try { await ensureField('Preislisten', 'data_json', 'multilineText'); } catch(_){}
-    try { await ensureField('Preislisten', 'pdf',       'multipleAttachments'); } catch(_){}
+    // Tabelle + Schema sicherstellen (falls erstes Speichern)
+    await _ensurePreislistenTable();
     let recId = existingRecId;
     if (existingRecId) {
       // Update + altes PDF entfernen → neues hochladen
