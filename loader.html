@@ -52,9 +52,11 @@ var cachedHtml=null,cachedAt=null;
 try{cachedHtml=localStorage.getItem(cacheKey);cachedAt=localStorage.getItem(cacheKey+'_at');}catch(e){}
 if(cachedHtml)window._cachedApp=cachedHtml;
 function injectMonitor(html){
+// Versionsbasierter Check: extrahiert APP_VERSION aus dem HTML und vergleicht — robust gegen Whitespace/Encoding-Unterschiede
 var mon='<script>(function(){try{var R="'+REPO+'",F="'+FILENAME+'",CK="app_cache_"+R,P='+POLL_MIN+'*60*1000;'
-+'function showUpdateBanner(){if(document.getElementById("__upd_banner"))return;var b=document.createElement("div");b.id="__upd_banner";b.style.cssText="position:fixed;top:0;left:0;right:0;background:#00e676;color:#000;padding:10px 14px;text-align:center;font-family:-apple-system,sans-serif;font-size:13px;z-index:999999;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);padding-top:calc(10px + env(safe-area-inset-top, 0px))";b.innerHTML="✨ Neue Version verfügbar – hier klicken zum Aktualisieren";b.onclick=function(){location.reload();};document.body.appendChild(b);}'
-+'function chk(){fetch("https://raw.githubusercontent.com/"+R+"/main/"+F+"?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)return;return r.text();}).then(function(t){if(!t)return;var c=null;try{c=localStorage.getItem(CK);}catch(e){}if(c&&t!==c){showUpdateBanner();}}).catch(function(){});}'
++'function ver(s){if(!s)return null;var m=/const\\s+APP_VERSION\\s*=\\s*[\\\'"]([^\\\'"]+)[\\\'"]/.exec(s);return m?m[1]:null;}'
++'function showUpdateBanner(newV){if(document.getElementById("__upd_banner"))return;var b=document.createElement("div");b.id="__upd_banner";b.style.cssText="position:fixed;top:0;left:0;right:0;background:#00e676;color:#000;padding:10px 14px;text-align:center;font-family:-apple-system,sans-serif;font-size:13px;z-index:999999;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);padding-top:calc(10px + env(safe-area-inset-top, 0px))";b.innerHTML="✨ Neue Version "+(newV?newV+" ":"")+"verfügbar – hier klicken zum Aktualisieren";b.onclick=function(){location.reload();};document.body.appendChild(b);}'
++'function chk(){fetch("https://raw.githubusercontent.com/"+R+"/main/"+F+"?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)return;return r.text();}).then(function(t){if(!t)return;var c=null;try{c=localStorage.getItem(CK);}catch(e){}if(!c)return;var vNew=ver(t),vOld=ver(c);if(!vNew||!vOld)return;if(vNew!==vOld){try{localStorage.setItem(CK,t);}catch(e){}showUpdateBanner(vNew);}}).catch(function(){});}'
 +'setTimeout(chk,30000);setInterval(chk,P);'
 +'document.addEventListener("visibilitychange",function(){if(!document.hidden)chk();});'
 +'window.addEventListener("focus",chk);'
