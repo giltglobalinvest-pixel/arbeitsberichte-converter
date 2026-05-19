@@ -2249,7 +2249,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.28';
+const APP_VERSION = 'v3.29';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9374,6 +9374,8 @@ function _renderPreislisteDetailModal(rec) {
           (f.empfaenger_adresse?'<div style="grid-column:1/-1"><strong>Anschrift:</strong> '+escapeHtml(f.empfaenger_adresse).replace(/\n/g,'<br>')+'</div>':'')+
           (f.kontakt_name?'<div style="grid-column:1/-1"><strong>Kontakt:</strong> '+escapeHtml(f.kontakt_name)+(f.kontakt_email?' · '+escapeHtml(f.kontakt_email):'')+(f.kontakt_telefon?' · '+escapeHtml(f.kontakt_telefon):'')+'</div>':'')+
         '</div>'+
+        // Abrechnungs-Modell + Summen
+        _renderPreislisteAbrechnungSummary(rec, anlagen)+
         // Anlagen-Sektion
         '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">'+
           '<h4 style="margin:0;font-size:14px;color:var(--navy)">🛗 Aufzüge für Wartungsvertrag <span style="font-weight:400;color:var(--txt3);font-size:11px">('+anlagen.length+')</span></h4>'+
@@ -9396,14 +9398,81 @@ function _renderPreislisteDetailModal(rec) {
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
 }
 
+/* Berechnet den Wartungspreis pro Anlage und Jahr basierend auf Haltestellen + Preisliste */
+function _calcWartungspreisProAnlage(anlage, plData) {
+  if (!plData) return null;
+  const h = +anlage.haltestellen || 0;
+  if (!h) return null;
+  const wartungen = +plData.wartungenProJahr || 4;
+  // Preisliste: finde proWartung für die Haltestellen
+  const list = plData.wartung || [];
+  let proWartung = null;
+  const exact = list.find(w => +w.haltestellen === h);
+  if (exact) proWartung = +exact.proWartung;
+  else {
+    const sorted = list.slice().sort((a,b) => +a.haltestellen - +b.haltestellen);
+    if (h < +sorted[0]?.haltestellen) proWartung = +sorted[0].proWartung;
+    else {
+      const last = sorted[sorted.length-1];
+      const prev = sorted[sorted.length-2] || last;
+      const step = (last.proWartung - prev.proWartung) / Math.max(1, (last.haltestellen - prev.haltestellen));
+      proWartung = Math.max(0, +last.proWartung + (h - +last.haltestellen) * step);
+    }
+  }
+  return Math.round(proWartung * wartungen * 100) / 100;  // Jahresbetrag
+}
+
+/* Summary-Box mit Abrechnungs-Modell, Anzahl Anlagen, Sammelrechnung-Total falls relevant */
+function _renderPreislisteAbrechnungSummary(rec, anlagen) {
+  const f = rec.fields || {};
+  let plData = null;
+  try { plData = JSON.parse(f.data_json || 'null'); } catch(_){}
+  const typ      = plData?.abrechnungTyp    || 'sammel';
+  const turnus   = plData?.abrechnungTurnus || 'jaehrlich';
+  const wpa      = +plData?.wartungenProJahr || 4;
+  const typLabel    = typ === 'sammel' ? '📦 Sammelrechnung' : '🛗 Einzelrechnung pro Anlage';
+  const turnusLabel = turnus === 'quartal' ? 'Quartalsweise (4× p.a.)' : 'Jährlich (1× p.a.)';
+  // Summe berechnen (für Sammel oder als Info)
+  let total = 0;
+  let withHaltestellen = 0;
+  for (const a of (anlagen||[])) {
+    const p = _calcWartungspreisProAnlage(a, plData);
+    if (p != null && +a.haltestellen > 0) { total += p; withHaltestellen++; }
+  }
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  const turnusPro = turnus === 'quartal' ? (total/4) : total;
+  return '<div style="background:#EEF2FF;border:1px solid #A5B4FC;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px">'+
+    '<div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:'+(anlagen.length?'10px':'0')+'">'+
+      '<div><strong>'+typLabel+'</strong></div>'+
+      '<div style="color:var(--txt2)">·</div>'+
+      '<div>'+escapeHtml(turnusLabel)+'</div>'+
+      '<div style="color:var(--txt2)">·</div>'+
+      '<div>'+wpa+' Wartungen/Anlage p.a.</div>'+
+    '</div>'+
+    (anlagen.length && withHaltestellen > 0
+      ? '<div style="padding-top:8px;border-top:1px solid #A5B4FC;display:flex;flex-wrap:wrap;gap:14px;align-items:baseline">'+
+          '<div><strong>Jahresumsatz:</strong> '+eur(total)+' netto</div>'+
+          (turnus==='quartal' ? '<div style="color:var(--txt2)">→ Quartal: '+eur(turnusPro)+' netto</div>' : '')+
+          (withHaltestellen < anlagen.length ? '<div style="color:#92400E;font-size:11px;background:#FEF3C7;padding:2px 8px;border-radius:99px">⚠ '+(anlagen.length-withHaltestellen)+' ohne Haltestellen-Angabe</div>' : '')+
+        '</div>'
+      : (anlagen.length ? '<div style="font-size:11px;color:#92400E;padding-top:6px;border-top:1px solid #A5B4FC">⚠ Bitte Haltestellen pro Anlage eintragen (siehe unten), damit der Jahresumsatz berechnet werden kann.</div>' : ''))+
+  '</div>';
+}
+
 function _renderPreislisteAnlagenList(recId, anlagen) {
   if (!anlagen || anlagen.length === 0) {
     return '<div style="padding:30px;text-align:center;color:var(--txt3);background:var(--bg);border-radius:6px;border:1px dashed var(--bdr)">Noch keine Anlagen zugewiesen.<br><span style="font-size:11px">Klick "+ Anlage aus ERP" oben.</span></div>';
   }
-  return '<div style="display:grid;gap:6px">'+anlagen.map((a, idx) =>
-    '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surf);border:1px solid var(--bdr);border-radius:6px">'+
+  // Preisliste-Daten für Preis-Anzeige
+  const modal = document.getElementById('pl-detail-modal');
+  let plData = null;
+  if (modal && modal._record) { try { plData = JSON.parse(modal._record.fields.data_json||'null'); } catch(_){} }
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  return '<div style="display:grid;gap:6px">'+anlagen.map((a, idx) => {
+    const preisJahr = _calcWartungspreisProAnlage(a, plData);
+    return '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;flex-wrap:wrap">'+
       '<div style="font-size:18px">🛗</div>'+
-      '<div style="flex:1;min-width:0">'+
+      '<div style="flex:1;min-width:200px">'+
         '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(a.adresse||a.standort||'(ohne Adresse)')+'</div>'+
         '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+
           (a.fabriknummer?'🔧 '+escapeHtml(a.fabriknummer):'')+
@@ -9411,9 +9480,33 @@ function _renderPreislisteAnlagenList(recId, anlagen) {
           (a.objektTyp?' · '+escapeHtml(a.objektTyp):'')+
         '</div>'+
       '</div>'+
+      '<div style="display:flex;align-items:center;gap:6px;font-size:12px">'+
+        '<label style="color:var(--txt2);font-size:11px">Haltestellen:</label>'+
+        '<input type="number" min="2" max="40" step="1" value="'+(+a.haltestellen||'')+'" onchange="_setAnlageHaltestellen(\''+recId+'\','+idx+',this.value)" placeholder="?" style="width:60px;padding:4px 6px;border:1px solid var(--bdr);border-radius:4px;text-align:center">'+
+      '</div>'+
+      (preisJahr != null
+        ? '<div style="font-weight:600;color:#065F46;font-size:13px;min-width:90px;text-align:right">'+eur(preisJahr)+'<div style="font-size:10px;color:var(--txt3);font-weight:400">netto/Jahr</div></div>'
+        : '<div style="font-size:11px;color:var(--txt3);min-width:90px;text-align:right">—</div>')+
       '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3);padding:4px 10px;font-size:12px" onclick="removeAnlageFromPreisliste(\''+recId+'\','+idx+')" title="Anlage entfernen">🗑</button>'+
-    '</div>'
-  ).join('')+'</div>';
+    '</div>';
+  }).join('')+'</div>';
+}
+
+/* Haltestellen-Änderung pro Anlage — speichert sofort + re-rendert die Summe */
+async function _setAnlageHaltestellen(recId, idx, value) {
+  const modal = document.getElementById('pl-detail-modal');
+  if (!modal) return;
+  const anlagen = (modal._anlagen||[]).slice();
+  if (idx < 0 || idx >= anlagen.length) return;
+  anlagen[idx] = { ...anlagen[idx], haltestellen: +value || 0 };
+  await _savePreislisteAnlagen(recId, anlagen);
+  modal._anlagen = anlagen;
+  modal._record.fields.anlagen_json = JSON.stringify(anlagen);
+  // Sowohl Liste als auch Summary neu rendern
+  document.getElementById('pl-anlagen-list').innerHTML = _renderPreislisteAnlagenList(recId, anlagen);
+  // Summary-Box ist das 2. Kind im body (.auf-section…). Wir suchen und ersetzen via Attribut
+  // Einfacher: kompletten Modal neu rendern
+  _renderPreislisteDetailModal(modal._record);
 }
 
 /* Anlage zur Preisliste hinzufügen — Picker mit Anlagen des verknüpften Kunden */
@@ -9897,6 +9990,9 @@ function openKonePreislisteKundeEditor() {
     gueltigBis:  '31.12.2027',
     empfaengerName: '',
     empfaengerAdresse: '',
+    abrechnungTyp:    'sammel',     // 'sammel' (eine Rechnung über alle Anlagen) | 'einzel' (pro Anlage)
+    abrechnungTurnus: 'jaehrlich',  // 'jaehrlich' | 'quartal'
+    wartungenProJahr: 4,            // typische Basis für KONE-Preisliste
     wartung:     hk.wartung.map(w => ({ haltestellen: w.haltestellen, proWartung: Math.round(w.proWartung * factor * 100)/100 })),
     stundensatz: Math.round(hk.stundensatz * factor * 100)/100,
     aufschlaege: hk.aufschlaege.map(a => ({ label: a.label, pct: a.pct })),  // Aufschläge bleiben in %
@@ -9949,6 +10045,21 @@ function _showKundenpreislisteEditor(data, hkRef) {
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
           '<div><strong>Titel</strong><br><input type="text" value="'+escapeHtml(data.titel)+'" data-kk="titel" style="width:100%;padding:5px 8px"></div>'+
           '<div><strong>Gültig bis</strong><br><input type="text" value="'+escapeHtml(data.gueltigBis)+'" data-kk="gueltigBis" style="width:100%;padding:5px 8px"></div>'+
+        '</div>'+
+        '<h4 style="margin:10px 0 4px;font-size:13px;color:var(--navy)">💼 Vertrags- und Abrechnungs-Modell</h4>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">'+
+          '<div><strong>Abrechnungs-Typ</strong><br>'+
+            '<select data-kk="abrechnungTyp" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px">'+
+              '<option value="sammel"'+(data.abrechnungTyp==='sammel'?' selected':'')+'>📦 Sammelrechnung (alle Aufzüge)</option>'+
+              '<option value="einzel"'+(data.abrechnungTyp==='einzel'?' selected':'')+'>🛗 Einzelrechnung pro Anlage</option>'+
+            '</select></div>'+
+          '<div><strong>Abrechnungs-Turnus</strong><br>'+
+            '<select data-kk="abrechnungTurnus" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px">'+
+              '<option value="jaehrlich"'+(data.abrechnungTurnus==='jaehrlich'?' selected':'')+'>📅 Jährlich (1× p.a.)</option>'+
+              '<option value="quartal"'+(data.abrechnungTurnus==='quartal'?' selected':'')+'>📆 Quartalsweise (4× p.a.)</option>'+
+            '</select></div>'+
+          '<div><strong>Wartungen p.a.</strong><br>'+
+            '<input type="number" min="1" max="12" step="1" value="'+(+data.wartungenProJahr||4)+'" data-kk="wartungenProJahr" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px"></div>'+
         '</div>'+
         '<div style="margin-bottom:8px"><button class="btn" onclick="openKundenPicker()" style="background:#EEF2FF;border-color:#A5B4FC;color:#3730A3">🔍 Kunde aus ERP wählen</button> <span style="font-size:11px;color:var(--txt3);margin-left:8px">füllt Empfänger + Adresse automatisch</span></div>'+
         '<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-bottom:14px">'+
