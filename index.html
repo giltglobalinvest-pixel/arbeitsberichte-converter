@@ -2294,7 +2294,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.13';
+const APP_VERSION = 'v3.14';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5562,6 +5562,10 @@ function openAuftragDetail(recId) {
     if ((_isAssignedToMe(rec) || hasPermission('auftraege_edit')) && status !== 'abgerechnet') {
       html += '<button class="btn" onclick="openBerichtForm(\''+rec.id+'\',\''+f.bericht_id+'\')">✏ Bericht bearbeiten</button>';
     }
+    // Manuell ein Freshdesk-Ticket erstellen (z.B. nach Bericht-Bearbeitung oder falls Auto-Hook nicht griff)
+    if (hasPermission('auftraege_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())) {
+      html += '<button class="btn" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" onclick="manualCreateFreshdeskTicket(\''+rec.id+'\')" title="Freshdesk-Ticket für diesen Auftrag/Bericht jetzt erstellen">🎫 Freshdesk-Ticket erstellen</button>';
+    }
   }
   foot.innerHTML = html;
 
@@ -8653,6 +8657,9 @@ async function saveBerichtFromForm() {
 
     // ── Freshdesk-Auto-Ticket nach erfolgreichem Bericht-Save ──
     // Nur bei NEUEN Berichten (nicht beim Edit) und wenn Freshdesk konfiguriert ist.
+    if (_bfMode === 'edit') {
+      console.log('[Freshdesk] Edit-Modus → kein Auto-Ticket. Nutze "🎫 Ticket erstellen" am Auftrag.');
+    }
     if (_bfMode !== 'edit') {
       const firmaSlug = af.firma || S.firma?.slug || getCurrentFirmaSlug();
       if (freshdeskIsConfigured(firmaSlug)) {
@@ -10214,6 +10221,62 @@ async function freshdeskTest(firmaSlug, btn) {
 }
 
 /* Returns true if Freshdesk is configured for this firma. */
+/* Manuell ein Freshdesk-Ticket für einen vorhandenen Auftrag/Bericht erstellen.
+   Nützlich nach Bericht-Bearbeitung oder wenn der Auto-Hook nicht griff. */
+async function manualCreateFreshdeskTicket(auftragRecId) {
+  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  const auftragRec = _auftragCache.find(r => r.id === auftragRecId);
+  if (!auftragRec) return toast('Auftrag nicht gefunden.','err');
+  const af = auftragRec.fields;
+  if (!af.bericht_id) return toast('Kein Bericht verknüpft.','err');
+  const firmaSlug = af.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) {
+    return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert (Admin → Integrationen).','err');
+  }
+  if (!confirm('Freshdesk-Ticket für Auftrag #'+(af.auftrag_num||'?')+' (Bericht Nr. '+(af.bericht_num||'?')+') erstellen?')) return;
+
+  toast('🎫 Lade Bericht + PDF…','');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+af.bericht_id, {
+      headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    const berichtRec = { id: af.bericht_id, fields: d.fields };
+    const pdfMeta = d.fields && d.fields.out_pdf && d.fields.out_pdf[0];
+    if (!pdfMeta || !pdfMeta.url) throw new Error('Kein PDF im Bericht-Record vorhanden.');
+    const berichtPdfUrl = pdfMeta.url;
+
+    // PDF herunterladen für Anhang
+    toast('🎫 Lade PDF herunter…','');
+    const pdfResp = await fetch(berichtPdfUrl);
+    if (!pdfResp.ok) throw new Error('PDF-Download fehlgeschlagen: HTTP '+pdfResp.status);
+    const pdfBlob = await pdfResp.blob();
+
+    toast('🎫 Erstelle Ticket…','');
+    const result = await freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, berichtPdfUrl);
+    if (result.skipped) return toast('ℹ '+result.reason, 'warn');
+    if (result.ticketId) {
+      // Ticket-ID im Bericht speichern
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+af.bericht_id, {
+          method:'PATCH',
+          headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+          body: JSON.stringify({ fields:{ fd_ticket_id: result.ticketId, fd_ticket_url: result.ticketUrl||'' }}),
+        });
+      } catch(_){}
+      toast('🎫 Ticket #'+result.ticketId+' erstellt.', 'ok');
+      if (result.ticketUrl) {
+        if (confirm('Ticket erstellt. Im Freshdesk öffnen?')) window.open(result.ticketUrl, '_blank');
+      }
+    }
+  } catch(e) {
+    console.error('manualCreateFreshdeskTicket:', e);
+    toast('❌ Ticket-Erstellung fehlgeschlagen: '+e.message, 'err');
+  }
+}
+
 function freshdeskIsConfigured(firmaSlug) {
   return !!(APP_KEYS.freshdeskDomains[firmaSlug]
          && APP_KEYS.freshdeskApiKeys[firmaSlug]
