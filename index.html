@@ -2260,7 +2260,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.35';
+const APP_VERSION = 'v3.36';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2868,8 +2868,9 @@ async function showApp() {
 /* ════════════════════════════════════════════════════════════
    CLAUDE API
    ════════════════════════════════════════════════════════════ */
-async function callClaude(file, prompt) {
+async function callClaude(file, prompt, opts) {
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic API-Key konfiguriert');
+  const maxTokens = (opts && opts.maxTokens) || 2000;
   const b64 = await new Promise((res,rej)=>{
     const r=new FileReader(); r.readAsDataURL(file);
     r.onload=()=>res(r.result.split(',')[1]); r.onerror=rej;
@@ -2884,7 +2885,7 @@ async function callClaude(file, prompt) {
       'anthropic-dangerous-direct-browser-access':'true',
     },
     body: JSON.stringify({
-      model:'claude-sonnet-4-6', max_tokens:2000,
+      model:'claude-sonnet-4-6', max_tokens: maxTokens,
       messages:[{ role:'user', content:[
         { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64 } },
         { type:'text', text:prompt },
@@ -9630,10 +9631,19 @@ async function _previewVorlage(recId) {
     }
 
     if (usePdf && pdfBlobRef) {
-      toast('🤖 KI generiert Vorschau aus PDF + Dummy-Daten…','');
+      _showVorlagenWorking('🤖 KI generiert Vorschau aus PDF + Dummy-Daten… (bis zu 60 Sekunden)');
+      console.log('[Vorlage-Preview] callClaude — PDF '+(pdfBlobRef.size/1024).toFixed(0)+' KB');
       const ki = (prompt || VORLAGE_DEFAULT_PDF_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
-      finalText = await callClaude(pdfBlobRef, ki);
+      try {
+        finalText = await callClaude(pdfBlobRef, ki, { maxTokens: 8000 });
+        console.log('[Vorlage-Preview] KI-Antwort: '+finalText.length+' Zeichen');
+      } catch(e) {
+        _closeVorlagenWorking();
+        console.error('[Vorlage-Preview] callClaude fehlgeschlagen:', e);
+        throw new Error('Claude-Anfrage fehlgeschlagen: '+e.message);
+      }
       finalText = finalText.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+      _closeVorlagenWorking();
     } else {
       // Markdown + Platzhalter-Ersetzung
       if (!text) return toast('Kein Text und kein PDF — nichts zu zeigen.','err');
@@ -9645,9 +9655,25 @@ async function _previewVorlage(recId) {
     _showVorlagenPreview(blob, vars.kunde_name);
   } catch(e) {
     console.error('preview:', e);
+    _closeVorlagenWorking();
     toast('❌ Vorschau-Fehler: '+e.message,'err');
   }
 }
+
+/* Working-Indicator während die KI arbeitet */
+function _showVorlagenWorking(msg) {
+  const old = document.getElementById('vlg-working'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'vlg-working';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10600;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML = '<div style="background:#fff;padding:30px 40px;border-radius:14px;box-shadow:0 10px 50px rgba(0,0,0,.4);text-align:center;max-width:480px">'+
+    '<div class="spinner" style="margin:0 auto 16px;width:42px;height:42px;border-width:3px"></div>'+
+    '<div style="font-size:14px;color:var(--navy);font-weight:600">'+escapeHtml(msg||'⏳ KI arbeitet…')+'</div>'+
+    '<div style="font-size:11px;color:var(--txt3);margin-top:10px;line-height:1.5">Großes PDF? → kann etwas länger dauern.<br>Du siehst das Ergebnis direkt nach Abschluss.</div>'+
+  '</div>';
+  document.body.appendChild(m);
+}
+function _closeVorlagenWorking() { const m = document.getElementById('vlg-working'); if (m) m.remove(); }
 
 function _showVorlagenPreview(pdfBlob, label) {
   const old = document.getElementById('vlg-preview-modal'); if (old) old.remove();
@@ -9862,9 +9888,11 @@ async function _generateVertragNow(vertragId, preislisteId) {
       if (!pdfResp.ok) throw new Error('Referenz-PDF konnte nicht geladen werden (HTTP '+pdfResp.status+')');
       const pdfBlob = await pdfResp.blob();
       const pdfFile = new File([pdfBlob], quellPdfMeta.filename||'referenz.pdf', { type:'application/pdf' });
-      if (btn) btn.textContent = '🤖 KI generiert (PDF + Daten)…';
+      if (btn) btn.textContent = '🤖 KI generiert (PDF + Daten) — bis zu 60s …';
+      console.log('[Vertrag-Gen] callClaude mit PDF '+(pdfBlob.size/1024).toFixed(0)+' KB + Prompt '+(vData.fields.ki_prompt?.length||VORLAGE_DEFAULT_PDF_PROMPT.length)+' Zeichen');
       const prompt = (vData.fields.ki_prompt || VORLAGE_DEFAULT_PDF_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
-      text = await callClaude(pdfFile, prompt);
+      text = await callClaude(pdfFile, prompt, { maxTokens: 8000 });
+      console.log('[Vertrag-Gen] KI-Antwort:', text.length, 'Zeichen');
       // KI antwortet manchmal mit Markdown-Fence — entfernen
       text = text.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
     } else {
