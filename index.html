@@ -1723,63 +1723,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <button class="kone-modal-close" onclick="hideKonePrice()" title="Schließen">✕</button>
     </div>
     <div class="kone-modal-body">
-
-      <div class="kone-section">
-        <div class="kone-section-title">Wartung pro Haltestellen <span style="font-weight:400;text-transform:none;color:var(--txt3);letter-spacing:0">(Basis 4× WA pro Jahr)</span></div>
-        <table class="kone-tbl">
-          <thead>
-            <tr><th>Haltestellen</th><th class="num">Pro Wartung</th><th class="num">Pro Jahr (4×)</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>2</td><td class="num">100,00 €</td><td class="num">400,00 €</td></tr>
-            <tr><td>3</td><td class="num">100,00 €</td><td class="num">400,00 €</td></tr>
-            <tr><td>4</td><td class="num">100,00 €</td><td class="num">400,00 €</td></tr>
-            <tr><td>5</td><td class="num">100,00 €</td><td class="num">400,00 €</td></tr>
-            <tr><td>6</td><td class="num">110,00 €</td><td class="num">440,00 €</td></tr>
-            <tr><td>7</td><td class="num">120,00 €</td><td class="num">480,00 €</td></tr>
-            <tr><td>8</td><td class="num">130,00 €</td><td class="num">520,00 €</td></tr>
-            <tr><td>9</td><td class="num">140,00 €</td><td class="num">560,00 €</td></tr>
-            <tr><td>10</td><td class="num">150,00 €</td><td class="num">600,00 €</td></tr>
-            <tr><td>11</td><td class="num">160,00 €</td><td class="num">640,00 €</td></tr>
-            <tr><td>12</td><td class="num">170,00 €</td><td class="num">680,00 €</td></tr>
-            <tr><td>13</td><td class="num">180,00 €</td><td class="num">720,00 €</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="kone-section">
-        <div class="kone-section-title">Stundenverrechnung bei Störungseinsätzen</div>
-        <table class="kone-tbl">
-          <tbody>
-            <tr><td>Stundensatz pro Monteur</td><td class="num">90,00 €</td></tr>
-            <tr><td>Aufschlag Mo–Do 17:00–19:00</td><td class="num">+25 %</td></tr>
-            <tr><td>Aufschlag Mo–Do 19:00–07:00</td><td class="num">+50 %</td></tr>
-            <tr><td>Aufschlag Fr 15:00–17:00</td><td class="num">+25 %</td></tr>
-            <tr><td>Aufschlag Fr 17:00–07:00</td><td class="num">+50 %</td></tr>
-            <tr><td>Aufschlag Sa, So</td><td class="num">+50 %</td></tr>
-            <tr><td>Aufschlag Feiertage</td><td class="num">+100 %</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="kone-section">
-        <div class="kone-section-title">Sonstiges (optional)</div>
-        <table class="kone-tbl">
-          <tbody>
-            <tr><td>Anfahrt-/Zustellpauschale (Einsatzpauschale)</td><td class="num">50,00 €</td></tr>
-            <tr><td>Monteursbegleitung ZÜS-Prüfung (pro Einsatz/Anlage, zzgl. Anfahrt)</td><td class="num">100,00 €</td></tr>
-            <tr class="hl"><td>Notruf Konexion 10.3 GSM (Notrufservice inkl. Mietgerät, GSM, SIM-Card &amp; Notbefreiung) – pro Monat</td><td class="num">40,00 €</td></tr>
-            <tr class="hl"><td>Installation KONE-Notrufgerät – pro Installation (einmalig)</td><td class="num">500,00 €</td></tr>
-          </tbody>
-        </table>
-        <div class="kone-foot">
-          * Bei Aufschaltung des Notrufs auf den Subunternehmer beträgt die Mindestvertragslaufzeit drei (3) Jahre. Im Falle einer vorzeitigen Kündigung durch den Kunden vor Ablauf der Mindestvertragslaufzeit werden Deinstallationskosten in Höhe von <strong>499,00 €</strong> berechnet.
-        </div>
-      </div>
-
-      <div style="font-size:10px;color:var(--txt3);text-align:center;font-style:italic;margin-top:14px">
-        Quelle: Anhang 3 zum Nachunternehmer-Vertrag – Aszendio Aufzugservice GmbH (Deutschland) · Fixpreise bis 31.12.2027
-      </div>
+      <!-- Inhalt wird dynamisch via _renderKonePriceTable() befüllt -->
     </div>
   </div>
 </div>
@@ -2294,7 +2238,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.18';
+const APP_VERSION = 'v3.19';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -8962,12 +8906,139 @@ async function loadDashboardStats() {
    WARTUNGSPREIS-KALKULATOR
    Datenbasis: Aszendio Preisliste 2026–2027 (Anhang 3)
    ────────────────────────────────────────────────────────────── */
+/* ── KONE-Preisliste: Datenmodell + Speicherung ──
+   Die Werte sind als JSON gespeichert (default hardcoded, überschreibbar
+   via localStorage durch Admin-Upload). _renderKonePriceTable() rendert
+   das Modal daraus, getPreisProWartung(h) nutzt die wartung-Liste.
+*/
+const KONE_DEFAULT_PRICES = {
+  source:      'Aszendio Preisliste 2026–2027 · Fixpreise bis 31.12.2027',
+  // Pro Haltestellen-Anzahl: pro Wartung (Basis 4 Wartungen/Jahr)
+  wartung: [
+    { haltestellen:  2, proWartung: 100 },
+    { haltestellen:  3, proWartung: 100 },
+    { haltestellen:  4, proWartung: 100 },
+    { haltestellen:  5, proWartung: 100 },
+    { haltestellen:  6, proWartung: 110 },
+    { haltestellen:  7, proWartung: 120 },
+    { haltestellen:  8, proWartung: 130 },
+    { haltestellen:  9, proWartung: 140 },
+    { haltestellen: 10, proWartung: 150 },
+    { haltestellen: 11, proWartung: 160 },
+    { haltestellen: 12, proWartung: 170 },
+    { haltestellen: 13, proWartung: 180 },
+  ],
+  stundensatz: 90,
+  aufschlaege: [
+    { label: 'Mo–Do 17:00–19:00',                   pct: 25 },
+    { label: 'Mo–Do 19:00–07:00',                   pct: 50 },
+    { label: 'Fr 15:00–17:00',                      pct: 25 },
+    { label: 'Fr 17:00–07:00',                      pct: 50 },
+    { label: 'Sa, So',                              pct: 50 },
+    { label: 'Feiertage',                           pct: 100 },
+  ],
+  sonstiges: [
+    { label: 'Anfahrt-/Zustellpauschale (Einsatzpauschale)',                                            preis: 50,  einheit: '€' },
+    { label: 'Monteursbegleitung ZÜS-Prüfung (pro Einsatz/Anlage, zzgl. Anfahrt)',                       preis: 100, einheit: '€' },
+    { label: 'Notruf Konexion 10.3 GSM (Notrufservice inkl. Mietgerät, GSM, SIM-Card & Notbefreiung)',   preis: 40,  einheit: '€/Monat', highlight: true },
+    { label: 'Installation KONE-Notrufgerät – pro Installation (einmalig)',                              preis: 500, einheit: '€',       highlight: true },
+  ],
+  fussnote: 'Bei Aufschaltung des Notrufs auf den Subunternehmer beträgt die Mindestvertragslaufzeit drei (3) Jahre. Im Falle einer vorzeitigen Kündigung durch den Kunden vor Ablauf der Mindestvertragslaufzeit werden Deinstallationskosten in Höhe von 499,00 € berechnet.',
+};
+
+let _konePriceData = null;  // wird in _loadKonePrices() befüllt
+
+function _loadKonePrices() {
+  if (_konePriceData) return _konePriceData;
+  try {
+    const raw = localStorage.getItem('kone_prices_'+APP_CONFIG.PROJECT_ID);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && Array.isArray(parsed.wartung) && parsed.wartung.length) {
+        _konePriceData = parsed;
+        return _konePriceData;
+      }
+    }
+  } catch(_){}
+  // Fallback: tiefe Kopie der Defaults
+  _konePriceData = JSON.parse(JSON.stringify(KONE_DEFAULT_PRICES));
+  return _konePriceData;
+}
+function _saveKonePrices(data) {
+  _konePriceData = data;
+  try { localStorage.setItem('kone_prices_'+APP_CONFIG.PROJECT_ID, JSON.stringify(data)); } catch(_){}
+}
+function _resetKonePrices() {
+  try { localStorage.removeItem('kone_prices_'+APP_CONFIG.PROJECT_ID); } catch(_){}
+  _konePriceData = null;
+  _renderKonePriceTable();
+}
+
 function getPreisProWartung(haltestellen) {
-  // Bis 5 Haltestellen: 100 €. Ab 6 Haltestellen: +10 € pro Haltestelle (bis 13 in der Tabelle).
-  // Über 13 wird linear extrapoliert (mit UI-Hinweis).
+  const data = _loadKonePrices();
   const h = Math.max(2, Math.floor(haltestellen || 0));
-  if (h <= 5) return 100;
-  return 100 + (h - 5) * 10;
+  const list = data.wartung || KONE_DEFAULT_PRICES.wartung;
+  // Exact match
+  const exact = list.find(r => +r.haltestellen === h);
+  if (exact) return +exact.proWartung;
+  // Über Tabelle: linear extrapolieren ab letztem Punkt
+  const sorted = list.slice().sort((a,b) => a.haltestellen - b.haltestellen);
+  if (h < sorted[0].haltestellen) return +sorted[0].proWartung;
+  const last = sorted[sorted.length-1];
+  const prev = sorted[sorted.length-2] || last;
+  const step = (last.proWartung - prev.proWartung) / Math.max(1, (last.haltestellen - prev.haltestellen));
+  return Math.max(0, +last.proWartung + (h - last.haltestellen) * step);
+}
+
+/* Rendert die Tabellen im KONE-Modal aus _konePriceData. */
+function _renderKonePriceTable() {
+  const data = _loadKonePrices();
+  const body = document.querySelector('#kone-modal .kone-modal-body');
+  if (!body) return;
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  const wartungRows = data.wartung.map(w =>
+    '<tr><td>'+w.haltestellen+'</td><td class="num">'+eur(w.proWartung)+'</td><td class="num">'+eur(w.proWartung*4)+'</td></tr>'
+  ).join('');
+  const aufschlagRows = data.aufschlaege.map(a =>
+    '<tr><td>Aufschlag '+escapeHtml(a.label)+'</td><td class="num">+'+a.pct+' %</td></tr>'
+  ).join('');
+  const sonstRows = data.sonstiges.map(s => {
+    const cls = s.highlight ? ' class="hl"' : '';
+    const lbl = escapeHtml(s.label);
+    const pr  = eur(s.preis) + (s.einheit && s.einheit !== '€' ? (' / '+s.einheit.replace('€/','').replace('€','').trim() || s.einheit) : '');
+    return '<tr'+cls+'><td>'+lbl+'</td><td class="num">'+pr+'</td></tr>';
+  }).join('');
+  body.innerHTML =
+    '<div class="kone-section">'+
+      '<div class="kone-section-title">Wartung pro Haltestellen <span style="font-weight:400;text-transform:none;color:var(--txt3);letter-spacing:0">(Basis 4× WA pro Jahr)</span></div>'+
+      '<table class="kone-tbl"><thead><tr><th>Haltestellen</th><th class="num">Pro Wartung</th><th class="num">Pro Jahr (4×)</th></tr></thead><tbody>'+wartungRows+'</tbody></table>'+
+    '</div>'+
+    '<div class="kone-section">'+
+      '<div class="kone-section-title">Stundenverrechnung bei Störungseinsätzen</div>'+
+      '<table class="kone-tbl"><tbody>'+
+        '<tr><td>Stundensatz pro Monteur</td><td class="num">'+eur(data.stundensatz)+'</td></tr>'+
+        aufschlagRows+
+      '</tbody></table>'+
+    '</div>'+
+    '<div class="kone-section">'+
+      '<div class="kone-section-title">Sonstiges (optional)</div>'+
+      '<table class="kone-tbl"><tbody>'+sonstRows+'</tbody></table>'+
+      (data.fussnote ? '<div class="kone-foot">* '+escapeHtml(data.fussnote)+'</div>' : '')+
+    '</div>'+
+    (isAdmin() ?
+      '<div style="margin-top:14px;padding:12px;background:#EEF2FF;border:1px solid #A5B4FC;border-radius:8px;font-size:12px;color:#3730A3">'+
+        '<strong>🤖 Preisliste aktualisieren</strong>'+
+        '<div style="margin:6px 0;font-size:11px;line-height:1.5">PDF mit neuer Preisliste hochladen — die KI extrahiert die Werte automatisch und zeigt eine Vorschau vor dem Speichern.</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
+          '<input type="file" id="kone-upload-input" accept="application/pdf" style="display:none" onchange="onKonePriceListUpload(this)">'+
+          '<button class="btn" style="background:#4F46E5;color:#fff;border-color:#4F46E5" onclick="document.getElementById(\'kone-upload-input\').click()">📥 PDF hochladen</button>'+
+          '<button class="btn" onclick="_resetKonePrices()" title="Auf Standardwerte zurücksetzen">↺ Standard wiederherstellen</button>'+
+        '</div>'+
+      '</div>'
+      : '')+
+    '<div style="font-size:10px;color:var(--txt3);text-align:center;font-style:italic;margin-top:14px">'+
+      'Quelle: '+escapeHtml(data.source||'')+
+    '</div>';
 }
 
 const _wkFmt = new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR',minimumFractionDigits:2,maximumFractionDigits:2});
@@ -9124,7 +9195,145 @@ function renderWartungKalk() {
   }
 }
 
+/* PDF-Upload → Claude extrahiert Preisliste → Preview-Modal */
+async function onKonePriceListUpload(inputEl) {
+  const file = inputEl.files && inputEl.files[0];
+  inputEl.value = ''; // Reset für nächsten Upload
+  if (!file) return;
+  if (!APP_KEYS.anthropicKey) return toast('Anthropic-API-Key fehlt — kein KI-Parsing möglich.','err');
+  if (!/pdf/i.test(file.type) && !/\.pdf$/i.test(file.name)) {
+    return toast('Bitte ein PDF hochladen (Excel/Bilder vorher zu PDF konvertieren).','err');
+  }
+
+  toast('🤖 KI analysiert PDF…','');
+  const prompt = 'Du erhältst eine Preisliste eines Aufzugsunternehmens (KONE/Aszendio Format). '+
+    'Extrahiere die Werte und gib NUR ein JSON zurück (kein Markdown, kein Erklärungstext) mit dieser Struktur:\n\n'+
+    '{\n'+
+    '  "source": "<Quelle/Titel der Preisliste, z.B. \'Anhang 3 Rahmenvereinbarung 2026-2027\'>",\n'+
+    '  "wartung": [{"haltestellen": 2, "proWartung": 100.00}, ... ],   // Preis pro Wartung (NICHT pro Jahr) je Haltestellenzahl\n'+
+    '  "stundensatz": 90.00,\n'+
+    '  "aufschlaege": [{"label": "Mo-Do 17:00-19:00", "pct": 25}, ...],   // Stundenzuschläge in Prozent\n'+
+    '  "sonstiges": [{"label": "Anfahrt-Pauschale", "preis": 50.00, "einheit": "€"}, ...],\n'+
+    '  "fussnote": "<optionaler Fußnotentext>"\n'+
+    '}\n\n'+
+    'Wichtig:\n'+
+    '- Alle Preise als Number (nicht String), z.B. 100.00 nicht "100,00 €"\n'+
+    '- Pro Wartung (1×), NICHT die Jahrespreis-Spalte\n'+
+    '- Falls die Preisliste die Werte als "pro Jahr (4×)" angibt, durch 4 teilen\n'+
+    '- Einheit für sonstige Posten: "€" (einmalig), "€/Monat", "€/Jahr", "€/h" etc.\n'+
+    '- Antworte NUR mit dem JSON, nichts davor/danach.';
+
+  try {
+    const txt = await callClaude(file, prompt);
+    let parsed;
+    try { parsed = parseJ(txt); }
+    catch(e) {
+      console.error('[KONE-Upload] Parse-Error:', e, 'Raw:', txt);
+      return toast('❌ KI-Antwort konnte nicht geparst werden. Siehe Console.','err');
+    }
+    // Sanity-Check
+    if (!parsed || !Array.isArray(parsed.wartung) || parsed.wartung.length === 0) {
+      console.warn('[KONE-Upload] Ungültiges JSON:', parsed);
+      return toast('❌ KI lieferte unvollständige Daten (keine Wartungs-Tabelle). Bitte PDF prüfen.','err');
+    }
+    _showKonePriceListPreview(parsed);
+  } catch(e) {
+    console.error('[KONE-Upload]', e);
+    toast('❌ KI-Aufruf fehlgeschlagen: '+e.message,'err');
+  }
+}
+
+/* Preview-Modal mit editierbaren Werten + Speichern-Button */
+function _showKonePriceListPreview(data) {
+  // Vorhandenes entfernen
+  const old = document.getElementById('kone-preview-modal'); if (old) old.remove();
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 });
+  const wartungRows = (data.wartung||[]).map((w, i) =>
+    '<tr>'+
+      '<td><input type="number" min="2" step="1" value="'+(+w.haltestellen||0)+'" data-kp="wartung.'+i+'.haltestellen" style="width:70px"></td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+(+w.proWartung||0)+'" data-kp="wartung.'+i+'.proWartung" style="width:100px"> €</td>'+
+    '</tr>'
+  ).join('');
+  const aufschlagRows = (data.aufschlaege||[]).map((a, i) =>
+    '<tr>'+
+      '<td><input type="text" value="'+escapeHtml(a.label||'')+'" data-kp="aufschlaege.'+i+'.label" style="width:100%;min-width:200px"></td>'+
+      '<td><input type="number" min="0" step="1" value="'+(+a.pct||0)+'" data-kp="aufschlaege.'+i+'.pct" style="width:70px"> %</td>'+
+    '</tr>'
+  ).join('');
+  const sonstRows = (data.sonstiges||[]).map((s, i) =>
+    '<tr>'+
+      '<td><input type="text" value="'+escapeHtml(s.label||'')+'" data-kp="sonstiges.'+i+'.label" style="width:100%;min-width:200px"></td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+(+s.preis||0)+'" data-kp="sonstiges.'+i+'.preis" style="width:90px"></td>'+
+      '<td><input type="text" value="'+escapeHtml(s.einheit||'€')+'" data-kp="sonstiges.'+i+'.einheit" style="width:80px"></td>'+
+    '</tr>'
+  ).join('');
+
+  const modal = document.createElement('div');
+  modal.id = 'kone-preview-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:760px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#4F46E5;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🤖 Preisliste-Vorschau (vor dem Speichern editierbar)</span>'+
+        '<button onclick="document.getElementById(\'kone-preview-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="margin-bottom:14px"><strong>Quelle:</strong> <input type="text" value="'+escapeHtml(data.source||'')+'" data-kp="source" style="width:70%;font-size:12px;padding:4px 8px"></div>'+
+        '<h4 style="margin:10px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen</h4>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Haltestellen</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Pro Wartung</th></tr></thead><tbody>'+wartungRows+'</tbody></table>'+
+        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Stundensatz + Aufschläge</h4>'+
+        '<div style="margin-bottom:8px"><strong>Stundensatz €/h:</strong> <input type="number" min="0" step="0.01" value="'+(+data.stundensatz||0)+'" data-kp="stundensatz" style="width:100px"></div>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Aufschlag</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">%</th></tr></thead><tbody>'+aufschlagRows+'</tbody></table>'+
+        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Sonstiges</h4>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Bezeichnung</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Preis</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Einheit</th></tr></thead><tbody>'+sonstRows+'</tbody></table>'+
+        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Fußnote</h4>'+
+        '<textarea data-kp="fussnote" style="width:100%;min-height:60px;font-size:12px;padding:8px;border:1px solid var(--bdr);border-radius:4px">'+escapeHtml(data.fussnote||'')+'</textarea>'+
+      '</div>'+
+      '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'kone-preview-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" onclick="_applyKonePriceListPreview()">💾 Speichern + Tabelle aktualisieren</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal._stagedData = JSON.parse(JSON.stringify(data));
+}
+
+/* Liest die editierten Werte aus dem Preview-Modal, speichert + re-rendert */
+function _applyKonePriceListPreview() {
+  const modal = document.getElementById('kone-preview-modal');
+  if (!modal) return;
+  const data = modal._stagedData || {};
+  // Inputs lesen via data-kp Pfad
+  modal.querySelectorAll('[data-kp]').forEach(el => {
+    const path = el.dataset.kp.split('.');
+    let target = data;
+    for (let i = 0; i < path.length - 1; i++) {
+      const k = path[i];
+      const next = path[i+1];
+      const arrIdx = /^\d+$/.test(next) ? +next : null;
+      if (arrIdx !== null) {
+        if (!Array.isArray(target[k])) target[k] = [];
+        if (!target[k][arrIdx]) target[k][arrIdx] = {};
+      } else if (!target[k] || typeof target[k] !== 'object') {
+        target[k] = {};
+      }
+      target = target[k];
+    }
+    const last = path[path.length-1];
+    const t = el.tagName === 'INPUT' ? el.type : 'text';
+    if (t === 'number') target[last] = +el.value || 0;
+    else target[last] = el.value;
+  });
+  _saveKonePrices(data);
+  modal.remove();
+  _renderKonePriceTable();
+  // Falls Kalkulator gerade offen ist, auch neu berechnen
+  try { if (document.getElementById('wkalk-view')?.classList.contains('show')) recalcWartung(); } catch(_){}
+  toast('✓ Preisliste gespeichert (lokal). Aktiv für diesen User/Browser.', 'ok');
+}
+
 function showKonePrice() {
+  _renderKonePriceTable();
   document.getElementById('kone-modal').classList.add('show');
   document.body.classList.add('has-modal');
 }
