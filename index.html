@@ -2294,7 +2294,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.16';
+const APP_VERSION = 'v3.17';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -10325,6 +10325,19 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, 
     '<p>Vollständiger Bericht im Anhang.</p>',
   ].filter(Boolean).join('');
 
+  // Freshdesk-"type" akzeptiert nur die im Account konfigurierten Werte
+  // (hier: Pauschal, Nach Aufwand, Modernisierung, Wartung).
+  // Mapping aus dem Angebots-Typ — wenn nicht passend, Feld weglassen.
+  const ANGEBOT_TO_FD_TYPE = {
+    'WARTUNG_NOTRUF': 'Wartung',
+    'WARTUNG':        'Wartung',
+    'PAUSCHAL':       'Pauschal',
+    'AUFWAND':        'Nach Aufwand',
+    'MODERNISIERUNG': 'Modernisierung',
+  };
+  const angTypUpper = String(af.angebot_typ||'').toUpperCase();
+  const fdType = ANGEBOT_TO_FD_TYPE[angTypUpper] || null;
+
   const fd = new FormData();
   fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
   fd.append('subject', subject);
@@ -10332,7 +10345,7 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, 
   fd.append('priority', '1');     // 1=low, 2=med, 3=high, 4=urgent
   fd.append('status', '2');       // 2=open, 3=pending, 4=resolved, 5=closed
   fd.append('source', '2');       // 1=email, 2=portal, 3=phone, ...
-  fd.append('type', 'Bericht');
+  if (fdType) fd.append('type', fdType);
   if (pdfBlob) {
     const filename = 'arbeitsbericht-'+(f.bericht_num||'').toString().replace(/[^\w-]/g,'')+'.pdf';
     fd.append('attachments[]', pdfBlob, filename);
