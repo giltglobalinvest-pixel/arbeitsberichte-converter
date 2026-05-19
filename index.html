@@ -2260,7 +2260,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.32';
+const APP_VERSION = 'v3.33';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2432,17 +2432,27 @@ async function atBlobUpload(recordId, field, blob, filename, mimeType) {
    ════════════════════════════════════════════════════════════ */
 async function ensureTable(tableName, fields) {
   if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
-  const r = await fetch('https://api.airtable.com/v0/meta/bases/'+APP_CONFIG.APP_BASE_ID+'/tables', {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const r = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
     headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
   });
+  if (!r.ok) {
+    const errBody = await r.text().catch(()=> '');
+    throw new Error('Meta-API '+r.status+' beim Lesen der Tabellen (Token braucht schema:bases:read+write): '+errBody.slice(0,200));
+  }
   const meta = await r.json();
-  const exists = (meta.tables||[]).find(t=>t.name===tableName);
+  const exists = (meta.tables||[]).find(t => t.name === tableName);
   if (exists) return exists;
-  const cr = await fetch('https://api.airtable.com/v0/meta/bases/'+APP_CONFIG.APP_BASE_ID+'/tables', {
+  const cr = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
     method:'POST',
     headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
     body: JSON.stringify({ name:tableName, fields }),
   });
+  if (!cr.ok) {
+    const errBody = await cr.text().catch(()=> '');
+    throw new Error('Tabelle "'+tableName+'" konnte nicht angelegt werden (HTTP '+cr.status+'): '+errBody.slice(0,300));
+  }
+  console.log('[Schema] Tabelle '+tableName+' angelegt.');
   return await cr.json();
 }
 
@@ -9436,20 +9446,20 @@ const VORLAGE_DEFAULT_KI_PROMPT = 'Politur die folgenden Vertragstext: behebe Ti
 const VORLAGE_DEFAULT_PDF_PROMPT = 'Du erhältst einen bestehenden Wartungsvertrag als PDF (Referenz) und konkrete Vertragsdaten als JSON. \n\nDeine Aufgabe: Erstelle einen NEUEN Wartungsvertrag im selben Stil/Aufbau/Klauseln wie das Referenz-PDF, aber mit den unten genannten konkreten Daten. \n\nWichtig:\n- Formelle deutsche Geschäftssprache\n- Markdown-Format mit # für Hauptüberschriften und ## für Paragrafen (z.B. "## § 1 Vertragsgegenstand")\n- Aufzug-Liste als saubere Aufzählung\n- Alle Vertragsdaten korrekt einsetzen\n- Behalte die Klausel-Reihenfolge und Formulierungen der Referenz so weit sinnvoll bei\n- Keine Anmerkungen, keine Code-Blöcke, keine Markdown-Fence — nur den fertigen Vertragstext\n\nVertragsdaten:';
 
 async function _ensureVorlagenTable() {
-  try {
-    await ensureTable('Vertragsvorlagen', [
-      { name:'firma',         type:'singleLineText' },
-      { name:'typ',           type:'singleLineText' },  // 'sammel' | 'einzel'
-      { name:'name',          type:'singleLineText' },
-      { name:'vorlage_text',  type:'multilineText' },
-      { name:'ki_prompt',     type:'multilineText' },
-      { name:'quell_pdf',     type:'multipleAttachments' },
-      { name:'aktiv',         type:'checkbox' },
-      { name:'created',       type:'singleLineText' },
-      { name:'updated',       type:'singleLineText' },
-    ]);
-    try { await ensureField('Vertragsvorlagen', 'quell_pdf', 'multipleAttachments'); } catch(_){}
-  } catch(e) { console.warn('[Vorlagen] Tabellen-Setup:', e.message); }
+  // ensureTable ist idempotent (legt nur an wenn nicht da)
+  await ensureTable('Vertragsvorlagen', [
+    { name:'firma',         type:'singleLineText' },
+    { name:'typ',           type:'singleLineText' },
+    { name:'name',          type:'singleLineText' },
+    { name:'vorlage_text',  type:'multilineText' },
+    { name:'ki_prompt',     type:'multilineText' },
+    { name:'quell_pdf',     type:'multipleAttachments' },
+    { name:'aktiv',         type:'checkbox' },
+    { name:'created',       type:'singleLineText' },
+    { name:'updated',       type:'singleLineText' },
+  ]);
+  // Falls Tabelle existierte aber Feld fehlt → einzeln nachziehen
+  try { await ensureField('Vertragsvorlagen', 'quell_pdf', 'multipleAttachments'); } catch(_){}
 }
 
 async function renderVertragsvorlagenView() {
@@ -9586,7 +9596,9 @@ async function _saveVorlage(recId) {
   // Vorlage darf entweder Text ODER PDF haben (nicht beides leer)
   // Wir prüfen das erst nach dem PDF-Upload (sonst können wir nicht wissen ob ein bestehendes PDF da ist)
   try {
+    console.log('[Vorlagen] Stelle Tabelle sicher…');
     await _ensureVorlagenTable();
+    console.log('[Vorlagen] Tabelle OK, speichere …', fields);
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     let id = recId;
     // PDF-Lösch-Flag?
