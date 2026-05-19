@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Elevator Servicebox">
-<title>Elevator Servicebox</title>
+<meta name="apple-mobile-web-app-title" content="Arbeitsberichte Converter">
+<title>Arbeitsberichte Converter</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{height:100%;font-family:-apple-system,system-ui,Segoe UI,Roboto,sans-serif;}
@@ -25,8 +25,8 @@ body{display:flex;align-items:center;justify-content:center;background:#0d0d0d;c
 </head>
 <body>
 <div class="loader" id="loader">
-<div class="icon">🛗</div>
-<div class="title">Elevator Servicebox</div>
+<div class="icon">🔧</div>
+<div class="title">Arbeitsberichte Converter</div>
 <div class="sub">Lade neueste Version...</div>
 <div class="spinner"></div>
 <div class="status" id="status">Verbinde...</div>
@@ -52,11 +52,12 @@ var cachedHtml=null,cachedAt=null;
 try{cachedHtml=localStorage.getItem(cacheKey);cachedAt=localStorage.getItem(cacheKey+'_at');}catch(e){}
 if(cachedHtml)window._cachedApp=cachedHtml;
 function injectMonitor(html){
-// Versionsbasierter Check: extrahiert APP_VERSION aus dem HTML und vergleicht — robust gegen Whitespace/Encoding-Unterschiede
 var mon='<script>(function(){try{var R="'+REPO+'",F="'+FILENAME+'",CK="app_cache_"+R,P='+POLL_MIN+'*60*1000;'
-+'function ver(s){if(!s)return null;var m=/const\\s+APP_VERSION\\s*=\\s*[\\\'"]([^\\\'"]+)[\\\'"]/.exec(s);return m?m[1]:null;}'
-+'function showUpdateBanner(newV){if(document.getElementById("__upd_banner"))return;var b=document.createElement("div");b.id="__upd_banner";b.style.cssText="position:fixed;top:0;left:0;right:0;background:#00e676;color:#000;padding:10px 14px;text-align:center;font-family:-apple-system,sans-serif;font-size:13px;z-index:999999;font-weight:700;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.3);padding-top:calc(10px + env(safe-area-inset-top, 0px))";b.innerHTML="✨ Neue Version "+(newV?newV+" ":"")+"verfügbar – hier klicken zum Aktualisieren";b.onclick=function(){location.reload();};document.body.appendChild(b);}'
-+'function chk(){fetch("https://raw.githubusercontent.com/"+R+"/main/"+F+"?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)return;return r.text();}).then(function(t){if(!t)return;var c=null;try{c=localStorage.getItem(CK);}catch(e){}if(!c)return;var vNew=ver(t),vOld=ver(c);if(!vNew||!vOld)return;if(vNew!==vOld){try{localStorage.setItem(CK,t);}catch(e){}showUpdateBanner(vNew);}}).catch(function(){});}'
++'function isSuppressed(){try{return Date.now()<parseInt(localStorage.getItem(CK+"_suppress")||"0",10);}catch(e){return false;}}'
++'function suppress(min){try{localStorage.setItem(CK+"_suppress",String(Date.now()+min*60000));}catch(e){}}'
++'function hidePill(){var p=document.getElementById("__upd_pill");if(!p)return;p.style.opacity="0";p.style.transform="translateY(-150%)";setTimeout(function(){if(p.parentNode)p.remove();},400);}'
++'function showUpdateBanner(){if(isSuppressed())return;if(document.getElementById("__upd_pill"))return;var p=document.createElement("div");p.id="__upd_pill";p.style.cssText="position:fixed;top:calc(10px + env(safe-area-inset-top, 0px));right:12px;background:rgba(0,230,118,0.95);color:#0a3d20;padding:7px 14px;border-radius:999px;font-family:-apple-system,sans-serif;font-size:11px;font-weight:700;z-index:999999;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,0.3);transition:opacity 0.35s,transform 0.35s;transform:translateY(-150%);opacity:0;display:flex;align-items:center;gap:6px;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)";p.innerHTML=\'\\u2728 Update<span style="margin-left:4px;opacity:0.6;font-size:14px;line-height:1;padding:0 2px" id="__upd_x">\\u00d7</span>\';p.onclick=function(e){if(e.target&&e.target.id==="__upd_x"){e.stopPropagation();suppress(60);hidePill();}else{location.reload();}};document.body.appendChild(p);setTimeout(function(){p.style.transform="translateY(0)";p.style.opacity="1";},10);setTimeout(function(){if(document.getElementById("__upd_pill")){hidePill();suppress(15);}},7000);}'
++'function chk(){fetch("https://raw.githubusercontent.com/"+R+"/main/"+F+"?t="+Date.now(),{cache:"no-store"}).then(function(r){if(!r.ok)return;return r.text();}).then(function(t){if(!t)return;var c=null;try{c=localStorage.getItem(CK);}catch(e){}if(c&&t!==c){showUpdateBanner();}}).catch(function(){});}'
 +'setTimeout(chk,30000);setInterval(chk,P);'
 +'document.addEventListener("visibilitychange",function(){if(!document.hidden)chk();});'
 +'window.addEventListener("focus",chk);'
