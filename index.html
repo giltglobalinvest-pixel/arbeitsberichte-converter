@@ -2294,7 +2294,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.14';
+const APP_VERSION = 'v3.15';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -10339,6 +10339,12 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, 
   }
   await erpEnsureSession();
   const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+  // Diagnose-Log: was wir senden
+  console.log('[Freshdesk-Ticket] POST', url, {
+    email: APP_KEYS.freshdeskRequesterEmails[firmaSlug],
+    subject, descriptionLength: description.length,
+    hasPdf: !!pdfBlob,
+  });
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Authorization': 'Bearer '+erpGetSessionToken() }, // KEIN Content-Type setzen, fetch macht das für FormData
@@ -10347,7 +10353,16 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, 
   const text = await res.text();
   let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
   if (!res.ok) {
-    const msg = (data && (data.error||data.message)) || ('HTTP '+res.status);
+    // Freshdesk-Errors kommen meist als data.errors[] mit field/message/code
+    let msg = 'HTTP '+res.status;
+    if (data && Array.isArray(data.errors) && data.errors.length) {
+      msg = data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; ');
+    } else if (data && (data.description || data.message || data.error)) {
+      msg = data.description || data.message || data.error;
+    } else if (text) {
+      msg += ' – ' + text.slice(0,300);
+    }
+    console.error('[Freshdesk-Ticket] ERROR HTTP '+res.status, data || text);
     const err = new Error('Freshdesk: '+msg); err.status = res.status; err.body = data;
     throw err;
   }
