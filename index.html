@@ -1351,6 +1351,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav tnav-mobile-only" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
     <button class="tnav tnav-mobile-only" id="tnav-anlagen" onclick="switchView('anlagen')">🏢 Anlagen</button>
     <button class="tnav tnav-mobile-only" id="tnav-wartung" onclick="switchView('wartung')">🧮 Wartungspreis-Kalkulator</button>
+    <button class="tnav" id="tnav-preislisten" onclick="switchView('preislisten')" style="display:none">📋 Preislisten</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1736,6 +1737,16 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn prim" onclick="createNewFirma()">+ Neue Firma</button>
   </div>
   <div class="firma-body" id="firma-list"></div>
+</div>
+
+<!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
+<div class="firma-view" id="pl-view">
+  <div class="firma-hdr">
+    <h2>📋 Kundenpreislisten</h2>
+    <button class="btn" onclick="renderPreislistenView()">↻ Neu laden</button>
+    <button class="btn prim" onclick="openKonePreislisteKundeEditor()">+ Neue Preisliste</button>
+  </div>
+  <div class="firma-body" id="pl-list" style="padding:20px"></div>
 </div>
 
 <!-- INTEGRATIONEN (nur für role=admin) -->
@@ -2238,7 +2249,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.21';
+const APP_VERSION = 'v3.22';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2773,12 +2784,14 @@ async function showApp() {
   if (isAdmin()) {
     document.getElementById('tnav-users').style.display = '';
     document.getElementById('tnav-firmen').style.display = '';
+    document.getElementById('tnav-preislisten').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
   } else {
     document.getElementById('tnav-users').style.display = 'none';
     document.getElementById('tnav-firmen').style.display = 'none';
+    document.getElementById('tnav-preislisten').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3204,6 +3217,7 @@ function switchView(view) {
   // Permission-Gates
   if (view==='users' && !isAdmin()) return;
   if (view==='firmen' && !isAdmin()) return;
+  if (view==='preislisten' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3219,9 +3233,10 @@ function switchView(view) {
   const auf  = document.getElementById('auf-view');
   const intg = document.getElementById('intg-view');
   const anl  = document.getElementById('anl-view');
+  const pl   = document.getElementById('pl-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3234,6 +3249,7 @@ function switchView(view) {
   auf.classList.toggle('show',  view==='auftraege');
   if (intg) intg.classList.toggle('show', view==='intg');
   if (anl)  anl.classList.toggle('show',  view==='anlagen');
+  if (pl)   pl.classList.toggle('show',   view==='preislisten');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3242,6 +3258,7 @@ function switchView(view) {
   if (view==='auftraege') loadAuftraegeAndRender();
   if (view==='intg')     renderIntegrationView();
   if (view==='anlagen')  renderAnlagenView();
+  if (view==='preislisten') renderPreislistenView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -9037,9 +9054,10 @@ function _renderKonePriceTable() {
       '</div>'+
       '<div style="margin-top:10px;padding:12px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;font-size:12px;color:#065F46">'+
         '<strong>📄 Kundenversion erzeugen</strong>'+
-        '<div style="margin:6px 0;font-size:11px;line-height:1.5">HK-Preise mit Markup hochrechnen, Anrede/Empfänger eintragen → PDF mit Aszendio-Branding zum Download.</div>'+
+        '<div style="margin:6px 0;font-size:11px;line-height:1.5">HK-Preise mit Markup hochrechnen, Kunde aus ERP wählen → PDF mit Aszendio-Branding + Speichern in Übersicht.</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
-          '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981" onclick="openKonePreislisteKundeEditor()">📄 Kundenpreisliste erzeugen</button>'+
+          '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981" onclick="openKonePreislisteKundeEditor()">+ Neue Kundenpreisliste</button>'+
+          '<button class="btn" onclick="hideKonePrice();switchView(\'preislisten\')">📋 Übersicht öffnen</button>'+
         '</div>'+
       '</div>'
       : '')+
@@ -9202,6 +9220,221 @@ function renderWartungKalk() {
   }
 }
 
+/* ── Kundenpreislisten-Übersicht ─────────────────────────────────────── */
+async function renderPreislistenView() {
+  if (!isAdmin()) return;
+  const list = document.getElementById('pl-list');
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Preislisten…</div>';
+  try {
+    await ensureField('Preislisten', 'kunde_id',          'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'kunde_name',        'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'kunde_nummer',      'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'firma',             'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'titel',             'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'gueltig_bis',       'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'markup_pct',        'number').catch(()=>{});
+    await ensureField('Preislisten', 'empfaenger_name',   'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'empfaenger_adresse','multilineText').catch(()=>{});
+    await ensureField('Preislisten', 'kontakt_name',      'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'kontakt_email',     'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'kontakt_telefon',   'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'data_json',         'multilineText').catch(()=>{});
+    await ensureField('Preislisten', 'pdf',               'multipleAttachments').catch(()=>{});
+    await ensureField('Preislisten', 'created',           'singleLineText').catch(()=>{});
+    await ensureField('Preislisten', 'created_by',        'singleLineText').catch(()=>{});
+    const records = await atRead('Preislisten', null);
+    const firmaSlug = getCurrentFirmaSlug();
+    const allMode   = isFirmaAll();
+    const filtered  = records.filter(r => allMode ? true : (r.fields.firma||'') === firmaSlug)
+                              .sort((a,b) => String(b.fields.created||'').localeCompare(String(a.fields.created||'')));
+    if (filtered.length === 0) {
+      list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Preislisten erstellt.<br><br><button class="btn prim" onclick="openKonePreislisteKundeEditor()">+ Erste Preisliste anlegen</button></div>';
+      return;
+    }
+    list.innerHTML = '<div style="display:grid;gap:10px">'+filtered.map(r => {
+      const f = r.fields;
+      const pdfUrl = f.pdf && f.pdf[0] && f.pdf[0].url;
+      const created = f.created ? new Date(f.created).toLocaleString('de-DE') : '';
+      return ''+
+        '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px 18px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05)">'+
+          '<div style="flex:1;min-width:240px">'+
+            '<div style="font-size:15px;font-weight:600;color:var(--navy)">'+escapeHtml(f.kunde_name||f.empfaenger_name||'(ohne Kunde)')+'</div>'+
+            '<div style="font-size:12px;color:var(--txt2);margin-top:2px">'+escapeHtml(f.titel||'')+(f.gueltig_bis?' · gültig bis '+escapeHtml(f.gueltig_bis):'')+(f.markup_pct!=null?' · +'+f.markup_pct+'% Markup':'')+'</div>'+
+            '<div style="font-size:11px;color:var(--txt3);margin-top:4px">'+escapeHtml(created)+(f.kunde_nummer?' · Kd-Nr. '+escapeHtml(f.kunde_nummer):'')+'</div>'+
+          '</div>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+            (pdfUrl ? '<a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(pdfUrl)+'">📄 PDF</a>' : '')+
+            '<button class="btn" onclick="reeditPreisliste(\''+r.id+'\')">✏ Bearbeiten</button>'+
+            '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deletePreisliste(\''+r.id+'\')">🗑</button>'+
+          '</div>'+
+        '</div>';
+    }).join('')+'</div>';
+  } catch(e) {
+    list.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+async function deletePreisliste(recId) {
+  if (!confirm('Diese Preisliste wirklich löschen?')) return;
+  try {
+    await atDelete('Preislisten', recId);
+    toast('🗑 Preisliste gelöscht.','warn');
+    renderPreislistenView();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function reeditPreisliste(recId) {
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+recId, {
+      headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Lade-Fehler');
+    let data = null;
+    try { data = JSON.parse(d.fields.data_json||'null'); } catch(_){}
+    if (!data) return toast('Datensatz unvollständig — kein data_json.','err');
+    data._existingRecId = recId;
+    _showKundenpreislisteEditor(data, _loadKonePrices());
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/* ── ERP-Kunden-Picker ───────────────────────────────────────────────── */
+let _kundenCache = { firma: null, items: [], loadedAt: 0 };
+
+async function openKundenPicker() {
+  const firmaSlug = getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const old = document.getElementById('kp-picker-modal'); if (old) old.remove();
+  const modal = document.createElement('div');
+  modal.id = 'kp-picker-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10100;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:600px;width:100%;max-height:85vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy,#1A3353);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🔍 Kunde aus ERP wählen</span>'+
+        '<button onclick="document.getElementById(\'kp-picker-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:14px 18px;border-bottom:1px solid var(--bdr)">'+
+        '<input id="kp-search" placeholder="Suche nach Name / Kundennummer / Ort…" oninput="_renderKundenPickerList()" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '</div>'+
+      '<div id="kp-list" style="flex:1;overflow-y:auto;padding:8px 14px"><div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Kunden aus dem ERP…</div></div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+  // Cache 10 min
+  if (_kundenCache.firma !== firmaSlug || (Date.now() - _kundenCache.loadedAt) > 10*60*1000) {
+    try {
+      const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+      const list = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+      _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+    } catch(e) {
+      document.getElementById('kp-list').innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+      return;
+    }
+  }
+  _renderKundenPickerList();
+}
+
+function _renderKundenPickerList() {
+  const q = (document.getElementById('kp-search')?.value || '').toLowerCase().trim();
+  const list = _kundenCache.items || [];
+  const filtered = q
+    ? list.filter(k => (
+        String(k.firmenname||'').toLowerCase().includes(q) ||
+        String(k.kundennummer||'').toLowerCase().includes(q) ||
+        String(k.ort||'').toLowerCase().includes(q) ||
+        String(k.strasse||'').toLowerCase().includes(q)
+      ))
+    : list.slice(0, 100);
+  const out = document.getElementById('kp-list');
+  if (!out) return;
+  if (filtered.length === 0) {
+    out.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Keine Treffer.</div>';
+    return;
+  }
+  out.innerHTML = filtered.map(k =>
+    '<div onclick="_selectKundeFromPicker('+k.id+')" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+      '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
+      '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
+      (k.kundennummer ? '<div style="font-size:11px;color:var(--txt3)">Kd-Nr.: '+escapeHtml(k.kundennummer)+'</div>' : '')+
+    '</div>'
+  ).join('');
+}
+
+async function _selectKundeFromPicker(kundeId) {
+  const k = (_kundenCache.items||[]).find(x => +x.id === +kundeId);
+  if (!k) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  const modal = document.getElementById('kunden-pl-modal');
+  if (!modal) { document.getElementById('kp-picker-modal').remove(); return; }
+  // Editor-Felder direkt befüllen
+  const nameInp = modal.querySelector('[data-kk="empfaengerName"]');
+  const adrInp  = modal.querySelector('[data-kk="empfaengerAdresse"]');
+  if (nameInp) nameInp.value = k.firmenname || '';
+  if (adrInp)  adrInp.value  = [k.strasse, [k.plz, k.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  // Kunden-Metadaten ans Modal anhängen
+  modal._selectedKunde = {
+    id: k.id, kundennummer: k.kundennummer || '',
+    firmenname: k.firmenname || '',
+    strasse: k.strasse || '', plz: k.plz || '', ort: k.ort || '',
+  };
+  // Kontakte zum Kunden laden + Picker zeigen
+  document.getElementById('kp-picker-modal').remove();
+  toast('Kunde übernommen — lade Kontakte…','');
+  try {
+    const kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(k.kundennummer)+'/Kontakte');
+    const list = Array.isArray(kontakte) ? kontakte : ((kontakte && (kontakte.content||kontakte.items||kontakte.data))||[]);
+    if (list.length > 0) _openKontaktPicker(list);
+    else toast('Keine Kontakte für diesen Kunden gefunden.','warn');
+  } catch(e) { console.warn('Kontakte laden:', e.message); }
+}
+
+function _openKontaktPicker(kontakte) {
+  const modal = document.createElement('div');
+  modal.id = 'kp-kontakt-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10200;display:flex;align-items:center;justify-content:center;padding:16px';
+  const rows = kontakte.map(k => {
+    const name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim();
+    return ''+
+      '<div onclick="_selectKontaktFromPicker('+k.id+')" data-kontakt-id="'+k.id+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+        '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(name||'(ohne Namen)')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([k.rolle, k.email, k.telefon||k.mobile].filter(Boolean).join(' · '))+'</div>'+
+      '</div>';
+  }).join('');
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:540px;width:100%;max-height:85vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy,#1A3353);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📞 Kontakt wählen (optional)</span>'+
+        '<button onclick="document.getElementById(\'kp-kontakt-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:14px 18px;flex:1;overflow-y:auto" id="kp-kontakt-list">'+rows+'</div>'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);text-align:right">'+
+        '<button class="btn" onclick="document.getElementById(\'kp-kontakt-modal\').remove()">Überspringen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal._kontakte = kontakte;
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+}
+
+function _selectKontaktFromPicker(kontaktId) {
+  const modal = document.getElementById('kp-kontakt-modal');
+  if (!modal) return;
+  const k = (modal._kontakte||[]).find(x => +x.id === +kontaktId);
+  modal.remove();
+  if (!k) return;
+  const ed = document.getElementById('kunden-pl-modal');
+  if (ed) ed._selectedKontakt = {
+    id: k.id,
+    name:  [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim(),
+    email: k.email || '',
+    telefon: k.telefon || k.mobile || '',
+  };
+  toast('Kontakt übernommen: '+(k.vorname||'')+' '+(k.nachname||''),'ok');
+}
+
 /* ── Kundenversion der Preisliste: Markup-Editor + PDF-Export ──────────
    Phase 1: HK-Preise mit konfigurierbarem Markup hochrechnen, Anrede/Empfänger
    einfügen, als Aszendio-gebrandetes PDF exportieren.
@@ -9273,6 +9506,7 @@ function _showKundenpreislisteEditor(data, hkRef) {
           '<div><strong>Titel</strong><br><input type="text" value="'+escapeHtml(data.titel)+'" data-kk="titel" style="width:100%;padding:5px 8px"></div>'+
           '<div><strong>Gültig bis</strong><br><input type="text" value="'+escapeHtml(data.gueltigBis)+'" data-kk="gueltigBis" style="width:100%;padding:5px 8px"></div>'+
         '</div>'+
+        '<div style="margin-bottom:8px"><button class="btn" onclick="openKundenPicker()" style="background:#EEF2FF;border-color:#A5B4FC;color:#3730A3">🔍 Kunde aus ERP wählen</button> <span style="font-size:11px;color:var(--txt3);margin-left:8px">füllt Empfänger + Adresse automatisch</span></div>'+
         '<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-bottom:14px">'+
           '<div><strong>Empfänger (Name)</strong><br><input type="text" placeholder="z.B. Hausverwaltung Müller GmbH" value="'+escapeHtml(data.empfaengerName||'')+'" data-kk="empfaengerName" style="width:100%;padding:5px 8px"></div>'+
           '<div><strong>Empfänger-Anschrift</strong><br><textarea data-kk="empfaengerAdresse" placeholder="Straße + Nr.\\nPLZ + Ort" style="width:100%;min-height:50px;padding:5px 8px;font-family:inherit;font-size:12px">'+escapeHtml(data.empfaengerAdresse||'')+'</textarea></div>'+
@@ -9289,7 +9523,8 @@ function _showKundenpreislisteEditor(data, hkRef) {
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'kunden-pl-modal\').remove()">Abbrechen</button>'+
-        '<button class="btn prim" onclick="_generateKundenpreislistePDF()">📄 PDF generieren</button>'+
+        '<button class="btn" onclick="_generateKundenpreislistePDF()">📄 Nur PDF herunterladen</button>'+
+        '<button class="btn prim" onclick="_saveAndDownloadKundenpreisliste()">💾 Speichern + PDF</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(modal);
@@ -9346,28 +9581,95 @@ function _recalcKundenpreisliste() {
   _showKundenpreislisteEditor(newData, hk);
 }
 
-async function _generateKundenpreislistePDF() {
+/* Erzeugt Preisliste, lädt PDF hoch und speichert Metadaten in Airtable.
+   Wenn _existingRecId gesetzt ist → Update statt Insert. */
+async function _saveAndDownloadKundenpreisliste() {
   const data = _readKundenpreislisteEditor();
   if (!data) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const modal = document.getElementById('kunden-pl-modal');
+  const kunde   = modal?._selectedKunde || null;
+  const kontakt = modal?._selectedKontakt || null;
+  const existingRecId = modal?._stagedData?._existingRecId || null;
+  const btn = document.querySelector('#kunden-pl-modal .btn.prim');
+  if (btn) { btn.disabled = true; btn.textContent = '💾 Speichere…'; }
+  try {
+    // PDF erzeugen (gleiche Logik wie _generateKundenpreislistePDF, aber Blob zurück)
+    const pdfBlob = await _buildKundenpreislistePDFBlob(data);
+    const baseId  = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const fields = {
+      firma:              firmaSlug,
+      titel:              data.titel || '',
+      gueltig_bis:        data.gueltigBis || '',
+      markup_pct:         +data.markupPct || 0,
+      empfaenger_name:    data.empfaengerName || '',
+      empfaenger_adresse: data.empfaengerAdresse || '',
+      data_json:          JSON.stringify(data),
+      kunde_id:           kunde ? String(kunde.id||'') : '',
+      kunde_name:         kunde ? (kunde.firmenname||'') : (data.empfaengerName||''),
+      kunde_nummer:       kunde ? String(kunde.kundennummer||'') : '',
+      kontakt_name:       kontakt ? (kontakt.name||'') : '',
+      kontakt_email:      kontakt ? (kontakt.email||'') : '',
+      kontakt_telefon:    kontakt ? (kontakt.telefon||'') : '',
+      created:            new Date().toISOString(),
+      created_by:         APP_KEYS.user?.api_key || '',
+    };
+    // Schema sicherstellen
+    try { await ensureField('Preislisten', 'data_json', 'multilineText'); } catch(_){}
+    try { await ensureField('Preislisten', 'pdf',       'multipleAttachments'); } catch(_){}
+    let recId = existingRecId;
+    if (existingRecId) {
+      // Update + altes PDF entfernen → neues hochladen
+      await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+existingRecId, {
+        method:'PATCH',
+        headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+        body: JSON.stringify({ fields: { ...fields, pdf: [] } }),
+      }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message||'PATCH'); });
+    } else {
+      const rec = await atWrite('Preislisten', fields);
+      recId = rec.id;
+    }
+    if (btn) btn.textContent = '☁ Lade PDF hoch…';
+    const fname = 'Wartungspreisliste-'+(fields.kunde_name||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+    await atBlobUpload(recId, 'pdf', pdfBlob, fname, 'application/pdf');
+    // Lokal PDF zum Download anbieten
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast('💾 Preisliste gespeichert + PDF heruntergeladen.', 'ok');
+    modal.remove();
+    // Falls Preislisten-View offen ist, refreshen
+    if (document.getElementById('pl-view')?.classList.contains('show')) renderPreislistenView();
+  } catch(e) {
+    console.error('saveKundenpreisliste:', e);
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern + PDF'; }
+  }
+}
+
+/* Baut das PDF und gibt einen Blob zurück (für Save-Workflow). */
+async function _buildKundenpreislistePDFBlob(data) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
+  _renderKundenpreislisteIntoDoc(doc, data);
+  return doc.output('blob');
+}
+
+/* Gemeinsamer Renderer für PDF-Inhalte — wiederverwendet von Save + Download */
+function _renderKundenpreislisteIntoDoc(doc, data) {
   const ml = 14, mr = 196, cw = 182, H = 297;
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
-
   let y = 14;
-  // Aszendio-Logo oben rechts
   try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',148,9,42,7); } catch(_){}
-
   doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(26,51,83);
   doc.text(String(data.titel||'Wartungspreisliste'), ml, y); y += 7;
   if (data.gueltigBis) {
     doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100);
-    doc.text('Gültig bis: '+data.gueltigBis, ml, y);
-    y += 5;
+    doc.text('Gültig bis: '+data.gueltigBis, ml, y); y += 5;
   }
   doc.setDrawColor(160,160,160); doc.setLineWidth(0.3); doc.line(ml, y, mr, y); y += 7;
-
-  // Empfänger
   if ((data.empfaengerName||'').trim() || (data.empfaengerAdresse||'').trim()) {
     doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100);
     doc.text('Für:', ml, y); y += 4;
@@ -9375,13 +9677,10 @@ async function _generateKundenpreislistePDF() {
     if (data.empfaengerName) { doc.text(String(data.empfaengerName), ml, y); y += 5; }
     if (data.empfaengerAdresse) {
       doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(60,60,60);
-      const lines = String(data.empfaengerAdresse).split('\n');
-      for (const ln of lines) { doc.text(ln, ml, y); y += 4.5; }
+      for (const ln of String(data.empfaengerAdresse).split('\n')) { doc.text(ln, ml, y); y += 4.5; }
     }
     y += 4;
   }
-
-  // Tabelle: Wartung pro Haltestellen
   const drawSectionTitle = (txt) => {
     if (y > H - 30) { doc.addPage(); y = 14; }
     doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(26,51,83);
@@ -9389,10 +9688,10 @@ async function _generateKundenpreislistePDF() {
     doc.setDrawColor(26,51,83); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 5;
   };
   let _rowIdx = 0;
+  const tableReset = () => { _rowIdx = 0; };
   const tableRow = (cols, widths, bold) => {
     if (y > H - 22) { doc.addPage(); y = 14; _rowIdx = 0; }
     const rowH = 6.5;
-    // Zebra-Streifen (jede zweite Zeile leicht grau hinterlegt)
     if (!bold && _rowIdx % 2 === 1) {
       doc.setFillColor(248,250,252);
       doc.rect(ml-1, y-4.5, (mr-ml)+2, rowH, 'F');
@@ -9408,20 +9707,16 @@ async function _generateKundenpreislistePDF() {
     y += rowH;
     _rowIdx++;
   };
-  const tableReset = () => { _rowIdx = 0; };
-
   drawSectionTitle('Wartung pro Haltestellen (Basis 4× pro Jahr)');
   tableReset();
   tableRow(['Haltestellen','Pro Wartung','Pro Jahr (4×)'], [60,60,62], true);
   data.wartung.forEach(w => tableRow([w.haltestellen, eur(w.proWartung), eur((+w.proWartung)*4)], [60,60,62]));
   y += 4;
-
   drawSectionTitle('Stundenverrechnung bei Störungseinsätzen');
   tableReset();
   tableRow(['Stundensatz pro Monteur', eur(data.stundensatz)], [120,62], true);
   data.aufschlaege.forEach(a => tableRow(['Aufschlag '+a.label, '+'+a.pct+' %'], [120,62]));
   y += 4;
-
   drawSectionTitle('Sonstiges');
   tableReset();
   data.sonstiges.forEach(s => {
@@ -9429,15 +9724,12 @@ async function _generateKundenpreislistePDF() {
     tableRow([s.label, preisTxt], [120,62]);
   });
   y += 4;
-
   if ((data.fussnote||'').trim()) {
     if (y > H - 30) { doc.addPage(); y = 14; }
     doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(100,100,100);
     const lines = doc.splitTextToSize(String(data.fussnote), cw);
     for (const ln of lines) { doc.text(ln, ml, y); y += 4; }
   }
-
-  // Footer auf jeder Seite
   const totalPages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
@@ -9448,8 +9740,14 @@ async function _generateKundenpreislistePDF() {
     doc.text('service@aszendio.com', ml+70, H-13);
     doc.text('Seite '+p+' / '+totalPages, mr, H-13, { align:'right' });
   }
+}
 
-  // Speichern + öffnen
+async function _generateKundenpreislistePDF() {
+  const data = _readKundenpreislisteEditor();
+  if (!data) return;
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  _renderKundenpreislisteIntoDoc(doc, data);
   const fname = 'Wartungspreisliste-Aszendio'+(data.empfaengerName?'-'+String(data.empfaengerName).replace(/[^\w-]/g,'_').slice(0,40):'')+'.pdf';
   doc.save(fname);
   toast('📄 PDF erstellt: '+fname, 'ok');
