@@ -2260,7 +2260,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.34';
+const APP_VERSION = 'v3.35';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9561,13 +9561,123 @@ async function openVorlageEditor(recId) {
         '<textarea id="vlg-prompt" style="width:100%;min-height:120px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5">'+escapeHtml(data.ki_prompt||'')+'</textarea>'+
         '<div style="margin-top:6px"><button class="btn" style="font-size:11px;padding:3px 10px" onclick="document.getElementById(\'vlg-prompt\').value = VORLAGE_DEFAULT_PDF_PROMPT;">↻ PDF-Prompt einsetzen</button> <button class="btn" style="font-size:11px;padding:3px 10px" onclick="document.getElementById(\'vlg-prompt\').value = VORLAGE_DEFAULT_KI_PROMPT;">↻ Politur-Prompt einsetzen</button></div>'+
       '</div>'+
-      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'vlg-editor\').remove()">Abbrechen</button>'+
-        '<button class="btn prim" onclick="_saveVorlage('+(recId?'\''+recId+'\'':'null')+')">💾 Speichern</button>'+
+        '<div style="display:flex;gap:8px">'+
+          '<button class="btn" style="background:#EEF2FF;border-color:#A5B4FC;color:#3730A3" onclick="_previewVorlage('+(recId?'\''+recId+'\'':'null')+')">👁 Vorschau (Dummy-Daten)</button>'+
+          '<button class="btn prim" onclick="_saveVorlage('+(recId?'\''+recId+'\'':'null')+')">💾 Speichern</button>'+
+        '</div>'+
       '</div>'+
     '</div>';
   document.body.appendChild(modal);
   modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+}
+
+/* Vorschau im Vorlagen-Editor: nimmt aktuellen Text + Dummy-Daten + erzeugt PDF */
+async function _previewVorlage(recId) {
+  const editor = document.getElementById('vlg-editor');
+  if (!editor) return;
+  const text = document.getElementById('vlg-text').value;
+  const prompt = document.getElementById('vlg-prompt').value;
+  const pdfInput = document.getElementById('vlg-pdf-upload');
+  const pdfFile = pdfInput && pdfInput.files && pdfInput.files[0];
+
+  // Dummy-Vars für Vorschau
+  const vars = {
+    kunde_name:         'Mustermann Hausverwaltung GmbH',
+    kunde_nummer:       '4711',
+    kunde_adresse:      'Musterstraße 12\n74369 Löchgau',
+    kontakt_name:       'Frau Anna Mustermann',
+    kontakt_email:      'a.mustermann@beispiel.de',
+    kontakt_telefon:    '+49 7123 456789',
+    vertrag_titel:      'Wartungsvertrag · Musteranlage',
+    abrechnung_typ:     'Sammelrechnung über alle Aufzüge',
+    abrechnung_turnus:  'Jährlich',
+    wartungen_pro_jahr: '4',
+    aufzug_liste:       '1. Musterstraße 12, Aufzug 1 (Fabrik-Nr. M-12345) · 5 Haltestellen · 600,00 € netto/Jahr\n2. Musterstraße 12, Aufzug 2 (Fabrik-Nr. M-12346) · 7 Haltestellen · 840,00 € netto/Jahr',
+    aufzug_anzahl:      '2',
+    jahresumsatz:       '1.440,00 € netto',
+    turnus_betrag:      '1.440,00 € netto',
+    stundensatz:        '162,00 €',
+    gueltig_bis:        '31.12.2027',
+    datum_heute:        new Date().toLocaleDateString('de-DE'),
+    firma_name:         'Aszendio Aufzugservice GmbH',
+  };
+
+  // Wenn ein bestehender Record + PDF da ist (und kein Re-Upload), nutze KI mit PDF
+  let finalText = text;
+  let usePdf = false;
+  let pdfBlobRef = null;
+  try {
+    // Aktuell hochgeladene Datei priorisieren
+    if (pdfFile && APP_KEYS.anthropicKey) {
+      usePdf = true; pdfBlobRef = pdfFile;
+    } else if (recId && APP_KEYS.anthropicKey) {
+      // Bestehende PDF prüfen
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertragsvorlagen/'+recId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
+      const d = await r.json();
+      if (d.fields && d.fields.quell_pdf && d.fields.quell_pdf[0]) {
+        const meta = d.fields.quell_pdf[0];
+        toast('📥 Lade Referenz-PDF…','');
+        const pdfResp = await fetch(meta.url);
+        if (pdfResp.ok) {
+          const blob = await pdfResp.blob();
+          pdfBlobRef = new File([blob], meta.filename||'referenz.pdf', { type:'application/pdf' });
+          usePdf = true;
+        }
+      }
+    }
+
+    if (usePdf && pdfBlobRef) {
+      toast('🤖 KI generiert Vorschau aus PDF + Dummy-Daten…','');
+      const ki = (prompt || VORLAGE_DEFAULT_PDF_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
+      finalText = await callClaude(pdfBlobRef, ki);
+      finalText = finalText.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+    } else {
+      // Markdown + Platzhalter-Ersetzung
+      if (!text) return toast('Kein Text und kein PDF — nichts zu zeigen.','err');
+      finalText = _ersetzePlatzhalter(text, vars);
+      // Optional: KI-Politur — überspringen in Vorschau-Modus für Geschwindigkeit
+    }
+    toast('📄 baue PDF…','');
+    const blob = await _buildVertragPDFBlob(finalText, vars);
+    _showVorlagenPreview(blob, vars.kunde_name);
+  } catch(e) {
+    console.error('preview:', e);
+    toast('❌ Vorschau-Fehler: '+e.message,'err');
+  }
+}
+
+function _showVorlagenPreview(pdfBlob, label) {
+  const old = document.getElementById('vlg-preview-modal'); if (old) old.remove();
+  const url = URL.createObjectURL(pdfBlob);
+  const modal = document.createElement('div');
+  modal.id = 'vlg-preview-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:10500;display:flex;align-items:center;justify-content:center;padding:12px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:1000px;width:100%;height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.6)">'+
+      '<div style="padding:14px 18px;background:#3730A3;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>👁 Vorlagen-Vorschau · '+escapeHtml(label||'')+' <span style="font-weight:400;opacity:.8;font-size:11px;margin-left:8px">mit Dummy-Daten</span></span>'+
+        '<button onclick="_closeVorlagenPreview()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="flex:1;background:#525252;overflow:hidden">'+
+        '<iframe src="'+url+'" style="width:100%;height:100%;border:none;background:#fff"></iframe>'+
+      '</div>'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="_closeVorlagenPreview()">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal._url = url;
+  modal.onclick = (e) => { if (e.target === modal) _closeVorlagenPreview(); };
+}
+
+function _closeVorlagenPreview() {
+  const m = document.getElementById('vlg-preview-modal');
+  if (!m) return;
+  if (m._url) URL.revokeObjectURL(m._url);
+  m.remove();
 }
 
 function _insertPlatzhalter(key) {
@@ -9948,56 +10058,188 @@ async function _callClaudeText(prompt) {
 async function _buildVertragPDFBlob(text, vars) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
-  const ml = 18, mr = 192, cw = mr - ml, H = 297;
-  let y = 16;
-  // Logo
-  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',148,9,42,7); } catch(_){}
-  doc.setFont('helvetica','bold'); doc.setFontSize(18); doc.setTextColor(26,51,83);
-  doc.text(vars.vertrag_titel || 'Wartungsvertrag', ml, y); y += 7;
-  doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(100,100,100);
-  doc.text('Datum: '+vars.datum_heute, ml, y); y += 5;
-  doc.setDrawColor(26,51,83); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 7;
+  const ml = 22, mr = 188, cw = mr - ml, H = 297;
+  const NAVY = [26, 51, 83];
+  const ACCENT = [33, 82, 169];      // Aszendio-Akzentblau
+  const GREY_TEXT = [55, 65, 81];
+  const GREY_LIGHT = [156, 163, 175];
+  let y = 18;
 
-  // Empfänger-Block
+  // ─── KOPFBEREICH ─────────────────────────────────────────────
+  // Aszendio-Logo oben rechts
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',mr-46,12,46,7.6); } catch(_){}
+  // Absender-Zeile (klein, oben links)
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_LIGHT);
+  doc.text('Aszendio Aufzugservice GmbH · service@aszendio.com', ml, 16);
+
+  // Akzentlinie oben
+  y = 26;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, mr, y); y += 8;
+
+  // ─── EMPFÄNGER-BLOCK (links, wie Geschäftsbrief) ─────────────
   if (vars.kunde_name) {
-    doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(26,51,83);
+    doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY_LIGHT);
+    doc.text('EMPFÄNGER', ml, y); y += 4.5;
+    doc.setFontSize(10.5); doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
     doc.text(vars.kunde_name, ml, y); y += 5;
-    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(60,60,60);
-    for (const ln of String(vars.kunde_adresse||'').split('\n')) { if (ln.trim()) { doc.text(ln, ml, y); y += 4.5; } }
-    y += 4;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY_TEXT);
+    for (const ln of String(vars.kunde_adresse||'').split('\n')) { if (ln.trim()) { doc.text(ln, ml, y); y += 4.6; } }
+    y += 2;
   }
 
-  // Text (mit Auto-Wrap)
-  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(40,40,40);
-  const paragraphs = String(text).split(/\n\s*\n/);
-  for (const para of paragraphs) {
-    const lines = doc.splitTextToSize(para, cw);
-    for (const line of lines) {
-      if (y > H - 20) { doc.addPage(); y = 16; }
-      // Markdown-Headlines erkennen
-      if (/^#\s+/.test(line)) {
-        doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(26,51,83);
-        doc.text(line.replace(/^#\s+/,''), ml, y); y += 6;
-        doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(40,40,40);
-      } else if (/^##\s+/.test(line)) {
-        doc.setFont('helvetica','bold'); doc.setFontSize(11.5); doc.setTextColor(26,51,83);
-        doc.text(line.replace(/^##\s+/,''), ml, y); y += 5.5;
-        doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(40,40,40);
-      } else {
-        doc.text(line, ml, y); y += 5;
-      }
+  // Datum + ggf. Vertragsnummer-Zeile (rechtsbündig)
+  doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY_TEXT);
+  const datumLine = 'Datum: ' + (vars.datum_heute || new Date().toLocaleDateString('de-DE'));
+  doc.text(datumLine, mr, y, { align:'right' });
+  y += 10;
+
+  // ─── TITEL ───────────────────────────────────────────────────
+  doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(...NAVY);
+  doc.text(vars.vertrag_titel || 'Wartungsvertrag', ml, y); y += 1;
+  // Akzent-Unterstrich unter dem Titel
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(1.4); doc.line(ml, y+1.5, ml+34, y+1.5);
+  y += 11;
+
+  // ─── HAUPTTEXT mit Markdown-Renderer ─────────────────────────
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY_TEXT);
+
+  // Helper: prüft Seitenumbruch
+  const needSpace = (h) => { if (y + h > H - 22) { doc.addPage(); y = 18; _drawFooter = true; } };
+
+  // Helper: rendert eine Zeile mit inline-Formatting (**bold**, *italic*)
+  const renderInlineFormatted = (line, opts = {}) => {
+    const startX = opts.x || ml;
+    const fontSize = opts.fontSize || 10.5;
+    const color = opts.color || GREY_TEXT;
+    // Parse Tokens: **bold**, *italic*, normal
+    const tokens = [];
+    let rest = line;
+    while (rest.length > 0) {
+      const mBold = /^\*\*(.+?)\*\*/.exec(rest);
+      const mItal = /^\*(.+?)\*/.exec(rest);
+      const mPlain = /^([^*]+|\*)/.exec(rest);
+      if (mBold) { tokens.push({ text: mBold[1], bold:true }); rest = rest.slice(mBold[0].length); }
+      else if (mItal) { tokens.push({ text: mItal[1], italic:true }); rest = rest.slice(mItal[0].length); }
+      else if (mPlain) { tokens.push({ text: mPlain[1] }); rest = rest.slice(mPlain[0].length); }
+      else { tokens.push({ text: rest }); rest = ''; }
     }
-    y += 3;
+    doc.setFontSize(fontSize); doc.setTextColor(...color);
+    let x = startX;
+    for (const t of tokens) {
+      doc.setFont('helvetica', t.bold ? 'bold' : (t.italic ? 'italic' : 'normal'));
+      doc.text(t.text, x, y);
+      x += doc.getTextWidth(t.text);
+    }
+  };
+
+  // Markdown-Renderer (zeilenbasiert)
+  const paragraphs = String(text).split(/\n/);
+  let inList = false, listIdxCounter = 0;
+  for (let i = 0; i < paragraphs.length; i++) {
+    const raw = paragraphs[i];
+    const line = raw.replace(/\r/g, '');
+    // Leerzeile = Abstand
+    if (!line.trim()) {
+      y += 3.5;
+      inList = false;
+      continue;
+    }
+    // Horizontale Linie ---
+    if (/^---+$/.test(line.trim())) {
+      needSpace(6);
+      doc.setDrawColor(...GREY_LIGHT); doc.setLineWidth(0.3);
+      doc.line(ml, y, mr, y); y += 6;
+      continue;
+    }
+    // H1 (#)
+    if (/^#\s+/.test(line)) {
+      needSpace(10);
+      y += 2;
+      doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.setTextColor(...NAVY);
+      doc.text(line.replace(/^#\s+/,''), ml, y); y += 6;
+      // Akzent-Strich darunter
+      doc.setDrawColor(...ACCENT); doc.setLineWidth(0.7); doc.line(ml, y, ml+22, y); y += 4;
+      doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY_TEXT);
+      inList = false;
+      continue;
+    }
+    // H2 (##)
+    if (/^##\s+/.test(line)) {
+      needSpace(9);
+      y += 2;
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
+      doc.text(line.replace(/^##\s+/,''), ml, y); y += 5.5;
+      doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY_TEXT);
+      inList = false;
+      continue;
+    }
+    // H3 (###)
+    if (/^###\s+/.test(line)) {
+      needSpace(7);
+      doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...NAVY);
+      doc.text(line.replace(/^###\s+/,''), ml, y); y += 5;
+      doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY_TEXT);
+      inList = false;
+      continue;
+    }
+    // Liste (- oder *)
+    const mList = /^[\-\*]\s+(.*)$/.exec(line);
+    if (mList) {
+      const itemTxt = mList[1];
+      const wrap = doc.splitTextToSize(itemTxt, cw - 6);
+      for (let li = 0; li < wrap.length; li++) {
+        needSpace(5.5);
+        if (li === 0) {
+          doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...ACCENT);
+          doc.text('•', ml+1, y);
+        }
+        renderInlineFormatted(wrap[li], { x: ml+6, fontSize:10.5 });
+        y += 5;
+      }
+      inList = true;
+      continue;
+    }
+    // Nummerierte Liste (1. text)
+    const mNum = /^(\d+)\.\s+(.*)$/.exec(line);
+    if (mNum) {
+      const num = mNum[1], itemTxt = mNum[2];
+      const wrap = doc.splitTextToSize(itemTxt, cw - 8);
+      for (let li = 0; li < wrap.length; li++) {
+        needSpace(5.5);
+        if (li === 0) {
+          doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...ACCENT);
+          doc.text(num+'.', ml, y);
+        }
+        renderInlineFormatted(wrap[li], { x: ml+8, fontSize:10.5 });
+        y += 5;
+      }
+      inList = true;
+      continue;
+    }
+    // Normaler Absatz — wrap und inline-format
+    const wrap = doc.splitTextToSize(line, cw);
+    for (const wl of wrap) {
+      needSpace(5.5);
+      renderInlineFormatted(wl);
+      y += 5;
+    }
   }
 
-  // Footer
+  // ─── FOOTER auf jeder Seite ──────────────────────────────────
   const totalPages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= totalPages; p++) {
     doc.setPage(p);
-    doc.setDrawColor(180,180,180); doc.setLineWidth(0.2); doc.line(ml, H-18, mr, H-18);
-    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(120,120,120);
-    doc.text('Aszendio Aufzugservice GmbH', ml, H-13);
-    doc.text('service@aszendio.com', ml+70, H-13);
+    // Akzent-Linie oben am Footer
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
+    doc.line(ml, H-20, mr, H-20);
+    doc.setDrawColor(...GREY_LIGHT); doc.setLineWidth(0.2);
+    doc.line(ml, H-19.5, mr, H-19.5);
+    // Footer-Inhalt
+    doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.setTextColor(...NAVY);
+    doc.text('Aszendio Aufzugservice GmbH', ml, H-15);
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_LIGHT);
+    doc.text('service@aszendio.com · www.aszendio.com', ml, H-11);
+    doc.setFontSize(8); doc.setTextColor(...GREY_LIGHT);
     doc.text('Seite '+p+' / '+totalPages, mr, H-13, { align:'right' });
   }
   return doc.output('blob');
