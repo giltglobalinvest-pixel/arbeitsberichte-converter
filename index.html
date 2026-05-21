@@ -1359,6 +1359,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <div class="drawer-divider"></div>
     <div class="drawer-user-info"><span style="font-size:18px">👤</span><span id="drawer-user-name" style="font-weight:600">–</span></div>
     <button type="button" class="drawer-action" onclick="toggleTheme()">🎨 Design wechseln</button>
+    <button type="button" class="drawer-action" id="drawer-install-btn" onclick="triggerInstallPwa()" style="display:none">📥 Als App installieren</button>
     <button type="button" class="drawer-action" onclick="forceUpdate()">↻ Update prüfen</button>
     <button type="button" class="drawer-action drawer-logout" onclick="logout()">⏏ Abmelden</button>
     <div class="drawer-footer" id="drawer-version">–</div>
@@ -2260,7 +2261,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.37';
+const APP_VERSION = 'v3.38';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2778,6 +2779,61 @@ async function doLogin() {
     toast('❌ '+e.message, 'err');
     btn.disabled = false; btn.textContent = 'Einloggen';
   }
+}
+
+// PWA-Installation: Service Worker + Install-Prompt-Handler
+let _deferredInstallPrompt = null;
+(function _setupPwa() {
+  // Service Worker registrieren (Voraussetzung für Chrome-Install-Button)
+  if ('serviceWorker' in navigator) {
+    // Path relative zu loader.html — der lädt index.html via document.write, Pfad bleibt aber gleich
+    navigator.serviceWorker.register('./sw.js', { scope: './' })
+      .then(reg => console.log('[PWA] Service Worker registriert:', reg.scope))
+      .catch(err => console.warn('[PWA] Service Worker registration fehlgeschlagen:', err.message));
+  }
+  // Capture beforeinstallprompt → Button im Drawer zeigen
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _deferredInstallPrompt = e;
+    const btn = document.getElementById('drawer-install-btn');
+    if (btn) btn.style.display = '';
+    console.log('[PWA] Install-Prompt verfügbar');
+  });
+  window.addEventListener('appinstalled', () => {
+    _deferredInstallPrompt = null;
+    const btn = document.getElementById('drawer-install-btn');
+    if (btn) btn.style.display = 'none';
+    toast('🎉 App wurde als Desktop-App installiert!', 'ok');
+  });
+})();
+
+async function triggerInstallPwa() {
+  // 1) Bereits installiert?
+  if (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) {
+    return toast('App läuft bereits im App-Modus.', '');
+  }
+  // 2) Chrome/Edge: Standard-Prompt
+  if (_deferredInstallPrompt) {
+    _deferredInstallPrompt.prompt();
+    const result = await _deferredInstallPrompt.userChoice;
+    console.log('[PWA] User-Choice:', result);
+    _deferredInstallPrompt = null;
+    if (result.outcome !== 'accepted') toast('Installation abgebrochen.', '');
+    return;
+  }
+  // 3) Safari (Mac/iOS): kein nativer Prompt, manuelle Anleitung
+  const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+  const isMac    = /Macintosh|Mac OS X/.test(navigator.userAgent);
+  const isIOS    = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  let msg;
+  if (isMac && isSafari) {
+    msg = 'In Safari (Mac): Datei → Im Dock ablegen … (Safari 17+). Oder Teilen-Symbol → "Zum Dock hinzufügen".';
+  } else if (isIOS) {
+    msg = 'In Safari (iOS): Teilen-Symbol unten → "Zum Home-Bildschirm" → Fertig.';
+  } else {
+    msg = 'Browser unterstützt keinen Auto-Install. Tipp: Chrome/Edge öffnen → URL-Leiste rechts klicken → "App installieren".';
+  }
+  alert('📥 App installieren\n\n' + msg);
 }
 
 // Notfall-Cleanup für vom alten Loader-Bug erzeugte "✨ Neue Version verfügbar"-Banner.
