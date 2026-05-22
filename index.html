@@ -1948,10 +1948,19 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
         Synchronisiert Kunden-Kontakte aus dem ERP in eine Mailchimp-Audience <strong>je Firma</strong>. Idempotent (existierende Member werden aktualisiert, neue werden mit Status <code>subscribed</code> angelegt). Felder: <code>FNAME</code>, <code>LNAME</code>, <code>COMPANY</code>, <code>PHONE</code> + Tag mit dem Kundennamen für Segmentierung.
       </p>
       <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.6;margin-bottom:10px">
-        <strong>Setup je Firma (einmalig in val.town → Settings → Environment Variables):</strong><br>
-        <code>MAILCHIMP_API_KEY_&lt;FIRMA&gt;</code> = der API-Key (endet mit <code>-us12</code> o.ä.)<br>
-        <code>MAILCHIMP_AUDIENCE_&lt;FIRMA&gt;</code> = die List-/Audience-ID<br>
-        <span style="color:var(--txt3)">Firma-Slug in Großbuchstaben, z.B. <code>MAILCHIMP_API_KEY_AUFZUG</code> und <code>MAILCHIMP_AUDIENCE_AUFZUG</code>.</span>
+        <strong>Setup je Firma — direkt in der App:</strong><br>
+        1. Gehe zu <a href="#" onclick="event.preventDefault();switchView('firmen')" style="color:var(--navy);font-weight:600">🏢 Firmen-Verwaltung</a><br>
+        2. In der Zeile deiner Firma die zwei neuen Spalten ausfüllen:<br>
+        &nbsp;&nbsp;&nbsp;• <code>📧 Mailchimp-Key</code> — der API-Key (endet mit Server-Suffix wie <code>-us12</code>)<br>
+        &nbsp;&nbsp;&nbsp;• <code>📧 Audience-ID</code> — die List-/Audience-ID aus Mailchimp<br>
+        3. <strong>💾 Speichern</strong> klicken<br>
+        4. Hier unten auf <strong>🩺 Verbindung testen</strong>
+        <div style="margin-top:8px;padding-top:8px;border-top:1px dashed var(--bdr);color:var(--txt3);font-size:11px">
+          <strong>Wo finde ich die Werte in Mailchimp?</strong><br>
+          • <strong>API-Key</strong>: Mailchimp → Profil (oben rechts) → <em>Account &amp; billing</em> → <em>Extras</em> → <em>API keys</em> → „Create A Key"<br>
+          • <strong>Audience-ID</strong>: Mailchimp → <em>Audience</em> → <em>Settings</em> → <em>Audience name and defaults</em> → unten rechts steht „Audience ID"
+        </div>
+        <div style="margin-top:6px;color:var(--txt3);font-size:11px">Fallback: Env-Vars <code>MAILCHIMP_API_KEY_&lt;FIRMA&gt;</code> + <code>MAILCHIMP_AUDIENCE_&lt;FIRMA&gt;</code> in val.town funktionieren weiterhin, sind aber nur nötig wenn man die Keys nicht in Airtable haben will.</div>
       </div>
       <div class="intg-row">
         <button class="btn" onclick="_mailchimpTestPing(this)" title="Prüft Mailchimp-Verbindung für aktive Firma">🩺 Verbindung testen</button>
@@ -2329,7 +2338,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.52';
+const APP_VERSION = 'v3.53';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4877,6 +4886,9 @@ async function ensureLegacyFirmaFields() {
   // User: Techniker-Flag + Subunternehmer-Flag
   await ensureField('User',         'techniker',     'checkbox');
   await ensureField('User',         'subunternehmer','checkbox');
+  // Mailchimp je Firma (API-Key + Audience-ID); ERP-Tenant ist schon da
+  await ensureField('Firmen',       'mailchimp_api_key',     'singleLineText');
+  await ensureField('Firmen',       'mailchimp_audience_id', 'singleLineText');
 }
 
 function pickInitialFirma() {
@@ -5002,16 +5014,17 @@ async function renderFirmaView() {
     list.innerHTML = `
       <table class="firma-tbl">
         <thead><tr>
-          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>ERP-Tenant</th><th title="URL-Prefix zum Auftrag im ERP — Auftragsnummer wird automatisch angehängt">ERP-Auftrag-URL</th><th>Aktiv</th><th></th>
+          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>ERP-Tenant</th><th title="URL-Prefix zum Auftrag im ERP — Auftragsnummer wird automatisch angehängt">ERP-Auftrag-URL</th><th title="Mailchimp API-Key, endet mit -us12 o.ä.">📧 Mailchimp-Key</th><th title="Mailchimp Audience-/List-ID">📧 Audience-ID</th><th>Aktiv</th><th></th>
         </tr></thead>
-        <tbody>${rows || '<tr><td colspan="10" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="12" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
       </table>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
         ℹ️ <strong>Slug</strong> ist der eindeutige Schlüssel (z.B. <code>aszendio</code>) – wird intern für Berichts-Filter und Template-Zuordnung verwendet, nicht ändern wenn schon Berichte existieren.<br>
         ℹ️ <strong>Kalkulator-Typ</strong>: <code>kone</code> = KONE-Preisliste (Aszendio), <code>none</code> = Kalkulator nicht verfügbar (Platzhalter), <code>custom</code> = ausstehend.<br>
         ℹ️ <strong>Bericht-Start</strong> / <strong>Auftrag-Start</strong>: Startwerte für die jeweiligen Nummernkreise pro Firma. Aszendio: Berichte ab 50000, Aufträge ab 1001. Neue Firmen jeweils ab 1.<br>
         ℹ️ <strong>ERP-Tenant</strong>: Mandanten-ID im Aufzugshandwerk-ERP (z.B. <code>1</code> = Aufzugshandwerk, <code>4</code> = Aszendio). Leer lassen, wenn die Firma kein ERP nutzt.<br>
-        ℹ️ <strong>ERP-Auftrag-URL</strong>: URL-Prefix zum Auftrag im ERP — die Auftragsnummer wird automatisch angehängt. Beispiel: <code>https://verwaltung.aufzugshandwerk.de/auftraege</code> → ergibt <code>…/auftraege/1003</code>. Wird in Freshdesk-Tickets als Direkt-Link genutzt.
+        ℹ️ <strong>ERP-Auftrag-URL</strong>: URL-Prefix zum Auftrag im ERP — die Auftragsnummer wird automatisch angehängt. Beispiel: <code>https://verwaltung.aufzugshandwerk.de/auftraege</code> → ergibt <code>…/auftraege/1003</code>. Wird in Freshdesk-Tickets als Direkt-Link genutzt.<br>
+        ℹ️ <strong>📧 Mailchimp-Key</strong> + <strong>Audience-ID</strong>: Pro Firma eigener Mailchimp-Account. Key endet mit Server-Suffix (z.B. <code>-us12</code>). Audience-ID findest du in Mailchimp → Audience → Settings → „Audience name and defaults". Leer lassen, wenn keine Mailchimp-Integration für diese Firma.
       </div>
     `;
   } catch(e) {
@@ -5040,6 +5053,8 @@ function firmaRowHtml(f) {
       <td data-label="Auftrag-Start"><input type="number" class="firma-inp" data-field="auftrag_start_num" value="${+fl.auftrag_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
       <td data-label="ERP-Tenant"><input class="firma-inp" data-field="erp_tenant" value="${esc(fl.erp_tenant)}" placeholder="z.B. 1 oder 4" style="max-width:80px;font-family:monospace;text-align:center" title="Mandanten-ID im Aufzugshandwerk-ERP"></td>
       <td data-label="ERP-Auftrag-URL"><input class="firma-inp" data-field="erp_auftrag_url" value="${esc(fl.erp_auftrag_url)}" placeholder="https://verwaltung.aufzugshandwerk.de/auftraege" style="min-width:280px;font-family:monospace;font-size:11px" title="URL-Prefix — Auftragsnummer wird angehängt"></td>
+      <td data-label="Mailchimp-Key"><input class="firma-inp" data-field="mailchimp_api_key" value="${esc(fl.mailchimp_api_key)}" type="password" placeholder="…-us12" style="min-width:160px;font-family:monospace;font-size:11px" title="Mailchimp API-Key (endet mit Server-Suffix wie -us12)" autocomplete="new-password"></td>
+      <td data-label="Audience-ID"><input class="firma-inp" data-field="mailchimp_audience_id" value="${esc(fl.mailchimp_audience_id)}" placeholder="a1b2c3d4e5" style="min-width:120px;font-family:monospace;font-size:11px" title="Mailchimp List-/Audience-ID"></td>
       <td data-label="Aktiv" style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
       <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
@@ -5062,12 +5077,18 @@ async function saveFirmaRow(recId) {
   });
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   try {
-    // Schema-Sicherstellung: erp_tenant + erp_auftrag_url ggf. anlegen
+    // Schema-Sicherstellung: erp_tenant + erp_auftrag_url + mailchimp_* ggf. anlegen
     if ('erp_tenant' in f) {
       try { await ensureField('Firmen', 'erp_tenant', 'singleLineText'); } catch(_){}
     }
     if ('erp_auftrag_url' in f) {
       try { await ensureField('Firmen', 'erp_auftrag_url', 'singleLineText'); } catch(_){}
+    }
+    if ('mailchimp_api_key' in f) {
+      try { await ensureField('Firmen', 'mailchimp_api_key', 'singleLineText'); } catch(_){}
+    }
+    if ('mailchimp_audience_id' in f) {
+      try { await ensureField('Firmen', 'mailchimp_audience_id', 'singleLineText'); } catch(_){}
     }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+recId, {
@@ -13661,23 +13682,25 @@ export default async function (req) {
   //   POST /mailchimp/<firma>/ping            → Verbindungstest (zeigt Audience-Name)
   //   POST /mailchimp/<firma>/upsert          → 1 Kontakt anlegen/aktualisieren (idempotent via md5(email))
   //   POST /mailchimp/<firma>/bulk            → mehrere Kontakte (Body: { members:[...] })
-  // Env: MAILCHIMP_API_KEY_<FIRMA>  (Key endet mit -<server>, z.B. -us12)
-  //      MAILCHIMP_AUDIENCE_<FIRMA> (List/Audience-ID)
+  // Config-Quelle (Reihenfolge):
+  //   1) Airtable Firmen.mailchimp_api_key + .mailchimp_audience_id (über Firmen-Verwaltung in der App)
+  //   2) Fallback Env-Vars MAILCHIMP_API_KEY_<FIRMA> / MAILCHIMP_AUDIENCE_<FIRMA>
   if (path.startsWith("mailchimp/")) {
     const rest = path.replace(/^mailchimp\\//, "");
     const i = rest.indexOf("/");
     if (i < 0) return json({ error:"Bad path. Erwartet: /mailchimp/<firma>/<action>" }, 400);
     const firma  = rest.slice(0, i);
     const action = rest.slice(i+1).replace(/\\/+$/,"");
-    const keyEnv = "MAILCHIMP_API_KEY_"+firma.toUpperCase();
-    const audEnv = "MAILCHIMP_AUDIENCE_"+firma.toUpperCase();
-    const apiKey = Deno.env.get(keyEnv);
-    const audId  = Deno.env.get(audEnv);
-    if (!apiKey || !audId) return json({ error:"Mailchimp-Config fehlt für Firma "+firma, expected_env:[keyEnv, audEnv] }, 500);
+    const cfg = await lookupMailchimpConfig(firma);
+    const apiKey = cfg.apiKey, audId = cfg.audId;
+    if (!apiKey || !audId) return json({
+      error:"Mailchimp-Config fehlt für Firma "+firma,
+      hint:"Trage API-Key und Audience-ID in Admin → Firmen-Verwaltung ein (oder als Env-Vars MAILCHIMP_API_KEY_"+firma.toUpperCase()+" / MAILCHIMP_AUDIENCE_"+firma.toUpperCase()+")."
+    }, 500);
     // Server-Prefix aus dem Key extrahieren: "<token>-us12" → "us12"
     const dash = apiKey.lastIndexOf("-");
     const server = dash > 0 ? apiKey.slice(dash+1) : "";
-    if (!server) return json({ error:"Mailchimp API-Key hat keinen Server-Suffix (z.B. -us12)" }, 500);
+    if (!server) return json({ error:"Mailchimp API-Key hat keinen Server-Suffix (z.B. -us12). Prüfe ob der Key korrekt aus Mailchimp kopiert wurde." }, 500);
     const mcBase = "https://"+server+".api.mailchimp.com/3.0";
     const basic = btoa("anystring:"+apiKey);
     const mcHeaders = { "Authorization":"Basic "+basic, "Content-Type":"application/json", "Accept":"application/json" };
@@ -13932,6 +13955,25 @@ async function lookupTenant(firma) {
   } catch(_){}
   const LEGACY = { aufzug: "1", aszendio: "4" };
   return LEGACY[firma] || null;
+}
+
+// Mailchimp-Config pro Firma. Reihenfolge: Airtable-Felder (Firmen.mailchimp_api_key
+// + .mailchimp_audience_id) → Env-Vars MAILCHIMP_API_KEY_<FIRMA> / MAILCHIMP_AUDIENCE_<FIRMA>
+// → null. So kann der Admin alles in der App pflegen, ohne in val.town zu müssen.
+async function lookupMailchimpConfig(firma) {
+  let apiKey = null, audId = null;
+  try {
+    const recs = await atReadAll("Firmen", "filterByFormula="+encodeURIComponent("{slug}='"+firma+"'")+"&maxRecords=1");
+    const f = recs[0] && recs[0].fields;
+    if (f) {
+      const k = f.mailchimp_api_key, a = f.mailchimp_audience_id;
+      if (k && String(k).trim()) apiKey = String(k).trim();
+      if (a && String(a).trim()) audId  = String(a).trim();
+    }
+  } catch(_){}
+  if (!apiKey) apiKey = Deno.env.get("MAILCHIMP_API_KEY_"+firma.toUpperCase()) || null;
+  if (!audId)  audId  = Deno.env.get("MAILCHIMP_AUDIENCE_"+firma.toUpperCase()) || null;
+  return { apiKey, audId };
 }
 
 async function erpGet(firma, tenant, apiKey, p) {
