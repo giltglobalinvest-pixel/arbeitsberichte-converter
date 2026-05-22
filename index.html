@@ -2363,7 +2363,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.56';
+const APP_VERSION = 'v3.57';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11799,51 +11799,91 @@ async function _openWartungsvertragDetail(recId) {
   }
 }
 
-/* ERP-Wartungsverträge laden — probiert mehrere Endpunkte, da der genaue Pfad
-   im Aufzugshandwerk-ERP nicht dokumentiert ist. Read-only. */
+/* ERP-Wartungsverträge laden. Im Aufzugshandwerk-ERP gibt es keinen dedizierten
+   "Wartungsverträge"-Endpunkt — Verträge bestehen aus:
+     1) Wartungs-/Notruf-Angebot (api/angebote/wartungNotruf) mit vertragsEnde
+     2) bestätigtem MITANGEBOT-Auftrag (api/auftraege), der auf das Angebot zeigt
+   Aktive Verträge = Angebot mit gültigem vertragsEnde, das einen aktiven Auftrag hat. */
 async function _loadWartungsvertraegeFromERP() {
   if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
   const firmaSlug = getCurrentFirmaSlug();
   const btn = document.getElementById('wv-erp-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ lade…'; }
   try {
-    const candidates = [
-      'api/wartungsvertraege',
-      'wartungsvertraege',
-      'api/vertraege',
-      'vertraege',
-      'api/wartung/vertraege',
-      'api/Wartungsvertraege',
-    ];
-    let result = null, usedPath = null, lastErr = null;
-    for (const p of candidates) {
-      try {
-        result = await erpFetch('/aufzug/'+firmaSlug+'/'+p);
-        usedPath = p;
-        break;
-      } catch(e) {
-        lastErr = e;
-        // Bei 404 weiter probieren, bei 401/403 sofort abbrechen
-        if (e.status === 401 || e.status === 403) throw e;
-      }
+    // 1) Wartungs-/Notruf-Angebote
+    let wartungList = [];
+    try {
+      const wRes = await _erpTryPaths(firmaSlug, ['api/angebote/wartungNotruf','angebote/wartungNotruf']);
+      wartungList = Array.isArray(wRes) ? wRes : ((wRes && (wRes.content || wRes.items || wRes.data)) || []);
+    } catch(e) {
+      throw new Error('Wartungs-Angebote nicht ladbar: '+(e.message||'?').slice(0,200));
     }
-    if (!result) {
-      throw new Error('Kein ERP-Endpunkt gefunden. Probierte Pfade: '+candidates.join(', ')+'. Letzter Fehler: '+(lastErr && lastErr.message || '?').slice(0,200));
+    // 2) Aufträge (für MITANGEBOT-Mapping)
+    let auftrList = [];
+    try {
+      const aRes = await _erpTryPaths(firmaSlug, ['api/auftraege','auftraege']);
+      auftrList = Array.isArray(aRes) ? aRes : ((aRes && (aRes.content || aRes.items || aRes.data)) || []);
+    } catch(e) { console.warn('[ERP-Sync] Aufträge: '+e.message); }
+    // Map angebotId → Auftrag (aktive Verträge)
+    const ACTIVE = ['Auftrag bestätigt','In Bearbeitung','Abgeschlossen','Abgerechnet'];
+    const auftragByAngebotId = new Map();
+    for (const a of auftrList) {
+      if (a.bestellform !== 'MITANGEBOT' || !a.angebotid) continue;
+      if (!ACTIVE.includes(a.status)) continue;
+      auftragByAngebotId.set(String(a.angebotid), a);
     }
-    let items = Array.isArray(result) ? result : (result.content || result.items || result.data || []);
-    // ERP-URL pro Vertrag bauen falls Firma erp_auftrag_url hat
+    // Firma-Daten für URL-Bauen
     const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
     const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
-    if (baseUrl) {
-      items = items.map(e => Object.assign({}, e, {
-        _erpUrl: String(baseUrl).replace(/auftraege?\/?$/,'wartungsvertraege')+'/'+(e.id||e.vertragsId||'')
-      }));
+    // ERP-Verträge bauen — eine Zeile pro Wartungs-Angebot
+    const today = new Date().toISOString().slice(0,10);
+    const items = [];
+    for (const w of wartungList) {
+      const ang = w.angebot || w;
+      const angId = String(ang.id || w.angebotid || '');
+      if (!angId) continue;
+      const ende = String(w.vertragsEnde||'').slice(0,10);
+      const auftrag = auftragByAngebotId.get(angId);
+      // Status ableiten: aktiv wenn Auftrag bestätigt; sonst entwurf; gekündigt wenn ende < heute
+      let status = 'entwurf';
+      if (auftrag) status = 'aktiv';
+      if (ende && ende < today) status = 'gekuendigt';
+      const anlage = ang.anlage || {};
+      const kunde  = (ang.kunde) || (anlage.kunde) || (auftrag && auftrag.kunde) || {};
+      const kundeName = kunde.firmenname || kunde.name || kunde.bezeichnung || '';
+      const kundeNr   = String(kunde.kundennummer || kunde.id || '');
+      const adresse   = anlage.anzeigeAdresse || anlage.adresse || '';
+      const vNr = ang.angebotsnummer || ang.nummer || ang.belegnummer ||
+                  (auftrag && (auftrag.auftragsnummer || auftrag.nummer)) ||
+                  ('ANG-'+angId);
+      const erpUrl = baseUrl
+        ? (auftrag && auftrag.id
+            ? String(baseUrl).replace(/\/$/,'') + '/' + auftrag.id
+            : '')
+        : '';
+      items.push({
+        id: angId,
+        vertragsnummer: String(vNr),
+        titel: ang.bezeichnung || ang.titel || (adresse ? 'Wartung · '+adresse : 'Wartungsvertrag'),
+        typ: 'einzel',     // ERP-Verträge sind in dieser Struktur immer 1 Anlage = 1 Angebot
+        status,
+        kunde: { firmenname: kundeName, kundennummer: kundeNr },
+        kundenname: kundeName,
+        kundennummer: kundeNr,
+        anlagenAnzahl: 1,
+        startDatum: w.vertragsBeginn || w.vertragsstart || ang.datum || ang.angebotsdatum || '',
+        created: w.erstelltAm || ang.erstelltAm || ang.datum || '',
+        _erpUrl: erpUrl,
+        _vertragsEnde: ende,
+        _raw: w,
+      });
     }
     _erpVertraegeCache = { firma: firmaSlug, items, loadedAt: Date.now() };
-    toast('✅ '+items.length+' Verträge vom ERP geladen (Pfad: '+usedPath+')', 'ok');
+    const aktivCount = items.filter(it => it.status==='aktiv').length;
+    toast('✅ '+items.length+' Wartungsverträge geladen (' + aktivCount + ' aktiv, Quelle: Wartungs-Angebote + MITANGEBOT-Aufträge)', 'ok');
     _renderWartungsvertraegeList();
   } catch(e) {
-    toast('❌ ERP-Sync: '+(e.message||'Fehler').slice(0,250), 'err');
+    toast('❌ ERP-Sync: '+(e.message||'Fehler').slice(0,300), 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📥 Vom ERP laden'; }
   }
