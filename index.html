@@ -1355,6 +1355,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-vorlagen" onclick="switchView('vorlagen')" style="display:none">📑 Vertragsvorlagen</button>
     <button class="tnav" id="tnav-kunden" onclick="switchView('kunden')" style="display:none">👥 Kunden</button>
     <button class="tnav" id="tnav-kontakte" onclick="switchView('kontakte')" style="display:none">👤 Kontakte</button>
+    <button class="tnav" id="tnav-vertraege" onclick="switchView('vertraege')" style="display:none">📑 Wartungsverträge</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1796,6 +1797,30 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="kt-list" style="padding:20px"></div>
+</div>
+
+<!-- WARTUNGSVERTRÄGE (Admin-only) -->
+<div class="firma-view" id="wv-view">
+  <div class="firma-hdr">
+    <h2>📑 Wartungsverträge <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="wv-count">0</span></h2>
+    <button class="btn" onclick="renderWartungsvertraegeView({force:true})">↻ Neu laden</button>
+    <button class="btn" id="wv-erp-btn" onclick="_loadWartungsvertraegeFromERP()" title="Bestehende Verträge aus dem Aufzugshandwerk-ERP nachladen (read-only)">📥 Vom ERP laden</button>
+    <button class="btn prim" onclick="openNeuerVertragWizard()">+ Neuer Vertrag</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="wv-search" placeholder="Suchen nach Nummer, Kunde, Anlage…" oninput="_renderWartungsvertraegeList()">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-app" checked onchange="_renderWartungsvertraegeList()"> 🔧 App</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-erp" checked onchange="_renderWartungsvertraegeList()"> 📥 ERP</label>
+      <span style="color:var(--txt3);font-size:11px">|</span>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-einzel" checked onchange="_renderWartungsvertraegeList()"> 🛗 Einzel</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-sammel" checked onchange="_renderWartungsvertraegeList()"> 📦 Sammel</label>
+    </div>
+  </div>
+  <div class="firma-body" id="wv-list" style="padding:20px"></div>
 </div>
 
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
@@ -2338,7 +2363,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.55';
+const APP_VERSION = 'v3.56';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2968,6 +2993,7 @@ async function showApp() {
     document.getElementById('tnav-vorlagen').style.display = '';
     document.getElementById('tnav-kunden').style.display = '';
     document.getElementById('tnav-kontakte').style.display = '';
+    document.getElementById('tnav-vertraege').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
@@ -2978,6 +3004,7 @@ async function showApp() {
     document.getElementById('tnav-vorlagen').style.display = 'none';
     document.getElementById('tnav-kunden').style.display = 'none';
     document.getElementById('tnav-kontakte').style.display = 'none';
+    document.getElementById('tnav-vertraege').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3408,6 +3435,7 @@ function switchView(view) {
   if (view==='vorlagen' && !isAdmin()) return;
   if (view==='kunden' && !isAdmin()) return;
   if (view==='kontakte' && !isAdmin()) return;
+  if (view==='vertraege' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3427,9 +3455,10 @@ function switchView(view) {
   const vlg  = document.getElementById('vlg-view');
   const kdv  = document.getElementById('kdv-view');
   const ktv  = document.getElementById('kt-view');
+  const wv   = document.getElementById('wv-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3446,6 +3475,7 @@ function switchView(view) {
   if (vlg)  vlg.classList.toggle('show',  view==='vorlagen');
   if (kdv)  kdv.classList.toggle('show',  view==='kunden');
   if (ktv)  ktv.classList.toggle('show',  view==='kontakte');
+  if (wv)   wv.classList.toggle('show',   view==='vertraege');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3458,6 +3488,7 @@ function switchView(view) {
   if (view==='vorlagen') renderVertragsvorlagenView();
   if (view==='kunden') renderKundenView();
   if (view==='kontakte') renderKontakteView();
+  if (view==='vertraege') renderWartungsvertraegeView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -9067,6 +9098,12 @@ function renderDashboard() {
         <div class="dash-tool-desc">Alle Kunden-Kontakte auf einen Blick — Suche, manueller + Bulk-Sync zu Mailchimp.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>
+      <button class="dash-tool" onclick="switchView('vertraege')">
+        <div class="dash-tool-icon">📑</div>
+        <div class="dash-tool-label">Wartungsverträge</div>
+        <div class="dash-tool-desc">Einzel- und Sammelverträge erzeugen. App- und ERP-Verträge gemischt mit eigenem Nummernkreis (WV-…).</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
       <button class="dash-tool" onclick="switchView('users')">
         <div class="dash-tool-icon">🧑‍💼</div>
         <div class="dash-tool-label">User-Verwaltung</div>
@@ -10727,7 +10764,42 @@ async function _ensureVertraegeTable() {
       { name:'created',       type:'singleLineText' },
       { name:'created_by',    type:'singleLineText' },
     ]);
+    // Felder für die Vertrags-Übersicht + ERP-Sync (additiv, nicht-disruptiv)
+    await ensureField('Vertraege', 'vertragsnummer',  'singleLineText');
+    await ensureField('Vertraege', 'quelle',          'singleLineText');  // 'app' | 'erp'
+    await ensureField('Vertraege', 'erp_id',          'singleLineText');
+    await ensureField('Vertraege', 'erp_url',         'singleLineText');
+    await ensureField('Vertraege', 'kunde_id',        'singleLineText');
+    await ensureField('Vertraege', 'kunde_nummer',    'singleLineText');
+    await ensureField('Vertraege', 'kunde_name',      'singleLineText');
+    await ensureField('Vertraege', 'start_datum',     'singleLineText');
+    await ensureField('Vertraege', 'laufzeit_monate', 'number', { precision:0 });
   } catch(e) { console.warn('[Vertraege] Tabellen-Setup:', e.message); }
+}
+
+/* Vertragsnummer-Generator: WV-{firmaInitial}-{YY}-{0001}
+   Pro Firma + Jahr eigener Counter. Liest alle bestehenden App-Verträge der Firma
+   für das aktuelle Jahr, ermittelt höchste Sequenz, +1. Kollisionssicher solang Anlegen seriell. */
+async function _nextVertragsnummer(firmaSlug) {
+  const jahr = new Date().getFullYear();
+  const yy = String(jahr).slice(-2);
+  const initial = String(firmaSlug||'x').charAt(0).toUpperCase() || 'X';
+  // Bestehende App-Verträge der Firma im aktuellen Jahr scannen
+  let records = [];
+  try { records = await atRead('Vertraege', null); } catch(_){}
+  const prefix = 'WV-'+initial+'-'+yy+'-';
+  let maxSeq = 0;
+  for (const r of records) {
+    const f = r.fields || {};
+    if (String(f.firma||'') !== String(firmaSlug)) continue;
+    if (String(f.quelle||'app') !== 'app') continue;
+    const nr = String(f.vertragsnummer||'');
+    if (!nr.startsWith(prefix)) continue;
+    const seq = parseInt(nr.slice(prefix.length), 10);
+    if (Number.isFinite(seq) && seq > maxSeq) maxSeq = seq;
+  }
+  const next = maxSeq + 1;
+  return prefix + String(next).padStart(4, '0');
 }
 
 async function _loadVertraegeForPreisliste(rec) {
@@ -11568,6 +11640,452 @@ async function _mailchimpBulkSyncFromKontakteView() {
     toast('❌ Bulk-Sync: '+e.message.slice(0,250), 'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📧 Alle → Mailchimp'; }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   WARTUNGSVERTRÄGE-VIEW (Admin)
+   App + ERP-Verträge gemischt mit Source-Badge.
+   ════════════════════════════════════════════════════════════ */
+// Cache für App-Verträge (Airtable) und ERP-Verträge (read-only)
+let _wartungsvertraegeCache = { items: [], loadedAt: 0 };
+let _erpVertraegeCache = { firma: null, items: [], loadedAt: 0 };
+
+async function renderWartungsvertraegeView(opts) {
+  if (!isAdmin()) return;
+  const list = document.getElementById('wv-list');
+  if (!list) return;
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Verträge…</div>';
+  try {
+    await _ensureVertraegeTable();
+    const force = opts && opts.force;
+    const fresh = !force && _wartungsvertraegeCache.items.length && (Date.now() - _wartungsvertraegeCache.loadedAt) < 5*60*1000;
+    if (!fresh) {
+      let records = [];
+      try { records = await atRead('Vertraege', null); } catch(_){}
+      _wartungsvertraegeCache = { items: records, loadedAt: Date.now() };
+    }
+    _renderWartungsvertraegeList();
+  } catch(e) {
+    list.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+/* Vereinheitlichte View-Items aus App- + ERP-Daten bauen. */
+function _buildWartungsvertraegeViewItems() {
+  const firmaSlug = getCurrentFirmaSlug();
+  const all = isFirmaAll();
+  const items = [];
+  // App-Verträge aus Airtable
+  for (const r of (_wartungsvertraegeCache.items||[])) {
+    const f = r.fields || {};
+    if (!all && String(f.firma||'') !== firmaSlug) continue;
+    if (String(f.quelle||'app') !== 'app') continue;
+    let anlagen = [];
+    try { anlagen = JSON.parse(f.anlagen_json || '[]'); } catch(_){}
+    items.push({
+      _src: 'app',
+      _id: r.id,
+      firma: f.firma,
+      nummer: f.vertragsnummer || '(ohne Nr.)',
+      titel: f.titel || '',
+      typ: f.abrechnung_typ || 'sammel',
+      status: f.status || 'entwurf',
+      kunde_name: f.kunde_name || '',
+      kunde_nummer: f.kunde_nummer || '',
+      anlagen_count: anlagen.length,
+      start: f.start_datum || '',
+      created: f.created || '',
+      preisliste_id: f.preisliste_id || ''
+    });
+  }
+  // ERP-Verträge
+  if (!all && _erpVertraegeCache.firma === firmaSlug) {
+    for (const e of (_erpVertraegeCache.items||[])) {
+      items.push({
+        _src: 'erp',
+        _id: 'erp-'+(e.id||e.vertragsId||Math.random()),
+        firma: firmaSlug,
+        nummer: e.vertragsnummer || e.nummer || e.id || '(ohne Nr.)',
+        titel: e.titel || e.bezeichnung || '',
+        typ: (e.typ||'').toLowerCase() === 'einzel' ? 'einzel' : 'sammel',
+        status: e.status || 'aktiv',
+        kunde_name: (e.kunde && (e.kunde.firmenname || e.kunde.name)) || e.kundenname || '',
+        kunde_nummer: (e.kunde && e.kunde.kundennummer) || e.kundennummer || '',
+        anlagen_count: Array.isArray(e.anlagen) ? e.anlagen.length : (e.anlagenAnzahl||0),
+        start: e.startDatum || e.start || '',
+        created: e.created || e.erstelltAm || '',
+        erp_url: e._erpUrl || '',
+        erp_id: e.id || e.vertragsId || ''
+      });
+    }
+  }
+  return items;
+}
+
+function _renderWartungsvertraegeList() {
+  const list = document.getElementById('wv-list');
+  const cnt  = document.getElementById('wv-count');
+  if (!list) return;
+  const q = (document.getElementById('wv-search')?.value || '').toLowerCase().trim();
+  const showApp    = document.getElementById('wv-flt-app')?.checked !== false;
+  const showErp    = document.getElementById('wv-flt-erp')?.checked !== false;
+  const showEinzel = document.getElementById('wv-flt-einzel')?.checked !== false;
+  const showSammel = document.getElementById('wv-flt-sammel')?.checked !== false;
+  let items = _buildWartungsvertraegeViewItems();
+  // Quelle-Filter
+  items = items.filter(it => (it._src==='app' && showApp) || (it._src==='erp' && showErp));
+  // Typ-Filter
+  items = items.filter(it => (it.typ==='einzel' && showEinzel) || (it.typ==='sammel' && showSammel));
+  // Suche
+  if (q) items = items.filter(it =>
+    String(it.nummer||'').toLowerCase().includes(q) ||
+    String(it.titel||'').toLowerCase().includes(q) ||
+    String(it.kunde_name||'').toLowerCase().includes(q) ||
+    String(it.kunde_nummer||'').toLowerCase().includes(q)
+  );
+  // Sort: neueste zuerst (createdAt fallback Nummer)
+  items.sort((a,b) => String(b.created||b.nummer).localeCompare(String(a.created||a.nummer)));
+  if (cnt) cnt.textContent = items.length+' Verträge';
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer.':'Noch keine Verträge. Klick <strong>+ Neuer Vertrag</strong> oder <strong>📥 Vom ERP laden</strong>.')+'</div>';
+    return;
+  }
+  list.innerHTML = '<div style="display:grid;gap:8px">'+items.slice(0, 500).map(it => {
+    const srcBadge = it._src==='erp'
+      ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">📥 ERP</span>'
+      : '<span style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">🔧 APP</span>';
+    const typBadge = it.typ==='einzel'
+      ? '<span style="background:#e0e7ff;color:#3730A3;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">🛗 Einzel</span>'
+      : '<span style="background:#fef3c7;color:#92400e;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">📦 Sammel</span>';
+    const statBadge = it.status==='aktiv'
+      ? '<span style="background:#dcfce7;color:#166534;font-size:10px;padding:2px 6px;border-radius:4px">aktiv</span>'
+      : it.status==='gekuendigt'
+      ? '<span style="background:#fee2e2;color:#991b1b;font-size:10px;padding:2px 6px;border-radius:4px">gekündigt</span>'
+      : '<span style="background:#f3f4f6;color:#6b7280;font-size:10px;padding:2px 6px;border-radius:4px">'+escapeHtml(it.status||'entwurf')+'</span>';
+    const clickHandler = it._src==='erp'
+      ? (it.erp_url ? 'window.open(\''+escapeHtml(it.erp_url)+'\',\'_blank\')' : 'toast(\'Kein ERP-Link verfügbar\',\'err\')')
+      : '_openWartungsvertragDetail(\''+escapeHtml(it._id)+'\')';
+    return '<div onclick="'+clickHandler+'" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._src==='erp'?'#3730A3':'#10b981')+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
+      '<div style="flex:1;min-width:240px">'+
+        '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'+
+          srcBadge+typBadge+statBadge+
+          '<strong style="font-family:monospace;color:var(--navy)">'+escapeHtml(it.nummer)+'</strong>'+
+        '</div>'+
+        '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(it.kunde_name||'(ohne Kunde)')+(it.kunde_nummer?' <span style="font-weight:400;color:var(--txt3)">· Kd-Nr. '+escapeHtml(it.kunde_nummer)+'</span>':'')+'</div>'+
+        (it.titel ? '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml(it.titel)+'</div>' : '')+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--txt2);text-align:right">'+
+        '<div>🛗 '+(it.anlagen_count||0)+' Anlagen</div>'+
+        (it.start ? '<div style="color:var(--txt3)">Start: '+escapeHtml(String(it.start).slice(0,10))+'</div>' : '')+
+      '</div>'+
+    '</div>';
+  }).join('')+'</div>'+
+  (items.length > 500 ? '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px">… 500 von '+items.length+' Verträgen werden angezeigt. Bitte Suche eingrenzen.</div>' : '');
+}
+
+/* App-Vertrag öffnen → bestehendes Detail aus Preisliste-Kontext aufrufen falls möglich. */
+async function _openWartungsvertragDetail(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  const plId = rec.fields && rec.fields.preisliste_id;
+  if (typeof openVertragDetail === 'function' && plId) {
+    openVertragDetail(recId, plId);
+  } else if (typeof openVertragDetail === 'function') {
+    // Ohne Preisliste-Kontext öffnen — Detail-Funktion sollte das hinkriegen, da rec.id genügt
+    openVertragDetail(recId, plId||'');
+  } else {
+    toast('Detail-Ansicht nicht verfügbar.','err');
+  }
+}
+
+/* ERP-Wartungsverträge laden — probiert mehrere Endpunkte, da der genaue Pfad
+   im Aufzugshandwerk-ERP nicht dokumentiert ist. Read-only. */
+async function _loadWartungsvertraegeFromERP() {
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const btn = document.getElementById('wv-erp-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ lade…'; }
+  try {
+    const candidates = [
+      'api/wartungsvertraege',
+      'wartungsvertraege',
+      'api/vertraege',
+      'vertraege',
+      'api/wartung/vertraege',
+      'api/Wartungsvertraege',
+    ];
+    let result = null, usedPath = null, lastErr = null;
+    for (const p of candidates) {
+      try {
+        result = await erpFetch('/aufzug/'+firmaSlug+'/'+p);
+        usedPath = p;
+        break;
+      } catch(e) {
+        lastErr = e;
+        // Bei 404 weiter probieren, bei 401/403 sofort abbrechen
+        if (e.status === 401 || e.status === 403) throw e;
+      }
+    }
+    if (!result) {
+      throw new Error('Kein ERP-Endpunkt gefunden. Probierte Pfade: '+candidates.join(', ')+'. Letzter Fehler: '+(lastErr && lastErr.message || '?').slice(0,200));
+    }
+    let items = Array.isArray(result) ? result : (result.content || result.items || result.data || []);
+    // ERP-URL pro Vertrag bauen falls Firma erp_auftrag_url hat
+    const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
+    const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
+    if (baseUrl) {
+      items = items.map(e => Object.assign({}, e, {
+        _erpUrl: String(baseUrl).replace(/auftraege?\/?$/,'wartungsvertraege')+'/'+(e.id||e.vertragsId||'')
+      }));
+    }
+    _erpVertraegeCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+    toast('✅ '+items.length+' Verträge vom ERP geladen (Pfad: '+usedPath+')', 'ok');
+    _renderWartungsvertraegeList();
+  } catch(e) {
+    toast('❌ ERP-Sync: '+(e.message||'Fehler').slice(0,250), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📥 Vom ERP laden'; }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   NEUER-VERTRAG-WIZARD
+   Alle Schritte in einem Modal: Typ → Kunde → Anlagen → Konditionen → Submit
+   ════════════════════════════════════════════════════════════ */
+async function openNeuerVertragWizard() {
+  if (!isAdmin()) return toast('🔒 Nur für Admin','err');
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  // Vorbereitung: Kunden laden (falls noch nicht im Cache)
+  if (!_kundenCache.items || !_kundenCache.items.length || _kundenCache.firma !== firmaSlug) {
+    toast('⏳ Lade Kunden…','');
+    try {
+      const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+      const items = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+      _kundenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+    } catch(e) {
+      return toast('❌ Kunden laden: '+e.message.slice(0,200),'err');
+    }
+  }
+  const old = document.getElementById('nwv-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'nwv-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:var(--navy,#1A3353);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📑 Neuer Wartungsvertrag</span>'+
+        '<button onclick="document.getElementById(\'nwv-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px">'+
+        // Typ
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">1. Vertragstyp</div>'+
+          '<div style="display:flex;gap:8px">'+
+            '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border:2px solid var(--bdr);border-radius:8px;cursor:pointer" id="nwv-typ-einzel-lbl">'+
+              '<input type="radio" name="nwv-typ" value="einzel" onchange="_nwvOnTypChange()"> <span>🛗 <strong>Einzelvertrag</strong><br><span style="font-weight:400;color:var(--txt3);font-size:11px">Eine Anlage = ein Vertrag</span></span>'+
+            '</label>'+
+            '<label style="flex:1;display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--bg);border:2px solid var(--bdr);border-radius:8px;cursor:pointer" id="nwv-typ-sammel-lbl">'+
+              '<input type="radio" name="nwv-typ" value="sammel" checked onchange="_nwvOnTypChange()"> <span>📦 <strong>Sammelvertrag</strong><br><span style="font-weight:400;color:var(--txt3);font-size:11px">Ein Betreiber, mehrere Anlagen</span></span>'+
+            '</label>'+
+          '</div>'+
+        '</div>'+
+        // Kunde
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">2. Kunde / Betreiber *</div>'+
+          '<select id="nwv-kunde" onchange="_nwvOnKundeChange()" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+            '<option value="">– bitte wählen –</option>'+
+            (_kundenCache.items||[]).map(k => '<option value="'+escapeHtml(String(k.id))+'">'+escapeHtml(k.firmenname||'(ohne Name)')+(k.kundennummer?' · Kd-Nr. '+escapeHtml(String(k.kundennummer)):'')+'</option>').join('')+
+          '</select>'+
+        '</div>'+
+        // Anlagen
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">3. Anlagen <span id="nwv-anlagen-info" style="font-weight:400;color:var(--txt3);font-size:11px">— erst Kunden wählen</span></div>'+
+          '<div id="nwv-anlagen-list" style="max-height:240px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px"><div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px">⚠ Wähle erst einen Kunden</div></div>'+
+        '</div>'+
+        // Konditionen
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">4. Konditionen</div>'+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+            '<div><strong>Wartungen / Jahr</strong><br><input id="nwv-wpa" type="number" value="4" min="0" max="12" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Abrechnungsturnus</strong><br><select id="nwv-turnus" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"><option value="jaehrlich">Jährlich</option><option value="quartal">Quartalsweise</option></select></div>'+
+            '<div><strong>Startdatum</strong><br><input id="nwv-start" type="date" value="'+new Date().toISOString().slice(0,10)+'" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Laufzeit (Monate)</strong><br><input id="nwv-laufzeit" type="number" value="12" min="1" max="120" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '</div>'+
+        '</div>'+
+        // Titel
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">5. Bezeichnung (optional)</div>'+
+          '<input id="nwv-titel" type="text" placeholder="z.B. Wartungsvertrag 2026" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+        '</div>'+
+        // Vorschau Nummer
+        '<div style="padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534"><strong>📋 Vertragsnummer wird generiert beim Erstellen:</strong> <code id="nwv-nummer-preview" style="font-family:monospace">…</code></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'nwv-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="nwv-submit" onclick="_nwvSubmit()">🚀 Vertrag erstellen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._firmaSlug = firmaSlug;
+  m._selectedAnlagen = [];
+  // Vorschau Nummer initial
+  _nextVertragsnummer(firmaSlug).then(nr => { const el = document.getElementById('nwv-nummer-preview'); if (el) el.textContent = nr; });
+  _nwvOnTypChange();
+}
+
+function _nwvOnTypChange() {
+  const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
+  const einzelLbl = document.getElementById('nwv-typ-einzel-lbl');
+  const sammelLbl = document.getElementById('nwv-typ-sammel-lbl');
+  if (einzelLbl) einzelLbl.style.borderColor = typ==='einzel' ? 'var(--navy)' : 'var(--bdr)';
+  if (sammelLbl) sammelLbl.style.borderColor = typ==='sammel' ? 'var(--navy)' : 'var(--bdr)';
+  // Bei Einzelvertrag-Hinweis: später max 1 Anlage erzwingen
+  const info = document.getElementById('nwv-anlagen-info');
+  if (info) {
+    const modal = document.getElementById('nwv-modal');
+    const sel = (modal && modal._selectedAnlagen) || [];
+    info.textContent = typ==='einzel'
+      ? '— bei Einzelvertrag genau 1 Anlage wählen ('+sel.length+' gewählt)'
+      : '— eine oder mehrere Anlagen wählen ('+sel.length+' gewählt)';
+  }
+}
+
+async function _nwvOnKundeChange() {
+  const modal = document.getElementById('nwv-modal');
+  if (!modal) return;
+  const kundeId = document.getElementById('nwv-kunde').value;
+  const listEl = document.getElementById('nwv-anlagen-list');
+  modal._selectedAnlagen = [];
+  if (!kundeId) {
+    listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px">⚠ Wähle erst einen Kunden</div>';
+    _nwvOnTypChange();
+    return;
+  }
+  const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
+  if (!kunde) return;
+  modal._kunde = kunde;
+  listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px"><div class="spinner" style="margin:0 auto 6px"></div>Lade Anlagen…</div>';
+  try {
+    const all = await _loadAnlagenForFirma(modal._firmaSlug);
+    const kundenNr = String(kunde.kundennummer||'');
+    const mine = all.filter(a => String(a.kunde?.kundennummer||'') === kundenNr);
+    modal._anlagen = mine;
+    _nwvRenderAnlagen();
+  } catch(e) {
+    listEl.innerHTML = '<div style="padding:12px;color:var(--err);font-size:12px">❌ '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function _nwvRenderAnlagen() {
+  const modal = document.getElementById('nwv-modal');
+  if (!modal) return;
+  const list = modal._anlagen || [];
+  const sel = modal._selectedAnlagen || [];
+  const listEl = document.getElementById('nwv-anlagen-list');
+  if (!list.length) {
+    listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px">Keine Anlagen für diesen Kunden im ERP.</div>';
+    return;
+  }
+  listEl.innerHTML = list.map((a, i) => {
+    const id = String(a.id||i);
+    const checked = sel.includes(id) ? 'checked' : '';
+    const adresse = a.anzeigeAdresse || a.adresse || '';
+    const meta = [a.fabriknummer?'🔧 '+a.fabriknummer:'', a.objektTyp, a.haltestellen?a.haltestellen+' HS':'', a.betreiberTyp].filter(Boolean).join(' · ');
+    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,0.04)\'" onmouseout="this.style.background=\'transparent\'">'+
+      '<input type="checkbox" value="'+escapeHtml(id)+'" '+checked+' onchange="_nwvToggleAnlage(\''+escapeHtml(id)+'\')" style="margin:0">'+
+      '<div style="flex:1">'+
+        '<div style="font-size:13px;color:var(--navy);font-weight:600">🛗 '+escapeHtml(adresse||'(ohne Adresse)')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml(meta||'')+'</div>'+
+      '</div>'+
+    '</label>';
+  }).join('');
+  _nwvOnTypChange();  // refresh info-text
+}
+
+function _nwvToggleAnlage(id) {
+  const modal = document.getElementById('nwv-modal');
+  if (!modal) return;
+  if (!modal._selectedAnlagen) modal._selectedAnlagen = [];
+  const idx = modal._selectedAnlagen.indexOf(id);
+  if (idx >= 0) modal._selectedAnlagen.splice(idx, 1);
+  else modal._selectedAnlagen.push(id);
+  _nwvOnTypChange();
+}
+
+async function _nwvSubmit() {
+  const modal = document.getElementById('nwv-modal');
+  if (!modal) return;
+  const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
+  const kundeId = document.getElementById('nwv-kunde').value;
+  const wpa = +document.getElementById('nwv-wpa').value || 4;
+  const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
+  const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
+  const laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
+  const titel = (document.getElementById('nwv-titel').value || '').trim();
+  const sel = modal._selectedAnlagen || [];
+  if (!kundeId) return toast('Bitte Kunden wählen.','err');
+  if (!sel.length) return toast('Bitte mindestens eine Anlage wählen.','err');
+  if (typ === 'einzel' && sel.length > 1) return toast('Einzelvertrag erlaubt nur 1 Anlage. Sammelvertrag wählen oder Anlagen reduzieren.','err');
+  const btn = document.getElementById('nwv-submit');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ erstelle…'; }
+  try {
+    const firmaSlug = modal._firmaSlug;
+    const kunde = modal._kunde || {};
+    const anlagenAll = modal._anlagen || [];
+    const chosenAnlagen = anlagenAll.filter(a => sel.includes(String(a.id||''))).map(a => ({
+      id: a.id,
+      adresse: a.anzeigeAdresse || a.adresse || '',
+      fabriknummer: a.fabriknummer || '',
+      objektTyp: a.objektTyp || '',
+      betreiberTyp: a.betreiberTyp || '',
+      haltestellen: a.haltestellen || 0,
+      _wpa: wpa,
+    }));
+    // Vertragsnummer
+    const nummer = await _nextVertragsnummer(firmaSlug);
+    // Optional: bestehende Preisliste des Kunden suchen (für Konditionen)
+    let preislisteId = '';
+    try {
+      const pls = await atRead('Preislisten', null);
+      const pl = pls.find(p => String(p.fields.firma||'') === firmaSlug && String(p.fields.kunde_nummer||'') === String(kunde.kundennummer||''));
+      if (pl) preislisteId = pl.id;
+    } catch(_){}
+    const payload = {
+      preisliste_id: preislisteId,
+      firma: firmaSlug,
+      titel: titel || ('Wartungsvertrag '+(typ==='einzel'?'Einzel':'Sammel')+' · '+(kunde.firmenname||'')),
+      abrechnung_typ: typ,
+      abrechnung_turnus: turnus,
+      wartungen_pro_jahr: wpa,
+      status: 'entwurf',
+      anlagen_json: JSON.stringify(chosenAnlagen),
+      created: new Date().toISOString(),
+      created_by: APP_KEYS.user?.api_key || '',
+      vertragsnummer: nummer,
+      quelle: 'app',
+      kunde_id: String(kunde.id||''),
+      kunde_nummer: String(kunde.kundennummer||''),
+      kunde_name: kunde.firmenname || '',
+      start_datum: start,
+      laufzeit_monate: laufzeit,
+    };
+    await _ensureVertraegeTable();
+    const rec = await atWrite('Vertraege', payload);
+    if (!rec || !rec.id) throw new Error('Vertrag konnte nicht angelegt werden.');
+    toast('✅ Vertrag '+nummer+' angelegt.','ok');
+    modal.remove();
+    // Liste neu laden
+    await renderWartungsvertraegeView({ force:true });
+    // Detail öffnen
+    if (typeof openVertragDetail === 'function') {
+      openVertragDetail(rec.id, preislisteId);
+    }
+  } catch(e) {
+    console.error('createVertrag:', e);
+    toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Vertrag erstellen'; }
   }
 }
 
