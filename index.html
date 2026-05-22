@@ -2261,7 +2261,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.39';
+const APP_VERSION = 'v3.40';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9039,21 +9039,23 @@ async function loadDashboardStats() {
    das Modal daraus, getPreisProWartung(h) nutzt die wartung-Liste.
 */
 const KONE_DEFAULT_PRICES = {
-  source:      'Aszendio Preisliste 2026–2027 · Fixpreise bis 31.12.2027',
-  // Pro Haltestellen-Anzahl: pro Wartung (Basis 4 Wartungen/Jahr)
+  source:      'KONE Anhang 3 zum Nachunternehmer-Vertrag · Fixpreise bis 31.12.2027',
+  // Pro Haltestellen-Anzahl: Preis pro Wartung — gestaffelt nach Wartungsfrequenz
+  //   proWartung_3_4: günstiger pro Termin (Mehrwartung 3-4× p.a.)
+  //   proWartung_1_2: teurer pro Termin (Wenig-Wartung 1-2× p.a.)
   wartung: [
-    { haltestellen:  2, proWartung: 100 },
-    { haltestellen:  3, proWartung: 100 },
-    { haltestellen:  4, proWartung: 100 },
-    { haltestellen:  5, proWartung: 100 },
-    { haltestellen:  6, proWartung: 110 },
-    { haltestellen:  7, proWartung: 120 },
-    { haltestellen:  8, proWartung: 130 },
-    { haltestellen:  9, proWartung: 140 },
-    { haltestellen: 10, proWartung: 150 },
-    { haltestellen: 11, proWartung: 160 },
-    { haltestellen: 12, proWartung: 170 },
-    { haltestellen: 13, proWartung: 180 },
+    { haltestellen:  2, proWartung_3_4: 100, proWartung_1_2: 170 },
+    { haltestellen:  3, proWartung_3_4: 100, proWartung_1_2: 170 },
+    { haltestellen:  4, proWartung_3_4: 100, proWartung_1_2: 170 },
+    { haltestellen:  5, proWartung_3_4: 100, proWartung_1_2: 170 },
+    { haltestellen:  6, proWartung_3_4: 110, proWartung_1_2: 187 },
+    { haltestellen:  7, proWartung_3_4: 120, proWartung_1_2: 204 },
+    { haltestellen:  8, proWartung_3_4: 130, proWartung_1_2: 221 },
+    { haltestellen:  9, proWartung_3_4: 140, proWartung_1_2: 238 },
+    { haltestellen: 10, proWartung_3_4: 150, proWartung_1_2: 255 },
+    { haltestellen: 11, proWartung_3_4: 160, proWartung_1_2: 272 },
+    { haltestellen: 12, proWartung_3_4: 170, proWartung_1_2: 289 },
+    { haltestellen: 13, proWartung_3_4: 180, proWartung_1_2: 306 },
   ],
   stundensatz: 90,
   aufschlaege: [
@@ -9101,20 +9103,38 @@ function _resetKonePrices() {
   _renderKonePriceTable();
 }
 
-function getPreisProWartung(haltestellen) {
+/* Liest aus einem Wartungs-Eintrag den passenden Preis je nach Wartungs-Frequenz.
+   Neue Datenstruktur hat proWartung_1_2 + proWartung_3_4. Rückwärtskompatibel: wenn nur
+   das alte proWartung-Feld existiert, wird das für alle Frequenzen genutzt. */
+function _preisVonWartungsEintrag(entry, wartungenProJahr) {
+  if (!entry) return 0;
+  const wpa = +wartungenProJahr || 4;
+  if (wpa >= 3 && entry.proWartung_3_4 != null) return +entry.proWartung_3_4;
+  if (wpa <= 2 && entry.proWartung_1_2 != null) return +entry.proWartung_1_2;
+  // Fallback: nur eines der beiden Felder vorhanden
+  if (entry.proWartung_3_4 != null) return +entry.proWartung_3_4;
+  if (entry.proWartung_1_2 != null) return +entry.proWartung_1_2;
+  // Legacy: altes Datenformat mit proWartung
+  return +entry.proWartung || 0;
+}
+
+function getPreisProWartung(haltestellen, wartungenProJahr) {
   const data = _loadKonePrices();
   const h = Math.max(2, Math.floor(haltestellen || 0));
   const list = data.wartung || KONE_DEFAULT_PRICES.wartung;
+  const wpa = +wartungenProJahr || 4;
   // Exact match
   const exact = list.find(r => +r.haltestellen === h);
-  if (exact) return +exact.proWartung;
+  if (exact) return _preisVonWartungsEintrag(exact, wpa);
   // Über Tabelle: linear extrapolieren ab letztem Punkt
   const sorted = list.slice().sort((a,b) => a.haltestellen - b.haltestellen);
-  if (h < sorted[0].haltestellen) return +sorted[0].proWartung;
+  if (h < sorted[0].haltestellen) return _preisVonWartungsEintrag(sorted[0], wpa);
   const last = sorted[sorted.length-1];
   const prev = sorted[sorted.length-2] || last;
-  const step = (last.proWartung - prev.proWartung) / Math.max(1, (last.haltestellen - prev.haltestellen));
-  return Math.max(0, +last.proWartung + (h - last.haltestellen) * step);
+  const lastP = _preisVonWartungsEintrag(last, wpa);
+  const prevP = _preisVonWartungsEintrag(prev, wpa);
+  const step = (lastP - prevP) / Math.max(1, (last.haltestellen - prev.haltestellen));
+  return Math.max(0, lastP + (h - last.haltestellen) * step);
 }
 
 /* Rendert die Tabellen im KONE-Modal aus _konePriceData. */
@@ -9123,9 +9143,15 @@ function _renderKonePriceTable() {
   const body = document.querySelector('#kone-modal .kone-modal-body');
   if (!body) return;
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
-  const wartungRows = data.wartung.map(w =>
-    '<tr><td>'+w.haltestellen+'</td><td class="num">'+eur(w.proWartung)+'</td><td class="num">'+eur(w.proWartung*4)+'</td></tr>'
-  ).join('');
+  const wartungRows = data.wartung.map(w => {
+    const p34 = _preisVonWartungsEintrag(w, 4);
+    const p12 = _preisVonWartungsEintrag(w, 2);
+    return '<tr><td>'+w.haltestellen+'</td>'+
+      '<td class="num">'+eur(p34)+'</td>'+
+      '<td class="num">'+eur(p34*4)+'</td>'+
+      '<td class="num">'+eur(p12)+'</td>'+
+      '<td class="num">'+eur(p12*2)+'</td></tr>';
+  }).join('');
   const aufschlagRows = data.aufschlaege.map(a =>
     '<tr><td>Aufschlag '+escapeHtml(a.label)+'</td><td class="num">+'+a.pct+' %</td></tr>'
   ).join('');
@@ -9138,7 +9164,19 @@ function _renderKonePriceTable() {
   body.innerHTML =
     '<div class="kone-section">'+
       '<div class="kone-section-title">Wartung pro Haltestellen <span style="font-weight:400;text-transform:none;color:var(--txt3);letter-spacing:0">(Basis 4× WA pro Jahr)</span></div>'+
-      '<table class="kone-tbl"><thead><tr><th>Haltestellen</th><th class="num">Pro Wartung</th><th class="num">Pro Jahr (4×)</th></tr></thead><tbody>'+wartungRows+'</tbody></table>'+
+      '<table class="kone-tbl"><thead>'+
+        '<tr>'+
+          '<th rowspan="2">Haltestellen</th>'+
+          '<th class="num" colspan="2" style="border-left:1px solid var(--bdr)">3-4 Wartungen/Jahr</th>'+
+          '<th class="num" colspan="2" style="border-left:1px solid var(--bdr)">1-2 Wartungen/Jahr</th>'+
+        '</tr>'+
+        '<tr>'+
+          '<th class="num" style="border-left:1px solid var(--bdr)">Pro Wartung</th>'+
+          '<th class="num">Pro Jahr (4×)</th>'+
+          '<th class="num" style="border-left:1px solid var(--bdr)">Pro Wartung</th>'+
+          '<th class="num">Pro Jahr (2×)</th>'+
+        '</tr>'+
+      '</thead><tbody>'+wartungRows+'</tbody></table>'+
     '</div>'+
     '<div class="kone-section">'+
       '<div class="kone-section-title">Stundenverrechnung bei Störungseinsätzen</div>'+
@@ -9197,7 +9235,8 @@ function _wkRead() {
 }
 
 function _wkCalc(i) {
-  const preisProWart    = getPreisProWartung(i.haltestellen);
+  // Wartungspreis hängt jetzt auch von der Wartungsfrequenz ab (1-2× p.a. teurer als 3-4× p.a.)
+  const preisProWart    = getPreisProWartung(i.haltestellen, i.wartungen);
   const wartungJahr     = preisProWart * i.wartungen;
   const notrufJahr      = i.notrufMo * 12;
   const einkaufJahr     = wartungJahr + notrufJahr;
@@ -10741,25 +10780,28 @@ async function openAnlagenPickerForVertrag(vertragId) {
   }
 }
 
-/* Berechnet den Wartungspreis pro Anlage und Jahr basierend auf Haltestellen + Preisliste */
+/* Berechnet den Wartungspreis pro Anlage und Jahr basierend auf Haltestellen + Preisliste.
+   Berücksichtigt die Wartungsfrequenz (proWartung_3_4 vs proWartung_1_2). */
 function _calcWartungspreisProAnlage(anlage, plData) {
   if (!plData) return null;
   const h = +anlage.haltestellen || 0;
   if (!h) return null;
   const wartungen = +plData.wartungenProJahr || 4;
-  // Preisliste: finde proWartung für die Haltestellen
   const list = plData.wartung || [];
+  if (list.length === 0) return null;
   let proWartung = null;
   const exact = list.find(w => +w.haltestellen === h);
-  if (exact) proWartung = +exact.proWartung;
+  if (exact) proWartung = _preisVonWartungsEintrag(exact, wartungen);
   else {
     const sorted = list.slice().sort((a,b) => +a.haltestellen - +b.haltestellen);
-    if (h < +sorted[0]?.haltestellen) proWartung = +sorted[0].proWartung;
+    if (h < +sorted[0].haltestellen) proWartung = _preisVonWartungsEintrag(sorted[0], wartungen);
     else {
       const last = sorted[sorted.length-1];
       const prev = sorted[sorted.length-2] || last;
-      const step = (last.proWartung - prev.proWartung) / Math.max(1, (last.haltestellen - prev.haltestellen));
-      proWartung = Math.max(0, +last.proWartung + (h - +last.haltestellen) * step);
+      const lastP = _preisVonWartungsEintrag(last, wartungen);
+      const prevP = _preisVonWartungsEintrag(prev, wartungen);
+      const step = (lastP - prevP) / Math.max(1, (+last.haltestellen - +prev.haltestellen));
+      proWartung = Math.max(0, lastP + (h - +last.haltestellen) * step);
     }
   }
   return Math.round(proWartung * wartungen * 100) / 100;  // Jahresbetrag
@@ -11360,15 +11402,20 @@ function openKonePreislisteKundeEditor() {
   // Werte mit Markup vorberechnen, danach editierbar
   const factor = 1 + markupPct/100;
   // Preisliste ist allgemein gültig (Preise, Markup) — Abrechnungs-Modell gehört zu den Verträgen darunter.
+  const r2 = (n) => Math.round(n * factor * 100) / 100;
   const initData = {
     titel:       'Wartungspreisliste Aszendio',
     gueltigBis:  '31.12.2027',
     empfaengerName: '',
     empfaengerAdresse: '',
-    wartung:     hk.wartung.map(w => ({ haltestellen: w.haltestellen, proWartung: Math.round(w.proWartung * factor * 100)/100 })),
-    stundensatz: Math.round(hk.stundensatz * factor * 100)/100,
+    wartung:     hk.wartung.map(w => ({
+      haltestellen:     w.haltestellen,
+      proWartung_3_4:   r2(_preisVonWartungsEintrag(w, 4)),
+      proWartung_1_2:   r2(_preisVonWartungsEintrag(w, 2)),
+    })),
+    stundensatz: r2(hk.stundensatz),
     aufschlaege: hk.aufschlaege.map(a => ({ label: a.label, pct: a.pct })),  // Aufschläge bleiben in %
-    sonstiges:   hk.sonstiges.map(s => ({ label: s.label, preis: Math.round((+s.preis||0) * factor * 100)/100, einheit: s.einheit, highlight: s.highlight })),
+    sonstiges:   hk.sonstiges.map(s => ({ label: s.label, preis: r2(+s.preis||0), einheit: s.einheit, highlight: s.highlight })),
     fussnote:    'Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.',
     markupPct:   markupPct,
   };
@@ -11380,13 +11427,18 @@ function _showKundenpreislisteEditor(data, hkRef) {
   const modal = document.createElement('div');
   modal.id = 'kunden-pl-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
-  const wartungRows = data.wartung.map((w,i) =>
-    '<tr>'+
-      '<td><input type="number" min="2" step="1" value="'+(+w.haltestellen||0)+'" data-kk="wartung.'+i+'.haltestellen" style="width:70px"></td>'+
-      '<td style="color:var(--txt3);font-size:11px">'+ (hkRef ? Number(hkRef.wartung[i]?.proWartung||0).toLocaleString('de-DE',{ minimumFractionDigits:2 })+' €' : '—') +'</td>'+
-      '<td><input type="number" min="0" step="0.01" value="'+(+w.proWartung||0).toFixed(2)+'" data-kk="wartung.'+i+'.proWartung" style="width:110px"> €</td>'+
-    '</tr>'
-  ).join('');
+  const wartungRows = data.wartung.map((w,i) => {
+    const hkEntry = hkRef && hkRef.wartung[i];
+    const hk34 = hkEntry ? _preisVonWartungsEintrag(hkEntry, 4) : 0;
+    const hk12 = hkEntry ? _preisVonWartungsEintrag(hkEntry, 2) : 0;
+    return '<tr>'+
+      '<td><input type="number" min="2" step="1" value="'+(+w.haltestellen||0)+'" data-kk="wartung.'+i+'.haltestellen" style="width:60px"></td>'+
+      '<td style="color:var(--txt3);font-size:11px;text-align:right">'+ (hkRef ? Number(hk34).toLocaleString('de-DE',{minimumFractionDigits:2})+' €' : '—') +'</td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+(+(w.proWartung_3_4 ?? w.proWartung)||0).toFixed(2)+'" data-kk="wartung.'+i+'.proWartung_3_4" style="width:90px"> €</td>'+
+      '<td style="color:var(--txt3);font-size:11px;text-align:right;border-left:1px solid var(--bdr);padding-left:8px">'+ (hkRef ? Number(hk12).toLocaleString('de-DE',{minimumFractionDigits:2})+' €' : '—') +'</td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+(+(w.proWartung_1_2 ?? w.proWartung)||0).toFixed(2)+'" data-kk="wartung.'+i+'.proWartung_1_2" style="width:90px"> €</td>'+
+    '</tr>';
+  }).join('');
   const aufRows = data.aufschlaege.map((a,i) =>
     '<tr>'+
       '<td><input type="text" value="'+escapeHtml(a.label||'')+'" data-kk="aufschlaege.'+i+'.label" style="width:100%;min-width:200px"></td>'+
@@ -11426,8 +11478,21 @@ function _showKundenpreislisteEditor(data, hkRef) {
           '<div><strong>Empfänger (Name)</strong><br><input type="text" placeholder="z.B. Hausverwaltung Müller GmbH" value="'+escapeHtml(data.empfaengerName||'')+'" data-kk="empfaengerName" style="width:100%;padding:5px 8px"></div>'+
           '<div><strong>Empfänger-Anschrift</strong><br><textarea data-kk="empfaengerAdresse" placeholder="Straße + Nr.\\nPLZ + Ort" style="width:100%;min-height:50px;padding:5px 8px;font-family:inherit;font-size:12px">'+escapeHtml(data.empfaengerAdresse||'')+'</textarea></div>'+
         '</div>'+
-        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen <span style="font-weight:400;color:var(--txt3);font-size:11px">(HK-Spalte zur Referenz)</span></h4>'+
-        '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Haltestellen</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">HK</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Kunde pro Wartung</th></tr></thead><tbody>'+wartungRows+'</tbody></table>'+
+        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen <span style="font-weight:400;color:var(--txt3);font-size:11px">(2 Preisspalten je Wartungsfrequenz · HK in grau zur Referenz)</span></h4>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+          '<thead>'+
+            '<tr style="background:var(--bg)">'+
+              '<th rowspan="2" style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Haltestellen</th>'+
+              '<th colspan="2" style="text-align:center;border-bottom:1px solid var(--bdr);padding:4px;font-size:11px;color:#065F46">3-4× pro Jahr</th>'+
+              '<th colspan="2" style="text-align:center;border-bottom:1px solid var(--bdr);padding:4px;font-size:11px;color:#7C2D12;border-left:1px solid var(--bdr)">1-2× pro Jahr</th>'+
+            '</tr>'+
+            '<tr style="background:var(--bg)">'+
+              '<th style="text-align:right;border-bottom:1px solid var(--bdr);padding:4px;font-size:10px;color:var(--txt3)">HK</th>'+
+              '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Kunde €</th>'+
+              '<th style="text-align:right;border-bottom:1px solid var(--bdr);padding:4px;font-size:10px;color:var(--txt3);border-left:1px solid var(--bdr)">HK</th>'+
+              '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Kunde €</th>'+
+            '</tr>'+
+          '</thead><tbody>'+wartungRows+'</tbody></table>'+
         '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Stundensatz + Aufschläge</h4>'+
         '<div style="margin-bottom:8px"><strong>Stundensatz €/h:</strong> <input type="number" min="0" step="0.01" value="'+(+data.stundensatz||0).toFixed(2)+'" data-kk="stundensatz" style="width:100px"> €<span style="color:var(--txt3);font-size:11px;margin-left:8px">(HK: '+(hkRef?Number(hkRef.stundensatz||0).toLocaleString("de-DE",{ minimumFractionDigits:2 }):"—")+' €)</span></div>'+
         '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Aufschlag</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">%</th></tr></thead><tbody>'+aufRows+'</tbody></table>'+
@@ -11479,6 +11544,7 @@ function _recalcKundenpreisliste() {
   try { localStorage.setItem('kone_kunden_markup_pct_'+APP_CONFIG.PROJECT_ID, String(pct)); } catch(_){}
   const hk = modal._hkRef;
   const factor = 1 + pct/100;
+  const r2 = (n) => Math.round(n * factor * 100) / 100;
   // Aktuelle Werte aus Editor übernehmen (nur Titel/Empfänger/Fußnote/Aufschläge erhalten)
   const current = _readKundenpreislisteEditor();
   const newData = {
@@ -11486,10 +11552,14 @@ function _recalcKundenpreisliste() {
     gueltigBis:   current.gueltigBis,
     empfaengerName: current.empfaengerName,
     empfaengerAdresse: current.empfaengerAdresse,
-    wartung:      hk.wartung.map(w => ({ haltestellen: w.haltestellen, proWartung: Math.round(w.proWartung * factor * 100)/100 })),
-    stundensatz:  Math.round(hk.stundensatz * factor * 100)/100,
+    wartung:      hk.wartung.map(w => ({
+      haltestellen:    w.haltestellen,
+      proWartung_3_4:  r2(_preisVonWartungsEintrag(w, 4)),
+      proWartung_1_2:  r2(_preisVonWartungsEintrag(w, 2)),
+    })),
+    stundensatz:  r2(hk.stundensatz),
     aufschlaege:  hk.aufschlaege.map(a => ({ label: a.label, pct: a.pct })),
-    sonstiges:    hk.sonstiges.map(s => ({ label: s.label, preis: Math.round((+s.preis||0) * factor * 100)/100, einheit: s.einheit, highlight: s.highlight })),
+    sonstiges:    hk.sonstiges.map(s => ({ label: s.label, preis: r2(+s.preis||0), einheit: s.einheit, highlight: s.highlight })),
     fussnote:     current.fussnote,
     markupPct:    pct,
   };
@@ -11621,10 +11691,16 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
     y += rowH;
     _rowIdx++;
   };
-  drawSectionTitle('Wartung pro Haltestellen (Basis 4× pro Jahr)');
+  drawSectionTitle('Wartung pro Haltestellen');
   tableReset();
-  tableRow(['Haltestellen','Pro Wartung','Pro Jahr (4×)'], [60,60,62], true);
-  data.wartung.forEach(w => tableRow([w.haltestellen, eur(w.proWartung), eur((+w.proWartung)*4)], [60,60,62]));
+  // Zwei-stufige Header-Zeile als zwei separate Rows (jsPDF kann kein rowspan)
+  tableRow(['Haltestellen', '3-4× pro Jahr', '', '1-2× pro Jahr', ''], [38, 41, 30, 41, 30], true);
+  tableRow(['', 'Pro Wartung', 'Pro Jahr (4×)', 'Pro Wartung', 'Pro Jahr (2×)'], [38, 41, 30, 41, 30], true);
+  data.wartung.forEach(w => {
+    const p34 = _preisVonWartungsEintrag(w, 4);
+    const p12 = _preisVonWartungsEintrag(w, 2);
+    tableRow([w.haltestellen, eur(p34), eur(p34*4), eur(p12), eur(p12*2)], [38, 41, 30, 41, 30]);
+  });
   y += 4;
   drawSectionTitle('Stundenverrechnung bei Störungseinsätzen');
   tableReset();
@@ -11681,8 +11757,15 @@ async function onKonePriceListUpload(inputEl) {
   const prompt = 'Du erhältst eine Preisliste eines Aufzugsunternehmens (KONE/Aszendio Format). '+
     'Extrahiere die Werte und gib NUR ein JSON zurück (kein Markdown, kein Erklärungstext) mit dieser Struktur:\n\n'+
     '{\n'+
-    '  "source": "<Quelle/Titel der Preisliste, z.B. \'Anhang 3 Rahmenvereinbarung 2026-2027\'>",\n'+
-    '  "wartung": [{"haltestellen": 2, "proWartung": 100.00}, ... ],   // Preis pro Wartung (NICHT pro Jahr) je Haltestellenzahl\n'+
+    '  "source": "<Quelle/Titel der Preisliste, z.B. \'Anhang 3 Nachunternehmer-Vertrag 2026-2027\'>",\n'+
+    '  "wartung": [\n'+
+    '    {\n'+
+    '      "haltestellen": 2,\n'+
+    '      "proWartung_3_4": 100.00,   // Preis pro Wartung bei 3-4 Wartungen pro Jahr (Mehrwartung — günstiger pro Termin)\n'+
+    '      "proWartung_1_2": 170.00    // Preis pro Wartung bei 1-2 Wartungen pro Jahr (Wenig-Wartung — teurer pro Termin)\n'+
+    '    },\n'+
+    '    ...\n'+
+    '  ],\n'+
     '  "stundensatz": 90.00,\n'+
     '  "aufschlaege": [{"label": "Mo-Do 17:00-19:00", "pct": 25}, ...],   // Stundenzuschläge in Prozent\n'+
     '  "sonstiges": [{"label": "Anfahrt-Pauschale", "preis": 50.00, "einheit": "€"}, ...],\n'+
@@ -11690,8 +11773,10 @@ async function onKonePriceListUpload(inputEl) {
     '}\n\n'+
     'Wichtig:\n'+
     '- Alle Preise als Number (nicht String), z.B. 100.00 nicht "100,00 €"\n'+
-    '- Pro Wartung (1×), NICHT die Jahrespreis-Spalte\n'+
-    '- Falls die Preisliste die Werte als "pro Jahr (4×)" angibt, durch 4 teilen\n'+
+    '- KONE-Preislisten haben üblicherweise eine Spalte "Preis pro Wartung bei 3-4x WA p.a." → proWartung_3_4\n'+
+    '- Und eine Spalte "Preis pro Wartung bei 1-2x WA pro Jahr" → proWartung_1_2\n'+
+    '- IGNORIERE die "Preis pro Jahr"-Spalten (das sind nur 4× bzw. 2× der Wartungspreise, redundant)\n'+
+    '- Falls die Preisliste nur EINE Wartungspreis-Spalte hat, setze beide Felder auf den gleichen Wert\n'+
     '- Einheit für sonstige Posten: "€" (einmalig), "€/Monat", "€/Jahr", "€/h" etc.\n'+
     '- Antworte NUR mit dem JSON, nichts davor/danach.';
 
@@ -11722,8 +11807,9 @@ function _showKonePriceListPreview(data, fileBlob) {
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 });
   const wartungRows = (data.wartung||[]).map((w, i) =>
     '<tr>'+
-      '<td><input type="number" min="2" step="1" value="'+(+w.haltestellen||0)+'" data-kp="wartung.'+i+'.haltestellen" style="width:70px"></td>'+
-      '<td><input type="number" min="0" step="0.01" value="'+(+w.proWartung||0)+'" data-kp="wartung.'+i+'.proWartung" style="width:100px"> €</td>'+
+      '<td><input type="number" min="2" step="1" value="'+(+w.haltestellen||0)+'" data-kp="wartung.'+i+'.haltestellen" style="width:55px"></td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+(+(w.proWartung_3_4 ?? w.proWartung)||0)+'" data-kp="wartung.'+i+'.proWartung_3_4" style="width:80px"> €</td>'+
+      '<td style="border-left:1px solid var(--bdr);padding-left:6px"><input type="number" min="0" step="0.01" value="'+(+(w.proWartung_1_2 ?? w.proWartung)||0)+'" data-kp="wartung.'+i+'.proWartung_1_2" style="width:80px"> €</td>'+
     '</tr>'
   ).join('');
   const aufschlagRows = (data.aufschlaege||[]).map((a, i) =>
@@ -11751,8 +11837,14 @@ function _showKonePriceListPreview(data, fileBlob) {
       '</div>'+
       '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
         '<div style="margin-bottom:14px"><strong>Quelle:</strong> <input type="text" value="'+escapeHtml(data.source||'')+'" data-kp="source" style="width:70%;font-size:12px;padding:4px 8px"></div>'+
-        '<h4 style="margin:10px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen</h4>'+
-        '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Haltestellen</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Pro Wartung</th></tr></thead><tbody>'+wartungRows+'</tbody></table>'+
+        '<h4 style="margin:10px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen <span style="font-weight:400;color:var(--txt3);font-size:11px">(2 Preisspalten je Wartungsfrequenz)</span></h4>'+
+        '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead>'+
+          '<tr style="background:var(--bg)">'+
+            '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Haltestellen</th>'+
+            '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px;color:#065F46">3-4× p.a. — Pro Wartung</th>'+
+            '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px;color:#7C2D12;border-left:1px solid var(--bdr);padding-left:6px">1-2× p.a. — Pro Wartung</th>'+
+          '</tr>'+
+        '</thead><tbody>'+wartungRows+'</tbody></table>'+
         '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Stundensatz + Aufschläge</h4>'+
         '<div style="margin-bottom:8px"><strong>Stundensatz €/h:</strong> <input type="number" min="0" step="0.01" value="'+(+data.stundensatz||0)+'" data-kp="stundensatz" style="width:100px"></div>'+
         '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Aufschlag</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">%</th></tr></thead><tbody>'+aufschlagRows+'</tbody></table>'+
