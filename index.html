@@ -2363,7 +2363,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.59';
+const APP_VERSION = 'v3.60';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12048,13 +12048,12 @@ async function openNeuerVertragWizard() {
             '</label>'+
           '</div>'+
         '</div>'+
-        // Kunde
+        // Kunde — Combobox mit Live-Suche
         '<div style="margin-bottom:14px">'+
-          '<div style="font-weight:600;margin-bottom:6px">2. Kunde / Betreiber *</div>'+
-          '<select id="nwv-kunde" onchange="_nwvOnKundeChange()" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
-            '<option value="">– bitte wählen –</option>'+
-            (_kundenCache.items||[]).map(k => '<option value="'+escapeHtml(String(k.id))+'">'+escapeHtml(k.firmenname||'(ohne Name)')+(k.kundennummer?' · Kd-Nr. '+escapeHtml(String(k.kundennummer)):'')+'</option>').join('')+
-          '</select>'+
+          '<div style="font-weight:600;margin-bottom:6px">2. Kunde / Betreiber * <span id="nwv-kunde-selected" style="font-weight:400;color:#10b981;font-size:11px;margin-left:8px"></span></div>'+
+          '<input type="text" id="nwv-kunde-search" placeholder="🔍 Suchen nach Firmenname, Kunden-Nr. oder Ort…" oninput="_nwvFilterKunden()" onfocus="this.select();_nwvFilterKunden()" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-bottom:4px">'+
+          '<input type="hidden" id="nwv-kunde-id" value="">'+
+          '<div id="nwv-kunde-list" style="max-height:200px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
         '</div>'+
         // Anlagen
         '<div style="margin-bottom:14px">'+
@@ -12090,6 +12089,59 @@ async function openNeuerVertragWizard() {
   // Vorschau Nummer initial
   _nextVertragsnummer(firmaSlug).then(nr => { const el = document.getElementById('nwv-nummer-preview'); if (el) el.textContent = nr; });
   _nwvOnTypChange();
+  _nwvFilterKunden();  // Initiale Liste rendern (alle Kunden)
+}
+
+/* Filtert die Kunden-Liste live nach dem Suchtext. Klick auf Eintrag wählt aus. */
+function _nwvFilterKunden() {
+  const searchEl = document.getElementById('nwv-kunde-search');
+  const listEl   = document.getElementById('nwv-kunde-list');
+  const hiddenEl = document.getElementById('nwv-kunde-id');
+  if (!listEl) return;
+  const q = (searchEl?.value || '').toLowerCase().trim();
+  const all = _kundenCache.items || [];
+  const filtered = q
+    ? all.filter(k => (
+        String(k.firmenname||'').toLowerCase().includes(q) ||
+        String(k.kundennummer||'').toLowerCase().includes(q) ||
+        String(k.ort||'').toLowerCase().includes(q) ||
+        String(k.strasse||'').toLowerCase().includes(q)
+      ))
+    : all;
+  const selectedId = hiddenEl?.value || '';
+  if (!filtered.length) {
+    listEl.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3)">Keine Treffer für "'+escapeHtml(q)+'"</div>';
+    return;
+  }
+  // Bei >150 Treffern: Kappen + Hinweis
+  const cap = 150;
+  const showItems = filtered.slice(0, cap);
+  listEl.innerHTML = showItems.map(k => {
+    const id = String(k.id);
+    const sel = (id === selectedId);
+    const meta = [k.kundennummer ? 'Kd-Nr. '+k.kundennummer : '', k.ort].filter(Boolean).join(' · ');
+    return '<div onclick="_nwvSelectKunde(\''+escapeHtml(id)+'\')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);'+(sel?'background:#dcfce7;border-left:3px solid #10b981':'')+'" onmouseover="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'rgba(35,74,117,0.06)\'" onmouseout="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'transparent\'">'+
+      '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(k.firmenname||'(ohne Name)')+(sel?' <span style="color:#10b981">✓</span>':'')+'</div>'+
+      (meta ? '<div style="font-size:11px;color:var(--txt3);margin-top:1px">'+escapeHtml(meta)+'</div>' : '')+
+    '</div>';
+  }).join('') + (filtered.length > cap
+    ? '<div style="padding:8px 12px;text-align:center;color:var(--txt3);font-size:11px;font-style:italic">… '+cap+' von '+filtered.length+' Treffern. Bitte Suche eingrenzen.</div>'
+    : '');
+}
+
+/* Wählt einen Kunden aus der Combobox-Liste aus. */
+function _nwvSelectKunde(kundeId) {
+  const hiddenEl = document.getElementById('nwv-kunde-id');
+  const searchEl = document.getElementById('nwv-kunde-search');
+  const labelEl  = document.getElementById('nwv-kunde-selected');
+  if (hiddenEl) hiddenEl.value = kundeId;
+  const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
+  if (kunde) {
+    if (searchEl) searchEl.value = (kunde.firmenname || '') + (kunde.kundennummer ? ' · Kd-Nr. '+kunde.kundennummer : '');
+    if (labelEl)  labelEl.textContent = '✓ '+(kunde.firmenname || '');
+  }
+  _nwvFilterKunden();   // Liste neu rendern für Highlight
+  _nwvOnKundeChange();
 }
 
 function _nwvOnTypChange() {
@@ -12112,7 +12164,7 @@ function _nwvOnTypChange() {
 async function _nwvOnKundeChange() {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
-  const kundeId = document.getElementById('nwv-kunde').value;
+  const kundeId = document.getElementById('nwv-kunde-id').value;
   const listEl = document.getElementById('nwv-anlagen-list');
   modal._selectedAnlagen = [];
   if (!kundeId) {
@@ -12175,7 +12227,7 @@ async function _nwvSubmit() {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
   const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
-  const kundeId = document.getElementById('nwv-kunde').value;
+  const kundeId = document.getElementById('nwv-kunde-id').value;
   const wpa = +document.getElementById('nwv-wpa').value || 4;
   const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
   const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
