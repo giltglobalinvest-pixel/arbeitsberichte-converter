@@ -2364,7 +2364,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.62';
+const APP_VERSION = 'v3.63';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12254,11 +12254,23 @@ function _nwvFilterKunden() {
   // Bei >150 Treffern: Kappen + Hinweis
   const cap = 150;
   const showItems = filtered.slice(0, cap);
+  // Sanity-Check: warne wenn IDs nicht eindeutig oder fehlen
+  const idCounts = {};
+  let missingIds = 0;
+  for (const k of showItems) {
+    if (!k.id) missingIds++;
+    const sid = String(k.id);
+    idCounts[sid] = (idCounts[sid]||0) + 1;
+  }
+  const duplicates = Object.entries(idCounts).filter(([_, c]) => c > 1);
+  if (missingIds || duplicates.length) {
+    console.warn('[Wizard] Kunden-IDs problematisch:', { missingIds, duplicates: duplicates.slice(0,5) });
+  }
   listEl.innerHTML = showItems.map(k => {
     const id = String(k.id);
     const sel = (id === selectedId);
     const meta = [k.kundennummer ? 'Kd-Nr. '+k.kundennummer : '', k.ort].filter(Boolean).join(' · ');
-    return '<div onclick="_nwvSelectKunde(\''+escapeHtml(id)+'\')" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);'+(sel?'background:#dcfce7;border-left:3px solid #10b981':'')+'" onmouseover="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'rgba(35,74,117,0.06)\'" onmouseout="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'transparent\'">'+
+    return '<div data-kunde-id="'+escapeHtml(id)+'" onclick="_nwvSelectKunde(this.dataset.kundeId)" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);'+(sel?'background:#dcfce7;border-left:3px solid #10b981':'')+'" onmouseover="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'rgba(35,74,117,0.06)\'" onmouseout="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'transparent\'">'+
       '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(k.firmenname||'(ohne Name)')+(sel?' <span style="color:#10b981">✓</span>':'')+'</div>'+
       (meta ? '<div style="font-size:11px;color:var(--txt3);margin-top:1px">'+escapeHtml(meta)+'</div>' : '')+
     '</div>';
@@ -12277,7 +12289,11 @@ function _nwvSelectKunde(kundeId) {
   const selectedMeta = document.getElementById('nwv-kunde-selected-meta');
   if (hiddenEl) hiddenEl.value = String(kundeId);
   const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
-  if (!kunde) return;
+  console.log('[Wizard] _nwvSelectKunde:', { kundeId, gefunden: !!kunde, name: kunde?.firmenname, kundennummer: kunde?.kundennummer });
+  if (!kunde) {
+    console.warn('[Wizard] Kunde nicht im Cache gefunden! kundeId=', kundeId, 'Cache-Größe=', (_kundenCache.items||[]).length);
+    return;
+  }
   // Pille füllen + sichtbar machen
   if (selectedName) selectedName.textContent = kunde.firmenname || '(ohne Name)';
   if (selectedMeta) {
