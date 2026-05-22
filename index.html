@@ -1814,6 +1814,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-app" checked onchange="_renderWartungsvertraegeList()"> 🔧 App</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-legacy" checked onchange="_renderWartungsvertraegeList()"> 📌 Legacy</label>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-erp" checked onchange="_renderWartungsvertraegeList()"> 📥 ERP</label>
       <span style="color:var(--txt3);font-size:11px">|</span>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-einzel" checked onchange="_renderWartungsvertraegeList()"> 🛗 Einzel</label>
@@ -2363,7 +2364,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.60';
+const APP_VERSION = 'v3.61';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11650,6 +11651,8 @@ async function _mailchimpBulkSyncFromKontakteView() {
 // Cache für App-Verträge (Airtable) und ERP-Verträge (read-only)
 let _wartungsvertraegeCache = { items: [], loadedAt: 0 };
 let _erpVertraegeCache = { firma: null, items: [], loadedAt: 0 };
+// Preislisten-Cache für Legacy-Vertrag-Anreicherung (Kunde-Daten aus Preisliste joinen)
+let _preislistenForVtCache = { items: [], loadedAt: 0 };
 
 async function renderWartungsvertraegeView(opts) {
   if (!isAdmin()) return;
@@ -11661,9 +11664,13 @@ async function renderWartungsvertraegeView(opts) {
     const force = opts && opts.force;
     const fresh = !force && _wartungsvertraegeCache.items.length && (Date.now() - _wartungsvertraegeCache.loadedAt) < 5*60*1000;
     if (!fresh) {
-      let records = [];
-      try { records = await atRead('Vertraege', null); } catch(_){}
+      // Parallel laden: Verträge + Preislisten (für Legacy-Anreicherung)
+      const [records, pls] = await Promise.all([
+        atRead('Vertraege', null).catch(() => []),
+        atRead('Preislisten', null).catch(() => []),
+      ]);
       _wartungsvertraegeCache = { items: records, loadedAt: Date.now() };
+      _preislistenForVtCache = { items: pls, loadedAt: Date.now() };
     }
     _renderWartungsvertraegeList();
   } catch(e) {
@@ -11683,16 +11690,30 @@ function _buildWartungsvertraegeViewItems() {
     if (String(f.quelle||'app') !== 'app') continue;
     let anlagen = [];
     try { anlagen = JSON.parse(f.anlagen_json || '[]'); } catch(_){}
+    // Legacy-Anreicherung: wenn kunde_name fehlt aber preisliste_id da ist,
+    // ziehe Kundendaten aus der verknüpften Preisliste (Display-only).
+    let kundeName = f.kunde_name || '';
+    let kundeNr   = f.kunde_nummer || '';
+    if ((!kundeName || !kundeNr) && f.preisliste_id) {
+      const pl = (_preislistenForVtCache.items||[]).find(p => p.id === f.preisliste_id);
+      if (pl) {
+        const plf = pl.fields || {};
+        if (!kundeName) kundeName = plf.kunde_name || plf.kunde || '';
+        if (!kundeNr)   kundeNr   = plf.kunde_nummer || plf.kundennummer || '';
+      }
+    }
+    const isLegacy = !f.vertragsnummer;
     items.push({
       _src: 'app',
       _id: r.id,
+      _legacy: isLegacy,
       firma: f.firma,
-      nummer: f.vertragsnummer || '(ohne Nr.)',
+      nummer: f.vertragsnummer || '(Legacy)',
       titel: f.titel || '',
       typ: f.abrechnung_typ || 'sammel',
       status: f.status || 'entwurf',
-      kunde_name: f.kunde_name || '',
-      kunde_nummer: f.kunde_nummer || '',
+      kunde_name: kundeName,
+      kunde_nummer: kundeNr,
       anlagen_count: anlagen.length,
       start: f.start_datum || '',
       created: f.created || '',
@@ -11730,12 +11751,17 @@ function _renderWartungsvertraegeList() {
   if (!list) return;
   const q = (document.getElementById('wv-search')?.value || '').toLowerCase().trim();
   const showApp    = document.getElementById('wv-flt-app')?.checked !== false;
+  const showLegacy = document.getElementById('wv-flt-legacy')?.checked !== false;
   const showErp    = document.getElementById('wv-flt-erp')?.checked !== false;
   const showEinzel = document.getElementById('wv-flt-einzel')?.checked !== false;
   const showSammel = document.getElementById('wv-flt-sammel')?.checked !== false;
   let items = _buildWartungsvertraegeViewItems();
-  // Quelle-Filter
-  items = items.filter(it => (it._src==='app' && showApp) || (it._src==='erp' && showErp));
+  // Quelle-Filter (App = nicht-legacy, Legacy = legacy, ERP = ERP)
+  items = items.filter(it => {
+    if (it._src==='erp') return showErp;
+    if (it._legacy) return showLegacy;
+    return showApp;
+  });
   // Typ-Filter
   items = items.filter(it => (it.typ==='einzel' && showEinzel) || (it.typ==='sammel' && showSammel));
   // Suche
@@ -11755,6 +11781,8 @@ function _renderWartungsvertraegeList() {
   list.innerHTML = '<div style="display:grid;gap:8px">'+items.slice(0, 500).map(it => {
     const srcBadge = it._src==='erp'
       ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">📥 ERP</span>'
+      : it._legacy
+      ? '<span style="background:#6b7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600" title="Legacy-Vertrag aus dem alten Preislisten-Workflow — Vertragsnummer und Kunden-Daten können nachträglich migriert werden">📌 LEGACY</span>'
       : '<span style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">🔧 APP</span>';
     const typBadge = it.typ==='einzel'
       ? '<span style="background:#e0e7ff;color:#3730A3;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">🛗 Einzel</span>'
@@ -11785,18 +11813,121 @@ function _renderWartungsvertraegeList() {
   (items.length > 500 ? '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px">… 500 von '+items.length+' Verträgen werden angezeigt. Bitte Suche eingrenzen.</div>' : '');
 }
 
-/* App-Vertrag öffnen → bestehendes Detail aus Preisliste-Kontext aufrufen falls möglich. */
+/* App-Vertrag öffnen. Bei Legacy-Verträgen (ohne Vertragsnummer) zeigen wir vorher
+   ein kleines Migrate-Modal mit Optionen: Migrieren / Detail öffnen / Löschen. */
 async function _openWartungsvertragDetail(recId) {
   const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Vertrag nicht gefunden.','err');
-  const plId = rec.fields && rec.fields.preisliste_id;
-  if (typeof openVertragDetail === 'function' && plId) {
-    openVertragDetail(recId, plId);
-  } else if (typeof openVertragDetail === 'function') {
-    // Ohne Preisliste-Kontext öffnen — Detail-Funktion sollte das hinkriegen, da rec.id genügt
+  const f = rec.fields || {};
+  const plId = f.preisliste_id;
+  const isLegacy = !f.vertragsnummer;
+  if (isLegacy) {
+    // Mini-Modal für Legacy-Vertrag: Migrate / Open / Delete
+    _openLegacyVertragChoice(rec);
+    return;
+  }
+  if (typeof openVertragDetail === 'function') {
     openVertragDetail(recId, plId||'');
   } else {
     toast('Detail-Ansicht nicht verfügbar.','err');
+  }
+}
+
+/* Choice-Modal für Legacy-Verträge: Migrate vs Open vs Delete */
+function _openLegacyVertragChoice(rec) {
+  const f = rec.fields || {};
+  const pl = (_preislistenForVtCache.items||[]).find(p => p.id === f.preisliste_id);
+  const plKunde = pl && pl.fields && (pl.fields.kunde_name || pl.fields.kunde || '');
+  const plKundeNr = pl && pl.fields && (pl.fields.kunde_nummer || pl.fields.kundennummer || '');
+  let anlagenCount = 0;
+  try { anlagenCount = JSON.parse(f.anlagen_json||'[]').length; } catch(_){}
+  const old = document.getElementById('legacy-vt-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'legacy-vt-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#6b7280;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📌 Legacy-Vertrag</span>'+
+        '<button onclick="document.getElementById(\'legacy-vt-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px">'+
+        '<p style="font-size:13px;line-height:1.6;margin:0 0 14px">Dieser Vertrag wurde mit dem alten Workflow (Preisliste → Vertrag) angelegt — er hat noch keine Vertragsnummer und keine Kunden-Daten im neuen Schema.</p>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;font-size:12px;margin-bottom:14px">'+
+          '<div style="display:flex;gap:10px;padding:3px 0"><div style="min-width:120px;color:var(--txt3)">Titel</div><div style="flex:1">'+escapeHtml(f.titel||'(ohne Titel)')+'</div></div>'+
+          '<div style="display:flex;gap:10px;padding:3px 0"><div style="min-width:120px;color:var(--txt3)">Typ</div><div style="flex:1">'+(f.abrechnung_typ==='einzel'?'🛗 Einzel':'📦 Sammel')+'</div></div>'+
+          '<div style="display:flex;gap:10px;padding:3px 0"><div style="min-width:120px;color:var(--txt3)">Anlagen</div><div style="flex:1">'+anlagenCount+'</div></div>'+
+          '<div style="display:flex;gap:10px;padding:3px 0"><div style="min-width:120px;color:var(--txt3)">Preisliste</div><div style="flex:1">'+(pl?escapeHtml(pl.fields.titel||pl.fields.name||'(ohne Titel)'):'<em style="color:var(--err)">nicht gefunden</em>')+'</div></div>'+
+          (plKunde ? '<div style="display:flex;gap:10px;padding:3px 0"><div style="min-width:120px;color:var(--txt3)">Kunde (Preisliste)</div><div style="flex:1">'+escapeHtml(plKunde)+(plKundeNr?' · Kd-Nr. '+escapeHtml(String(plKundeNr)):'')+'</div></div>' : '')+
+        '</div>'+
+        '<div style="font-size:12px;color:var(--txt2);margin-bottom:8px"><strong>Was möchtest du tun?</strong></div>'+
+        '<div style="display:flex;flex-direction:column;gap:8px">'+
+          (pl
+            ? '<button class="btn prim" onclick="_migrateLegacyVertrag(\''+escapeHtml(rec.id)+'\')" style="text-align:left;display:flex;align-items:center;gap:10px;padding:10px 12px"><span style="font-size:20px">🔄</span><span style="flex:1"><strong>Migrieren</strong><br><span style="font-weight:400;font-size:11px;opacity:.85">Vertragsnummer generieren + Kunde aus Preisliste übernehmen</span></span></button>'
+            : '')+
+          '<button class="btn" onclick="document.getElementById(\'legacy-vt-modal\').remove();openVertragDetail(\''+escapeHtml(rec.id)+'\',\''+escapeHtml(f.preisliste_id||'')+'\')" style="text-align:left;display:flex;align-items:center;gap:10px;padding:10px 12px"><span style="font-size:20px">📂</span><span style="flex:1"><strong>So öffnen</strong><br><span style="font-weight:400;font-size:11px;color:var(--txt3)">Detail-Modal ohne Migration anzeigen</span></span></button>'+
+          '<button class="btn" onclick="_deleteLegacyVertrag(\''+escapeHtml(rec.id)+'\')" style="text-align:left;display:flex;align-items:center;gap:10px;padding:10px 12px;color:#dc2626;border-color:#fecaca"><span style="font-size:20px">🗑</span><span style="flex:1"><strong>Löschen</strong><br><span style="font-weight:400;font-size:11px;color:var(--txt3)">Vertrag dauerhaft entfernen</span></span></button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (ev) => { if (ev.target === m) m.remove(); };
+}
+
+/* Legacy-Vertrag migrieren: Vertragsnummer generieren + Kunde aus Preisliste übernehmen */
+async function _migrateLegacyVertrag(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  const pl = (_preislistenForVtCache.items||[]).find(p => p.id === f.preisliste_id);
+  if (!pl) return toast('Preisliste nicht gefunden — Migration nicht möglich.','err');
+  const plf = pl.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  try {
+    const nummer = await _nextVertragsnummer(firmaSlug);
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const patch = {
+      vertragsnummer: nummer,
+      quelle: 'app',
+      kunde_name:   plf.kunde_name || plf.kunde || '',
+      kunde_nummer: String(plf.kunde_nummer || plf.kundennummer || ''),
+      kunde_id:     String(plf.kunde_id || ''),
+      start_datum:  f.start_datum || new Date().toISOString().slice(0,10),
+      laufzeit_monate: f.laufzeit_monate || 12,
+    };
+    const res = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertraege/'+recId, {
+      method:'PATCH',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: patch }),
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error.message || 'Fehler');
+    toast('✅ Migriert zu '+nummer, 'ok');
+    document.getElementById('legacy-vt-modal')?.remove();
+    await renderWartungsvertraegeView({ force:true });
+  } catch(e) {
+    toast('❌ Migration: '+e.message.slice(0,250),'err');
+  }
+}
+
+/* Legacy-Vertrag löschen (mit Bestätigung) */
+async function _deleteLegacyVertrag(recId) {
+  if (!confirm('Diesen Legacy-Vertrag wirklich löschen?\n\n(Die verknüpfte Preisliste und Anlagen bleiben erhalten — nur dieser leere Vertrags-Record wird gelöscht.)')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const res = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertraege/'+recId, {
+      method:'DELETE',
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    if (!res.ok) {
+      const d = await res.json().catch(()=>({}));
+      throw new Error(d.error?.message || 'HTTP '+res.status);
+    }
+    toast('🗑 Vertrag gelöscht.','ok');
+    document.getElementById('legacy-vt-modal')?.remove();
+    await renderWartungsvertraegeView({ force:true });
+  } catch(e) {
+    toast('❌ Löschen: '+e.message.slice(0,250),'err');
   }
 }
 
