@@ -1639,10 +1639,15 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <!-- 2. Live-Ergebnisse: Einmal | Jahr 1 | Folgejahre -->
     <div class="wkalk-grid3" style="margin-top:10px">
       <div class="wkalk-card">
-        <h3>💰 Einmalig an Kunde <span style="font-weight:500;color:var(--txt3);font-size:10px;text-transform:none;letter-spacing:0;margin-left:2px">(auto)</span></h3>
-        <div class="wk-auto-val" id="wk-einmal-val">0,00 €</div>
-        <div class="wkalk-row" style="font-size:11px;color:var(--txt3);border-bottom:none;padding:2px 0;justify-content:center;gap:6px">
-          <span>Bereich 0 € … <span id="wk-einmal-max">–</span></span>
+        <h3>💰 Einmalig an Kunde <span id="wk-einmal-mode-label" style="font-weight:500;color:var(--txt3);font-size:10px;text-transform:none;letter-spacing:0;margin-left:2px">(auto)</span></h3>
+        <div style="display:flex;gap:6px;align-items:center;justify-content:center">
+          <input type="number" id="wk-einmal-input" step="10" min="0" placeholder="0" oninput="_onEinmalManualInput(this)" style="width:140px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:18px;font-weight:700;text-align:center;font-family:inherit">
+          <span style="font-size:18px;font-weight:700">€</span>
+          <button class="btn" id="wk-einmal-reset" onclick="_resetEinmalManual()" title="Auf automatisch berechneten Wert zurücksetzen" style="padding:4px 8px;font-size:11px;display:none">↻ Auto</button>
+        </div>
+        <div class="wkalk-row" style="font-size:11px;color:var(--txt3);border-bottom:none;padding:4px 0 0;justify-content:center;gap:6px">
+          <span>Empfehlung (auto): <span id="wk-einmal-auto-val">0,00 €</span></span>
+          <span>· Max 0 € … <span id="wk-einmal-max">–</span></span>
         </div>
         <div id="wk-einmal-warn" style="display:none" class="wkalk-warn"></div>
       </div>
@@ -2268,7 +2273,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.42';
+const APP_VERSION = 'v3.43';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9230,6 +9235,7 @@ function _wkEur(n) { return _wkFmt.format(n || 0); }
 function _wkSet(id, txt) { const el = document.getElementById(id); if (el) el.textContent = txt; }
 
 let _wkZielpreis = 2400;  // Single source of truth für den Zielpreis (synct Slider+Input)
+let _wkEinmalManual = null;  // null = Auto-Modus, sonst manuell eingegebener Wert für "Einmalig an Kunde"
 
 function _wkRead() {
   return {
@@ -9256,8 +9262,13 @@ function _wkCalc(i) {
   //   benötigt = max(0, MontageEK − Überschuss)  [um Jahr-1-Saldo ≥ 0 zu erreichen]
   //   Range:    [0, MontageEK]  → wenn benötigt > MontageEK, wird gecappt (Vorleistung-Warnung)
   const einmalNeeded = Math.max(0, i.montageEK - ueberschussJahr);
-  const einmalVK     = Math.min(einmalNeeded, i.montageEK);
-  const vorleistung  = Math.max(0, einmalNeeded - i.montageEK);  // Restdefizit, falls Cap nicht reicht
+  const einmalVKAuto = Math.min(einmalNeeded, i.montageEK);
+  const vorleistungAuto = Math.max(0, einmalNeeded - i.montageEK);
+  // Manueller Override: wenn _wkEinmalManual gesetzt ist, hat dieser Wert Vorrang
+  const isManual     = (_wkEinmalManual != null);
+  const einmalVK     = isManual ? Math.max(0, +_wkEinmalManual) : einmalVKAuto;
+  // Vorleistung wird im manuellen Modus aus dem realen Y1-Saldo errechnet (siehe _wkRenderJahre)
+  const vorleistung  = isManual ? Math.max(0, (i.montageEK + i.einkaufJahr) - (i.zielpreis + einmalVK)) : vorleistungAuto;
 
   // Zielpreis-Slider Range
   const zielMin = 100;  // sinnvoller Mindestwert (verhindert 0 €)
@@ -9266,7 +9277,7 @@ function _wkCalc(i) {
   return {
     ...i,
     preisProWart, wartungJahr, notrufJahr, zuesJahr, einkaufJahr, ueberschussJahr,
-    einmalVK, einmalNeeded, vorleistung,
+    einmalVK, einmalVKAuto, einmalNeeded, vorleistung, isManual,
     zielMin, zielMax,
   };
 }
@@ -9311,22 +9322,43 @@ function _wkRenderZielpreisSlider(c) {
 }
 
 function _wkRenderEinmalAuto(c) {
-  const el   = document.getElementById('wk-einmal-val');
+  const inp  = document.getElementById('wk-einmal-input');
   const warn = document.getElementById('wk-einmal-warn');
-  el.textContent = _wkEur(c.einmalVK);
+  const modeLbl = document.getElementById('wk-einmal-mode-label');
+  const resetBtn = document.getElementById('wk-einmal-reset');
+  // Im Auto-Modus den berechneten Wert in das Input schreiben (ohne Manual-Override auszulösen)
+  if (!c.isManual && document.activeElement !== inp) {
+    inp.value = Math.round(c.einmalVK * 100) / 100;
+  }
+  _wkSet('wk-einmal-auto-val', _wkEur(c.einmalVKAuto));
   _wkSet('wk-einmal-max', _wkEur(c.montageEK));
+  if (modeLbl) modeLbl.textContent = c.isManual ? '(manuell)' : '(auto)';
+  if (resetBtn) resetBtn.style.display = c.isManual ? '' : 'none';
 
+  // Warnungen: Vorleistung (Y1-Verlust)
+  inp.classList.remove('warn'); inp.style.borderColor = ''; inp.style.background = '';
   if (c.vorleistung > 0.005) {
-    el.classList.add('warn');
+    inp.style.borderColor = '#FCA5A5'; inp.style.background = '#FEF2F2';
     warn.style.display = 'block';
-    warn.innerHTML =
-      '⚠ Vorleistung in Jahr 1: ' + _wkEur(c.vorleistung) + '. ' +
-      'Auch mit dem Maximum (' + _wkEur(c.montageEK) + ') Einmalkosten reicht der Zielpreis nicht. ' +
-      'Zielpreis um mindestens ' + _wkEur(c.vorleistung) + '/Jahr erhöhen.';
+    if (c.isManual) {
+      warn.innerHTML = '⚠ Bei diesem Einmal-Betrag fehlen in Jahr 1: ' + _wkEur(c.vorleistung) + '. Du zahlst im ersten Jahr drauf — bewusst gewählt?';
+    } else {
+      warn.innerHTML = '⚠ Vorleistung in Jahr 1: ' + _wkEur(c.vorleistung) + '. Auch mit dem Maximum (' + _wkEur(c.montageEK) + ') reicht der Zielpreis nicht.';
+    }
   } else {
-    el.classList.remove('warn');
     warn.style.display = 'none';
   }
+}
+
+function _onEinmalManualInput(el) {
+  const v = el.value.trim();
+  _wkEinmalManual = (v === '' || v == null) ? null : (+v || 0);
+  recalcWartung();
+}
+
+function _resetEinmalManual() {
+  _wkEinmalManual = null;
+  recalcWartung();
 }
 
 function _wkRenderJahre(c) {
@@ -9383,8 +9415,9 @@ function renderWartungKalk() {
   document.getElementById('wkalk-aufzug').style.display   = showKone ? 'none' : '';
   document.getElementById('wkalk-placeholder-name').textContent = f?.name || 'Diese Firma';
   if (showKone) {
-    // Bei jedem Eintritt zurücksetzen: 1 Wartung p.a.
+    // Bei jedem Eintritt zurücksetzen: 1 Wartung p.a. + Auto-Modus für Einmalig
     document.getElementById('wk-wartungen').value = 1;
+    _wkEinmalManual = null;
     recalcWartung();
   }
 }
