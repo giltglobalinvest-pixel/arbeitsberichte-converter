@@ -2273,7 +2273,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.45';
+const APP_VERSION = 'v3.46';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9606,6 +9606,15 @@ REGELN:
 6. Markdown-Format: # für Vertragstitel (sehr knapp), ## für jeden Paragraph (z.B. "## § 1 Vertragsgegenstand"). Aufzug-Liste als nummerierte Auflistung.
 7. Keine Anmerkungen, kein Vorwort, keine Code-Blöcke, keine \`\`\`-Fences — nur den fertigen Vertragstext.
 8. Schreibe juristisch sauber, aber lesbar. Üblich für Wartungsverträge in Deutschland (BGB-Konform: ordentliche Kündigung, AGB-Anforderungen).
+9. UNTERSCHRIFTSZEILEN: Schreibe NIE Ketten aus _____ \\\\\\\\ ~~~ ------- für Linien. Setze stattdessen das Token \`[[SIGLINE]]\` allein auf einer Zeile — die PDF-Engine zeichnet daraus eine saubere Unterschriftslinie. Beispiel:
+
+Ort, Datum:
+[[SIGLINE]]
+Unterschrift Auftraggeber (Mustermann GmbH)
+
+Ort, Datum:
+[[SIGLINE]]
+Unterschrift Auftragnehmer (Aszendio Aufzugservice GmbH)
 
 Vertragsdaten:`;
 
@@ -10365,7 +10374,13 @@ async function _buildVertragPDFBlob(text, vars) {
   };
 
   // Markdown-Renderer (zeilenbasiert)
-  const paragraphs = String(text).split(/\n/);
+  // VORHER: Unterschriftslinien-Marker normalisieren — KI nutzt oft Ketten von _, \, ~ für Linien
+  // die im Helvetica-Font seltsam aussehen. Wir ersetzen durch eine Marker-Zeile [[SIGLINE]].
+  const cleanedText = String(text)
+    .replace(/[\\_~‾]{6,}/g, '[[SIGLINE]]')   // 6+ Backslashes/Underscores/Tildes → Sig-Linie
+    .replace(/^[ \t]*[-_]{20,}[ \t]*$/gm, '[[SIGLINE]]'); // Lange ---- als Sig-Linie
+
+  const paragraphs = cleanedText.split(/\n/);
   let inList = false, listIdxCounter = 0;
   for (let i = 0; i < paragraphs.length; i++) {
     const raw = paragraphs[i];
@@ -10374,6 +10389,15 @@ async function _buildVertragPDFBlob(text, vars) {
     if (!line.trim()) {
       y += 3.5;
       inList = false;
+      continue;
+    }
+    // Unterschriftslinie [[SIGLINE]] → echte zarte Linie
+    if (line.trim() === '[[SIGLINE]]') {
+      needSpace(10);
+      y += 3;
+      doc.setDrawColor(80,80,80); doc.setLineWidth(0.25);
+      doc.line(ml, y, ml + Math.min(95, cw), y);
+      y += 8;
       continue;
     }
     // Horizontale Linie ---
