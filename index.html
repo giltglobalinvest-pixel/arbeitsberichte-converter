@@ -1769,6 +1769,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-hdr">
     <h2>👥 Kunden <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="kdv-count">0</span></h2>
     <button class="btn" onclick="renderKundenView({force:true})">↻ Neu laden</button>
+    <button class="btn" id="kdv-mc-btn" onclick="_mailchimpBulkSyncFromKundenView()" title="Alle Kontakte aller Kunden zu Mailchimp pushen" style="background:#FFE01B;color:#222;border:1px solid #d4ba0b;font-weight:600;display:none">📧 Alle → Mailchimp</button>
     <button class="btn prim" onclick="_openKundeFromView()">+ Neuer Kunde</button>
   </div>
   <div class="anl-search-bar">
@@ -1921,6 +1922,26 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       </div>
 
       <div class="intg-hint">Pro Firma sind drei Werte nötig: <strong>Domain</strong>, <strong>API-Key</strong> und <strong>Default-Requester-Email</strong> (wird beim Ticket als Anfrager gesetzt — meistens eine interne Service-Adresse).</div>
+    </div>
+
+    <!-- MAILCHIMP -->
+    <div class="intg-card">
+      <h3>📧 Mailchimp-Integration</h3>
+      <p class="intg-desc">
+        Synchronisiert Kunden-Kontakte aus dem ERP in eine Mailchimp-Audience <strong>je Firma</strong>. Idempotent (existierende Member werden aktualisiert, neue werden mit Status <code>subscribed</code> angelegt). Felder: <code>FNAME</code>, <code>LNAME</code>, <code>COMPANY</code>, <code>PHONE</code> + Tag mit dem Kundennamen für Segmentierung.
+      </p>
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.6;margin-bottom:10px">
+        <strong>Setup je Firma (einmalig in val.town → Settings → Environment Variables):</strong><br>
+        <code>MAILCHIMP_API_KEY_&lt;FIRMA&gt;</code> = der API-Key (endet mit <code>-us12</code> o.ä.)<br>
+        <code>MAILCHIMP_AUDIENCE_&lt;FIRMA&gt;</code> = die List-/Audience-ID<br>
+        <span style="color:var(--txt3)">Firma-Slug in Großbuchstaben, z.B. <code>MAILCHIMP_API_KEY_AUFZUG</code> und <code>MAILCHIMP_AUDIENCE_AUFZUG</code>.</span>
+      </div>
+      <div class="intg-row">
+        <button class="btn" onclick="_mailchimpTestPing(this)" title="Prüft Mailchimp-Verbindung für aktive Firma">🩺 Verbindung testen</button>
+        <button class="btn" onclick="valtownUpdateProxyCode(this)" title="Push neuesten Proxy-Code (inkl. Mailchimp-Routen)">⬆ Proxy-Code aktualisieren</button>
+      </div>
+      <div class="intg-hint">Sync-Trigger: <strong>automatisch</strong> beim Anlegen eines Kontakts · <strong>manuell</strong> über 📧-Button im Kunde-Detail · <strong>bulk</strong> über die Kunden-View.</div>
+      <div class="intg-log" id="intg-mc-log"></div>
     </div>
 
     <!-- ERP-SYNC + DEBUG -->
@@ -2291,7 +2312,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.50';
+const APP_VERSION = 'v3.51';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11166,9 +11187,91 @@ async function renderKundenView(opts) {
       _kundenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
     }
     _renderKundenViewList();
+    // Mailchimp-Bulk-Button zeigen wenn Proxy konfiguriert
+    const mcBtn = document.getElementById('kdv-mc-btn');
+    if (mcBtn) mcBtn.style.display = _mailchimpEnabled() ? '' : 'none';
   } catch(e) {
     if (list) list.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
   }
+}
+
+/* Bulk-Sync: alle Kontakte aller Kunden der aktiven Firma zu Mailchimp pushen.
+   Lädt pro Kunde die Kontakte-Liste vom ERP, sammelt sie, schickt sie chunkweise an den Proxy. */
+async function _mailchimpBulkSyncFromKundenView() {
+  if (!isAdmin()) return toast('🔒 Nur für Admin','err');
+  if (!_mailchimpEnabled()) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const kunden = (_kundenCache.items||[]).filter(k => k && (k.kundennummer || k.id));
+  if (!kunden.length) return toast('Keine Kunden im Cache — erst Liste laden.','err');
+  // Ping vorab — bricht hier ab mit klarer Fehlermeldung, falls Config fehlt
+  let ping = null;
+  try {
+    ping = await mailchimpPing(firmaSlug);
+  } catch(e) {
+    return toast('❌ Mailchimp nicht erreichbar: '+(e.message||'?').slice(0,300),'err');
+  }
+  const audName = (ping && ping.audience && ping.audience.name) || 'Audience';
+  if (!confirm('Bulk-Sync starten?\\n\\nZiel: Mailchimp-Audience "'+audName+'"\\nQuelle: '+kunden.length+' Kunden der Firma "'+firmaSlug+'"\\n\\nKontakte werden pro Kunde aus dem ERP gezogen und einzeln zu Mailchimp gepusht. Bei großen Datenmengen dauert das ein paar Minuten — Fenster offen lassen.')) return;
+
+  // Banner anzeigen
+  const banner = document.createElement('div');
+  banner.id = 'kdv-mc-banner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#FFE01B;color:#222;padding:10px 14px;text-align:center;font-weight:600;font-size:13px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.2);padding-top:calc(10px + env(safe-area-inset-top,0px))';
+  banner.innerHTML = '📧 Mailchimp-Bulk-Sync läuft… <span id="kdv-mc-progress">vorbereiten…</span> <button onclick="window._mcBulkCancel=true;document.getElementById(\'kdv-mc-banner\')?.remove()" style="margin-left:10px;background:#222;color:#fff;border:none;padding:4px 10px;border-radius:5px;cursor:pointer;font-weight:600">Abbrechen</button>';
+  document.body.appendChild(banner);
+  window._mcBulkCancel = false;
+
+  const stats = { kundenDone:0, gesamt: kunden.length, kontakteDone:0, ok:0, fail:0, skip:0, errors:[] };
+  const setProgress = () => {
+    const el = document.getElementById('kdv-mc-progress');
+    if (el) el.textContent = 'Kunde '+stats.kundenDone+'/'+stats.gesamt+' · '+stats.kontakteDone+' Kontakte verarbeitet (✅ '+stats.ok+' / ❌ '+stats.fail+' / ⏭ '+stats.skip+')';
+  };
+  setProgress();
+
+  for (const k of kunden) {
+    if (window._mcBulkCancel) break;
+    stats.kundenDone++;
+    setProgress();
+    const kundenNr = k.kundennummer || k.id;
+    let kontakte = [];
+    try {
+      if (_kontakteCache.has(String(kundenNr))) {
+        kontakte = _kontakteCache.get(String(kundenNr));
+      } else {
+        const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+        kontakte = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+        _kontakteCache.set(String(kundenNr), kontakte);
+      }
+    } catch(e) {
+      stats.errors.push('Kunde '+kundenNr+': '+e.message.slice(0,120));
+      continue;
+    }
+    // Mit Email filtern und an Bulk-Endpoint schicken
+    const eligible = kontakte.filter(c => c && c.email && String(c.email).trim());
+    if (!eligible.length) { stats.skip += kontakte.length; continue; }
+    const members = eligible.map(c => Object.assign({}, c, { _kunde: k.firmenname || '' }));
+    try {
+      const r = await mailchimpUpsertBulk(firmaSlug, members);
+      stats.kontakteDone += r.total || eligible.length;
+      stats.ok   += r.success || 0;
+      stats.fail += r.failed  || 0;
+      stats.skip += (kontakte.length - eligible.length) + (r.skipped || 0);
+      if (Array.isArray(r.results)) {
+        r.results.filter(x => !x.ok && x.error).slice(0, 3).forEach(x => stats.errors.push(x.email+': '+String(x.error).slice(0,120)));
+      }
+    } catch(e) {
+      stats.errors.push('Push '+(k.firmenname||kundenNr)+': '+e.message.slice(0,120));
+      stats.fail += eligible.length;
+    }
+    setProgress();
+  }
+  document.getElementById('kdv-mc-banner')?.remove();
+  const msg = window._mcBulkCancel
+    ? '⏹ Abgebrochen nach '+stats.kundenDone+' Kunden. ✅ '+stats.ok+' · ❌ '+stats.fail+' · ⏭ '+stats.skip
+    : '✅ Bulk-Sync fertig: '+stats.kontakteDone+' Kontakte verarbeitet (✅ '+stats.ok+' · ❌ '+stats.fail+' · ⏭ '+stats.skip+')';
+  toast(msg, stats.fail > 0 && stats.ok === 0 ? 'err' : 'ok');
+  if (stats.errors.length) console.warn('[Mailchimp-Bulk] Fehler:', stats.errors);
 }
 
 function _renderKundenViewList() {
@@ -11286,20 +11389,48 @@ function _renderKundeKontakteList(kontakte) {
   const cnt = document.getElementById('kde-kt-count');
   if (cnt) cnt.textContent = '('+kontakte.length+')';
   if (!el) return;
+  // Liste im Modal cachen, damit der Mailchimp-Button die Daten findet
+  const modal = document.getElementById('kde-detail-modal');
+  if (modal) modal._kontakte = kontakte;
   if (kontakte.length === 0) {
     el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--txt3);background:var(--bg);border-radius:6px;border:1px dashed var(--bdr);font-size:12px">Keine Kontakte hinterlegt.<br><span style="font-size:11px">Klick "+ Neuer Kontakt" oben.</span></div>';
     return;
   }
-  el.innerHTML = '<div style="display:grid;gap:6px">'+kontakte.map(k => {
+  const mcOn = _mailchimpEnabled();
+  el.innerHTML = '<div style="display:grid;gap:6px">'+kontakte.map((k, i) => {
     const name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
+    const hasEmail = !!(k.email && String(k.email).trim());
+    const mcBtn = (mcOn && hasEmail)
+      ? '<button class="btn" onclick="event.stopPropagation();_mailchimpSyncKontakt('+i+', this)" title="Diesen Kontakt jetzt zu Mailchimp pushen" style="padding:4px 10px;font-size:11px;background:#FFE01B;color:#222;border:1px solid #d4ba0b;font-weight:600">📧 → Mailchimp</button>'
+      : '';
     return '<div style="padding:10px 12px;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">'+
       '<div style="font-size:18px">👤</div>'+
       '<div style="flex:1;min-width:160px">'+
         '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(name)+(k.rolle?' <span style="font-weight:400;font-size:11px;color:var(--txt3)">· '+escapeHtml(k.rolle)+'</span>':'')+'</div>'+
         '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([k.email, k.telefon||k.mobile].filter(Boolean).join(' · '))+'</div>'+
       '</div>'+
+      mcBtn+
     '</div>';
   }).join('')+'</div>';
+}
+
+/* Manueller Mailchimp-Sync für einen Kontakt aus dem Kunde-Detail-Modal. */
+async function _mailchimpSyncKontakt(idx, btn) {
+  const modal = document.getElementById('kde-detail-modal');
+  if (!modal || !modal._kontakte) return toast('Kontakt-Liste nicht verfügbar.','err');
+  const k = modal._kontakte[idx];
+  if (!k) return;
+  const kunde = modal._kunde || {};
+  const firmaSlug = modal._firmaSlug || getCurrentFirmaSlug();
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ pushe…'; }
+  const r = await mailchimpSyncSilently(firmaSlug, k, kunde.firmenname || '', { verbose:false });
+  if (r && r.ok) {
+    if (btn) { btn.textContent = '✅ in Mailchimp'; btn.style.background = '#10b981'; btn.style.color = '#fff'; }
+    toast('📧 '+(k.email||'Kontakt')+' → Mailchimp ok', 'ok');
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = '📧 → Mailchimp'; }
+    toast('❌ Mailchimp: '+(r && r.error || 'Fehler')+'', 'err');
+  }
 }
 
 function _renderKundeAnlagenList(anlagen) {
@@ -11733,6 +11864,10 @@ async function _submitCreateKontakt() {
     _kontakteCache.delete(String(opts.kundenId));
     toast('🚀 Kontakt "'+vorname+' '+nachname+'" angelegt.', 'ok');
     m.remove();
+    // ── Auto-Sync zu Mailchimp (fire-and-forget, nicht blockierend) ──
+    if (_mailchimpEnabled() && email) {
+      mailchimpSyncSilently(m._firmaSlug, { vorname, nachname, email, telefon, mobile, rolle }, opts.kundenname || '', { verbose:true });
+    }
     if (typeof opts.onCreated === 'function') opts.onCreated(created);
   } catch(e) {
     console.error('createKontakt:', e);
@@ -13304,6 +13439,139 @@ export default async function (req) {
     }});
   }
 
+  // ══════════ MAILCHIMP PROXY ══════════
+  // Routes:
+  //   POST /mailchimp/<firma>/ping            → Verbindungstest (zeigt Audience-Name)
+  //   POST /mailchimp/<firma>/upsert          → 1 Kontakt anlegen/aktualisieren (idempotent via md5(email))
+  //   POST /mailchimp/<firma>/bulk            → mehrere Kontakte (Body: { members:[...] })
+  // Env: MAILCHIMP_API_KEY_<FIRMA>  (Key endet mit -<server>, z.B. -us12)
+  //      MAILCHIMP_AUDIENCE_<FIRMA> (List/Audience-ID)
+  if (path.startsWith("mailchimp/")) {
+    const rest = path.replace(/^mailchimp\\//, "");
+    const i = rest.indexOf("/");
+    if (i < 0) return json({ error:"Bad path. Erwartet: /mailchimp/<firma>/<action>" }, 400);
+    const firma  = rest.slice(0, i);
+    const action = rest.slice(i+1).replace(/\\/+$/,"");
+    const keyEnv = "MAILCHIMP_API_KEY_"+firma.toUpperCase();
+    const audEnv = "MAILCHIMP_AUDIENCE_"+firma.toUpperCase();
+    const apiKey = Deno.env.get(keyEnv);
+    const audId  = Deno.env.get(audEnv);
+    if (!apiKey || !audId) return json({ error:"Mailchimp-Config fehlt für Firma "+firma, expected_env:[keyEnv, audEnv] }, 500);
+    // Server-Prefix aus dem Key extrahieren: "<token>-us12" → "us12"
+    const dash = apiKey.lastIndexOf("-");
+    const server = dash > 0 ? apiKey.slice(dash+1) : "";
+    if (!server) return json({ error:"Mailchimp API-Key hat keinen Server-Suffix (z.B. -us12)" }, 500);
+    const mcBase = "https://"+server+".api.mailchimp.com/3.0";
+    const basic = btoa("anystring:"+apiKey);
+    const mcHeaders = { "Authorization":"Basic "+basic, "Content-Type":"application/json", "Accept":"application/json" };
+
+    // Helper: md5 → Mailchimp subscriber_hash erwartet md5(lowercase(email))
+    async function md5Hex(input) {
+      // Deno hat kein native md5 in Web Crypto. Wir nutzen eine kleine JS-Implementierung.
+      function md5(s) {
+        function r(n,b){return n<<b|n>>>32-b}
+        function a(a,b,c,d,e,f,g){b=b+(a&c|~a&d)+(e>>>0)+g;return r(b,f)+a}
+        function k(a,b,c,d,e,f,g){b=b+(a&d|c&~d)+(e>>>0)+g;return r(b,f)+a}
+        function l(a,b,c,d,e,f,g){b=b+(a^c^d)+(e>>>0)+g;return r(b,f)+a}
+        function m(a,b,c,d,e,f,g){b=b+(c^(a|~d))+(e>>>0)+g;return r(b,f)+a}
+        // String → byte array
+        const bytes=[]; for(let i=0;i<s.length;i++){let c=s.charCodeAt(i); if(c<128)bytes.push(c); else if(c<2048){bytes.push(192|c>>6);bytes.push(128|c&63);} else {bytes.push(224|c>>12);bytes.push(128|c>>6&63);bytes.push(128|c&63);}}
+        const len = bytes.length;
+        bytes.push(0x80);
+        while(bytes.length%64 !== 56) bytes.push(0);
+        const bitLen = len*8;
+        bytes.push(bitLen&0xff,(bitLen>>>8)&0xff,(bitLen>>>16)&0xff,(bitLen>>>24)&0xff,0,0,0,0);
+        let aH=1732584193,bH=-271733879,cH=-1732584194,dH=271733878;
+        for(let i=0;i<bytes.length;i+=64){
+          const w=new Array(16);
+          for(let j=0;j<16;j++) w[j]=bytes[i+j*4]|bytes[i+j*4+1]<<8|bytes[i+j*4+2]<<16|bytes[i+j*4+3]<<24;
+          const aa=aH,bb=bH,cc=cH,dd=dH;
+          aH=a(aH,bH,cH,dH,w[0],7,-680876936);  dH=a(dH,aH,bH,cH,w[1],12,-389564586); cH=a(cH,dH,aH,bH,w[2],17,606105819); bH=a(bH,cH,dH,aH,w[3],22,-1044525330);
+          aH=a(aH,bH,cH,dH,w[4],7,-176418897);  dH=a(dH,aH,bH,cH,w[5],12,1200080426); cH=a(cH,dH,aH,bH,w[6],17,-1473231341); bH=a(bH,cH,dH,aH,w[7],22,-45705983);
+          aH=a(aH,bH,cH,dH,w[8],7,1770035416);  dH=a(dH,aH,bH,cH,w[9],12,-1958414417); cH=a(cH,dH,aH,bH,w[10],17,-42063); bH=a(bH,cH,dH,aH,w[11],22,-1990404162);
+          aH=a(aH,bH,cH,dH,w[12],7,1804603682); dH=a(dH,aH,bH,cH,w[13],12,-40341101); cH=a(cH,dH,aH,bH,w[14],17,-1502002290); bH=a(bH,cH,dH,aH,w[15],22,1236535329);
+          aH=k(aH,bH,cH,dH,w[1],5,-165796510);  dH=k(dH,aH,bH,cH,w[6],9,-1069501632); cH=k(cH,dH,aH,bH,w[11],14,643717713); bH=k(bH,cH,dH,aH,w[0],20,-373897302);
+          aH=k(aH,bH,cH,dH,w[5],5,-701558691);  dH=k(dH,aH,bH,cH,w[10],9,38016083); cH=k(cH,dH,aH,bH,w[15],14,-660478335); bH=k(bH,cH,dH,aH,w[4],20,-405537848);
+          aH=k(aH,bH,cH,dH,w[9],5,568446438);   dH=k(dH,aH,bH,cH,w[14],9,-1019803690); cH=k(cH,dH,aH,bH,w[3],14,-187363961); bH=k(bH,cH,dH,aH,w[8],20,1163531501);
+          aH=k(aH,bH,cH,dH,w[13],5,-1444681467);dH=k(dH,aH,bH,cH,w[2],9,-51403784); cH=k(cH,dH,aH,bH,w[7],14,1735328473); bH=k(bH,cH,dH,aH,w[12],20,-1926607734);
+          aH=l(aH,bH,cH,dH,w[5],4,-378558);     dH=l(dH,aH,bH,cH,w[8],11,-2022574463); cH=l(cH,dH,aH,bH,w[11],16,1839030562); bH=l(bH,cH,dH,aH,w[14],23,-35309556);
+          aH=l(aH,bH,cH,dH,w[1],4,-1530992060); dH=l(dH,aH,bH,cH,w[4],11,1272893353); cH=l(cH,dH,aH,bH,w[7],16,-155497632); bH=l(bH,cH,dH,aH,w[10],23,-1094730640);
+          aH=l(aH,bH,cH,dH,w[13],4,681279174);  dH=l(dH,aH,bH,cH,w[0],11,-358537222); cH=l(cH,dH,aH,bH,w[3],16,-722521979); bH=l(bH,cH,dH,aH,w[6],23,76029189);
+          aH=l(aH,bH,cH,dH,w[9],4,-640364487);  dH=l(dH,aH,bH,cH,w[12],11,-421815835); cH=l(cH,dH,aH,bH,w[15],16,530742520); bH=l(bH,cH,dH,aH,w[2],23,-995338651);
+          aH=m(aH,bH,cH,dH,w[0],6,-198630844);  dH=m(dH,aH,bH,cH,w[7],10,1126891415); cH=m(cH,dH,aH,bH,w[14],15,-1416354905); bH=m(bH,cH,dH,aH,w[5],21,-57434055);
+          aH=m(aH,bH,cH,dH,w[12],6,1700485571); dH=m(dH,aH,bH,cH,w[3],10,-1894986606); cH=m(cH,dH,aH,bH,w[10],15,-1051523); bH=m(bH,cH,dH,aH,w[1],21,-2054922799);
+          aH=m(aH,bH,cH,dH,w[8],6,1873313359);  dH=m(dH,aH,bH,cH,w[15],10,-30611744); cH=m(cH,dH,aH,bH,w[6],15,-1560198380); bH=m(bH,cH,dH,aH,w[13],21,1309151649);
+          aH=m(aH,bH,cH,dH,w[4],6,-145523070);  dH=m(dH,aH,bH,cH,w[11],10,-1120210379); cH=m(cH,dH,aH,bH,w[2],15,718787259); bH=m(bH,cH,dH,aH,w[9],21,-343485551);
+          aH=aa+aH|0; bH=bb+bH|0; cH=cc+cH|0; dH=dd+dH|0;
+        }
+        function h(n){ let s=""; for(let i=0;i<4;i++) s += ((n>>>(i*8))&0xff).toString(16).padStart(2,"0"); return s; }
+        return h(aH)+h(bH)+h(cH)+h(dH);
+      }
+      return md5(input);
+    }
+
+    async function mcUpsert(member) {
+      const email = String(member.email_address||"").trim().toLowerCase();
+      if (!email) return { ok:false, error:"Email fehlt" };
+      const hash = await md5Hex(email);
+      const mergeFields = {};
+      if (member.merge_fields) Object.assign(mergeFields, member.merge_fields);
+      const body = {
+        email_address: email,
+        status_if_new: "subscribed",
+        merge_fields: mergeFields
+      };
+      const target = mcBase+"/lists/"+audId+"/members/"+hash;
+      const r = await fetch(target, { method:"PUT", headers: mcHeaders, body: JSON.stringify(body) });
+      const txt = await r.text();
+      if (!r.ok) {
+        let detail = txt; try { const j = JSON.parse(txt); detail = j.detail || j.title || txt; } catch(_){}
+        return { ok:false, email, status:r.status, error: detail };
+      }
+      let memberData = null; try { memberData = JSON.parse(txt); } catch(_){}
+      // Tags zusätzlich pushen (separater Endpoint)
+      const tags = Array.isArray(member.tags) ? member.tags.filter(t => t && String(t).trim()) : [];
+      if (tags.length) {
+        const tagBody = { tags: tags.map(t => ({ name: String(t).trim(), status: "active" })) };
+        const tr = await fetch(mcBase+"/lists/"+audId+"/members/"+hash+"/tags", {
+          method:"POST", headers: mcHeaders, body: JSON.stringify(tagBody)
+        });
+        if (!tr.ok) {
+          const tt = await tr.text();
+          return { ok:true, email, hash, warn:"Member ok, Tags HTTP "+tr.status+": "+tt.slice(0,200), member: memberData };
+        }
+      }
+      return { ok:true, email, hash, member: memberData };
+    }
+
+    if (action === "ping") {
+      const r = await fetch(mcBase+"/lists/"+audId, { headers: mcHeaders });
+      const txt = await r.text();
+      if (!r.ok) return json({ ok:false, status:r.status, body: txt.slice(0,500) }, r.status);
+      let d = null; try { d = JSON.parse(txt); } catch(_){}
+      return json({ ok:true, audience: d ? { id:d.id, name:d.name, member_count:d.stats && d.stats.member_count } : null });
+    }
+    if (action === "upsert" && req.method === "POST") {
+      let b = {}; try { b = await req.json(); } catch(_){}
+      const result = await mcUpsert(b);
+      return json(result, result.ok ? 200 : (result.status||500));
+    }
+    if (action === "bulk" && req.method === "POST") {
+      let b = {}; try { b = await req.json(); } catch(_){}
+      const members = Array.isArray(b.members) ? b.members : [];
+      const results = [];
+      let ok=0, fail=0, skip=0;
+      for (const m of members) {
+        if (!m || !m.email_address) { skip++; results.push({ ok:false, error:"keine Email", input:m && m.tags }); continue; }
+        const r = await mcUpsert(m);
+        if (r.ok) ok++; else fail++;
+        results.push(r);
+      }
+      return json({ ok:true, total: members.length, success: ok, failed: fail, skipped: skip, results });
+    }
+    return json({ error:"Unbekannte Mailchimp-Action: "+action, available:["ping","upsert","bulk"] }, 404);
+  }
+
   // ══════════ BACKGROUND-SYNC ENDPOINTS ══════════
 
   if (path === "sync/run" && req.method === "POST") {
@@ -14754,6 +15022,95 @@ async function erpFetch(path, options={}) {
     throw err;
   }
   return data;
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   MAILCHIMP-INTEGRATION (über val.town-Proxy, pro Firma)
+   ──────────────────────────────────────────────────────────────────── */
+function _mailchimpEnabled() { return !!APP_KEYS.valtownProxyUrl; }
+
+/* Baut den Member-Payload für Mailchimp aus einem ERP-Kontakt. */
+function _buildMailchimpMember(kontakt, kundeName) {
+  const k = kontakt || {};
+  const email = String(k.email||'').trim().toLowerCase();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
+  const fname = String(k.vorname||'').trim();
+  const lname = String(k.nachname||'').trim();
+  const phone = String(k.telefon||k.mobile||'').trim();
+  const merge = {};
+  if (fname) merge.FNAME = fname;
+  if (lname) merge.LNAME = lname;
+  if (kundeName) merge.COMPANY = String(kundeName).trim();
+  if (phone) merge.PHONE = phone;
+  const tags = [];
+  if (kundeName) tags.push(String(kundeName).trim());
+  return { email_address: email, merge_fields: merge, tags };
+}
+
+/* Verbindung testen — gibt Audience-Name + member_count zurück. */
+async function mailchimpPing(firmaSlug) {
+  if (!_mailchimpEnabled()) throw new Error('Proxy nicht eingerichtet');
+  return await erpFetch('/mailchimp/'+encodeURIComponent(firmaSlug)+'/ping', { method:'POST' });
+}
+
+/* 1 Kontakt zu Mailchimp synchronisieren (idempotent — anlegen oder updaten). */
+async function mailchimpUpsertContact(firmaSlug, kontakt, kundeName) {
+  if (!_mailchimpEnabled()) throw new Error('Proxy nicht eingerichtet');
+  const payload = _buildMailchimpMember(kontakt, kundeName);
+  if (!payload) { const e = new Error('Email fehlt / ungültig'); e.skipped = true; throw e; }
+  return await erpFetch('/mailchimp/'+encodeURIComponent(firmaSlug)+'/upsert', { method:'POST', body: payload });
+}
+
+/* Mehrere Kontakte als Bulk. members = [{email, vorname, nachname, telefon, _kunde}] */
+async function mailchimpUpsertBulk(firmaSlug, members) {
+  if (!_mailchimpEnabled()) throw new Error('Proxy nicht eingerichtet');
+  const payload = { members: [] };
+  for (const m of (members||[])) {
+    const p = _buildMailchimpMember(m, m._kunde);
+    if (p) payload.members.push(p);
+  }
+  if (!payload.members.length) return { ok:true, total:0, success:0, failed:0, skipped:0, results:[] };
+  return await erpFetch('/mailchimp/'+encodeURIComponent(firmaSlug)+'/bulk', { method:'POST', body: payload });
+}
+
+/* UI-Test: Mailchimp-Ping aus der Integrationen-View. */
+async function _mailchimpTestPing(btn) {
+  const log = document.getElementById('intg-mc-log');
+  if (isFirmaAll()) { if (log) log.innerHTML = '<div style="color:var(--err)">⚠ Bitte erst eine konkrete Firma oben rechts auswählen.</div>'; return; }
+  const firmaSlug = getCurrentFirmaSlug();
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ teste…'; }
+  if (log) { log.style.display = 'block'; log.innerHTML = '<div style="color:var(--txt3)">Pinge Mailchimp für Firma "'+escapeHtml(firmaSlug)+'"…</div>'; }
+  try {
+    const r = await mailchimpPing(firmaSlug);
+    if (r && r.ok && r.audience) {
+      const a = r.audience;
+      if (log) log.innerHTML = '<div style="color:#10b981;font-weight:600">✅ Verbindung ok</div>'+
+        '<div style="margin-top:6px;font-size:12px">Audience: <strong>'+escapeHtml(a.name||'(ohne Name)')+'</strong> · ID: <code>'+escapeHtml(a.id||'?')+'</code> · '+(a.member_count!=null?a.member_count+' Mitglieder':'')+'</div>';
+    } else {
+      if (log) log.innerHTML = '<div style="color:var(--err)">⚠ Unerwartete Antwort: '+escapeHtml(JSON.stringify(r).slice(0,500))+'</div>';
+    }
+  } catch(e) {
+    if (log) log.innerHTML = '<div style="color:var(--err)">❌ '+escapeHtml(e.message||'Fehler')+'</div>'+
+      '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">Tipp: Env-Vars <code>MAILCHIMP_API_KEY_'+firmaSlug.toUpperCase()+'</code> und <code>MAILCHIMP_AUDIENCE_'+firmaSlug.toUpperCase()+'</code> in val.town setzen + Proxy-Code aktualisieren.</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🩺 Verbindung testen'; }
+  }
+}
+
+/* Fire-and-forget Sync mit dezentem Toast — keine Exceptions nach außen. */
+async function mailchimpSyncSilently(firmaSlug, kontakt, kundeName, opts) {
+  opts = opts || {};
+  if (!_mailchimpEnabled()) return { ok:false, skipped:true, reason:'kein Proxy' };
+  if (!kontakt || !String(kontakt.email||'').trim()) return { ok:false, skipped:true, reason:'keine Email' };
+  try {
+    const r = await mailchimpUpsertContact(firmaSlug, kontakt, kundeName);
+    if (opts.verbose) toast('📧 Kontakt → Mailchimp ('+(kontakt.email)+')', 'ok');
+    return r;
+  } catch(e) {
+    console.warn('[Mailchimp] Sync fehlgeschlagen:', e && e.message);
+    if (opts.verbose) toast('⚠ Mailchimp: '+(e.message||'unbekannter Fehler'), 'err');
+    return { ok:false, error: e.message };
+  }
 }
 
 /* ── ERP-Aufträge importieren (Aufzugshandwerk) ── */
