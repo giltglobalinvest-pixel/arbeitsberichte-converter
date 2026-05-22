@@ -2338,7 +2338,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.53';
+const APP_VERSION = 'v3.54';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15349,8 +15349,20 @@ async function _mailchimpTestPing(btn) {
       if (log) log.innerHTML = '<div style="color:var(--err)">⚠ Unerwartete Antwort: '+escapeHtml(JSON.stringify(r).slice(0,500))+'</div>';
     }
   } catch(e) {
+    // Backend-Hint aus strukturierter Fehlerantwort (e.body.hint) ziehen wenn vorhanden
+    const hint = (e.body && typeof e.body === 'object' && e.body.hint) ? e.body.hint : null;
     if (log) log.innerHTML = '<div style="color:var(--err)">❌ '+escapeHtml(e.message||'Fehler')+'</div>'+
-      '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">Tipp: Env-Vars <code>MAILCHIMP_API_KEY_'+firmaSlug.toUpperCase()+'</code> und <code>MAILCHIMP_AUDIENCE_'+firmaSlug.toUpperCase()+'</code> in val.town setzen + Proxy-Code aktualisieren.</div>';
+      (hint
+        ? '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">💡 '+escapeHtml(hint)+'</div>'
+        : '')+
+      '<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:11px;color:var(--txt2);line-height:1.5">'+
+        '<strong>Checkliste:</strong><br>'+
+        '1. Felder <code>📧 Mailchimp-Key</code> + <code>📧 Audience-ID</code> in '+
+        '<a href="#" onclick="event.preventDefault();switchView(\'firmen\')" style="color:var(--navy);font-weight:600">🏢 Firmen-Verwaltung</a> '+
+        'für Firma "<strong>'+escapeHtml(firmaSlug)+'</strong>" ausgefüllt und gespeichert?<br>'+
+        '2. <strong>⬆ Proxy-Code aktualisieren</strong> oben geklickt? (Pflicht, damit val.town die neue Airtable-Lookup-Logik kennt.)<br>'+
+        '3. Key endet wirklich mit Server-Suffix wie <code>-us12</code>?'+
+      '</div>';
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🩺 Verbindung testen'; }
   }
