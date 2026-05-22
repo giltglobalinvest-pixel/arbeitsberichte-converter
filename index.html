@@ -2363,7 +2363,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.57';
+const APP_VERSION = 'v3.58';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11836,18 +11836,23 @@ async function _loadWartungsvertraegeFromERP() {
     const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
     const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
     // ERP-Verträge bauen — eine Zeile pro Wartungs-Angebot
+    // Status-Logik (von locker nach streng):
+    //   ende < heute            → gekündigt
+    //   sonst (kein/zukünftiges Ende) → aktiv (Default, da ERP-seitig bereits ein Vertrag)
+    //   Falls Angebot keinen MITANGEBOT-Auftrag hat: bleibt "aktiv" (das ist ERP-Realität),
+    //   aber wir markieren intern via _hasAuftrag damit man später filtern könnte.
     const today = new Date().toISOString().slice(0,10);
     const items = [];
+    let matched = 0, expired = 0;
     for (const w of wartungList) {
       const ang = w.angebot || w;
       const angId = String(ang.id || w.angebotid || '');
       if (!angId) continue;
       const ende = String(w.vertragsEnde||'').slice(0,10);
       const auftrag = auftragByAngebotId.get(angId);
-      // Status ableiten: aktiv wenn Auftrag bestätigt; sonst entwurf; gekündigt wenn ende < heute
-      let status = 'entwurf';
-      if (auftrag) status = 'aktiv';
-      if (ende && ende < today) status = 'gekuendigt';
+      if (auftrag) matched++;
+      let status = 'aktiv';
+      if (ende && ende < today) { status = 'gekuendigt'; expired++; }
       const anlage = ang.anlage || {};
       const kunde  = (ang.kunde) || (anlage.kunde) || (auftrag && auftrag.kunde) || {};
       const kundeName = kunde.firmenname || kunde.name || kunde.bezeichnung || '';
@@ -11880,7 +11885,16 @@ async function _loadWartungsvertraegeFromERP() {
     }
     _erpVertraegeCache = { firma: firmaSlug, items, loadedAt: Date.now() };
     const aktivCount = items.filter(it => it.status==='aktiv').length;
-    toast('✅ '+items.length+' Wartungsverträge geladen (' + aktivCount + ' aktiv, Quelle: Wartungs-Angebote + MITANGEBOT-Aufträge)', 'ok');
+    console.log('[ERP-Verträge]', {
+      wartungs_angebote: wartungList.length,
+      auftraege_gesamt: auftrList.length,
+      auftraege_mitangebot_aktiv: auftragByAngebotId.size,
+      vertrag_items: items.length,
+      davon_aktiv: aktivCount,
+      davon_gekuendigt: expired,
+      davon_mit_auftrag: matched
+    });
+    toast('✅ '+items.length+' Wartungsverträge geladen ('+aktivCount+' aktiv, '+expired+' gekündigt, '+matched+' mit bestätigtem Auftrag)', 'ok');
     _renderWartungsvertraegeList();
   } catch(e) {
     toast('❌ ERP-Sync: '+(e.message||'Fehler').slice(0,300), 'err');
