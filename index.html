@@ -1354,6 +1354,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-preislisten" onclick="switchView('preislisten')" style="display:none">📋 Preislisten</button>
     <button class="tnav" id="tnav-vorlagen" onclick="switchView('vorlagen')" style="display:none">📑 Vertragsvorlagen</button>
     <button class="tnav" id="tnav-kunden" onclick="switchView('kunden')" style="display:none">👥 Kunden</button>
+    <button class="tnav" id="tnav-kontakte" onclick="switchView('kontakte')" style="display:none">👤 Kontakte</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1779,6 +1780,22 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="kdv-list" style="padding:20px"></div>
+</div>
+
+<!-- KONTAKTE (Admin-only) -->
+<div class="firma-view" id="kt-view">
+  <div class="firma-hdr">
+    <h2>👤 Kontakte <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="kt-count">0</span></h2>
+    <button class="btn" onclick="renderKontakteView({force:true})">↻ Neu laden</button>
+    <button class="btn" id="kt-mc-btn" onclick="_mailchimpBulkSyncFromKontakteView()" title="Alle hier sichtbaren Kontakte zu Mailchimp pushen" style="background:#FFE01B;color:#222;border:1px solid #d4ba0b;font-weight:600;display:none">📧 Alle → Mailchimp</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="kt-search" placeholder="Suchen nach Name, E-Mail, Telefon, Kundenname…" oninput="_renderKontakteViewList()">
+    </div>
+  </div>
+  <div class="firma-body" id="kt-list" style="padding:20px"></div>
 </div>
 
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
@@ -2312,7 +2329,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.51';
+const APP_VERSION = 'v3.52';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2941,6 +2958,7 @@ async function showApp() {
     document.getElementById('tnav-preislisten').style.display = '';
     document.getElementById('tnav-vorlagen').style.display = '';
     document.getElementById('tnav-kunden').style.display = '';
+    document.getElementById('tnav-kontakte').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
@@ -2950,6 +2968,7 @@ async function showApp() {
     document.getElementById('tnav-preislisten').style.display = 'none';
     document.getElementById('tnav-vorlagen').style.display = 'none';
     document.getElementById('tnav-kunden').style.display = 'none';
+    document.getElementById('tnav-kontakte').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3379,6 +3398,7 @@ function switchView(view) {
   if (view==='preislisten' && !isAdmin()) return;
   if (view==='vorlagen' && !isAdmin()) return;
   if (view==='kunden' && !isAdmin()) return;
+  if (view==='kontakte' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3397,9 +3417,10 @@ function switchView(view) {
   const pl   = document.getElementById('pl-view');
   const vlg  = document.getElementById('vlg-view');
   const kdv  = document.getElementById('kdv-view');
+  const ktv  = document.getElementById('kt-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3415,6 +3436,7 @@ function switchView(view) {
   if (pl)   pl.classList.toggle('show',   view==='preislisten');
   if (vlg)  vlg.classList.toggle('show',  view==='vorlagen');
   if (kdv)  kdv.classList.toggle('show',  view==='kunden');
+  if (ktv)  ktv.classList.toggle('show',  view==='kontakte');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3426,6 +3448,7 @@ function switchView(view) {
   if (view==='preislisten') renderPreislistenView();
   if (view==='vorlagen') renderVertragsvorlagenView();
   if (view==='kunden') renderKundenView();
+  if (view==='kontakte') renderKontakteView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -8952,8 +8975,20 @@ function renderDashboard() {
   // Admin-only Kacheln (Verwaltung) – bei Techniker-Only komplett ausgeblendet
   if (isAdmin() && !techMode) {
     html += `
-      <button class="dash-tool" onclick="switchView('users')">
+      <button class="dash-tool" onclick="switchView('kunden')">
         <div class="dash-tool-icon">👥</div>
+        <div class="dash-tool-label">Kunden</div>
+        <div class="dash-tool-desc">Alle Kunden aus dem ERP — mit Kontakten und Anlagen im Detail. Neuanlage direkt möglich.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+      <button class="dash-tool" onclick="switchView('kontakte')">
+        <div class="dash-tool-icon">👤</div>
+        <div class="dash-tool-label">Kontakte</div>
+        <div class="dash-tool-desc">Alle Kunden-Kontakte auf einen Blick — Suche, manueller + Bulk-Sync zu Mailchimp.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+      <button class="dash-tool" onclick="switchView('users')">
+        <div class="dash-tool-icon">🧑‍💼</div>
         <div class="dash-tool-label">User-Verwaltung</div>
         <div class="dash-tool-desc">User anlegen, Berechtigungen vergeben, Techniker markieren.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
@@ -8967,7 +9002,7 @@ function renderDashboard() {
       <button class="dash-tool" onclick="switchView('intg')">
         <div class="dash-tool-icon">🔌</div>
         <div class="dash-tool-label">Integrationen</div>
-        <div class="dash-tool-desc">Val.town-Proxy einrichten und ERP-Aufträge aus Aufzugshandwerk synchronisieren.</div>
+        <div class="dash-tool-desc">Val.town-Proxy, Mailchimp-Setup und ERP-Aufträge aus Aufzugshandwerk synchronisieren.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>`;
   }
@@ -11272,6 +11307,188 @@ async function _mailchimpBulkSyncFromKundenView() {
     : '✅ Bulk-Sync fertig: '+stats.kontakteDone+' Kontakte verarbeitet (✅ '+stats.ok+' · ❌ '+stats.fail+' · ⏭ '+stats.skip+')';
   toast(msg, stats.fail > 0 && stats.ok === 0 ? 'err' : 'ok');
   if (stats.errors.length) console.warn('[Mailchimp-Bulk] Fehler:', stats.errors);
+}
+
+/* ────────────────────────────────────────────────────────────────────
+   KONTAKTE-VIEW (alle Kontakte aller Kunden einer Firma, flach)
+   ──────────────────────────────────────────────────────────────────── */
+// Cache: { firma, items:[{...kontakt, _kundeName, _kundenNr}], loadedAt }
+let _kontakteFlatCache = { firma:null, items:null, loadedAt:0 };
+
+async function renderKontakteView(opts) {
+  if (!isAdmin()) return;
+  if (isFirmaAll()) {
+    const list = document.getElementById('kt-list');
+    if (list) list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">Bitte oben rechts eine konkrete Firma auswählen.</div>';
+    return;
+  }
+  const firmaSlug = getCurrentFirmaSlug();
+  const list = document.getElementById('kt-list');
+  const cnt  = document.getElementById('kt-count');
+  const force = opts && opts.force;
+  const fresh = !force && _kontakteFlatCache.firma === firmaSlug && _kontakteFlatCache.items && (Date.now() - _kontakteFlatCache.loadedAt) < 10*60*1000;
+
+  if (fresh) {
+    _renderKontakteViewList();
+  } else {
+    // Frisch laden: erst Kunden, dann pro Kunde Kontakte (mit Progress-Anzeige)
+    if (list) list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div><div id="kt-load-progress">Lade Kunden…</div></div>';
+    try {
+      // Kunden ggf. neu laden
+      const kundenFresh = _kundenCache.firma === firmaSlug && _kundenCache.items.length && (Date.now() - _kundenCache.loadedAt) < 10*60*1000;
+      if (!kundenFresh) {
+        const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+        const items = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+        _kundenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+      }
+      const kunden = _kundenCache.items || [];
+      const flat = [];
+      const progEl = document.getElementById('kt-load-progress');
+      let done = 0;
+      // Concurrency-Begrenzung: max 6 parallel, damit der Proxy nicht überrannt wird
+      const CONC = 6;
+      const queue = kunden.slice();
+      async function worker() {
+        while (queue.length) {
+          const k = queue.shift();
+          if (!k) break;
+          const nr = k.kundennummer || k.id;
+          try {
+            let kontakte;
+            if (_kontakteCache.has(String(nr))) {
+              kontakte = _kontakteCache.get(String(nr));
+            } else {
+              const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(nr)+'/Kontakte');
+              kontakte = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+              _kontakteCache.set(String(nr), kontakte);
+            }
+            for (const c of kontakte) {
+              if (!c) continue;
+              flat.push(Object.assign({}, c, { _kundeName: k.firmenname || '', _kundenNr: nr, _kundeId: k.id }));
+            }
+          } catch(e) { /* einzelne Fehler tolerieren */ }
+          done++;
+          if (progEl) progEl.textContent = 'Lade Kontakte… ('+done+'/'+kunden.length+' Kunden, bisher '+flat.length+' Kontakte)';
+        }
+      }
+      await Promise.all(Array.from({length: Math.min(CONC, kunden.length)}, worker));
+      _kontakteFlatCache = { firma: firmaSlug, items: flat, loadedAt: Date.now() };
+      _renderKontakteViewList();
+    } catch(e) {
+      if (list) list.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+    }
+  }
+  // Mailchimp-Bulk-Button zeigen wenn Proxy konfiguriert
+  const mcBtn = document.getElementById('kt-mc-btn');
+  if (mcBtn) mcBtn.style.display = _mailchimpEnabled() ? '' : 'none';
+}
+
+function _renderKontakteViewList() {
+  const list = document.getElementById('kt-list');
+  const cnt  = document.getElementById('kt-count');
+  const q    = (document.getElementById('kt-search')?.value || '').toLowerCase().trim();
+  const items = _kontakteFlatCache.items || [];
+  const filtered = q
+    ? items.filter(c => (
+        String(c.vorname||'').toLowerCase().includes(q) ||
+        String(c.nachname||'').toLowerCase().includes(q) ||
+        String(c.email||'').toLowerCase().includes(q) ||
+        String(c.telefon||'').toLowerCase().includes(q) ||
+        String(c.mobile||'').toLowerCase().includes(q) ||
+        String(c.rolle||'').toLowerCase().includes(q) ||
+        String(c._kundeName||'').toLowerCase().includes(q)
+      ))
+    : items;
+  if (cnt) cnt.textContent = filtered.length + (q ? ' / ' + items.length : '') + ' Kontakte';
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer für "'+escapeHtml(q)+'".':'Keine Kontakte vorhanden.')+'</div>';
+    return;
+  }
+  const mcOn = _mailchimpEnabled();
+  // Index merken für Mailchimp-Sync-Button
+  window._kontakteViewFiltered = filtered;
+  list.innerHTML = '<div style="display:grid;gap:6px">'+filtered.slice(0, 1500).map((c, idx) => {
+    const name = [c.anrede, c.vorname, c.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
+    const hasEmail = !!(c.email && String(c.email).trim());
+    const mcBtn = (mcOn && hasEmail)
+      ? '<button class="btn" onclick="event.stopPropagation();_mailchimpSyncKontaktFromView('+idx+', this)" title="Diesen Kontakt zu Mailchimp pushen" style="padding:4px 10px;font-size:11px;background:#FFE01B;color:#222;border:1px solid #d4ba0b;font-weight:600">📧</button>'
+      : '';
+    const meta = [c.email, c.telefon||c.mobile, c.rolle].filter(Boolean).join(' · ');
+    return '<div onclick="openKundeDetail(\''+escapeHtml(String(c._kundeId||''))+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(35,74,117,.25)\'" onmouseout="this.style.borderColor=\'var(--bdr)\'">'+
+      '<div style="font-size:18px">👤</div>'+
+      '<div style="flex:1;min-width:200px">'+
+        '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(name)+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml(meta||'')+'</div>'+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--txt2);text-align:right;min-width:120px"><div style="font-weight:600;color:var(--navy)">'+escapeHtml(c._kundeName||'(kein Kunde)')+'</div>'+
+        (c._kundenNr?'<div style="font-size:10px;color:var(--txt3)">Kd-Nr. '+escapeHtml(String(c._kundenNr))+'</div>':'')+
+      '</div>'+
+      mcBtn+
+    '</div>';
+  }).join('')+'</div>'+
+  (filtered.length > 1500 ? '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px">… nur die ersten 1500 von '+filtered.length+' werden angezeigt. Bitte Suche eingrenzen.</div>' : '');
+}
+
+/* Manueller Mailchimp-Sync aus der Kontakte-View. */
+async function _mailchimpSyncKontaktFromView(idx, btn) {
+  const list = window._kontakteViewFiltered || [];
+  const c = list[idx];
+  if (!c) return;
+  const firmaSlug = _kontakteFlatCache.firma || getCurrentFirmaSlug();
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  const r = await mailchimpSyncSilently(firmaSlug, c, c._kundeName || '', { verbose:false });
+  if (r && r.ok) {
+    if (btn) { btn.textContent = '✅'; btn.style.background = '#10b981'; btn.style.color = '#fff'; }
+    toast('📧 '+(c.email||'Kontakt')+' → Mailchimp ok', 'ok');
+  } else {
+    if (btn) { btn.disabled = false; btn.textContent = '📧'; }
+    toast('❌ Mailchimp: '+(r && r.error || 'Fehler'), 'err');
+  }
+}
+
+/* Bulk-Sync aus der Kontakte-View — alle aktuell gefilterten Kontakte. */
+async function _mailchimpBulkSyncFromKontakteView() {
+  if (!isAdmin()) return toast('🔒 Nur für Admin','err');
+  if (!_mailchimpEnabled()) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  const firmaSlug = _kontakteFlatCache.firma || getCurrentFirmaSlug();
+  const q    = (document.getElementById('kt-search')?.value || '').toLowerCase().trim();
+  const all = _kontakteFlatCache.items || [];
+  const filtered = q
+    ? all.filter(c => (
+        String(c.vorname||'').toLowerCase().includes(q) ||
+        String(c.nachname||'').toLowerCase().includes(q) ||
+        String(c.email||'').toLowerCase().includes(q) ||
+        String(c._kundeName||'').toLowerCase().includes(q)
+      ))
+    : all;
+  const eligible = filtered.filter(c => c && c.email && String(c.email).trim());
+  if (!eligible.length) return toast('Keine Kontakte mit E-Mail zum Synchronisieren.','err');
+  // Ping vorab
+  let ping = null;
+  try { ping = await mailchimpPing(firmaSlug); } catch(e) { return toast('❌ Mailchimp: '+e.message.slice(0,250),'err'); }
+  const audName = (ping && ping.audience && ping.audience.name) || 'Audience';
+  if (!confirm('Bulk-Sync starten?\\n\\nZiel: Mailchimp-Audience "'+audName+'"\\nKontakte: '+eligible.length+(q?' (gefiltert nach "'+q+'")':'')+'\\n\\nDie Liste wird in einem Schwung an den Proxy geschickt — dauert bei vielen Kontakten ein paar Sekunden.')) return;
+
+  const btn = document.getElementById('kt-mc-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ pushe…'; }
+  try {
+    // In Chunks à 200 pushen
+    const CHUNK = 200;
+    let ok=0, fail=0, skip=0;
+    for (let i=0; i<eligible.length; i+=CHUNK) {
+      const slice = eligible.slice(i, i+CHUNK).map(c => Object.assign({}, c, { _kunde: c._kundeName||'' }));
+      const r = await mailchimpUpsertBulk(firmaSlug, slice);
+      ok   += r.success || 0;
+      fail += r.failed  || 0;
+      skip += r.skipped || 0;
+      if (btn) btn.textContent = '⏳ '+(i+slice.length)+'/'+eligible.length;
+    }
+    toast('✅ Bulk-Sync fertig: ✅ '+ok+' · ❌ '+fail+' · ⏭ '+skip, fail>0 && ok===0 ? 'err' : 'ok');
+  } catch(e) {
+    toast('❌ Bulk-Sync: '+e.message.slice(0,250), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📧 Alle → Mailchimp'; }
+  }
 }
 
 function _renderKundenViewList() {
