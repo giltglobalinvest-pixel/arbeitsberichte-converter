@@ -2338,7 +2338,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.54';
+const APP_VERSION = 'v3.55';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5054,7 +5054,13 @@ function firmaRowHtml(f) {
       <td data-label="ERP-Tenant"><input class="firma-inp" data-field="erp_tenant" value="${esc(fl.erp_tenant)}" placeholder="z.B. 1 oder 4" style="max-width:80px;font-family:monospace;text-align:center" title="Mandanten-ID im Aufzugshandwerk-ERP"></td>
       <td data-label="ERP-Auftrag-URL"><input class="firma-inp" data-field="erp_auftrag_url" value="${esc(fl.erp_auftrag_url)}" placeholder="https://verwaltung.aufzugshandwerk.de/auftraege" style="min-width:280px;font-family:monospace;font-size:11px" title="URL-Prefix — Auftragsnummer wird angehängt"></td>
       <td data-label="Mailchimp-Key"><input class="firma-inp" data-field="mailchimp_api_key" value="${esc(fl.mailchimp_api_key)}" type="password" placeholder="…-us12" style="min-width:160px;font-family:monospace;font-size:11px" title="Mailchimp API-Key (endet mit Server-Suffix wie -us12)" autocomplete="new-password"></td>
-      <td data-label="Audience-ID"><input class="firma-inp" data-field="mailchimp_audience_id" value="${esc(fl.mailchimp_audience_id)}" placeholder="a1b2c3d4e5" style="min-width:120px;font-family:monospace;font-size:11px" title="Mailchimp List-/Audience-ID"></td>
+      <td data-label="Audience">
+        <select class="firma-inp" data-field="mailchimp_audience_id" data-mc-slug="${esc(fl.slug)}" onfocus="_mcLoadAudiencesForSelect(this)" onmousedown="_mcLoadAudiencesForSelect(this)" style="min-width:200px;font-size:11px" title="Mailchimp Audience (Liste). Bei Klick werden alle Audiences aus dem Mailchimp-Account geladen.">
+          ${fl.mailchimp_audience_id
+            ? `<option value="${esc(fl.mailchimp_audience_id)}" selected>ID: ${esc(fl.mailchimp_audience_id)} (Liste laden…)</option>`
+            : `<option value="">– bitte wählen (Klick lädt Listen) –</option>`}
+        </select>
+      </td>
       <td data-label="Aktiv" style="text-align:center"><input type="checkbox" class="firma-inp" data-field="aktiv" ${fl.aktiv!==false?'checked':''}></td>
       <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
@@ -5110,6 +5116,59 @@ async function saveFirmaRow(recId) {
       loadHistory().catch(()=>{});
     }
   } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+/* Lazy-Load: lädt alle Mailchimp-Audiences für eine Firma und befüllt das Select.
+   Wird beim ersten Fokus/Mousedown getriggert. Liest API-Key aus der gleichen Zeile,
+   falls noch nicht gespeichert (Override-Body). */
+async function _mcLoadAudiencesForSelect(selEl) {
+  if (!selEl || selEl._mcLoading || selEl._mcLoaded) return;
+  selEl._mcLoading = true;
+  const firmaSlug = selEl.dataset.mcSlug;
+  const currentId = selEl.value || '';
+  // API-Key aus derselben Zeile holen (lokal, kann ungespeichert sein)
+  const row = selEl.closest('tr');
+  const keyInput = row ? row.querySelector('[data-field="mailchimp_api_key"]') : null;
+  const apiKeyLocal = keyInput && keyInput.value ? keyInput.value.trim() : '';
+  if (!apiKeyLocal) {
+    selEl.innerHTML = (currentId ? '<option value="'+escapeHtml(currentId)+'" selected>ID: '+escapeHtml(currentId)+'</option>' : '')+
+      '<option value="" disabled>⚠ Erst Mailchimp-Key in der Spalte links eintragen + speichern</option>';
+    selEl._mcLoading = false;
+    return;
+  }
+  // Loading-State
+  const prevHtml = selEl.innerHTML;
+  selEl.innerHTML = (currentId ? '<option value="'+escapeHtml(currentId)+'" selected>⏳ Lade Audiences…</option>' : '<option value="">⏳ Lade Audiences…</option>');
+  try {
+    const r = await mailchimpListAudiences(firmaSlug, apiKeyLocal);
+    if (!r || !Array.isArray(r.lists) || !r.lists.length) {
+      selEl.innerHTML = (currentId ? '<option value="'+escapeHtml(currentId)+'" selected>ID: '+escapeHtml(currentId)+'</option>' : '')+
+        '<option value="" disabled>– keine Audiences im Mailchimp-Account –</option>';
+      selEl._mcLoaded = true;
+      return;
+    }
+    let html = currentId ? '' : '<option value="">– bitte wählen –</option>';
+    let foundCurrent = false;
+    for (const l of r.lists) {
+      const isSel = (l.id === currentId);
+      if (isSel) foundCurrent = true;
+      const cnt = (l.member_count != null) ? ' ('+l.member_count+' Mitglieder)' : '';
+      html += '<option value="'+escapeHtml(l.id)+'"'+(isSel?' selected':'')+'>'+escapeHtml(l.name||'(ohne Name)')+cnt+'</option>';
+    }
+    if (currentId && !foundCurrent) {
+      // Aktuelle ID gehört nicht zu diesem Account — als „unbekannt" markieren
+      html = '<option value="'+escapeHtml(currentId)+'" selected>⚠ Unbekannte ID: '+escapeHtml(currentId)+'</option>'+html;
+    }
+    selEl.innerHTML = html;
+    selEl._mcLoaded = true;
+  } catch(e) {
+    selEl.innerHTML = (currentId ? '<option value="'+escapeHtml(currentId)+'" selected>ID: '+escapeHtml(currentId)+'</option>' : '')+
+      '<option value="" disabled>❌ '+escapeHtml((e.message||'Fehler').slice(0,80))+'</option>';
+    // Erlaubt Retry beim nächsten Fokus
+    console.warn('Mailchimp /lists:', e);
+  } finally {
+    selEl._mcLoading = false;
+  }
 }
 
 async function createFirmaFromDefault(slug) {
@@ -13680,6 +13739,8 @@ export default async function (req) {
   // ══════════ MAILCHIMP PROXY ══════════
   // Routes:
   //   POST /mailchimp/<firma>/ping            → Verbindungstest (zeigt Audience-Name)
+  //   POST /mailchimp/<firma>/lists           → alle Audiences zurückgeben (für Dropdown-Picker)
+  //                                             Body optional: { apiKey } → override für ungespeicherten Key
   //   POST /mailchimp/<firma>/upsert          → 1 Kontakt anlegen/aktualisieren (idempotent via md5(email))
   //   POST /mailchimp/<firma>/bulk            → mehrere Kontakte (Body: { members:[...] })
   // Config-Quelle (Reihenfolge):
@@ -13691,6 +13752,45 @@ export default async function (req) {
     if (i < 0) return json({ error:"Bad path. Erwartet: /mailchimp/<firma>/<action>" }, 400);
     const firma  = rest.slice(0, i);
     const action = rest.slice(i+1).replace(/\\/+$/,"");
+
+    // SPECIAL CASE: "lists" braucht nur einen API-Key (Audience-ID egal)
+    // und akzeptiert optional einen override im Body — für den Picker bevor User gespeichert hat
+    if (action === "lists") {
+      let overrideKey = null;
+      if (req.method === "POST") {
+        try { const b = await req.json(); if (b && b.apiKey) overrideKey = String(b.apiKey).trim(); } catch(_){}
+      }
+      let useKey = overrideKey;
+      if (!useKey) {
+        const cfgL = await lookupMailchimpConfig(firma);
+        useKey = cfgL.apiKey;
+      }
+      if (!useKey) return json({
+        error:"Kein Mailchimp-API-Key für Firma "+firma+" verfügbar",
+        hint:"Trage den API-Key in Admin → Firmen-Verwaltung ein (oder schicke ihn im Body als { apiKey: '...' })."
+      }, 400);
+      const dashL = useKey.lastIndexOf("-");
+      const serverL = dashL > 0 ? useKey.slice(dashL+1) : "";
+      if (!serverL) return json({ error:"Mailchimp API-Key hat keinen Server-Suffix (z.B. -us12). Format prüfen." }, 400);
+      const baseL = "https://"+serverL+".api.mailchimp.com/3.0";
+      const basicL = btoa("anystring:"+useKey);
+      const r = await fetch(baseL+"/lists?count=100&fields=lists.id,lists.name,lists.stats.member_count,total_items", {
+        headers: { "Authorization":"Basic "+basicL, "Accept":"application/json" }
+      });
+      const txt = await r.text();
+      if (!r.ok) {
+        let detail = txt; try { const j = JSON.parse(txt); detail = j.detail || j.title || txt; } catch(_){}
+        return json({ ok:false, status:r.status, error:"Mailchimp /lists HTTP "+r.status, detail:String(detail).slice(0,500) }, r.status);
+      }
+      let d; try { d = JSON.parse(txt); } catch(_) { d = {}; }
+      const lists = (d.lists||[]).map(l => ({
+        id: l.id,
+        name: l.name,
+        member_count: (l.stats && l.stats.member_count) || 0
+      }));
+      return json({ ok:true, lists, total: d.total_items || lists.length });
+    }
+
     const cfg = await lookupMailchimpConfig(firma);
     const apiKey = cfg.apiKey, audId = cfg.audId;
     if (!apiKey || !audId) return json({
@@ -15310,6 +15410,14 @@ function _buildMailchimpMember(kontakt, kundeName) {
 async function mailchimpPing(firmaSlug) {
   if (!_mailchimpEnabled()) throw new Error('Proxy nicht eingerichtet');
   return await erpFetch('/mailchimp/'+encodeURIComponent(firmaSlug)+'/ping', { method:'POST' });
+}
+
+/* Alle Audiences für eine Firma laden. apiKeyOverride: optional — wenn User Key
+   gerade eingegeben aber noch nicht gespeichert hat (Picker im Firmen-Editor). */
+async function mailchimpListAudiences(firmaSlug, apiKeyOverride) {
+  if (!_mailchimpEnabled()) throw new Error('Proxy nicht eingerichtet');
+  const body = apiKeyOverride ? { apiKey: apiKeyOverride } : {};
+  return await erpFetch('/mailchimp/'+encodeURIComponent(firmaSlug)+'/lists', { method:'POST', body });
 }
 
 /* 1 Kontakt zu Mailchimp synchronisieren (idempotent — anlegen oder updaten). */
