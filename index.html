@@ -1353,6 +1353,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav tnav-mobile-only" id="tnav-wartung" onclick="switchView('wartung')">🧮 Wartungspreis-Kalkulator</button>
     <button class="tnav" id="tnav-preislisten" onclick="switchView('preislisten')" style="display:none">📋 Preislisten</button>
     <button class="tnav" id="tnav-vorlagen" onclick="switchView('vorlagen')" style="display:none">📑 Vertragsvorlagen</button>
+    <button class="tnav" id="tnav-kunden" onclick="switchView('kunden')" style="display:none">👥 Kunden</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1761,6 +1762,22 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn prim" onclick="openVorlageEditor(null)">+ Neue Vorlage</button>
   </div>
   <div class="firma-body" id="vlg-list" style="padding:20px"></div>
+</div>
+
+<!-- KUNDEN (Admin-only) -->
+<div class="firma-view" id="kdv-view">
+  <div class="firma-hdr">
+    <h2>👥 Kunden <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="kdv-count">0</span></h2>
+    <button class="btn" onclick="renderKundenView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" onclick="_openKundeFromView()">+ Neuer Kunde</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="kdv-search" placeholder="Suchen nach Name, Kundennummer, Ort…" oninput="_renderKundenViewList()">
+    </div>
+  </div>
+  <div class="firma-body" id="kdv-list" style="padding:20px"></div>
 </div>
 
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
@@ -2274,7 +2291,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.49';
+const APP_VERSION = 'v3.50';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2902,6 +2919,7 @@ async function showApp() {
     document.getElementById('tnav-firmen').style.display = '';
     document.getElementById('tnav-preislisten').style.display = '';
     document.getElementById('tnav-vorlagen').style.display = '';
+    document.getElementById('tnav-kunden').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
@@ -2910,6 +2928,7 @@ async function showApp() {
     document.getElementById('tnav-firmen').style.display = 'none';
     document.getElementById('tnav-preislisten').style.display = 'none';
     document.getElementById('tnav-vorlagen').style.display = 'none';
+    document.getElementById('tnav-kunden').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3338,6 +3357,7 @@ function switchView(view) {
   if (view==='firmen' && !isAdmin()) return;
   if (view==='preislisten' && !isAdmin()) return;
   if (view==='vorlagen' && !isAdmin()) return;
+  if (view==='kunden' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3355,9 +3375,10 @@ function switchView(view) {
   const anl  = document.getElementById('anl-view');
   const pl   = document.getElementById('pl-view');
   const vlg  = document.getElementById('vlg-view');
+  const kdv  = document.getElementById('kdv-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3372,6 +3393,7 @@ function switchView(view) {
   if (anl)  anl.classList.toggle('show',  view==='anlagen');
   if (pl)   pl.classList.toggle('show',   view==='preislisten');
   if (vlg)  vlg.classList.toggle('show',  view==='vorlagen');
+  if (kdv)  kdv.classList.toggle('show',  view==='kunden');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3382,6 +3404,7 @@ function switchView(view) {
   if (view==='anlagen')  renderAnlagenView();
   if (view==='preislisten') renderPreislistenView();
   if (view==='vorlagen') renderVertragsvorlagenView();
+  if (view==='kunden') renderKundenView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -11119,6 +11142,219 @@ function _renderPreislisteAnlagenPicker() {
     if (!item) return;
     _addAnlageToPreisliste(picker._recId, item.dataset.plAid);
   };
+}
+
+/* ────────────────────────────────────────────────────────────────
+   KUNDEN-VIEW (Admin): Liste aller ERP-Kunden, Detail mit Kontakten + Anlagen
+   ──────────────────────────────────────────────────────────────── */
+async function renderKundenView(opts) {
+  if (!isAdmin()) return;
+  if (isFirmaAll()) {
+    const list = document.getElementById('kdv-list');
+    if (list) list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">Bitte oben rechts eine konkrete Firma auswählen.</div>';
+    return;
+  }
+  const firmaSlug = getCurrentFirmaSlug();
+  const list = document.getElementById('kdv-list');
+  if (list) list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Kunden aus dem ERP…</div>';
+  try {
+    const force = opts && opts.force;
+    const fresh = !force && _kundenCache.firma === firmaSlug && _kundenCache.items.length && (Date.now() - _kundenCache.loadedAt) < 10*60*1000;
+    if (!fresh) {
+      const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+      const items = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+      _kundenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+    }
+    _renderKundenViewList();
+  } catch(e) {
+    if (list) list.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function _renderKundenViewList() {
+  const list = document.getElementById('kdv-list');
+  const cnt  = document.getElementById('kdv-count');
+  const q    = (document.getElementById('kdv-search')?.value || '').toLowerCase().trim();
+  const items = _kundenCache.items || [];
+  const filtered = q
+    ? items.filter(k => (
+        String(k.firmenname||'').toLowerCase().includes(q) ||
+        String(k.kundennummer||'').toLowerCase().includes(q) ||
+        String(k.ort||'').toLowerCase().includes(q) ||
+        String(k.strasse||'').toLowerCase().includes(q) ||
+        String(k.email||'').toLowerCase().includes(q)
+      ))
+    : items;
+  if (cnt) cnt.textContent = filtered.length + (q ? ' / ' + items.length : '') + ' Kunden';
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer für "'+escapeHtml(q)+'".':'Keine Kunden vorhanden.')+'</div>';
+    return;
+  }
+  list.innerHTML = '<div style="display:grid;gap:8px">'+filtered.slice(0,500).map(k =>
+    '<div onclick="openKundeDetail(\''+escapeHtml(String(k.id))+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\';this.style.borderColor=\'rgba(35,74,117,.25)\'" onmouseout="this.style.boxShadow=\'0 1px 3px rgba(0,0,0,.05)\';this.style.borderColor=\'var(--bdr)\'">'+
+      '<div style="flex:1;min-width:220px">'+
+        '<div style="font-size:14px;font-weight:600;color:var(--navy)">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
+      '</div>'+
+      '<div style="display:flex;gap:14px;font-size:11px;color:var(--txt2);flex-wrap:wrap;align-items:center">'+
+        (k.kundennummer ? '<span><strong>Kd-Nr.</strong> '+escapeHtml(String(k.kundennummer))+'</span>' : '')+
+        (k.email ? '<span>✉ '+escapeHtml(k.email)+'</span>' : '')+
+        (k.telefon ? '<span>📞 '+escapeHtml(k.telefon)+'</span>' : '')+
+      '</div>'+
+    '</div>'
+  ).join('')+'</div>';
+}
+
+async function openKundeDetail(kundeId) {
+  const kunde = (_kundenCache.items||[]).find(x => String(x.id) === String(kundeId));
+  if (!kunde) return toast('Kunde nicht gefunden im Cache.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const old = document.getElementById('kde-detail-modal'); if (old) old.remove();
+  const modal = document.createElement('div');
+  modal.id = 'kde-detail-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px';
+  const adresse = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:820px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:var(--navy,#1A3353);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>👥 '+escapeHtml(kunde.firmenname||'(ohne Name)')+(kunde.kundennummer?' · Kd-Nr. '+escapeHtml(String(kunde.kundennummer)):'')+'</span>'+
+        '<button onclick="document.getElementById(\'kde-detail-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        // Stammdaten
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">'+
+          (adresse ? '<div style="grid-column:1/-1"><strong>Anschrift:</strong> '+escapeHtml(adresse)+'</div>' : '')+
+          (kunde.email ? '<div><strong>E-Mail:</strong> '+escapeHtml(kunde.email)+'</div>' : '')+
+          (kunde.telefon ? '<div><strong>Telefon:</strong> '+escapeHtml(kunde.telefon)+'</div>' : '')+
+        '</div>'+
+        // Kontakte
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px">'+
+          '<h4 style="margin:0;font-size:14px;color:var(--navy)">👤 Kontakte <span id="kde-kt-count" style="font-weight:400;color:var(--txt3);font-size:11px">…</span></h4>'+
+          '<button class="btn" style="background:#3730A3;color:#fff;border-color:#3730A3" onclick="_openNewKontaktFromKundeDetail()">+ Neuer Kontakt</button>'+
+        '</div>'+
+        '<div id="kde-kontakte-list"><div style="padding:20px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 8px"></div>Lade Kontakte…</div></div>'+
+        // Anlagen
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin:20px 0 8px;flex-wrap:wrap;gap:8px">'+
+          '<h4 style="margin:0;font-size:14px;color:var(--navy)">🛗 Anlagen <span id="kde-anl-count" style="font-weight:400;color:var(--txt3);font-size:11px">…</span></h4>'+
+          '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981" onclick="_openNewAnlageFromKundeDetail()">+ Neue Anlage</button>'+
+        '</div>'+
+        '<div id="kde-anlagen-list"><div style="padding:20px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 8px"></div>Lade Anlagen…</div></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'kde-detail-modal\').remove()">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal._kunde = kunde; modal._firmaSlug = firmaSlug;
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+  // Kontakte laden
+  (async () => {
+    try {
+      const kundenNr = kunde.kundennummer || kunde.id;
+      let kontakte;
+      if (_kontakteCache.has(String(kundenNr))) {
+        kontakte = _kontakteCache.get(String(kundenNr));
+      } else {
+        kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+        if (!Array.isArray(kontakte)) kontakte = (kontakte && (kontakte.content || kontakte.items || kontakte.data)) || [];
+        _kontakteCache.set(String(kundenNr), kontakte);
+      }
+      _renderKundeKontakteList(kontakte);
+    } catch(e) {
+      const el = document.getElementById('kde-kontakte-list');
+      if (el) el.innerHTML = '<div style="padding:20px;color:var(--err);font-size:12px">Kontakte-Load fehlgeschlagen: '+escapeHtml(e.message)+'</div>';
+    }
+  })();
+
+  // Anlagen für diesen Kunden laden
+  (async () => {
+    try {
+      const all = await _loadAnlagenForFirma(firmaSlug);
+      const kundenNr = String(kunde.kundennummer || '');
+      const mine = all.filter(a => String(a.kunde?.kundennummer||'') === kundenNr);
+      _renderKundeAnlagenList(mine);
+    } catch(e) {
+      const el = document.getElementById('kde-anlagen-list');
+      if (el) el.innerHTML = '<div style="padding:20px;color:var(--err);font-size:12px">Anlagen-Load fehlgeschlagen: '+escapeHtml(e.message)+'</div>';
+    }
+  })();
+}
+
+function _renderKundeKontakteList(kontakte) {
+  const el = document.getElementById('kde-kontakte-list');
+  const cnt = document.getElementById('kde-kt-count');
+  if (cnt) cnt.textContent = '('+kontakte.length+')';
+  if (!el) return;
+  if (kontakte.length === 0) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--txt3);background:var(--bg);border-radius:6px;border:1px dashed var(--bdr);font-size:12px">Keine Kontakte hinterlegt.<br><span style="font-size:11px">Klick "+ Neuer Kontakt" oben.</span></div>';
+    return;
+  }
+  el.innerHTML = '<div style="display:grid;gap:6px">'+kontakte.map(k => {
+    const name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
+    return '<div style="padding:10px 12px;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">'+
+      '<div style="font-size:18px">👤</div>'+
+      '<div style="flex:1;min-width:160px">'+
+        '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(name)+(k.rolle?' <span style="font-weight:400;font-size:11px;color:var(--txt3)">· '+escapeHtml(k.rolle)+'</span>':'')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([k.email, k.telefon||k.mobile].filter(Boolean).join(' · '))+'</div>'+
+      '</div>'+
+    '</div>';
+  }).join('')+'</div>';
+}
+
+function _renderKundeAnlagenList(anlagen) {
+  const el = document.getElementById('kde-anlagen-list');
+  const cnt = document.getElementById('kde-anl-count');
+  if (cnt) cnt.textContent = '('+anlagen.length+')';
+  if (!el) return;
+  if (anlagen.length === 0) {
+    el.innerHTML = '<div style="padding:20px;text-align:center;color:var(--txt3);background:var(--bg);border-radius:6px;border:1px dashed var(--bdr);font-size:12px">Keine Anlagen für diesen Kunden im ERP.<br><span style="font-size:11px">Klick "+ Neue Anlage" oben.</span></div>';
+    return;
+  }
+  el.innerHTML = '<div style="display:grid;gap:6px">'+anlagen.map(a =>
+    '<div style="padding:10px 12px;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">'+
+      '<div style="font-size:18px">🛗</div>'+
+      '<div style="flex:1;min-width:200px">'+
+        '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(a.anzeigeAdresse||a.name||'(ohne Adresse)')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([a.fabriknummer?'🔧 '+a.fabriknummer:'', a.objektTyp, a.betreiberTyp].filter(Boolean).join(' · '))+'</div>'+
+      '</div>'+
+    '</div>'
+  ).join('')+'</div>';
+}
+
+function _openNewKontaktFromKundeDetail() {
+  const modal = document.getElementById('kde-detail-modal');
+  if (!modal) return;
+  const kunde = modal._kunde;
+  openCreateKontaktDialog({
+    firmaSlug:  modal._firmaSlug,
+    kundenId:   kunde.kundennummer || kunde.id,
+    kundenname: kunde.firmenname,
+    onCreated: async () => {
+      _kontakteCache.delete(String(kunde.kundennummer || kunde.id));
+      // Neu laden
+      try {
+        const k = await erpFetch('/aufzug/'+modal._firmaSlug+'/api/Kunden/'+encodeURIComponent(kunde.kundennummer || kunde.id)+'/Kontakte');
+        const list = Array.isArray(k) ? k : (k.content || k.items || k.data || []);
+        _kontakteCache.set(String(kunde.kundennummer || kunde.id), list);
+        _renderKundeKontakteList(list);
+      } catch(_){}
+    }
+  });
+}
+
+function _openNewAnlageFromKundeDetail() {
+  const modal = document.getElementById('kde-detail-modal');
+  if (!modal) return;
+  modal.remove();  // Detail kurz schließen, damit das Anlage-Form über volle Breite kommt
+  _openCreateAnlageStandaloneForm(modal._kunde);
+}
+
+function _openKundeFromView() {
+  openCreateKundeDialog({
+    firmaSlug: getCurrentFirmaSlug(),
+    onCreated: () => renderKundenView({ force:true })
+  });
 }
 
 /* Anlage anlegen aus dem Anlagen-View heraus (standalone, ohne Preisliste-Kontext).
