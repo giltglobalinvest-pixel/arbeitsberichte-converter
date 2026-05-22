@@ -1819,6 +1819,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <span style="color:var(--txt3);font-size:11px">|</span>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-einzel" checked onchange="_renderWartungsvertraegeList()"> 🛗 Einzel</label>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-sammel" checked onchange="_renderWartungsvertraegeList()"> 📦 Sammel</label>
+      <span style="color:var(--txt3);font-size:11px">|</span>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Nur ERP-Verträge mit verknüpftem MITANGEBOT-Auftrag (bestätigt)"><input type="checkbox" id="wv-flt-mit-auftrag" onchange="_renderWartungsvertraegeList()"> 🛠 Nur mit Auftrag</label>
     </div>
   </div>
   <div class="firma-body" id="wv-list" style="padding:20px"></div>
@@ -2364,7 +2366,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.64';
+const APP_VERSION = 'v3.65';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5943,6 +5945,39 @@ let _anlagenDebounceTimer = null;
 let _currentSelectedAnlage = null;  // ausgewählte Anlage für ERP-Auftragserstellung
 let _kontakteCache = new Map();     // kundenNr → Kontakte[]
 
+/* Robuste Adress-Extraktion aus einer Anlage. Versucht mehrere Feld-Varianten,
+   die das Aufzugshandwerk-ERP in verschiedenen Versionen verwendet hat. */
+function _buildAnlageAdresse(a) {
+  if (!a) return '';
+  if (a.anzeigeAdresse && String(a.anzeigeAdresse).trim()) return String(a.anzeigeAdresse).trim();
+  // a.adresse als String
+  if (typeof a.adresse === 'string' && a.adresse.trim()) return a.adresse.trim();
+  // a.adresse als nested object
+  if (a.adresse && typeof a.adresse === 'object') {
+    const ao = a.adresse;
+    const z1 = [ao.strasse || ao.street, ao.hausnummer || ao.houseNumber].filter(Boolean).join(' ').trim();
+    const z2 = [ao.plz || ao.postleitzahl || ao.zip, ao.ort || ao.stadt || ao.city].filter(Boolean).join(' ').trim();
+    const co = ao.co || ao.adresszusatz || '';
+    const built = [co, z1, z2].filter(s => s && s.trim()).join(', ');
+    if (built) return built;
+  }
+  // Standortobjekt
+  if (a.standort && typeof a.standort === 'object') {
+    const so = a.standort;
+    const z1 = [so.strasse, so.hausnummer].filter(Boolean).join(' ').trim();
+    const z2 = [so.plz, so.ort].filter(Boolean).join(' ').trim();
+    const built = [z1, z2].filter(Boolean).join(', ');
+    if (built) return built;
+  }
+  // Flache Felder direkt auf Anlage
+  const z1 = [a.strasse || a.street, a.hausnummer || a.houseNumber].filter(Boolean).join(' ').trim();
+  const z2 = [a.plz || a.postleitzahl, a.ort || a.stadt].filter(Boolean).join(' ').trim();
+  const flat = [z1, z2].filter(s => s && s.trim()).join(', ');
+  if (flat) return flat;
+  // Fallback: Name/Standort/Objektname
+  return a.name || a.standortname || a.objektName || a.kennung || '';
+}
+
 async function _loadAnlagenForFirma(firmaSlug) {
   // 5min Cache
   const fresh = _anlagenCache.firma === firmaSlug
@@ -5965,6 +6000,18 @@ async function _loadAnlagenForFirma(firmaSlug) {
     if (!res) throw (lastErr || new Error('Anlagen-Endpoint nicht erreichbar'));
     let list = res;
     if (!Array.isArray(list)) list = res.content || res.data || res.items || [];
+    // Anreicherung: anzeigeAdresse setzen falls leer (für robuste Anzeige im Wizard etc.)
+    for (const a of list) {
+      if (!a) continue;
+      if (!a.anzeigeAdresse || !String(a.anzeigeAdresse).trim()) {
+        const built = _buildAnlageAdresse(a);
+        if (built) a.anzeigeAdresse = built;
+      }
+    }
+    // Einmal das erste Sample loggen für Diagnose (hilft bei Adress-Problemen)
+    if (list[0] && !_anlagenCache.items) {
+      console.log('[Anlagen] Erste Anlage geladen — verfügbare Felder:', Object.keys(list[0]));
+    }
     _anlagenCache = { firma:firmaSlug, items:list, loadedAt:Date.now(), loading:false };
     return list;
   } catch(e) {
@@ -10775,6 +10822,8 @@ async function _ensureVertraegeTable() {
     await ensureField('Vertraege', 'kunde_name',      'singleLineText');
     await ensureField('Vertraege', 'start_datum',     'singleLineText');
     await ensureField('Vertraege', 'laufzeit_monate', 'number', { precision:0 });
+    await ensureField('Vertraege', 'vorlage_id',     'singleLineText');  // Verknüpfung zur Vertragsvorlage
+    await ensureField('Vertraege', 'pdf_modus',      'singleLineText');  // 'platzhalter' | 'ki'
   } catch(e) { console.warn('[Vertraege] Tabellen-Setup:', e.message); }
 }
 
@@ -11727,6 +11776,7 @@ function _buildWartungsvertraegeViewItems() {
         _src: 'erp',
         _id: 'erp-'+(e.id||e.vertragsId||Math.random()),
         _erpRaw: e,
+        _hatAuftrag: !!(e.auftragId),    // für Filter "Nur mit Auftrag"
         firma: firmaSlug,
         nummer: e.vertragsnummer || e.nummer || e.id || '(ohne Nr.)',
         titel: e.titel || e.bezeichnung || '',
@@ -11755,6 +11805,7 @@ function _renderWartungsvertraegeList() {
   const showErp    = document.getElementById('wv-flt-erp')?.checked !== false;
   const showEinzel = document.getElementById('wv-flt-einzel')?.checked !== false;
   const showSammel = document.getElementById('wv-flt-sammel')?.checked !== false;
+  const onlyMitAuftrag = document.getElementById('wv-flt-mit-auftrag')?.checked === true;
   let items = _buildWartungsvertraegeViewItems();
   // Quelle-Filter (App = nicht-legacy, Legacy = legacy, ERP = ERP)
   items = items.filter(it => {
@@ -11764,6 +11815,10 @@ function _renderWartungsvertraegeList() {
   });
   // Typ-Filter
   items = items.filter(it => (it.typ==='einzel' && showEinzel) || (it.typ==='sammel' && showSammel));
+  // Auftrags-Filter (nur ERP-relevant, App-Verträge zeigt es nie aus)
+  if (onlyMitAuftrag) {
+    items = items.filter(it => it._src!=='erp' || it._hatAuftrag);
+  }
   // Suche
   if (q) items = items.filter(it =>
     String(it.nummer||'').toLowerCase().includes(q) ||
@@ -11783,7 +11838,11 @@ function _renderWartungsvertraegeList() {
       ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">📥 ERP</span>'
       : it._legacy
       ? '<span style="background:#6b7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600" title="Legacy-Vertrag aus dem alten Preislisten-Workflow — Vertragsnummer und Kunden-Daten können nachträglich migriert werden">📌 LEGACY</span>'
-      : '<span style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">🔧 APP</span>';
+      : '<span style="background:#10b981;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600" title="App-Vertrag — eigenständig, nutzt App-Vorlagen, kein API-Aufruf">🔧 APP</span>';
+    // Bonus-Badge bei ERP-Verträgen mit verknüpftem MITANGEBOT-Auftrag
+    const auftragBadge = (it._src==='erp' && it._hatAuftrag)
+      ? '<span style="background:#ea580c;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600" title="MITANGEBOT-Auftrag im ERP vorhanden (bestätigter Vertrag)">🛠 Auftrag</span>'
+      : '';
     const typBadge = it.typ==='einzel'
       ? '<span style="background:#e0e7ff;color:#3730A3;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">🛗 Einzel</span>'
       : '<span style="background:#fef3c7;color:#92400e;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">📦 Sammel</span>';
@@ -11798,7 +11857,7 @@ function _renderWartungsvertraegeList() {
     return '<div onclick="'+clickHandler+'" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._src==='erp'?'#3730A3':'#10b981')+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
       '<div style="flex:1;min-width:240px">'+
         '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'+
-          srcBadge+typBadge+statBadge+
+          srcBadge+typBadge+statBadge+auftragBadge+
           '<strong style="font-family:monospace;color:var(--navy)">'+escapeHtml(it.nummer)+'</strong>'+
         '</div>'+
         '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(it.kunde_name||'(ohne Kunde)')+(it.kunde_nummer?' <span style="font-weight:400;color:var(--txt3)">· Kd-Nr. '+escapeHtml(it.kunde_nummer)+'</span>':'')+'</div>'+
@@ -12158,6 +12217,12 @@ async function openNeuerVertragWizard() {
   }
   // Stabile Index-Property setzen — garantiert eindeutig, unabhängig von k.id (das aus ERP fehlen kann)
   _kundenCache.items.forEach((k, i) => { if (k) k.__nwv_idx = i; });
+  // Vertragsvorlagen für aktive Firma laden (für Dropdown nach Typ-Filter)
+  let vorlagen = [];
+  try {
+    const vlgAll = await atRead('Vertragsvorlagen', null);
+    vorlagen = (vlgAll||[]).filter(v => String(v.fields.firma||'') === firmaSlug && v.fields.aktiv !== false);
+  } catch(_){}
   const old = document.getElementById('nwv-modal'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'nwv-modal';
@@ -12200,9 +12265,29 @@ async function openNeuerVertragWizard() {
           '<div style="font-weight:600;margin-bottom:6px">3. Anlagen <span id="nwv-anlagen-info" style="font-weight:400;color:var(--txt3);font-size:11px">— erst Kunden wählen</span></div>'+
           '<div id="nwv-anlagen-list" style="max-height:240px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px"><div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px">⚠ Wähle erst einen Kunden</div></div>'+
         '</div>'+
+        // Vorlage (gefiltert nach Typ)
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">4. Vorlage</div>'+
+          '<select id="nwv-vorlage" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+            '<option value="">– bitte wählen (nach Typ gefiltert) –</option>'+
+          '</select>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Vorlagen werden nach gewähltem Typ (Einzel/Sammel) gefiltert. Falls keine vorhanden: Admin → 📑 Vertragsvorlagen.</div>'+
+        '</div>'+
+        // PDF-Modus
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">5. PDF-Erzeugung</div>'+
+          '<div style="display:flex;gap:8px">'+
+            '<label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border:2px solid #10b981;border-radius:6px;cursor:pointer" id="nwv-pdf-platz-lbl">'+
+              '<input type="radio" name="nwv-pdf" value="platzhalter" checked> <span>⚡ <strong>Platzhalter</strong><br><span style="font-weight:400;color:var(--txt3);font-size:11px">Schnell, ohne KI-Aufruf</span></span>'+
+            '</label>'+
+            '<label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border:2px solid var(--bdr);border-radius:6px;cursor:pointer" id="nwv-pdf-ki-lbl">'+
+              '<input type="radio" name="nwv-pdf" value="ki"> <span>🤖 <strong>KI-Generierung</strong><br><span style="font-weight:400;color:var(--txt3);font-size:11px">Flexibler, kostet Tokens</span></span>'+
+            '</label>'+
+          '</div>'+
+        '</div>'+
         // Konditionen
         '<div style="margin-bottom:14px">'+
-          '<div style="font-weight:600;margin-bottom:6px">4. Konditionen</div>'+
+          '<div style="font-weight:600;margin-bottom:6px">6. Konditionen</div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
             '<div><strong>Wartungen / Jahr</strong><br><input id="nwv-wpa" type="number" value="4" min="0" max="12" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
             '<div><strong>Abrechnungsturnus</strong><br><select id="nwv-turnus" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"><option value="jaehrlich">Jährlich</option><option value="quartal">Quartalsweise</option></select></div>'+
@@ -12212,7 +12297,7 @@ async function openNeuerVertragWizard() {
         '</div>'+
         // Titel
         '<div style="margin-bottom:14px">'+
-          '<div style="font-weight:600;margin-bottom:6px">5. Bezeichnung (optional)</div>'+
+          '<div style="font-weight:600;margin-bottom:6px">7. Bezeichnung (optional)</div>'+
           '<input id="nwv-titel" type="text" placeholder="z.B. Wartungsvertrag 2026" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
         '</div>'+
         // Vorschau Nummer
@@ -12226,10 +12311,32 @@ async function openNeuerVertragWizard() {
   document.body.appendChild(m);
   m._firmaSlug = firmaSlug;
   m._selectedAnlagen = [];
+  m._vorlagen = vorlagen;
   // Vorschau Nummer initial
   _nextVertragsnummer(firmaSlug).then(nr => { const el = document.getElementById('nwv-nummer-preview'); if (el) el.textContent = nr; });
   _nwvOnTypChange();
   _nwvFilterKunden();  // Initiale Liste rendern (alle Kunden)
+  _nwvUpdateVorlagen(); // Vorlage-Dropdown initial füllen
+}
+
+/* Filtert Vorlagen nach gewähltem Typ und befüllt das Dropdown. Auto-select bei 1 Treffer. */
+function _nwvUpdateVorlagen() {
+  const modal = document.getElementById('nwv-modal');
+  const sel   = document.getElementById('nwv-vorlage');
+  if (!modal || !sel) return;
+  const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
+  const all = modal._vorlagen || [];
+  const filtered = all.filter(v => (v.fields.typ||'').toLowerCase() === typ);
+  if (!filtered.length) {
+    sel.innerHTML = '<option value="">⚠ Keine '+typ+'-Vorlage in dieser Firma — erst unter 📑 Vertragsvorlagen anlegen</option>';
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  sel.innerHTML = (filtered.length > 1 ? '<option value="">– bitte wählen –</option>' : '') +
+    filtered.map(v => '<option value="'+escapeHtml(v.id)+'">'+escapeHtml(v.fields.name||'(ohne Name)')+'</option>').join('');
+  // Auto-Select wenn nur eine Option
+  if (filtered.length === 1) sel.value = filtered[0].id;
 }
 
 /* Filtert die Kunden-Liste live nach dem Suchtext. Klick auf Eintrag wählt aus. */
@@ -12328,6 +12435,8 @@ function _nwvOnTypChange() {
       ? '— bei Einzelvertrag genau 1 Anlage wählen ('+sel.length+' gewählt)'
       : '— eine oder mehrere Anlagen wählen ('+sel.length+' gewählt)';
   }
+  // Vorlagen für neuen Typ neu filtern
+  if (document.getElementById('nwv-vorlage')) _nwvUpdateVorlagen();
 }
 
 async function _nwvOnKundeChange() {
@@ -12378,7 +12487,7 @@ function _nwvRenderAnlagen() {
     // Stabiler Listen-Index als ID (a.id kann fehlen oder doppelt sein)
     const id = String(i);
     const checked = sel.includes(id) ? 'checked' : '';
-    const adresse = a.anzeigeAdresse || a.adresse || '';
+    const adresse = _buildAnlageAdresse(a);
     const meta = [a.fabriknummer?'🔧 '+a.fabriknummer:'', a.objektTyp, a.haltestellen?a.haltestellen+' HS':'', a.betreiberTyp].filter(Boolean).join(' · ');
     return '<label data-anlage-idx="'+id+'" style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,0.04)\'" onmouseout="this.style.background=\'transparent\'">'+
       '<input type="checkbox" data-anlage-idx="'+id+'" '+checked+' onchange="_nwvToggleAnlage(this.dataset.anlageIdx)" style="margin:0">'+
@@ -12410,6 +12519,8 @@ async function _nwvSubmit() {
   const kundeIdx = parseInt(kundeIdxStr, 10);
   const kundeFromCache = (_kundenCache.items||[])[kundeIdx];
   const kundeId = kundeFromCache ? (kundeFromCache.id || kundeFromCache.kundennummer || '') : '';
+  const vorlageId = document.getElementById('nwv-vorlage')?.value || '';
+  const pdfModus = document.querySelector('input[name="nwv-pdf"]:checked')?.value || 'platzhalter';
   const wpa = +document.getElementById('nwv-wpa').value || 4;
   const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
   const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
@@ -12419,6 +12530,7 @@ async function _nwvSubmit() {
   if (!kundeId) return toast('Bitte Kunden wählen.','err');
   if (!sel.length) return toast('Bitte mindestens eine Anlage wählen.','err');
   if (typ === 'einzel' && sel.length > 1) return toast('Einzelvertrag erlaubt nur 1 Anlage. Sammelvertrag wählen oder Anlagen reduzieren.','err');
+  if (!vorlageId) return toast('Bitte Vorlage wählen (Schritt 4).','err');
   const btn = document.getElementById('nwv-submit');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ erstelle…'; }
   try {
@@ -12431,7 +12543,7 @@ async function _nwvSubmit() {
       .filter(({ i }) => sel.includes(String(i)))
       .map(({ a }) => ({
         id: a.id,
-        adresse: a.anzeigeAdresse || a.adresse || '',
+        adresse: _buildAnlageAdresse(a),
         fabriknummer: a.fabriknummer || '',
         objektTyp: a.objektTyp || '',
         betreiberTyp: a.betreiberTyp || '',
@@ -12465,6 +12577,8 @@ async function _nwvSubmit() {
       kunde_name: kunde.firmenname || '',
       start_datum: start,
       laufzeit_monate: laufzeit,
+      vorlage_id: vorlageId,
+      pdf_modus: pdfModus,
     };
     await _ensureVertraegeTable();
     const rec = await atWrite('Vertraege', payload);
