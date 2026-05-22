@@ -2273,7 +2273,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.47';
+const APP_VERSION = 'v3.48';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11117,6 +11117,181 @@ function _renderPreislisteAnlagenPicker() {
   };
 }
 
+/* ───────────────────────────────────────────────────────────────
+   Generische Dialoge: neuen Kunden / neuen Kontakt im ERP anlegen
+   ─────────────────────────────────────────────────────────────── */
+function openCreateKundeDialog(opts) {
+  // opts: { firmaSlug, presetFirmenname, presetAdresse, presetEmail, presetTelefon, onCreated(kunde) }
+  opts = opts || {};
+  const firmaSlug = opts.firmaSlug || getCurrentFirmaSlug();
+  const old = document.getElementById('kde-create-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'kde-create-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#10B981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🏢 Neuen Kunden im ERP anlegen</span>'+
+        '<button onclick="document.getElementById(\'kde-create-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px;font-size:11px;color:#78350F;margin-bottom:14px">'+
+          '⚠ Kunde wird sofort im ERP angelegt (POST /api/kunden). Pflichtfelder: Firmenname, E-Mail, Anschrift. Rechnungsempfänger = identisch (lässt sich später im ERP anpassen).'+
+        '</div>'+
+        '<div style="display:grid;gap:10px">'+
+          '<div><strong>Firmenname *</strong><br><input id="kde-firmenname" type="text" value="'+escapeHtml(opts.presetFirmenname||'')+'" placeholder="z.B. Mustermann Hausverwaltung GmbH" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+            '<div><strong>E-Mail *</strong><br><input id="kde-email" type="email" value="'+escapeHtml(opts.presetEmail||'')+'" placeholder="info@kunde.de" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Telefon *</strong><br><input id="kde-telefon" type="tel" value="'+escapeHtml(opts.presetTelefon||'')+'" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '</div>'+
+          '<div><strong>Anschrift *</strong><br><textarea id="kde-adresse" placeholder="Straße + Nr.&#10;PLZ + Ort" style="width:100%;min-height:55px;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit">'+escapeHtml(opts.presetAdresse||'')+'</textarea></div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'kde-create-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="kde-create-btn" onclick="_submitCreateKunde()">🚀 Anlegen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._opts = opts; m._firmaSlug = firmaSlug;
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+async function _submitCreateKunde() {
+  const m = document.getElementById('kde-create-modal');
+  if (!m) return;
+  const firmenname = document.getElementById('kde-firmenname').value.trim();
+  const email      = document.getElementById('kde-email').value.trim();
+  const telefon    = document.getElementById('kde-telefon').value.trim();
+  const adresse    = document.getElementById('kde-adresse').value.trim().replace(/\n/g, ', ');
+  if (!firmenname) return toast('Bitte Firmenname eintragen.','err');
+  if (!email)      return toast('Bitte E-Mail eintragen.','err');
+  if (!adresse)    return toast('Bitte Anschrift eintragen.','err');
+  if (!telefon)    return toast('Bitte Telefon eintragen.','err');
+
+  const btn = document.getElementById('kde-create-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ legt an…'; }
+  try {
+    const payload = {
+      firmenname:               firmenname,
+      adresseId:                adresse,
+      email:                    email,
+      telefon:                  telefon,
+      defaultrechnungsempfaenger: {
+        firmenname:    firmenname,
+        adresseId:     adresse,
+        email:         email,
+        telefonnummer: telefon,
+      },
+    };
+    console.log('[Kunde-Create] POST /api/kunden:', payload);
+    const created = await erpFetch('/aufzug/'+m._firmaSlug+'/api/kunden', { method:'POST', body: payload });
+    if (!created || (!created.kundennummer && !created.id)) throw new Error('ERP gab keine ID/Kundennummer zurück.');
+    // Kunden-Cache invalidieren, damit der neue im Picker erscheint
+    _kundenCache = { firma:null, items:[], loadedAt:0 };
+    toast('🚀 Kunde "'+firmenname+'" im ERP angelegt.', 'ok');
+    m.remove();
+    // Callback aufrufen
+    if (typeof m._opts.onCreated === 'function') m._opts.onCreated(created);
+  } catch(e) {
+    console.error('createKunde:', e);
+    toast('❌ Kunde konnte nicht angelegt werden: '+(e.message||'?').slice(0,200), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlegen'; }
+  }
+}
+
+/* Neuen Kontakt zu einem Kunden anlegen (POST /api/kontakte). */
+function openCreateKontaktDialog(opts) {
+  // opts: { firmaSlug, kundenId, kundenname, onCreated(kontakt) }
+  opts = opts || {};
+  const firmaSlug = opts.firmaSlug || getCurrentFirmaSlug();
+  const old = document.getElementById('kdk-create-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'kdk-create-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#3730A3;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>👤 Neuen Kontakt anlegen'+(opts.kundenname?' · '+escapeHtml(opts.kundenname):'')+'</span>'+
+        '<button onclick="document.getElementById(\'kdk-create-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px;font-size:11px;color:#78350F;margin-bottom:14px">'+
+          '⚠ Kontakt wird im ERP unter Kunde mit ID <strong>'+escapeHtml(String(opts.kundenId||'?'))+'</strong> angelegt.'+
+        '</div>'+
+        '<div style="display:grid;gap:10px">'+
+          '<div style="display:grid;grid-template-columns:120px 1fr 1fr;gap:10px">'+
+            '<div><strong>Anrede *</strong><br>'+
+              '<select id="kdk-anrede" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+                '<option>Herr</option><option>Frau</option><option>Divers</option>'+
+              '</select></div>'+
+            '<div><strong>Vorname *</strong><br><input id="kdk-vorname" type="text" placeholder="Max" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Nachname *</strong><br><input id="kdk-nachname" type="text" placeholder="Mustermann" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '</div>'+
+          '<div><strong>E-Mail *</strong><br><input id="kdk-email" type="email" placeholder="max.mustermann@kunde.de" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+            '<div><strong>Telefon</strong><br><input id="kdk-telefon" type="tel" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Mobil</strong><br><input id="kdk-mobile" type="tel" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '</div>'+
+          '<div><strong>Rolle</strong><br>'+
+            '<input id="kdk-rolle" type="text" list="kdk-rolle-list" placeholder="Betreiber, Eigentümer, Hausverwaltung …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+            '<datalist id="kdk-rolle-list"><option value="Betreiber"><option value="Eigentümer"><option value="Hausverwaltung"><option value="Mieter"><option value="Sonstiges"></datalist>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'kdk-create-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="kdk-create-btn" onclick="_submitCreateKontakt()">🚀 Anlegen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._opts = opts; m._firmaSlug = firmaSlug;
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+async function _submitCreateKontakt() {
+  const m = document.getElementById('kdk-create-modal');
+  if (!m) return;
+  const opts = m._opts;
+  const anrede   = document.getElementById('kdk-anrede').value;
+  const vorname  = document.getElementById('kdk-vorname').value.trim();
+  const nachname = document.getElementById('kdk-nachname').value.trim();
+  const email    = document.getElementById('kdk-email').value.trim();
+  const telefon  = document.getElementById('kdk-telefon').value.trim();
+  const mobile   = document.getElementById('kdk-mobile').value.trim();
+  const rolle    = document.getElementById('kdk-rolle').value.trim();
+  if (!vorname || !nachname) return toast('Vor- und Nachname sind Pflicht.','err');
+  if (!email) return toast('E-Mail ist Pflicht.','err');
+  if (!opts.kundenId) return toast('Keine Kunden-ID — interner Fehler.','err');
+
+  const btn = document.getElementById('kdk-create-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ legt an…'; }
+  try {
+    const payload = {
+      kundenId: +opts.kundenId,
+      anrede:   anrede,
+      vorname:  vorname,
+      nachname: nachname,
+      email:    email,
+    };
+    if (telefon) payload.telefon = telefon;
+    if (mobile)  payload.mobile  = mobile;
+    if (rolle)   payload.rolle   = rolle;
+    console.log('[Kontakt-Create] POST /api/kontakte:', payload);
+    const created = await erpFetch('/aufzug/'+m._firmaSlug+'/api/kontakte', { method:'POST', body: payload });
+    if (!created || !created.id) throw new Error('ERP gab keine ID zurück.');
+    // Kontakte-Cache invalidieren
+    _kontakteCache.delete(String(opts.kundenId));
+    toast('🚀 Kontakt "'+vorname+' '+nachname+'" angelegt.', 'ok');
+    m.remove();
+    if (typeof opts.onCreated === 'function') opts.onCreated(created);
+  } catch(e) {
+    console.error('createKontakt:', e);
+    toast('❌ Kontakt konnte nicht angelegt werden: '+(e.message||'?').slice(0,200), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlegen'; }
+  }
+}
+
 /* Formular zum Anlegen einer neuen Anlage im ERP (falls noch nicht vorhanden). */
 function _openCreateAnlageForm(recId) {
   const picker = document.getElementById('pl-anlage-picker');
@@ -11385,8 +11560,9 @@ async function openKundenPicker() {
         '<span>🔍 Kunde aus ERP wählen</span>'+
         '<button onclick="document.getElementById(\'kp-picker-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
-      '<div style="padding:14px 18px;border-bottom:1px solid var(--bdr)">'+
-        '<input id="kp-search" placeholder="Suche nach Name / Kundennummer / Ort…" oninput="_renderKundenPickerList()" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '<div style="padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;gap:8px;align-items:center">'+
+        '<input id="kp-search" placeholder="Suche nach Name / Kundennummer / Ort…" oninput="_renderKundenPickerList()" style="flex:1;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+        '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981;white-space:nowrap" onclick="_openKundeFromPicker()">+ Neuer Kunde</button>'+
       '</div>'+
       '<div id="kp-list" style="flex:1;overflow-y:auto;padding:8px 14px"><div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Kunden aus dem ERP…</div></div>'+
     '</div>';
@@ -11444,6 +11620,25 @@ function _renderKundenPickerList() {
   };
 }
 
+function _openKundeFromPicker() {
+  openCreateKundeDialog({
+    firmaSlug: getCurrentFirmaSlug(),
+    onCreated: async (kunde) => {
+      // Cache neu laden + den neuen Kunden direkt auswählen
+      try {
+        const res = await _erpTryPaths(getCurrentFirmaSlug(), ['api/kunden','kunden']);
+        const list = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+        _kundenCache = { firma: getCurrentFirmaSlug(), items: list, loadedAt: Date.now() };
+        // Suche aufrufen mit dem neuen Namen, dann auswählen
+        const q = document.getElementById('kp-search');
+        if (q) { q.value = kunde.firmenname || ''; _renderKundenPickerList(); }
+        // Direkt auswählen
+        await _selectKundeFromPicker(kunde.id);
+      } catch(_){}
+    }
+  });
+}
+
 async function _selectKundeFromPicker(kundeId) {
   // ID kann String oder Number kommen — beide Vergleiche probieren
   const k = (_kundenCache.items||[]).find(x => String(x.id) === String(kundeId));
@@ -11492,7 +11687,8 @@ function _openKontaktPicker(kontakte) {
         '<button onclick="document.getElementById(\'kp-kontakt-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:14px 18px;flex:1;overflow-y:auto" id="kp-kontakt-list">'+rows+'</div>'+
-      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);text-align:right">'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;align-items:center">'+
+        '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981" onclick="_openKontaktFromPicker()">+ Neuer Kontakt</button>'+
         '<button class="btn" onclick="document.getElementById(\'kp-kontakt-modal\').remove()">Überspringen</button>'+
       '</div>'+
     '</div>';
@@ -11505,6 +11701,26 @@ function _openKontaktPicker(kontakte) {
     if (!item) return;
     _selectKontaktFromPicker(item.dataset.kontaktId);
   };
+}
+
+function _openKontaktFromPicker() {
+  const editor = document.getElementById('kunden-pl-modal');
+  const kunde = editor && editor._selectedKunde;
+  if (!kunde) return toast('Erst einen Kunden auswählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  openCreateKontaktDialog({
+    firmaSlug:  firmaSlug,
+    kundenId:   kunde.kundennummer || kunde.id,
+    kundenname: kunde.firmenname,
+    onCreated: async (k) => {
+      // Kontakt direkt auswählen
+      const kpm = document.getElementById('kp-kontakt-modal');
+      if (kpm) {
+        kpm._kontakte = (kpm._kontakte || []).concat([k]);
+      }
+      _selectKontaktFromPicker(k.id);
+    }
+  });
 }
 
 function _selectKontaktFromPicker(kontaktId) {
