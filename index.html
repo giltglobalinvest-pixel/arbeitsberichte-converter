@@ -1989,6 +1989,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <h2>🏢 Anlagen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="anl-count">0 Anlagen</span></h2>
     <button class="btn" onclick="openAnlDetailSettings()" title="Detail-Felder konfigurieren (welche Felder im Detail-Modal angezeigt werden)">⚙</button>
     <button class="btn" onclick="renderAnlagenView({force:true})" title="Frisch vom ERP laden">↻ Aktualisieren</button>
+    <button class="btn" id="anl-new-btn" onclick="openCreateAnlageStandalone()" style="display:none" title="Einzelne Anlage anlegen (Kunde wird ausgewählt oder neu angelegt)">+ Neue Anlage</button>
     <button class="btn prim" id="anl-bulk-btn" onclick="openBulkImport()" style="display:none" title="Mehrere Anlagen aus Excel mit KI-Assistent anlegen">📥 Bulk-Import</button>
   </div>
   <div class="anl-search-bar">
@@ -2273,7 +2274,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.48';
+const APP_VERSION = 'v3.49';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6170,9 +6171,12 @@ async function renderAnlagenView(opts) {
     // Wartungsverträge im Hintergrund laden (für Badge-Anzeige), Fehler tolerieren
     _loadWartungsAnlagen(firmaSlug).then(() => _renderAnlagenList()).catch(()=>{});
     _renderAnlagenList();
-    // Bulk-Import-Button: nur sichtbar für User mit auftraege_edit (Admin/Verwalter)
+    // Bulk-Import-Button + Neue-Anlage-Button: nur sichtbar für User mit auftraege_edit (Admin/Verwalter)
+    const canEdit = isAdmin() || hasPermission('auftraege_edit');
     const bulkBtn = document.getElementById('anl-bulk-btn');
-    if (bulkBtn) bulkBtn.style.display = (isAdmin() || hasPermission('auftraege_edit')) ? '' : 'none';
+    if (bulkBtn) bulkBtn.style.display = canEdit ? '' : 'none';
+    const newBtn = document.getElementById('anl-new-btn');
+    if (newBtn) newBtn.style.display = canEdit ? '' : 'none';
   } catch(e) {
     list.innerHTML = '<div class="anl-empty" style="color:var(--err)">❌ Laden fehlgeschlagen: '+e.message.replace(/</g,'&lt;')+'</div>';
     if (cnt) cnt.textContent = '';
@@ -11115,6 +11119,215 @@ function _renderPreislisteAnlagenPicker() {
     if (!item) return;
     _addAnlageToPreisliste(picker._recId, item.dataset.plAid);
   };
+}
+
+/* Anlage anlegen aus dem Anlagen-View heraus (standalone, ohne Preisliste-Kontext).
+   Öffnet zuerst einen Kunden-Picker, dann das Anlage-Formular. */
+async function openCreateAnlageStandalone() {
+  if (!(isAdmin() || hasPermission('auftraege_edit'))) return toast('🔒 Keine Berechtigung','err');
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  // Kunden-Picker öffnen — Auswahl/Neuanlage → Anlage-Form starten
+  _openKundenPickerForAnlage(firmaSlug);
+}
+
+function _openKundenPickerForAnlage(firmaSlug) {
+  const old = document.getElementById('kp-picker-modal'); if (old) old.remove();
+  const modal = document.createElement('div');
+  modal.id = 'kp-picker-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10100;display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:600px;width:100%;max-height:85vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy,#1A3353);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🛗 Schritt 1/2: Kunde für die neue Anlage wählen</span>'+
+        '<button onclick="document.getElementById(\'kp-picker-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:14px 18px;border-bottom:1px solid var(--bdr);display:flex;gap:8px;align-items:center">'+
+        '<input id="kp-search" placeholder="Suche nach Name / Kundennummer / Ort…" oninput="_renderKundenPickerListForAnlage()" style="flex:1;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+        '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981;white-space:nowrap" onclick="_openKundeForStandaloneAnlage()">+ Neuer Kunde</button>'+
+      '</div>'+
+      '<div id="kp-list" style="flex:1;overflow-y:auto;padding:8px 14px"><div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Kunden aus dem ERP…</div></div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  modal._firmaSlug = firmaSlug;
+  modal._isAnlageMode = true;  // Marker: nach Auswahl Anlage-Form öffnen, nicht Preisliste
+  modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+
+  // Kunden laden (5min Cache)
+  (async () => {
+    if (_kundenCache.firma !== firmaSlug || (Date.now() - _kundenCache.loadedAt) > 10*60*1000) {
+      try {
+        const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+        const list = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+        _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+      } catch(e) {
+        const out = document.getElementById('kp-list');
+        if (out) out.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+        return;
+      }
+    }
+    _renderKundenPickerListForAnlage();
+  })();
+}
+
+function _renderKundenPickerListForAnlage() {
+  const q = (document.getElementById('kp-search')?.value || '').toLowerCase().trim();
+  const list = _kundenCache.items || [];
+  const filtered = q
+    ? list.filter(k => (
+        String(k.firmenname||'').toLowerCase().includes(q) ||
+        String(k.kundennummer||'').toLowerCase().includes(q) ||
+        String(k.ort||'').toLowerCase().includes(q) ||
+        String(k.strasse||'').toLowerCase().includes(q)
+      ))
+    : list.slice(0, 100);
+  const out = document.getElementById('kp-list');
+  if (!out) return;
+  if (filtered.length === 0) {
+    out.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Keine Treffer. <br><br>Falls der Kunde noch nicht im ERP ist: <strong>+ Neuer Kunde</strong> oben.</div>';
+    return;
+  }
+  out.innerHTML = filtered.map(k =>
+    '<div data-kp-kid="'+escapeHtml(String(k.id))+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+      '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
+      '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
+      (k.kundennummer ? '<div style="font-size:11px;color:var(--txt3)">Kd-Nr.: '+escapeHtml(k.kundennummer)+'</div>' : '')+
+    '</div>'
+  ).join('');
+  out.onclick = (ev) => {
+    const item = ev.target.closest('[data-kp-kid]');
+    if (!item) return;
+    const k = list.find(x => String(x.id) === String(item.dataset.kpKid));
+    if (k) _proceedToAnlageForm(k);
+  };
+}
+
+function _openKundeForStandaloneAnlage() {
+  const modal = document.getElementById('kp-picker-modal');
+  const firmaSlug = modal ? modal._firmaSlug : getCurrentFirmaSlug();
+  openCreateKundeDialog({
+    firmaSlug,
+    onCreated: async (kunde) => {
+      // Cache neu laden + sofort Anlage-Form öffnen
+      try {
+        const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+        const list = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+        _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+      } catch(_){}
+      _proceedToAnlageForm(kunde);
+    }
+  });
+}
+
+function _proceedToAnlageForm(kunde) {
+  const picker = document.getElementById('kp-picker-modal');
+  if (picker) picker.remove();
+  // Anlage-Form öffnen mit Kunde als Kontext
+  _openCreateAnlageStandaloneForm(kunde);
+}
+
+function _openCreateAnlageStandaloneForm(kunde) {
+  const firmaSlug = getCurrentFirmaSlug();
+  const adresseDefault = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const allAnlagen = _anlagenCache.items || [];
+  const objektTypen    = [...new Set(allAnlagen.map(a => String(a.objektTyp||'').trim()).filter(Boolean))].sort();
+  const betreiberTypen = [...new Set(allAnlagen.map(a => String(a.betreiberTyp||'').trim()).filter(Boolean))].sort();
+
+  const old = document.getElementById('pl-create-anlage'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'pl-create-anlage';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10200;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#10B981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🛗 Schritt 2/2: Anlage im ERP anlegen</span>'+
+        '<button onclick="document.getElementById(\'pl-create-anlage\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;padding:10px;font-size:11px;color:#065F46;margin-bottom:14px">'+
+          '✓ Kunde: <strong>'+escapeHtml(kunde.firmenname||'?')+'</strong>'+(kunde.kundennummer?' (Kd-Nr. '+escapeHtml(String(kunde.kundennummer))+')':'')+'</div>'+
+        '<div style="display:grid;gap:10px">'+
+          '<div><strong>Standort / Anzeige-Adresse *</strong><br>'+
+            '<input id="pl-new-adresse" type="text" value="'+escapeHtml(adresseDefault)+'" placeholder="Straße + Nr., PLZ + Ort" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '<div><strong>Fabriknummer</strong><br>'+
+            '<input id="pl-new-fabriknr" type="text" placeholder="z.B. 12345" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+            '<div><strong>Objekt-Typ *</strong><br>'+
+              '<input id="pl-new-objekttyp" type="text" list="pl-new-objekttyp-list" placeholder="aus ERP wählen / tippen" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+              '<datalist id="pl-new-objekttyp-list">'+objektTypen.map(t => '<option value="'+escapeHtml(t)+'">').join('')+'</datalist></div>'+
+            '<div><strong>Betreiber-Typ *</strong><br>'+
+              '<input id="pl-new-betreibertyp" type="text" list="pl-new-betreibertyp-list" placeholder="aus ERP wählen / tippen" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+              '<datalist id="pl-new-betreibertyp-list">'+betreiberTypen.map(t => '<option value="'+escapeHtml(t)+'">').join('')+'</datalist></div>'+
+          '</div>'+
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+            '<div><strong>Stundensatz €</strong><br>'+
+              '<input id="pl-new-stundensatz" type="number" step="0.01" value="90" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<div><strong>Einsatzpauschale €</strong><br>'+
+              '<input id="pl-new-einsatzpauschale" type="number" step="0.01" value="50" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+          '</div>'+
+          '<div><strong>Sonstiger Hinweis</strong> <span style="font-size:10px;color:var(--txt3)">(optional)</span><br>'+
+            '<input id="pl-new-hinweis" type="text" value="" placeholder="" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'pl-create-anlage\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="pl-new-save-btn" onclick="_submitCreateAnlageStandalone()">🚀 Anlage im ERP anlegen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._kunde = kunde;
+  m._firmaSlug = firmaSlug;
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+async function _submitCreateAnlageStandalone() {
+  const m = document.getElementById('pl-create-anlage');
+  if (!m) return;
+  const kunde = m._kunde;
+  const firmaSlug = m._firmaSlug;
+  const adresse        = document.getElementById('pl-new-adresse').value.trim();
+  const fabriknummer   = document.getElementById('pl-new-fabriknr').value.trim();
+  const objektTyp      = document.getElementById('pl-new-objekttyp').value.trim();
+  const betreiberTyp   = document.getElementById('pl-new-betreibertyp').value.trim();
+  const stundensatz    = +document.getElementById('pl-new-stundensatz').value || 0;
+  const einsatzPausch  = +document.getElementById('pl-new-einsatzpauschale').value || 0;
+  const hinweis        = document.getElementById('pl-new-hinweis').value.trim();
+  if (!adresse) return toast('Bitte Adresse eintragen.','err');
+  if (!objektTyp || !betreiberTyp) return toast('Bitte Objekt- und Betreiber-Typ wählen.','err');
+
+  const kundenId = kunde.kundennummer || kunde.id;
+  const payload = {
+    kundenId:           +kundenId,
+    adresseId:          adresse,
+    anzeigeAdresse:     adresse,
+    anzahlAufzuege:     1,
+    stundensatz:        stundensatz,
+    einsatzPauschale:   einsatzPausch,
+    objektTyp:          objektTyp,
+    betreiberTyp:       betreiberTyp,
+    rechnungsempfaenger: kunde.firmenname || '',
+    fabriknummer:       fabriknummer,
+    sonstigerHinweis:   hinweis,
+    archived:           false,
+  };
+  const btn = document.getElementById('pl-new-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ erstelle im ERP…'; }
+  try {
+    const created = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen', { method:'POST', body: payload });
+    if (!created || !created.id) throw new Error('ERP gab keine ID zurück.');
+    // Anlagen-Cache invalidieren + Anlagen-Liste refreshen
+    _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+    toast('🚀 Anlage "'+adresse.slice(0,40)+'" im ERP angelegt.', 'ok');
+    m.remove();
+    // Wenn aktuell auf Anlagen-View: neu laden
+    if (document.getElementById('anl-view')?.classList.contains('show')) {
+      renderAnlagenView({ force:true });
+    }
+  } catch(e) {
+    console.error('createAnlage standalone:', e);
+    toast('❌ Anlage konnte nicht angelegt werden: '+e.message.slice(0,200), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlage im ERP anlegen'; }
+  }
 }
 
 /* ───────────────────────────────────────────────────────────────
