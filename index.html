@@ -2364,7 +2364,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.63';
+const APP_VERSION = 'v3.64';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12156,6 +12156,8 @@ async function openNeuerVertragWizard() {
       return toast('❌ Kunden laden: '+e.message.slice(0,200),'err');
     }
   }
+  // Stabile Index-Property setzen — garantiert eindeutig, unabhängig von k.id (das aus ERP fehlen kann)
+  _kundenCache.items.forEach((k, i) => { if (k) k.__nwv_idx = i; });
   const old = document.getElementById('nwv-modal'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'nwv-modal';
@@ -12254,23 +12256,12 @@ function _nwvFilterKunden() {
   // Bei >150 Treffern: Kappen + Hinweis
   const cap = 150;
   const showItems = filtered.slice(0, cap);
-  // Sanity-Check: warne wenn IDs nicht eindeutig oder fehlen
-  const idCounts = {};
-  let missingIds = 0;
-  for (const k of showItems) {
-    if (!k.id) missingIds++;
-    const sid = String(k.id);
-    idCounts[sid] = (idCounts[sid]||0) + 1;
-  }
-  const duplicates = Object.entries(idCounts).filter(([_, c]) => c > 1);
-  if (missingIds || duplicates.length) {
-    console.warn('[Wizard] Kunden-IDs problematisch:', { missingIds, duplicates: duplicates.slice(0,5) });
-  }
   listEl.innerHTML = showItems.map(k => {
-    const id = String(k.id);
-    const sel = (id === selectedId);
+    // STABLE-INDEX als Identifier — k.id ist im ERP nicht zuverlässig (kann undefined sein)
+    const idx = (k && typeof k.__nwv_idx === 'number') ? k.__nwv_idx : -1;
+    const sel = (String(idx) === String(selectedId));
     const meta = [k.kundennummer ? 'Kd-Nr. '+k.kundennummer : '', k.ort].filter(Boolean).join(' · ');
-    return '<div data-kunde-id="'+escapeHtml(id)+'" onclick="_nwvSelectKunde(this.dataset.kundeId)" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);'+(sel?'background:#dcfce7;border-left:3px solid #10b981':'')+'" onmouseover="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'rgba(35,74,117,0.06)\'" onmouseout="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'transparent\'">'+
+    return '<div data-kunde-idx="'+idx+'" onclick="_nwvSelectKunde(this.dataset.kundeIdx)" style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--bdr);'+(sel?'background:#dcfce7;border-left:3px solid #10b981':'')+'" onmouseover="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'rgba(35,74,117,0.06)\'" onmouseout="if(!this.style.background.includes(\'rgb(220, 252, 231)\'))this.style.background=\'transparent\'">'+
       '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(k.firmenname||'(ohne Name)')+(sel?' <span style="color:#10b981">✓</span>':'')+'</div>'+
       (meta ? '<div style="font-size:11px;color:var(--txt3);margin-top:1px">'+escapeHtml(meta)+'</div>' : '')+
     '</div>';
@@ -12280,20 +12271,23 @@ function _nwvFilterKunden() {
 }
 
 /* Wählt einen Kunden aus der Combobox-Liste aus.
-   Suchfeld wird geleert, Auswahl wird in der grünen Pille angezeigt. */
-function _nwvSelectKunde(kundeId) {
+   Bekommt den stabilen Array-Index, nicht die (unzuverlässige) ERP-ID. */
+function _nwvSelectKunde(kundeIdx) {
   const hiddenEl   = document.getElementById('nwv-kunde-id');
   const searchEl   = document.getElementById('nwv-kunde-search');
   const selectedBox  = document.getElementById('nwv-kunde-selected-box');
   const selectedName = document.getElementById('nwv-kunde-selected-name');
   const selectedMeta = document.getElementById('nwv-kunde-selected-meta');
-  if (hiddenEl) hiddenEl.value = String(kundeId);
-  const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
-  console.log('[Wizard] _nwvSelectKunde:', { kundeId, gefunden: !!kunde, name: kunde?.firmenname, kundennummer: kunde?.kundennummer });
+  // kundeIdx ist ein String wegen data-attribute; konvertieren zu Number
+  const idx = parseInt(kundeIdx, 10);
+  const kunde = (_kundenCache.items||[])[idx];
+  console.log('[Wizard] _nwvSelectKunde:', { idx, gefunden: !!kunde, name: kunde?.firmenname, kundennummer: kunde?.kundennummer });
   if (!kunde) {
-    console.warn('[Wizard] Kunde nicht im Cache gefunden! kundeId=', kundeId, 'Cache-Größe=', (_kundenCache.items||[]).length);
+    console.warn('[Wizard] Kunde nicht gefunden bei Index', idx, 'Cache-Größe=', (_kundenCache.items||[]).length);
     return;
   }
+  // Hidden-Field bekommt den Index (eindeutig); _nwvOnKundeChange liest später dort
+  if (hiddenEl) hiddenEl.value = String(idx);
   // Pille füllen + sichtbar machen
   if (selectedName) selectedName.textContent = kunde.firmenname || '(ohne Name)';
   if (selectedMeta) {
@@ -12339,19 +12333,20 @@ function _nwvOnTypChange() {
 async function _nwvOnKundeChange() {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
-  const kundeId = document.getElementById('nwv-kunde-id').value;
+  const kundeIdxStr = document.getElementById('nwv-kunde-id').value;
   const listEl = document.getElementById('nwv-anlagen-list');
   modal._selectedAnlagen = [];
   // Race-Token: nur die letzte Auswahl darf die UI aktualisieren
   const token = (modal._kundeToken = (modal._kundeToken||0) + 1);
-  if (!kundeId) {
+  if (kundeIdxStr === '' || kundeIdxStr === null) {
     modal._kunde = null;
     modal._anlagen = [];
     listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px">⚠ Wähle erst einen Kunden</div>';
     _nwvOnTypChange();
     return;
   }
-  const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
+  const idx = parseInt(kundeIdxStr, 10);
+  const kunde = (_kundenCache.items||[])[idx];
   if (!kunde) return;
   modal._kunde = kunde;
   listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px"><div class="spinner" style="margin:0 auto 6px"></div>Lade Anlagen für '+escapeHtml(kunde.firmenname||'')+'…</div>';
@@ -12380,12 +12375,13 @@ function _nwvRenderAnlagen() {
     return;
   }
   listEl.innerHTML = list.map((a, i) => {
-    const id = String(a.id||i);
+    // Stabiler Listen-Index als ID (a.id kann fehlen oder doppelt sein)
+    const id = String(i);
     const checked = sel.includes(id) ? 'checked' : '';
     const adresse = a.anzeigeAdresse || a.adresse || '';
     const meta = [a.fabriknummer?'🔧 '+a.fabriknummer:'', a.objektTyp, a.haltestellen?a.haltestellen+' HS':'', a.betreiberTyp].filter(Boolean).join(' · ');
-    return '<label style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,0.04)\'" onmouseout="this.style.background=\'transparent\'">'+
-      '<input type="checkbox" value="'+escapeHtml(id)+'" '+checked+' onchange="_nwvToggleAnlage(\''+escapeHtml(id)+'\')" style="margin:0">'+
+    return '<label data-anlage-idx="'+id+'" style="display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px" onmouseover="this.style.background=\'rgba(0,0,0,0.04)\'" onmouseout="this.style.background=\'transparent\'">'+
+      '<input type="checkbox" data-anlage-idx="'+id+'" '+checked+' onchange="_nwvToggleAnlage(this.dataset.anlageIdx)" style="margin:0">'+
       '<div style="flex:1">'+
         '<div style="font-size:13px;color:var(--navy);font-weight:600">🛗 '+escapeHtml(adresse||'(ohne Adresse)')+'</div>'+
         '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml(meta||'')+'</div>'+
@@ -12399,9 +12395,10 @@ function _nwvToggleAnlage(id) {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
   if (!modal._selectedAnlagen) modal._selectedAnlagen = [];
-  const idx = modal._selectedAnlagen.indexOf(id);
+  const sid = String(id);
+  const idx = modal._selectedAnlagen.indexOf(sid);
   if (idx >= 0) modal._selectedAnlagen.splice(idx, 1);
-  else modal._selectedAnlagen.push(id);
+  else modal._selectedAnlagen.push(sid);
   _nwvOnTypChange();
 }
 
@@ -12409,7 +12406,10 @@ async function _nwvSubmit() {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
   const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
-  const kundeId = document.getElementById('nwv-kunde-id').value;
+  const kundeIdxStr = document.getElementById('nwv-kunde-id').value;
+  const kundeIdx = parseInt(kundeIdxStr, 10);
+  const kundeFromCache = (_kundenCache.items||[])[kundeIdx];
+  const kundeId = kundeFromCache ? (kundeFromCache.id || kundeFromCache.kundennummer || '') : '';
   const wpa = +document.getElementById('nwv-wpa').value || 4;
   const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
   const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
@@ -12425,15 +12425,19 @@ async function _nwvSubmit() {
     const firmaSlug = modal._firmaSlug;
     const kunde = modal._kunde || {};
     const anlagenAll = modal._anlagen || [];
-    const chosenAnlagen = anlagenAll.filter(a => sel.includes(String(a.id||''))).map(a => ({
-      id: a.id,
-      adresse: a.anzeigeAdresse || a.adresse || '',
-      fabriknummer: a.fabriknummer || '',
-      objektTyp: a.objektTyp || '',
-      betreiberTyp: a.betreiberTyp || '',
-      haltestellen: a.haltestellen || 0,
-      _wpa: wpa,
-    }));
+    // sel enthält Listen-Indices als Strings — auf die Anlagen mappen
+    const chosenAnlagen = anlagenAll
+      .map((a, i) => ({ a, i }))
+      .filter(({ i }) => sel.includes(String(i)))
+      .map(({ a }) => ({
+        id: a.id,
+        adresse: a.anzeigeAdresse || a.adresse || '',
+        fabriknummer: a.fabriknummer || '',
+        objektTyp: a.objektTyp || '',
+        betreiberTyp: a.betreiberTyp || '',
+        haltestellen: a.haltestellen || 0,
+        _wpa: wpa,
+      }));
     // Vertragsnummer
     const nummer = await _nextVertragsnummer(firmaSlug);
     // Optional: bestehende Preisliste des Kunden suchen (für Konditionen)
