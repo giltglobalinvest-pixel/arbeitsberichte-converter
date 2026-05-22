@@ -2363,7 +2363,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.58';
+const APP_VERSION = 'v3.59';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11705,6 +11705,7 @@ function _buildWartungsvertraegeViewItems() {
       items.push({
         _src: 'erp',
         _id: 'erp-'+(e.id||e.vertragsId||Math.random()),
+        _erpRaw: e,
         firma: firmaSlug,
         nummer: e.vertragsnummer || e.nummer || e.id || '(ohne Nr.)',
         titel: e.titel || e.bezeichnung || '',
@@ -11764,7 +11765,7 @@ function _renderWartungsvertraegeList() {
       ? '<span style="background:#fee2e2;color:#991b1b;font-size:10px;padding:2px 6px;border-radius:4px">gekündigt</span>'
       : '<span style="background:#f3f4f6;color:#6b7280;font-size:10px;padding:2px 6px;border-radius:4px">'+escapeHtml(it.status||'entwurf')+'</span>';
     const clickHandler = it._src==='erp'
-      ? (it.erp_url ? 'window.open(\''+escapeHtml(it.erp_url)+'\',\'_blank\')' : 'toast(\'Kein ERP-Link verfügbar\',\'err\')')
+      ? '_openErpVertragDetail(\''+escapeHtml(it._id)+'\')'
       : '_openWartungsvertragDetail(\''+escapeHtml(it._id)+'\')';
     return '<div onclick="'+clickHandler+'" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._src==='erp'?'#3730A3':'#10b981')+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
       '<div style="flex:1;min-width:240px">'+
@@ -11797,6 +11798,93 @@ async function _openWartungsvertragDetail(recId) {
   } else {
     toast('Detail-Ansicht nicht verfügbar.','err');
   }
+}
+
+/* ERP-Vertrag öffnen: zeigt App-internes Detail-Modal mit allen verfügbaren Daten
+   und Direkt-Links zu Angebot/Anlage/Auftrag im ERP. */
+function _openErpVertragDetail(itemId) {
+  // Finde das Item in der View-Items-Liste (rebuilt damit aktuelle Daten)
+  const items = _buildWartungsvertraegeViewItems();
+  const it = items.find(x => x._id === itemId);
+  if (!it) return toast('Vertrag nicht gefunden.','err');
+  const e = it._erpRaw || {};
+  const old = document.getElementById('erp-vt-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'erp-vt-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const row = (label, value, mono) => value
+    ? '<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--bdr);font-size:12px">'+
+        '<div style="min-width:130px;color:var(--txt3)">'+escapeHtml(label)+'</div>'+
+        '<div style="flex:1;color:var(--txt)'+(mono?';font-family:monospace':'')+'">'+escapeHtml(String(value))+'</div>'+
+      '</div>'
+    : '';
+  const linkBtn = (href, label, icon, color) => href
+    ? '<a href="'+escapeHtml(href)+'" target="_blank" rel="noopener" class="btn" style="background:'+color+';color:#fff;border-color:'+color+';text-decoration:none;display:inline-flex;align-items:center;gap:6px">'+icon+' '+label+' ↗</a>'
+    : '';
+  const statusColor = it.status==='aktiv' ? '#10b981'
+                    : it.status==='gekuendigt' ? '#dc2626' : '#6b7280';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#3730A3;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📥 ERP-Wartungsvertrag <span style="font-family:monospace;font-weight:400;opacity:.85">· '+escapeHtml(it.nummer)+'</span></span>'+
+        '<button onclick="document.getElementById(\'erp-vt-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        // Status-Pille
+        '<div style="margin-bottom:14px"><span style="background:'+statusColor+';color:#fff;font-size:11px;padding:4px 10px;border-radius:6px;font-weight:600;text-transform:uppercase">'+escapeHtml(it.status)+'</span></div>'+
+        // Stammdaten
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Stammdaten</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Vertragsnummer', it.nummer, true)+
+          row('Bezeichnung', it.titel)+
+          row('Status', it.status)+
+          row('Typ', it.typ === 'einzel' ? '🛗 Einzelvertrag' : '📦 Sammelvertrag')+
+        '</div>'+
+        // Kunde
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Kunde / Betreiber</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Kunde', it.kunde_name)+
+          row('Kunden-Nr.', it.kunde_nummer, true)+
+        '</div>'+
+        // Anlage
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Anlage</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Adresse', e.adresse||'')+
+          row('Fabriknummer', e.fabriknummer||'', true)+
+          row('Anlage-ID (ERP)', e.anlageId||'', true)+
+        '</div>'+
+        // Vertrag-Zeiten
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Laufzeit</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Vertragsbeginn', String(it.start||'').slice(0,10))+
+          row('Vertragsende', String(e.vertragsEnde||'').slice(0,10) || '(unbefristet)')+
+          row('Erstellt', String(it.created||'').slice(0,10))+
+        '</div>'+
+        // ERP-Verknüpfungen
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">ERP-Verknüpfungen</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Angebot-ID', e.angebotId||'', true)+
+          row('Auftrag-ID', e.auftragId||'(nicht verknüpft)', true)+
+          row('Auftragsnummer', e.auftragNummer||'', true)+
+        '</div>'+
+        // Action-Buttons
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--bdr)">'+
+          linkBtn(e._erpUrlAngebot, 'Angebot im ERP', '📄', '#3730A3')+
+          linkBtn(e._erpUrlAnlage,  'Anlage im ERP',  '🛗', '#10b981')+
+          linkBtn(e._erpUrlAuftrag, 'Auftrag im ERP', '🛠', '#ea580c')+
+        '</div>'+
+        (!e._erpUrlAngebot && !e._erpUrlAnlage && !e._erpUrlAuftrag
+          ? '<div style="margin-top:12px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:11px;color:#92400e">⚠ Keine ERP-Links verfügbar. Hinterlege <strong>ERP-Auftrag-URL</strong> in Admin → Firmen-Verwaltung (Spalte für deine Firma), dann werden die Links automatisch gebaut.</div>'
+          : '')+
+        // Raw-Data (klappbar)
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">🔍 Rohe ERP-Daten anzeigen</summary><pre style="background:#0f172a;color:#cbd5e1;padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:240px;margin-top:6px">'+escapeHtml(JSON.stringify(e._raw||e, null, 2))+'</pre></details>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'erp-vt-modal\').remove()">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (ev) => { if (ev.target === m) m.remove(); };
 }
 
 /* ERP-Wartungsverträge laden. Im Aufzugshandwerk-ERP gibt es keinen dedizierten
@@ -11832,9 +11920,11 @@ async function _loadWartungsvertraegeFromERP() {
       if (!ACTIVE.includes(a.status)) continue;
       auftragByAngebotId.set(String(a.angebotid), a);
     }
-    // Firma-Daten für URL-Bauen
+    // Firma-Daten für URL-Bauen — aus der erp_auftrag_url leiten wir alle anderen ERP-Pfade ab
     const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
     const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
+    // Host extrahieren: "https://verwaltung.aufzugshandwerk.de/auftraege" → "https://verwaltung.aufzugshandwerk.de"
+    const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
     // ERP-Verträge bauen — eine Zeile pro Wartungs-Angebot
     // Status-Logik (von locker nach streng):
     //   ende < heute            → gekündigt
@@ -11861,11 +11951,14 @@ async function _loadWartungsvertraegeFromERP() {
       const vNr = ang.angebotsnummer || ang.nummer || ang.belegnummer ||
                   (auftrag && (auftrag.auftragsnummer || auftrag.nummer)) ||
                   ('ANG-'+angId);
-      const erpUrl = baseUrl
-        ? (auftrag && auftrag.id
-            ? String(baseUrl).replace(/\/$/,'') + '/' + auftrag.id
-            : '')
+      const anlageId = anlage.id || '';
+      const erpUrlAuftrag = (baseUrl && auftrag && auftrag.id)
+        ? String(baseUrl).replace(/\/$/,'') + '/' + auftrag.id
         : '';
+      const erpUrlAngebot = erpHost ? erpHost + '/angebote/' + angId : '';
+      const erpUrlAnlage  = (erpHost && anlageId) ? erpHost + '/anlagen/' + anlageId : '';
+      // Primärer Klick-Link: Angebot (immer verfügbar), Auftrag falls vorhanden hat Priorität
+      const erpUrl = erpUrlAuftrag || erpUrlAngebot || '';
       items.push({
         id: angId,
         vertragsnummer: String(vNr),
@@ -11876,9 +11969,19 @@ async function _loadWartungsvertraegeFromERP() {
         kundenname: kundeName,
         kundennummer: kundeNr,
         anlagenAnzahl: 1,
+        adresse: adresse,
+        fabriknummer: anlage.fabriknummer || '',
+        anlageId: anlageId,
+        auftragId: auftrag && auftrag.id || '',
+        auftragNummer: auftrag && (auftrag.auftragsnummer || auftrag.nummer) || '',
+        angebotId: angId,
         startDatum: w.vertragsBeginn || w.vertragsstart || ang.datum || ang.angebotsdatum || '',
+        vertragsEnde: ende,
         created: w.erstelltAm || ang.erstelltAm || ang.datum || '',
         _erpUrl: erpUrl,
+        _erpUrlAuftrag: erpUrlAuftrag,
+        _erpUrlAngebot: erpUrlAngebot,
+        _erpUrlAnlage: erpUrlAnlage,
         _vertragsEnde: ende,
         _raw: w,
       });
