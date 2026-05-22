@@ -2364,7 +2364,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.61';
+const APP_VERSION = 'v3.62';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12179,10 +12179,17 @@ async function openNeuerVertragWizard() {
             '</label>'+
           '</div>'+
         '</div>'+
-        // Kunde — Combobox mit Live-Suche
+        // Kunde — Combobox mit getrenntem Such- und Auswahl-Feld
         '<div style="margin-bottom:14px">'+
-          '<div style="font-weight:600;margin-bottom:6px">2. Kunde / Betreiber * <span id="nwv-kunde-selected" style="font-weight:400;color:#10b981;font-size:11px;margin-left:8px"></span></div>'+
-          '<input type="text" id="nwv-kunde-search" placeholder="🔍 Suchen nach Firmenname, Kunden-Nr. oder Ort…" oninput="_nwvFilterKunden()" onfocus="this.select();_nwvFilterKunden()" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-bottom:4px">'+
+          '<div style="font-weight:600;margin-bottom:6px">2. Kunde / Betreiber *</div>'+
+          // Aktuell ausgewählter Kunde (Pille)
+          '<div id="nwv-kunde-selected-box" style="display:none;padding:8px 12px;background:#dcfce7;border:1px solid #86efac;border-radius:6px;margin-bottom:6px;font-size:12px;display:flex;align-items:center;gap:8px">'+
+            '<span style="font-size:16px">✓</span>'+
+            '<div style="flex:1"><strong id="nwv-kunde-selected-name">–</strong><span id="nwv-kunde-selected-meta" style="color:var(--txt3);margin-left:6px"></span></div>'+
+            '<button type="button" onclick="_nwvClearKunde()" style="background:transparent;border:none;cursor:pointer;font-size:14px;color:var(--err)" title="Auswahl zurücksetzen">×</button>'+
+          '</div>'+
+          // Reines Suchfeld
+          '<input type="text" id="nwv-kunde-search" placeholder="🔍 Suchen nach Firmenname, Kunden-Nr. oder Ort…" oninput="_nwvFilterKunden()" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-bottom:4px">'+
           '<input type="hidden" id="nwv-kunde-id" value="">'+
           '<div id="nwv-kunde-list" style="max-height:200px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
         '</div>'+
@@ -12260,18 +12267,39 @@ function _nwvFilterKunden() {
     : '');
 }
 
-/* Wählt einen Kunden aus der Combobox-Liste aus. */
+/* Wählt einen Kunden aus der Combobox-Liste aus.
+   Suchfeld wird geleert, Auswahl wird in der grünen Pille angezeigt. */
 function _nwvSelectKunde(kundeId) {
-  const hiddenEl = document.getElementById('nwv-kunde-id');
-  const searchEl = document.getElementById('nwv-kunde-search');
-  const labelEl  = document.getElementById('nwv-kunde-selected');
-  if (hiddenEl) hiddenEl.value = kundeId;
+  const hiddenEl   = document.getElementById('nwv-kunde-id');
+  const searchEl   = document.getElementById('nwv-kunde-search');
+  const selectedBox  = document.getElementById('nwv-kunde-selected-box');
+  const selectedName = document.getElementById('nwv-kunde-selected-name');
+  const selectedMeta = document.getElementById('nwv-kunde-selected-meta');
+  if (hiddenEl) hiddenEl.value = String(kundeId);
   const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
-  if (kunde) {
-    if (searchEl) searchEl.value = (kunde.firmenname || '') + (kunde.kundennummer ? ' · Kd-Nr. '+kunde.kundennummer : '');
-    if (labelEl)  labelEl.textContent = '✓ '+(kunde.firmenname || '');
+  if (!kunde) return;
+  // Pille füllen + sichtbar machen
+  if (selectedName) selectedName.textContent = kunde.firmenname || '(ohne Name)';
+  if (selectedMeta) {
+    const meta = [kunde.kundennummer ? 'Kd-Nr. '+kunde.kundennummer : '', kunde.ort].filter(Boolean).join(' · ');
+    selectedMeta.textContent = meta ? '· '+meta : '';
   }
-  _nwvFilterKunden();   // Liste neu rendern für Highlight
+  if (selectedBox) selectedBox.style.display = 'flex';
+  // Suchfeld leeren, damit es wieder als Suche dient
+  if (searchEl) searchEl.value = '';
+  _nwvFilterKunden();   // Liste neu rendern (alle, da Suchfeld leer ist)
+  _nwvOnKundeChange();
+}
+
+/* Auswahl zurücksetzen (× im Pille-Button). */
+function _nwvClearKunde() {
+  const hiddenEl     = document.getElementById('nwv-kunde-id');
+  const searchEl     = document.getElementById('nwv-kunde-search');
+  const selectedBox  = document.getElementById('nwv-kunde-selected-box');
+  if (hiddenEl) hiddenEl.value = '';
+  if (selectedBox) selectedBox.style.display = 'none';
+  if (searchEl) { searchEl.value = ''; searchEl.focus(); }
+  _nwvFilterKunden();
   _nwvOnKundeChange();
 }
 
@@ -12298,7 +12326,11 @@ async function _nwvOnKundeChange() {
   const kundeId = document.getElementById('nwv-kunde-id').value;
   const listEl = document.getElementById('nwv-anlagen-list');
   modal._selectedAnlagen = [];
+  // Race-Token: nur die letzte Auswahl darf die UI aktualisieren
+  const token = (modal._kundeToken = (modal._kundeToken||0) + 1);
   if (!kundeId) {
+    modal._kunde = null;
+    modal._anlagen = [];
     listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px">⚠ Wähle erst einen Kunden</div>';
     _nwvOnTypChange();
     return;
@@ -12306,14 +12338,17 @@ async function _nwvOnKundeChange() {
   const kunde = (_kundenCache.items||[]).find(k => String(k.id) === String(kundeId));
   if (!kunde) return;
   modal._kunde = kunde;
-  listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px"><div class="spinner" style="margin:0 auto 6px"></div>Lade Anlagen…</div>';
+  listEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--txt3);font-size:12px"><div class="spinner" style="margin:0 auto 6px"></div>Lade Anlagen für '+escapeHtml(kunde.firmenname||'')+'…</div>';
   try {
     const all = await _loadAnlagenForFirma(modal._firmaSlug);
+    // Stale-Check: ist diese Auswahl noch aktuell?
+    if (modal._kundeToken !== token) return;
     const kundenNr = String(kunde.kundennummer||'');
     const mine = all.filter(a => String(a.kunde?.kundennummer||'') === kundenNr);
     modal._anlagen = mine;
     _nwvRenderAnlagen();
   } catch(e) {
+    if (modal._kundeToken !== token) return;
     listEl.innerHTML = '<div style="padding:12px;color:var(--err);font-size:12px">❌ '+escapeHtml(e.message)+'</div>';
   }
 }
