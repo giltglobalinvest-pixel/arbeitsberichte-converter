@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.71';
+const APP_VERSION = 'v3.72';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9976,6 +9976,58 @@ Vertragsdaten:`;
 
 const VORLAGE_DEFAULT_PDF_PROMPT = 'Du erhältst einen bestehenden Wartungsvertrag als PDF (Referenz) und konkrete Vertragsdaten als JSON. \n\nDeine Aufgabe: Erstelle einen NEUEN Wartungsvertrag im selben Stil/Aufbau/Klauseln wie das Referenz-PDF, aber mit den unten genannten konkreten Daten. \n\nWichtig:\n- Formelle deutsche Geschäftssprache\n- Markdown-Format mit # für Hauptüberschriften und ## für Paragrafen (z.B. "## § 1 Vertragsgegenstand")\n- Aufzug-Liste als saubere Aufzählung\n- Alle Vertragsdaten korrekt einsetzen\n- Behalte die Klausel-Reihenfolge und Formulierungen der Referenz so weit sinnvoll bei\n- Keine Anmerkungen, keine Code-Blöcke, keine Markdown-Fence — nur den fertigen Vertragstext\n\nVertragsdaten:';
 
+/* Prompt zur EINMALIGEN Vorlage-Generierung: KI macht aus dem Referenz-PDF eine
+   Markdown-Vorlage MIT Platzhaltern. Diese wird dann gespeichert und bei jedem
+   Einzelvertrag nur noch per Platzhalter-Ersetzung verwendet (keine KI mehr nötig). */
+const VORLAGE_DEFAULT_GEN_PROMPT = `Du erhältst einen bestehenden Wartungsvertrag eines Wettbewerbers (z.B. KONE, Schindler, ThyssenKrupp) als PDF.
+
+DEINE AUFGABE: Erstelle eine WIEDERVERWENDBARE MARKDOWN-VORLAGE für eigene Wartungsverträge der Firma "Aszendio Aufzugservice GmbH" (bzw. "Aufzugshandwerk"), die strukturell vergleichbar zum Referenzvertrag aufgebaut ist — ABER mit PLATZHALTERN statt konkreter Werte. Diese Vorlage wird später bei jedem einzelnen Vertrag nur durch Werte-Ersetzung instanziiert; KI läuft dann nicht mehr.
+
+VERWENDE AUSSCHLIESSLICH DIESE PLATZHALTER (genaue Schreibweise mit doppelten geschweiften Klammern!):
+- {{kunde_name}}        — Firmenname des Kunden
+- {{kunde_nummer}}      — Kundennummer
+- {{kunde_adresse}}     — vollständige Anschrift
+- {{kontakt_name}}      — Ansprechpartner
+- {{kontakt_email}}     — Email
+- {{kontakt_telefon}}   — Telefon
+- {{vertrag_titel}}     — Vertragsbezeichnung
+- {{vertragsnummer}}    — eigene Vertragsnummer (z.B. WV-A-26-0001)
+- {{abrechnung_typ}}    — "Einzelrechnung pro Aufzug" | "Sammelrechnung über alle Aufzüge"
+- {{abrechnung_turnus}} — "Jährlich" | "Quartalsweise"
+- {{wartungen_pro_jahr}}— Zahl
+- {{aufzug_liste}}      — nummerierte Liste aller Anlagen (1. Adresse · Fabrik-Nr. · Haltestellen)
+- {{aufzug_anzahl}}     — Zahl
+- {{jahresumsatz}}      — z.B. "1.440,00 € netto"
+- {{turnus_betrag}}     — Betrag pro Abrechnungsperiode
+- {{stundensatz}}       — Stundensatz für Sondereinsätze
+- {{start_datum}}       — Vertragsbeginn
+- {{laufzeit_monate}}   — Laufzeit in Monaten
+- {{datum_heute}}       — heutiges Datum
+- {{firma_name}}        — eigene Firma (Aszendio/Aufzugshandwerk)
+
+REGELN:
+1. STRUKTUR übernehmen — gleiche Paragraphen-Reihenfolge (§ 1 Vertragsgegenstand, § 2 Wartungsleistungen, § 3 Vergütung, § 4 Laufzeit, § 5 Haftung, § 6 Sonstiges …).
+2. WORTLAUTE verändern — eigene formelle deutsche Geschäftssprache. NICHT 1:1 abschreiben (Urheberrecht).
+3. KEINE produktspezifischen Begriffe übernehmen ("Konexion 10.3 GSM", "KONE EcoMod" usw.) — stattdessen neutral ("Notrufgerät", "Anlage").
+4. KEINE DECKBLÄTTER, keine Marketing-Phrasen, keine "Über uns".
+5. PLATZHALTER statt konkreter Werte: Statt "Mustermann Hausverwaltung GmbH" → {{kunde_name}}. Statt "5 Aufzüge" → {{aufzug_anzahl}}. Statt "1.440 € netto/Jahr" → {{jahresumsatz}}.
+6. Markdown-Format: # für Vertragstitel (sehr knapp, optional mit {{vertrag_titel}}), ## für jeden Paragraph. Aufzug-Liste über {{aufzug_liste}} (NICHT händisch Aufzüge auflisten — der Platzhalter wird zur Liste).
+7. Keine Anmerkungen, kein Vorwort, keine Code-Blöcke, keine \`\`\`-Fences — nur die fertige Vorlage.
+8. Schreibe juristisch sauber (BGB-konform: ordentliche Kündigung, AGB-Anforderungen).
+9. UNTERSCHRIFTSZEILEN: Schreibe NIE Ketten aus _____ \\\\\\\\ ~~~ ------- für Linien. Setze stattdessen das Token \`[[SIGLINE]]\` allein auf einer Zeile. Beispiel:
+
+Ort, Datum:
+[[SIGLINE]]
+Unterschrift Auftraggeber ({{kunde_name}})
+
+Ort, Datum:
+[[SIGLINE]]
+Unterschrift Auftragnehmer ({{firma_name}})
+
+10. Wenn die Referenz Stundensätze oder Wartungsfrequenzen NICHT explizit nennt → in der Vorlage trotzdem die entsprechenden Platzhalter setzen (z.B. {{stundensatz}}), aber als optionale Klausel formulieren. Lieber ein Platzhalter zu viel als zu wenig.
+
+Gib NUR die fertige Markdown-Vorlage zurück. Keine Erklärung, keine Bemerkungen.`;
+
 async function _ensureVorlagenTable() {
   // ensureTable ist idempotent (legt nur an wenn nicht da)
   await ensureTable('Vertragsvorlagen', [
@@ -10087,9 +10139,16 @@ async function openVorlageEditor(recId) {
             '</div>'
           : '<div style="margin-bottom:10px"><input type="file" id="vlg-pdf-upload" accept="application/pdf" style="width:100%;padding:6px;border:1px dashed var(--bdr);border-radius:6px;font-size:12px"></div>')+
         '<h4 style="margin:12px 0 4px;font-size:13px;color:var(--navy)">📝 Vertragstext (Markdown, mit Platzhaltern) <span style="font-weight:400;color:var(--txt3);font-size:11px">— optional wenn PDF hochgeladen</span></h4>'+
+        '<div style="background:#dcfce7;border:1px solid #86efac;border-radius:6px;padding:8px 12px;font-size:11px;color:#166534;margin-bottom:8px;line-height:1.5">'+
+          '<strong>💡 Empfohlen:</strong> Nutze <strong>🤖 Aus PDF generieren</strong> unten — die KI erstellt die Markdown-Vorlage aus dem Referenz-PDF EINMAL und ersetzt konkrete Werte durch Platzhalter. Spätere Einzelverträge sind dann schnelle Platzhalter-Ersetzung ohne KI-Aufruf.'+
+        '</div>'+
         '<div style="font-size:11px;color:var(--txt3);margin-bottom:6px;line-height:1.5">Klick auf einen Platzhalter, um ihn an der Cursor-Position einzufügen:</div>'+
         '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;max-height:64px;overflow-y:auto">'+placeholderChips+'</div>'+
         '<textarea id="vlg-text" style="width:100%;min-height:200px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5">'+escapeHtml(data.vorlage_text||'')+'</textarea>'+
+        '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+          '<button class="btn prim" style="background:#10b981;border-color:#10b981;font-size:11px;padding:6px 14px" onclick="_generateVorlageFromPDF('+(recId?'\''+recId+'\'':'null')+')" title="KI generiert aus dem Referenz-PDF eine wiederverwendbare Markdown-Vorlage mit Platzhaltern (statt konkreter Werte). Läuft EINMAL — spätere Verträge brauchen dann keine KI mehr.">🤖 Aus PDF generieren (mit Platzhaltern)</button>'+
+          '<span style="font-size:10px;color:var(--txt3)">Überschreibt das Textfeld oben. Setzt einen PDF-Upload voraus.</span>'+
+        '</div>'+
         '<h4 style="margin:14px 0 4px;font-size:13px;color:var(--navy)">🤖 KI-Prompt</h4>'+
         '<div style="font-size:11px;color:var(--txt3);margin-bottom:6px">Mit PDF: Anweisung, wie der neue Vertrag aus der Referenz erstellt werden soll. Ohne PDF: Politur-Anweisung nach Platzhalter-Ersetzung.</div>'+
         '<textarea id="vlg-prompt" style="width:100%;min-height:120px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5">'+escapeHtml(data.ki_prompt||'')+'</textarea>'+
@@ -10197,6 +10256,56 @@ async function _previewVorlage(recId) {
     console.error('preview:', e);
     _closeVorlagenWorking();
     toast('❌ Vorschau-Fehler: '+e.message,'err');
+  }
+}
+
+/* EINMALIGE Vorlage-Generierung: KI macht aus dem Referenz-PDF eine Markdown-Vorlage
+   mit Platzhaltern statt konkreter Werte. Ergebnis wird in das Markdown-Textarea geschrieben.
+   Vorteil: Spätere Einzelverträge brauchen keine KI mehr — nur Platzhalter-Ersetzung. */
+async function _generateVorlageFromPDF(recId) {
+  const editor = document.getElementById('vlg-editor');
+  if (!editor) return;
+  if (!APP_KEYS.anthropicKey) return toast('❌ Kein Anthropic-API-Key konfiguriert.','err');
+  const pdfInput = document.getElementById('vlg-pdf-upload');
+  const pdfFile = pdfInput && pdfInput.files && pdfInput.files[0];
+  let pdfBlob = null;
+  if (pdfFile) {
+    pdfBlob = pdfFile;
+  } else if (recId) {
+    // Bestehendes Referenz-PDF aus Airtable
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertragsvorlagen/'+recId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
+      const d = await r.json();
+      if (d.fields && d.fields.quell_pdf && d.fields.quell_pdf[0]) {
+        const meta = d.fields.quell_pdf[0];
+        const pdfResp = await fetch(meta.url);
+        if (pdfResp.ok) {
+          const blob = await pdfResp.blob();
+          pdfBlob = new File([blob], meta.filename||'referenz.pdf', { type:'application/pdf' });
+        }
+      }
+    } catch(e) {
+      return toast('❌ Referenz-PDF nicht ladbar: '+e.message,'err');
+    }
+  }
+  if (!pdfBlob) return toast('❌ Kein Referenz-PDF — bitte erst eines hochladen.','err');
+  // Bestätigung wenn schon Text drin ist
+  const ta = document.getElementById('vlg-text');
+  if (ta && ta.value.trim() && !confirm('Es ist schon ein Vorlagentext vorhanden. Soll dieser durch die KI-Generierung ÜBERSCHRIEBEN werden?\n\n(Klick "Abbrechen" um den vorhandenen Text zu behalten.)')) return;
+  _showVorlagenWorking('🤖 KI erstellt Markdown-Vorlage aus PDF (bis zu 60 Sek.)…');
+  try {
+    console.log('[Vorlage-Gen] callClaude — PDF '+(pdfBlob.size/1024).toFixed(0)+' KB');
+    const result = await callClaude(pdfBlob, VORLAGE_DEFAULT_GEN_PROMPT, { maxTokens: 8000 });
+    let text = String(result||'').replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+    if (!text) throw new Error('KI hat einen leeren Text zurückgegeben.');
+    if (ta) ta.value = text;
+    _closeVorlagenWorking();
+    toast('✅ Vorlage generiert ('+text.length+' Zeichen). Bitte prüfen und speichern.','ok');
+  } catch(e) {
+    _closeVorlagenWorking();
+    console.error('Vorlage-Gen:', e);
+    toast('❌ Vorlage-Generierung: '+(e.message||'?').slice(0,300),'err');
   }
 }
 
@@ -12746,12 +12855,15 @@ function _nwvSyncPdfModeWithVorlage() {
     // Nur KI möglich
     if (radioKi) { radioKi.checked = true; }
     if (radioPlatz) radioPlatz.disabled = true;
-    if (lblPlatz) { lblPlatz.style.opacity = 0.4; lblPlatz.style.pointerEvents='none'; lblPlatz.title='Diese Vorlage hat keinen Markdown-Text — nur KI-Generierung möglich.'; }
+    if (lblPlatz) { lblPlatz.style.opacity = 0.4; lblPlatz.style.pointerEvents='none'; lblPlatz.title='Diese Vorlage hat keinen Markdown-Text — nur KI-Generierung möglich. Tipp: Vorlage-Editor → "🤖 Aus PDF generieren" um Markdown mit Platzhaltern zu erzeugen, dann läuft KI nicht mehr bei jedem Vertrag.'; }
   } else if (hasText && !hasPdf) {
     // Nur Platzhalter möglich (kein PDF für KI)
     if (radioPlatz) { radioPlatz.checked = true; }
     if (radioKi) radioKi.disabled = true;
     if (lblKi) { lblKi.style.opacity = 0.4; lblKi.style.pointerEvents='none'; lblKi.title='Diese Vorlage hat kein Referenz-PDF — keine KI-Generierung möglich.'; }
+  } else if (hasText && hasPdf) {
+    // Beides verfügbar — bevorzuge Platzhalter (schneller, keine Tokens)
+    if (radioPlatz) { radioPlatz.checked = true; }
   }
 }
 
