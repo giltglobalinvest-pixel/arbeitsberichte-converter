@@ -1356,6 +1356,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-kunden" onclick="switchView('kunden')" style="display:none">👥 Kunden</button>
     <button class="tnav" id="tnav-kontakte" onclick="switchView('kontakte')" style="display:none">👤 Kontakte</button>
     <button class="tnav" id="tnav-vertraege" onclick="switchView('vertraege')" style="display:none">📑 Wartungsverträge</button>
+    <button class="tnav" id="tnav-rechnungen" onclick="switchView('rechnungen')" style="display:none">💶 Rechnungen</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1824,6 +1825,28 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="wv-list" style="padding:20px"></div>
+</div>
+
+<!-- RECHNUNGEN (Admin-only) -->
+<div class="firma-view" id="rch-view">
+  <div class="firma-hdr">
+    <h2>💶 Rechnungen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="rch-count">0</span></h2>
+    <button class="btn" onclick="renderRechnungenView({force:true})">↻ Neu laden</button>
+    <button class="btn" id="rch-erp-btn" onclick="_loadRechnungenFromERP()" title="Rechnungen aus dem ERP herunterladen (read-only)">📥 Vom ERP laden</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="rch-search" placeholder="Suchen nach Nummer, Kunde, Betrag…" oninput="_renderRechnungenList()">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="rch-flt-offen" checked onchange="_renderRechnungenList()"> 🟠 Offen</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="rch-flt-bezahlt" checked onchange="_renderRechnungenList()"> 🟢 Bezahlt</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="rch-flt-ueberfaellig" checked onchange="_renderRechnungenList()"> 🔴 Überfällig</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="rch-flt-storno" onchange="_renderRechnungenList()"> ⚫ Storniert</label>
+    </div>
+  </div>
+  <div class="firma-body" id="rch-list" style="padding:20px"></div>
 </div>
 
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
@@ -2366,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.65';
+const APP_VERSION = 'v3.66';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -2997,6 +3020,7 @@ async function showApp() {
     document.getElementById('tnav-kunden').style.display = '';
     document.getElementById('tnav-kontakte').style.display = '';
     document.getElementById('tnav-vertraege').style.display = '';
+    document.getElementById('tnav-rechnungen').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
@@ -3008,6 +3032,7 @@ async function showApp() {
     document.getElementById('tnav-kunden').style.display = 'none';
     document.getElementById('tnav-kontakte').style.display = 'none';
     document.getElementById('tnav-vertraege').style.display = 'none';
+    document.getElementById('tnav-rechnungen').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3439,6 +3464,7 @@ function switchView(view) {
   if (view==='kunden' && !isAdmin()) return;
   if (view==='kontakte' && !isAdmin()) return;
   if (view==='vertraege' && !isAdmin()) return;
+  if (view==='rechnungen' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3459,9 +3485,10 @@ function switchView(view) {
   const kdv  = document.getElementById('kdv-view');
   const ktv  = document.getElementById('kt-view');
   const wv   = document.getElementById('wv-view');
+  const rch  = document.getElementById('rch-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3479,6 +3506,7 @@ function switchView(view) {
   if (kdv)  kdv.classList.toggle('show',  view==='kunden');
   if (ktv)  ktv.classList.toggle('show',  view==='kontakte');
   if (wv)   wv.classList.toggle('show',   view==='vertraege');
+  if (rch)  rch.classList.toggle('show',  view==='rechnungen');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3492,6 +3520,7 @@ function switchView(view) {
   if (view==='kunden') renderKundenView();
   if (view==='kontakte') renderKontakteView();
   if (view==='vertraege') renderWartungsvertraegeView();
+  if (view==='rechnungen') renderRechnungenView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -9152,6 +9181,12 @@ function renderDashboard() {
         <div class="dash-tool-desc">Einzel- und Sammelverträge erzeugen. App- und ERP-Verträge gemischt mit eigenem Nummernkreis (WV-…).</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>
+      <button class="dash-tool" onclick="switchView('rechnungen')">
+        <div class="dash-tool-icon">💶</div>
+        <div class="dash-tool-label">Rechnungen</div>
+        <div class="dash-tool-desc">Übersicht aller ERP-Rechnungen mit Status (offen/bezahlt/überfällig). Suche + Filter, später eigenes Erstellen.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
       <button class="dash-tool" onclick="switchView('users')">
         <div class="dash-tool-icon">🧑‍💼</div>
         <div class="dash-tool-label">User-Verwaltung</div>
@@ -12197,6 +12232,234 @@ async function _loadWartungsvertraegeFromERP() {
 }
 
 /* ════════════════════════════════════════════════════════════
+   RECHNUNGEN-VIEW (Admin, read-only ERP-Sync)
+   ════════════════════════════════════════════════════════════ */
+let _rechnungenCache = { firma: null, items: [], loadedAt: 0 };
+
+async function renderRechnungenView(opts) {
+  if (!isAdmin()) return;
+  if (isFirmaAll()) {
+    const list = document.getElementById('rch-list');
+    if (list) list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">Bitte oben rechts eine konkrete Firma auswählen.</div>';
+    return;
+  }
+  const firmaSlug = getCurrentFirmaSlug();
+  const list = document.getElementById('rch-list');
+  if (!list) return;
+  const force = opts && opts.force;
+  const fresh = !force && _rechnungenCache.firma === firmaSlug && _rechnungenCache.items.length && (Date.now() - _rechnungenCache.loadedAt) < 5*60*1000;
+  if (!fresh) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Rechnungen geladen. Klick <strong>📥 Vom ERP laden</strong>.</div>';
+  } else {
+    _renderRechnungenList();
+  }
+}
+
+/* Lädt Rechnungen aus dem ERP. Probiert mehrere Pfade. Normalisiert die Daten. */
+async function _loadRechnungenFromERP() {
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const btn = document.getElementById('rch-erp-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ lade…'; }
+  try {
+    const candidates = ['api/rechnungen', 'rechnungen', 'api/Rechnungen', 'api/invoice', 'api/invoices'];
+    let result = null, usedPath = null, lastErr = null;
+    for (const p of candidates) {
+      try {
+        result = await erpFetch('/aufzug/'+firmaSlug+'/'+p);
+        usedPath = p;
+        break;
+      } catch(e) {
+        lastErr = e;
+        if (e.status === 401 || e.status === 403) throw e;
+      }
+    }
+    if (!result) {
+      throw new Error('Kein ERP-Endpunkt gefunden. Probierte: '+candidates.join(', ')+'. Letzter Fehler: '+(lastErr && lastErr.message || '?').slice(0,200));
+    }
+    let raw = Array.isArray(result) ? result : (result.content || result.items || result.data || []);
+    if (raw[0]) console.log('[Rechnungen] Erste Rechnung — verfügbare Felder:', Object.keys(raw[0]));
+    // Firma-Daten für URL-Bauen
+    const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
+    const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
+    const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
+    // Normalisieren
+    const today = new Date().toISOString().slice(0,10);
+    const items = raw.map(r => {
+      const id = String(r.id || r.rechnungsId || r.invoiceId || '');
+      const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber || ('R-'+id);
+      const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate || r.created || '').toString().slice(0,10);
+      const faellig = (r.faelligkeitsdatum || r.faellig || r.dueDate || r.zahlungsziel || '').toString().slice(0,10);
+      const bezahltAm = (r.bezahltAm || r.zahldatum || r.paidAt || '').toString().slice(0,10);
+      const brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.summe || r.betrag || r.amountGross || r.brutto || 0);
+      const netto  = +(r.nettobetrag  || r.gesamtnettobetrag  || r.amountNet  || r.netto  || 0);
+      const kunde  = r.kunde || {};
+      const kundeName = kunde.firmenname || kunde.name || r.kundenname || '';
+      const kundeNr   = String(kunde.kundennummer || r.kundennummer || '');
+      const auftragId = r.auftragId || r.auftrag?.id || r.auftrag_id || '';
+      // Status ableiten (flexibel, je nach ERP)
+      let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
+      const storniert = !!(r.storniert || r.canceled);
+      if (storniert) status = 'storniert';
+      else if (bezahltAm) status = 'bezahlt';
+      else if (status.includes('bezahlt') || status.includes('paid')) status = 'bezahlt';
+      else if (status.includes('storno')) status = 'storniert';
+      else if (faellig && faellig < today) status = 'ueberfaellig';
+      else status = 'offen';
+      const erpUrl = erpHost ? (erpHost + '/rechnungen/' + id) : '';
+      const erpAuftragUrl = (erpHost && auftragId) ? (erpHost + '/auftraege/' + auftragId) : '';
+      return {
+        id, nummer: String(nr), datum, faellig, bezahltAm, brutto, netto,
+        kunde_name: kundeName, kunde_nummer: kundeNr,
+        auftrag_id: String(auftragId),
+        status,
+        _erpUrl: erpUrl,
+        _erpAuftragUrl: erpAuftragUrl,
+        _raw: r,
+      };
+    });
+    // Sort: neueste zuerst
+    items.sort((a,b) => String(b.datum||'').localeCompare(String(a.datum||'')));
+    _rechnungenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+    const offen = items.filter(it => it.status==='offen').length;
+    const ueberfaellig = items.filter(it => it.status==='ueberfaellig').length;
+    const bezahlt = items.filter(it => it.status==='bezahlt').length;
+    console.log('[Rechnungen]', { gesamt: items.length, offen, bezahlt, ueberfaellig, pfad: usedPath });
+    toast('✅ '+items.length+' Rechnungen geladen ('+offen+' offen · '+ueberfaellig+' überfällig · '+bezahlt+' bezahlt)', 'ok');
+    _renderRechnungenList();
+  } catch(e) {
+    toast('❌ Rechnungen-Sync: '+(e.message||'Fehler').slice(0,300), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📥 Vom ERP laden'; }
+  }
+}
+
+function _renderRechnungenList() {
+  const list = document.getElementById('rch-list');
+  const cnt  = document.getElementById('rch-count');
+  if (!list) return;
+  const q = (document.getElementById('rch-search')?.value || '').toLowerCase().trim();
+  const showOffen = document.getElementById('rch-flt-offen')?.checked !== false;
+  const showBez   = document.getElementById('rch-flt-bezahlt')?.checked !== false;
+  const showUebf  = document.getElementById('rch-flt-ueberfaellig')?.checked !== false;
+  const showStorno = document.getElementById('rch-flt-storno')?.checked === true;
+  let items = (_rechnungenCache.items||[]).slice();
+  // Status-Filter
+  items = items.filter(it => (
+    (it.status==='offen' && showOffen) ||
+    (it.status==='bezahlt' && showBez) ||
+    (it.status==='ueberfaellig' && showUebf) ||
+    (it.status==='storniert' && showStorno)
+  ));
+  // Suche
+  if (q) items = items.filter(it =>
+    String(it.nummer||'').toLowerCase().includes(q) ||
+    String(it.kunde_name||'').toLowerCase().includes(q) ||
+    String(it.kunde_nummer||'').toLowerCase().includes(q) ||
+    String(it.brutto||'').toLowerCase().includes(q)
+  );
+  if (cnt) cnt.textContent = items.length + ' Rechnungen';
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer.':'Keine passenden Rechnungen.')+'</div>';
+    return;
+  }
+  const fmt = (v) => Number(v||0).toLocaleString('de-DE', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  list.innerHTML = '<div style="display:grid;gap:6px">'+items.slice(0,500).map(it => {
+    const statColor = it.status==='bezahlt' ? '#10b981'
+                    : it.status==='ueberfaellig' ? '#dc2626'
+                    : it.status==='storniert' ? '#6b7280'
+                    : '#ea580c';
+    const statLabel = it.status==='bezahlt' ? '🟢 bezahlt'
+                    : it.status==='ueberfaellig' ? '🔴 überfällig'
+                    : it.status==='storniert' ? '⚫ storniert'
+                    : '🟠 offen';
+    return '<div onclick="_openRechnungDetail(\''+escapeHtml(it.id)+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+statColor+';border-radius:8px;padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
+      '<div style="flex:1;min-width:240px">'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:3px">'+
+          '<strong style="font-family:monospace;color:var(--navy)">'+escapeHtml(String(it.nummer))+'</strong>'+
+          '<span style="background:'+statColor+';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">'+statLabel+'</span>'+
+          (it.auftrag_id ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px" title="Verknüpft mit Auftrag '+escapeHtml(it.auftrag_id)+'">🛠 Auftrag</span>' : '')+
+        '</div>'+
+        '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(it.kunde_name||'(ohne Kunde)')+(it.kunde_nummer?' <span style="font-weight:400;color:var(--txt3)">· Kd-Nr. '+escapeHtml(it.kunde_nummer)+'</span>':'')+'</div>'+
+      '</div>'+
+      '<div style="text-align:right;font-size:12px;color:var(--txt2);min-width:140px">'+
+        '<div style="font-size:14px;font-weight:600;color:var(--navy)">'+fmt(it.brutto)+' €</div>'+
+        '<div style="color:var(--txt3);font-size:11px">'+escapeHtml(it.datum||'?')+(it.faellig?' · fällig '+escapeHtml(it.faellig):'')+'</div>'+
+      '</div>'+
+    '</div>';
+  }).join('')+'</div>'+
+  (items.length > 500 ? '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px">… 500 von '+items.length+' Rechnungen werden angezeigt. Bitte Suche eingrenzen.</div>' : '');
+}
+
+/* Rechnung Detail-Modal */
+function _openRechnungDetail(rechnungId) {
+  const it = (_rechnungenCache.items||[]).find(r => String(r.id) === String(rechnungId));
+  if (!it) return toast('Rechnung nicht gefunden.','err');
+  const fmt = (v) => Number(v||0).toLocaleString('de-DE', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const old = document.getElementById('rch-detail-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'rch-detail-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const row = (label, value, mono) => value
+    ? '<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--bdr);font-size:12px">'+
+        '<div style="min-width:130px;color:var(--txt3)">'+escapeHtml(label)+'</div>'+
+        '<div style="flex:1;color:var(--txt)'+(mono?';font-family:monospace':'')+'">'+escapeHtml(String(value))+'</div>'+
+      '</div>'
+    : '';
+  const linkBtn = (href, label, icon, color) => href
+    ? '<a href="'+escapeHtml(href)+'" target="_blank" rel="noopener" class="btn" style="background:'+color+';color:#fff;border-color:'+color+';text-decoration:none;display:inline-flex;align-items:center;gap:6px">'+icon+' '+label+' ↗</a>'
+    : '';
+  const statColor = it.status==='bezahlt' ? '#10b981'
+                  : it.status==='ueberfaellig' ? '#dc2626'
+                  : it.status==='storniert' ? '#6b7280'
+                  : '#ea580c';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:'+statColor+';color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>💶 Rechnung <span style="font-family:monospace;font-weight:400;opacity:.85">· '+escapeHtml(it.nummer)+'</span></span>'+
+        '<button onclick="document.getElementById(\'rch-detail-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        '<div style="margin-bottom:14px"><span style="background:'+statColor+';color:#fff;font-size:11px;padding:4px 10px;border-radius:6px;font-weight:600;text-transform:uppercase">'+escapeHtml(it.status)+'</span></div>'+
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Stammdaten</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Rechnungsnummer', it.nummer, true)+
+          row('Datum', it.datum)+
+          row('Fällig am', it.faellig)+
+          row('Bezahlt am', it.bezahltAm)+
+        '</div>'+
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Beträge</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Netto', it.netto ? fmt(it.netto)+' €' : '', true)+
+          row('Brutto', fmt(it.brutto)+' €', true)+
+        '</div>'+
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Kunde</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Name', it.kunde_name)+
+          row('Kunden-Nr.', it.kunde_nummer, true)+
+        '</div>'+
+        (it.auftrag_id ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Verknüpfungen</h4>'+
+          '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+            row('Auftrag-ID', it.auftrag_id, true)+
+          '</div>' : '')+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--bdr)">'+
+          linkBtn(it._erpUrl, 'Rechnung im ERP', '💶', '#3730A3')+
+          linkBtn(it._erpAuftragUrl, 'Auftrag im ERP', '🛠', '#ea580c')+
+        '</div>'+
+        (!it._erpUrl && !it._erpAuftragUrl
+          ? '<div style="margin-top:12px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:11px;color:#92400e">⚠ Keine ERP-Links — hinterlege <strong>ERP-Auftrag-URL</strong> in Admin → Firmen-Verwaltung.</div>'
+          : '')+
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">🔍 Rohe ERP-Daten anzeigen</summary><pre style="background:#0f172a;color:#cbd5e1;padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:240px;margin-top:6px">'+escapeHtml(JSON.stringify(it._raw||it, null, 2))+'</pre></details>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'rch-detail-modal\').remove()">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (ev) => { if (ev.target === m) m.remove(); };
+}
+
+/* ════════════════════════════════════════════════════════════
    NEUER-VERTRAG-WIZARD
    Alle Schritte in einem Modal: Typ → Kunde → Anlagen → Konditionen → Submit
    ════════════════════════════════════════════════════════════ */
@@ -12666,6 +12929,12 @@ async function openKundeDetail(kundeId) {
           '<button class="btn" style="background:#10B981;color:#fff;border-color:#10B981" onclick="_openNewAnlageFromKundeDetail()">+ Neue Anlage</button>'+
         '</div>'+
         '<div id="kde-anlagen-list"><div style="padding:20px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 8px"></div>Lade Anlagen…</div></div>'+
+        // Rechnungen
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin:20px 0 8px;flex-wrap:wrap;gap:8px">'+
+          '<h4 style="margin:0;font-size:14px;color:var(--navy)">💶 Rechnungen <span id="kde-rch-count" style="font-weight:400;color:var(--txt3);font-size:11px">…</span></h4>'+
+          '<button class="btn" onclick="_kdeLoadRechnungen()" id="kde-rch-load-btn" style="font-size:11px">📥 Vom ERP laden</button>'+
+        '</div>'+
+        '<div id="kde-rechnungen-list"><div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px">Klick <strong>📥 Vom ERP laden</strong> um alle Rechnungen dieses Kunden zu sehen.</div></div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
         '<button class="btn" onclick="document.getElementById(\'kde-detail-modal\').remove()">Schließen</button>'+
@@ -12775,6 +13044,114 @@ function _renderKundeAnlagenList(anlagen) {
       '</div>'+
     '</div>'
   ).join('')+'</div>';
+}
+
+/* Rechnungen für den aktuell geöffneten Kunden vom ERP laden + anzeigen.
+   Benutzt den globalen Rechnungen-Cache falls für diese Firma schon geladen. */
+async function _kdeLoadRechnungen() {
+  const modal = document.getElementById('kde-detail-modal');
+  if (!modal) return;
+  const kunde = modal._kunde || {};
+  const firmaSlug = modal._firmaSlug;
+  const listEl = document.getElementById('kde-rechnungen-list');
+  const cntEl  = document.getElementById('kde-rch-count');
+  const btn    = document.getElementById('kde-rch-load-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ lade…'; }
+  if (listEl) listEl.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px"><div class="spinner" style="margin:0 auto 6px"></div>Lade Rechnungen…</div>';
+  try {
+    // Nur laden falls Cache veraltet ist
+    const cacheFresh = _rechnungenCache.firma === firmaSlug && _rechnungenCache.items.length && (Date.now() - _rechnungenCache.loadedAt) < 5*60*1000;
+    if (!cacheFresh) {
+      await _loadRechnungenFromERPSilent(firmaSlug);
+    }
+    const kundenNr = String(kunde.kundennummer || '');
+    const mine = (_rechnungenCache.items||[]).filter(r => String(r.kunde_nummer||'') === kundenNr);
+    if (cntEl) cntEl.textContent = '('+mine.length+')';
+    if (!mine.length) {
+      listEl.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px;background:var(--bg);border-radius:6px;border:1px dashed var(--bdr)">Keine Rechnungen für diesen Kunden im ERP.</div>';
+      return;
+    }
+    const fmt = (v) => Number(v||0).toLocaleString('de-DE', { minimumFractionDigits:2, maximumFractionDigits:2 });
+    listEl.innerHTML = '<div style="display:grid;gap:6px">'+mine.slice(0, 20).map(it => {
+      const statColor = it.status==='bezahlt' ? '#10b981'
+                      : it.status==='ueberfaellig' ? '#dc2626'
+                      : it.status==='storniert' ? '#6b7280'
+                      : '#ea580c';
+      const statLabel = it.status==='bezahlt' ? '🟢 bezahlt'
+                      : it.status==='ueberfaellig' ? '🔴 überfällig'
+                      : it.status==='storniert' ? '⚫ storniert'
+                      : '🟠 offen';
+      return '<div onclick="event.stopPropagation();_openRechnungDetail(\''+escapeHtml(it.id)+'\')" style="padding:8px 12px;background:var(--surf);border:1px solid var(--bdr);border-left:3px solid '+statColor+';border-radius:6px;cursor:pointer;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px">'+
+        '<div style="flex:1;min-width:140px">'+
+          '<div style="font-family:monospace;font-weight:600;color:var(--navy)">'+escapeHtml(String(it.nummer))+'</div>'+
+          '<div style="color:var(--txt3);font-size:10px">'+escapeHtml(it.datum||'?')+'</div>'+
+        '</div>'+
+        '<span style="background:'+statColor+';color:#fff;font-size:9px;padding:2px 6px;border-radius:4px;font-weight:600">'+statLabel+'</span>'+
+        '<div style="font-weight:600;color:var(--navy);min-width:90px;text-align:right">'+fmt(it.brutto)+' €</div>'+
+      '</div>';
+    }).join('')+'</div>'+
+    (mine.length > 20 ? '<div style="margin-top:6px;text-align:center;font-size:11px"><a href="#" onclick="event.preventDefault();document.getElementById(\'kde-detail-modal\').remove();switchView(\'rechnungen\');document.getElementById(\'rch-search\').value=\''+escapeHtml(kundenNr)+'\';_renderRechnungenList()" style="color:var(--navy)">… alle '+mine.length+' Rechnungen in 💶 Rechnungen-View</a></div>' : '');
+  } catch(e) {
+    listEl.innerHTML = '<div style="padding:14px;color:var(--err);font-size:11px">❌ '+escapeHtml(e.message)+'</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Neu laden'; }
+  }
+}
+
+/* Silent-Variante des Rechnungen-Loads (kein Toast, kein Render der Hauptliste) */
+async function _loadRechnungenFromERPSilent(firmaSlug) {
+  // Trigger den globalen Loader; danach ist _rechnungenCache befüllt
+  const btn = document.getElementById('rch-erp-btn');
+  if (btn) btn.disabled = true;
+  try {
+    // Versuche Pfade direkt — dupliziert ein wenig _loadRechnungenFromERP, vermeidet aber UI-Updates
+    const candidates = ['api/rechnungen', 'rechnungen', 'api/Rechnungen', 'api/invoice', 'api/invoices'];
+    let result = null;
+    for (const p of candidates) {
+      try { result = await erpFetch('/aufzug/'+firmaSlug+'/'+p); break; }
+      catch(e) { if (e.status === 401 || e.status === 403) throw e; }
+    }
+    if (!result) throw new Error('Kein ERP-Endpunkt für Rechnungen gefunden.');
+    let raw = Array.isArray(result) ? result : (result.content || result.items || result.data || []);
+    const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
+    const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
+    const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
+    const today = new Date().toISOString().slice(0,10);
+    const items = raw.map(r => {
+      const id = String(r.id || r.rechnungsId || r.invoiceId || '');
+      const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber || ('R-'+id);
+      const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate || r.created || '').toString().slice(0,10);
+      const faellig = (r.faelligkeitsdatum || r.faellig || r.dueDate || r.zahlungsziel || '').toString().slice(0,10);
+      const bezahltAm = (r.bezahltAm || r.zahldatum || r.paidAt || '').toString().slice(0,10);
+      const brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.summe || r.betrag || r.amountGross || r.brutto || 0);
+      const netto  = +(r.nettobetrag  || r.gesamtnettobetrag  || r.amountNet  || r.netto  || 0);
+      const kunde  = r.kunde || {};
+      const kundeName = kunde.firmenname || kunde.name || r.kundenname || '';
+      const kundeNr   = String(kunde.kundennummer || r.kundennummer || '');
+      const auftragId = r.auftragId || r.auftrag?.id || r.auftrag_id || '';
+      let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
+      const storniert = !!(r.storniert || r.canceled);
+      if (storniert) status = 'storniert';
+      else if (bezahltAm) status = 'bezahlt';
+      else if (status.includes('bezahlt') || status.includes('paid')) status = 'bezahlt';
+      else if (status.includes('storno')) status = 'storniert';
+      else if (faellig && faellig < today) status = 'ueberfaellig';
+      else status = 'offen';
+      return {
+        id, nummer: String(nr), datum, faellig, bezahltAm, brutto, netto,
+        kunde_name: kundeName, kunde_nummer: kundeNr,
+        auftrag_id: String(auftragId),
+        status,
+        _erpUrl: erpHost ? (erpHost + '/rechnungen/' + id) : '',
+        _erpAuftragUrl: (erpHost && auftragId) ? (erpHost + '/auftraege/' + auftragId) : '',
+        _raw: r,
+      };
+    });
+    items.sort((a,b) => String(b.datum||'').localeCompare(String(a.datum||'')));
+    _rechnungenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 function _openNewKontaktFromKundeDetail() {
