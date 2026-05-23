@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.73';
+const APP_VERSION = 'v3.74';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9950,8 +9950,9 @@ Deine Aufgabe: Erstelle einen eigenständigen NEUEN Wartungsvertrag für die in 
 REGELN:
 1. STRUKTUR übernehmen — gleiche Paragraphen-Reihenfolge (§ 1 Vertragsgegenstand, § 2 Wartungsleistungen, § 3 Vergütung, § 4 Laufzeit, § 5 Haftung, § 6 Sonstiges …), damit Vergleich Punkt-für-Punkt möglich ist.
 2. WORTLAUTE verändern — andere Formulierungen, formelle deutsche Geschäftssprache. NICHT 1:1 übernehmen, das wäre eine Urheberrechtsverletzung.
-3. KEINE produktspezifischen Leistungen oder Geräte-Namen aus dem Referenzvertrag übernehmen (z.B. "Konexion 10.3 GSM", "KONE EcoMod" usw.) — stattdessen neutral und allgemein formulieren ("Notrufgerät", "Anlage").
+3. KEINE produktspezifischen Begriffe, KEINE Marken- und Hersteller-Namen übernehmen (NICHT "KONE-Datenblatt", "Schindler 5500", "Konexion 10.3 GSM", "KONE EcoMod", "TK 5500", "OTIS GeN2" etc.) — IMMER neutral und generisch formulieren ("technische Dokumentation", "Notrufgerät", "Steuerung", "Anlage", "Hersteller-Datenblatt"). Markennamen sind tabu, auch in Klammern oder als Beispiel.
 4. KEINE DECKBLÄTTER, KEINE Marketing-Phrasen ("Dedicated to People Flow" etc.), keine Seiten "Über uns".
+4a. KEINE VERWEISE AUF ANLAGEN/ANHÄNGE/BEILAGEN (z.B. "siehe Anlage 1", "Anlage 4: KONE-Datenblatt", "§ 11 Anlagen und Bestandteile"). Der Vertrag muss STANDALONE sein — alle relevanten Inhalte stehen im Vertragstext selbst, keine externen Beilagen werden referenziert. Wenn der Referenzvertrag mit Anlagen arbeitet → die Inhalte direkt in den entsprechenden Paragraphen integrieren, NICHT als "Anlage X" auslagern.
 5. EIGENE LEISTUNGEN der Aszendio/Aufzugshandwerk korrekt einsetzen — aus den Vertragsdaten (JSON) Aufzug-Liste, Jahresumsatz, Abrechnungs-Typ/Turnus, Wartungen p.a., Stundensatz etc.
 6. Markdown-Format: # für Vertragstitel (sehr knapp), ## für jeden Paragraph (z.B. "## § 1 Vertragsgegenstand"). Aufzug-Liste als nummerierte Auflistung.
 7. Keine Anmerkungen, kein Vorwort, keine Code-Blöcke, keine \`\`\`-Fences — nur den fertigen Vertragstext.
@@ -10008,8 +10009,9 @@ VERWENDE AUSSCHLIESSLICH DIESE PLATZHALTER (genaue Schreibweise mit doppelten ge
 REGELN:
 1. STRUKTUR übernehmen — gleiche Paragraphen-Reihenfolge (§ 1 Vertragsgegenstand, § 2 Wartungsleistungen, § 3 Vergütung, § 4 Laufzeit, § 5 Haftung, § 6 Sonstiges …).
 2. WORTLAUTE verändern — eigene formelle deutsche Geschäftssprache. NICHT 1:1 abschreiben (Urheberrecht).
-3. KEINE produktspezifischen Begriffe übernehmen ("Konexion 10.3 GSM", "KONE EcoMod" usw.) — stattdessen neutral ("Notrufgerät", "Anlage").
+3. KEINE produktspezifischen Begriffe, KEINE Marken- und Hersteller-Namen übernehmen (NICHT "KONE-Datenblatt", "Schindler 5500", "Konexion 10.3 GSM", "KONE EcoMod", "TK 5500", "OTIS GeN2" etc.) — IMMER neutral und generisch ("technische Dokumentation", "Notrufgerät", "Steuerung", "Anlage", "Hersteller-Datenblatt").
 4. KEINE DECKBLÄTTER, keine Marketing-Phrasen, keine "Über uns".
+4a. KEINE VERWEISE AUF ANLAGEN/ANHÄNGE/BEILAGEN (z.B. "siehe Anlage 1", "Anlage 4: KONE-Datenblatt", "§ 11 Anlagen und Bestandteile"). Der Vertrag muss STANDALONE sein — alle relevanten Inhalte stehen im Vertragstext selbst, keine externen Beilagen werden referenziert. Wenn Inhalte wie Leistungsbeschreibung gebraucht werden → direkt in den entsprechenden Paragraphen integrieren, NICHT als "Anlage X" auslagern.
 5. PLATZHALTER statt konkreter Werte: Statt "Mustermann Hausverwaltung GmbH" → {{kunde_name}}. Statt "5 Aufzüge" → {{aufzug_anzahl}}. Statt "1.440 € netto/Jahr" → {{jahresumsatz}}.
 6. Markdown-Format: # für Vertragstitel (sehr knapp, optional mit {{vertrag_titel}}), ## für jeden Paragraph. Aufzug-Liste über {{aufzug_liste}} (NICHT händisch Aufzüge auflisten — der Platzhalter wird zur Liste).
 7. Keine Anmerkungen, kein Vorwort, keine Code-Blöcke, keine \`\`\`-Fences — nur die fertige Vorlage.
@@ -12792,6 +12794,12 @@ async function openNeuerVertragWizard() {
           '<div style="font-weight:600;margin-bottom:6px">7. Bezeichnung (optional)</div>'+
           '<input id="nwv-titel" type="text" placeholder="z.B. Wartungsvertrag 2026" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
         '</div>'+
+        // Vorgangs-Hinweise (optional, KI-spezifisch)
+        '<div style="margin-bottom:14px">'+
+          '<div style="font-weight:600;margin-bottom:6px">8. Zusätzliche Hinweise <span style="font-weight:400;color:var(--txt3);font-size:11px">— optional, nur für DIESEN Vertrag</span></div>'+
+          '<textarea id="nwv-vorgang-extra" placeholder="z.B. „Laufzeit ausnahmsweise nur 24 Monate", „Kündigungsfrist 3 Monate statt 6", „Notrufpauschale entfällt" — werden an den KI-Prompt angehängt bzw. lösen eine KI-Politur aus bei Platzhalter-Modus." style="width:100%;min-height:60px;padding:8px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;line-height:1.4"></textarea>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:4px">💡 Im Platzhalter-Modus: Diese Hinweise lösen optional eine KI-Politur des fertigen Textes aus — nur wenn das Feld gefüllt ist.</div>'+
+        '</div>'+
         // Vorschau Nummer
         '<div style="padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534;margin-bottom:12px"><strong>📋 Vertragsnummer wird generiert beim Erstellen:</strong> <code id="nwv-nummer-preview" style="font-family:monospace">…</code></div>'+
         '<div style="padding:8px 12px;background:var(--bg);border:1px dashed var(--bdr);border-radius:6px;font-size:11px;color:var(--txt3);line-height:1.5">💡 <strong>Vorschau-Button unten</strong> erzeugt das fertige PDF mit deinen Daten <em>ohne</em> den Vertrag zu speichern. So siehst du das Ergebnis, bevor du erstellst.</div>'+
@@ -13062,6 +13070,7 @@ async function _nwvSubmit() {
   const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
   const laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
   const titel = (document.getElementById('nwv-titel').value || '').trim();
+  const vorgangExtra = (document.getElementById('nwv-vorgang-extra')?.value || '').trim();
   const sel = modal._selectedAnlagen || [];
   if (!kundeId) return toast('Bitte Kunden wählen.','err');
   if (!sel.length) return toast('Bitte mindestens eine Anlage wählen.','err');
@@ -13128,7 +13137,7 @@ async function _nwvSubmit() {
       const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
       if (vorlage) {
         pdfBlob = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, {
-          typ, turnus, wpa, start, laufzeit, titel, nummer
+          typ, turnus, wpa, start, laufzeit, titel, nummer, vorgangExtra
         });
         if (pdfBlob) {
           if (btn) btn.textContent = '☁ speichere PDF…';
@@ -13186,16 +13195,44 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
   };
   const tpl = vorlage.fields.vorlage_text || '';
   const pdfMeta = vorlage.fields.quell_pdf && vorlage.fields.quell_pdf[0];
+  const vorgangExtra = (opts.vorgangExtra||'').trim();
+  const vorlageExtra = (vorlage.fields.ki_prompt_extra||'').trim();
   let finalText = '';
   if (pdfModus === 'ki' && pdfMeta && APP_KEYS.anthropicKey) {
+    // KI-Modus: voller Prompt mit Vorlage-Extra + Vorgangs-Extra
     const pdfResp = await fetch(pdfMeta.url);
     const blob = await pdfResp.blob();
     const pdfFile = new File([blob], pdfMeta.filename||'referenz.pdf', { type:'application/pdf' });
-    const ki = (vorlage.fields.ki_prompt || VORLAGE_DEFAULT_VERGLEICH_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
-    finalText = await callClaude(pdfFile, ki, { maxTokens: 8000 });
+    const promptBasis = vorlage.fields.ki_prompt || VORLAGE_DEFAULT_VERGLEICH_PROMPT;
+    let prompt = promptBasis;
+    if (vorlageExtra) prompt += '\n\nZUSÄTZLICHE HINWEISE DIESER VORLAGE:\n' + vorlageExtra;
+    if (vorgangExtra) prompt += '\n\nZUSÄTZLICHE HINWEISE DIESES VORGANGS:\n' + vorgangExtra;
+    prompt += '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
+    finalText = await callClaude(pdfFile, prompt, { maxTokens: 8000 });
     finalText = String(finalText).replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
   } else if (tpl.trim()) {
+    // Platzhalter-Modus
     finalText = _ersetzePlatzhalter(tpl, vars);
+    // Wenn Vorgangs-Hinweise gefüllt sind → optionale KI-Politur
+    if (vorgangExtra && APP_KEYS.anthropicKey) {
+      try {
+        let politurPrompt = 'Du erhältst einen Wartungsvertragstext in Markdown und konkrete Anweisungen zur Anpassung. Setze die Anweisungen behutsam um — Struktur, Paragraphen-Reihenfolge und Wortlaute behalten, NUR die in den Anweisungen genannten Punkte ändern. KEINE Markennamen einfügen, KEINE Verweise auf Anlagen. Antworte NUR mit dem überarbeiteten Markdown, ohne Erklärung, ohne Code-Fences.';
+        if (vorlageExtra) politurPrompt += '\n\nALLGEMEINE HINWEISE DIESER VORLAGE:\n' + vorlageExtra;
+        politurPrompt += '\n\nKONKRETE ANWEISUNGEN DIESES VORGANGS:\n' + vorgangExtra;
+        politurPrompt += '\n\n--- VERTRAGSTEXT ---\n' + finalText;
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:6000, messages:[{ role:'user', content: politurPrompt }] }),
+        });
+        if (resp.ok) {
+          const j = await resp.json();
+          let polished = j.content[0].text;
+          polished = polished.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+          if (polished) finalText = polished;
+        }
+      } catch(e) { console.warn('[Wizard-Politur] fehlgeschlagen:', e.message); }
+    }
   } else {
     throw new Error('Vorlage hat weder Markdown-Text noch nutzbares KI-PDF.');
   }
@@ -13276,6 +13313,7 @@ async function _nwvShowPreview() {
   const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
   const laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
   const titel = (document.getElementById('nwv-titel').value || '').trim();
+  const vorgangExtra = (document.getElementById('nwv-vorgang-extra')?.value || '').trim();
   const sel = modal._selectedAnlagen || [];
 
   if (!kunde) return toast('Bitte erst Kunden wählen.','err');
@@ -13284,67 +13322,24 @@ async function _nwvShowPreview() {
   const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
   if (!vorlage) return toast('Vorlage nicht gefunden.','err');
 
-  const tpl       = vorlage.fields.vorlage_text || '';
-  const kiPrompt  = vorlage.fields.ki_prompt || '';
-  const pdfMeta   = vorlage.fields.quell_pdf && vorlage.fields.quell_pdf[0];
-
-  // Anlagen + Vars (echte Daten)
   const anlagenAll = modal._anlagen || [];
   const chosen = anlagenAll
     .map((a, i) => ({ a, i }))
     .filter(({ i }) => sel.includes(String(i)))
-    .map(({ a }) => a);
-  const aufzugZeilen = chosen.map((a, i) =>
-    (i+1)+'. '+(_buildAnlageAdresse(a)||'?')+
-    (a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+
-    (a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')
-  );
-  const vars = {
-    kunde_name:         kunde.firmenname || '',
-    kunde_nummer:       String(kunde.kundennummer||''),
-    kunde_adresse:      [kunde.strasse, kunde.plz, kunde.ort].filter(Boolean).join(', '),
-    kontakt_name:       '',
-    kontakt_email:      kunde.email || '',
-    kontakt_telefon:    kunde.telefon || '',
-    vertrag_titel:      titel || ('Wartungsvertrag '+(typ==='einzel'?'Einzel':'Sammel')+' · '+(kunde.firmenname||'')),
-    abrechnung_typ:     typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
-    abrechnung_turnus:  turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
-    wartungen_pro_jahr: String(wpa),
-    aufzug_liste:       aufzugZeilen.join('\n'),
-    aufzug_anzahl:      String(chosen.length),
-    jahresumsatz:       '(wird beim Erstellen berechnet)',
-    turnus_betrag:      '(wird beim Erstellen berechnet)',
-    stundensatz:        '',
-    gueltig_bis:        '',
-    datum_heute:        new Date().toLocaleDateString('de-DE'),
-    firma_name:         'Aszendio Aufzugservice GmbH',
-    vertragsnummer:     document.getElementById('nwv-nummer-preview')?.textContent || '',
-    start_datum:        start,
-    laufzeit_monate:    String(laufzeit),
-  };
+    .map(({ a }) => a)
+    .map(a => ({ ...a, adresse: _buildAnlageAdresse(a) }));
+  const nummer = document.getElementById('nwv-nummer-preview')?.textContent || '';
   try {
-    let finalText = '';
-    if (pdfModus === 'ki' && pdfMeta) {
-      // KI-Vorschau analog zu _previewVorlage
-      if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
-      _showVorlagenWorking('🤖 KI generiert Vorschau aus Referenz-PDF + Wizard-Daten… (bis zu 60 Sekunden)');
-      try {
-        const pdfResp = await fetch(pdfMeta.url);
-        const blob = await pdfResp.blob();
-        const pdfFile = new File([blob], pdfMeta.filename||'referenz.pdf', { type:'application/pdf' });
-        const ki = (kiPrompt || VORLAGE_DEFAULT_VERGLEICH_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
-        finalText = await callClaude(pdfFile, ki, { maxTokens: 8000 });
-        finalText = String(finalText).replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
-      } finally { _closeVorlagenWorking(); }
+    if (pdfModus === 'ki' || vorgangExtra) {
+      _showVorlagenWorking('🤖 KI arbeitet (bis zu 60 Sek.)…');
     } else {
-      // Platzhalter-Modus
-      if (!tpl.trim()) return toast('Vorlage hat keinen Markdown-Text. Wechsle zu "KI-Generierung" (wenn Referenz-PDF vorhanden) oder ergänze Text in 📑 Vertragsvorlagen.','err');
-      finalText = _ersetzePlatzhalter(tpl, vars);
+      toast('📄 baue PDF…','');
     }
-    toast('📄 baue PDF…','');
-    const pdfBlob = await _buildVertragPDFBlob(finalText, vars);
-    // Wiederverwende das bestehende Vorlagen-Vorschau-Modal
-    _showVorlagenPreview(pdfBlob, (vars.kunde_name||'')+' · '+(pdfModus==='ki'?'KI-Generierung':'Platzhalter-Ersetzung'));
+    const pdfBlob = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosen, {
+      typ, turnus, wpa, start, laufzeit, titel, nummer, vorgangExtra
+    });
+    _closeVorlagenWorking();
+    _showVorlagenPreview(pdfBlob, (kunde.firmenname||'')+' · '+(pdfModus==='ki'?'KI-Generierung':vorgangExtra?'Platzhalter+KI-Politur':'Platzhalter-Ersetzung'));
   } catch(e) {
     console.error('Wizard-Vorschau:', e);
     _closeVorlagenWorking();
