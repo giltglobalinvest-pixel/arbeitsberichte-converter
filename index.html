@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.70';
+const APP_VERSION = 'v3.71';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12643,7 +12643,7 @@ async function openNeuerVertragWizard() {
         // Vorlage (gefiltert nach Typ)
         '<div style="margin-bottom:14px">'+
           '<div style="font-weight:600;margin-bottom:6px">4. Vorlage</div>'+
-          '<select id="nwv-vorlage" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+          '<select id="nwv-vorlage" onchange="_nwvSyncPdfModeWithVorlage()" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
             '<option value="">– bitte wählen (nach Typ gefiltert) –</option>'+
           '</select>'+
           '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Vorlagen werden nach gewähltem Typ (Einzel/Sammel) gefiltert. Falls keine vorhanden: Admin → 📑 Vertragsvorlagen.</div>'+
@@ -12677,14 +12677,7 @@ async function openNeuerVertragWizard() {
         '</div>'+
         // Vorschau Nummer
         '<div style="padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534;margin-bottom:12px"><strong>📋 Vertragsnummer wird generiert beim Erstellen:</strong> <code id="nwv-nummer-preview" style="font-family:monospace">…</code></div>'+
-        // Vorschau-Container (initial leer/versteckt)
-        '<div id="nwv-preview-section" style="display:none;margin-top:12px">'+
-          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
-            '<strong style="font-size:13px;color:var(--navy)">👁 Vorschau (Platzhalter ersetzt)</strong>'+
-            '<button class="btn" onclick="document.getElementById(\'nwv-preview-section\').style.display=\'none\'" style="padding:4px 8px;font-size:11px">× ausblenden</button>'+
-          '</div>'+
-          '<div id="nwv-preview-out" style="max-height:320px;overflow-y:auto;background:#fafafa;border:1px solid var(--bdr);border-radius:6px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;white-space:pre-wrap"></div>'+
-        '</div>'+
+        '<div style="padding:8px 12px;background:var(--bg);border:1px dashed var(--bdr);border-radius:6px;font-size:11px;color:var(--txt3);line-height:1.5">💡 <strong>Vorschau-Button unten</strong> erzeugt das fertige PDF mit deinen Daten <em>ohne</em> den Vertrag zu speichern. So siehst du das Ergebnis, bevor du erstellst.</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'nwv-modal\').remove()">Abbrechen</button>'+
@@ -12718,9 +12711,48 @@ function _nwvUpdateVorlagen() {
   }
   sel.disabled = false;
   sel.innerHTML = (filtered.length > 1 ? '<option value="">– bitte wählen –</option>' : '') +
-    filtered.map(v => '<option value="'+escapeHtml(v.id)+'">'+escapeHtml(v.fields.name||'(ohne Name)')+'</option>').join('');
+    filtered.map(v => {
+      const hasText = !!(v.fields.vorlage_text && v.fields.vorlage_text.trim());
+      const hasPdf  = !!(v.fields.quell_pdf && v.fields.quell_pdf[0]);
+      const kind = hasText && hasPdf ? ' [Text+PDF]' : hasText ? ' [Text]' : hasPdf ? ' [KI+PDF]' : ' [leer]';
+      return '<option value="'+escapeHtml(v.id)+'">'+escapeHtml(v.fields.name||'(ohne Name)')+kind+'</option>';
+    }).join('');
   // Auto-Select wenn nur eine Option
   if (filtered.length === 1) sel.value = filtered[0].id;
+  // PDF-Modus an Vorlage anpassen
+  _nwvSyncPdfModeWithVorlage();
+}
+
+/* Wenn Vorlage NUR ein Referenz-PDF + KI-Prompt hat (kein Markdown-Text),
+   forciere KI-Modus. Hat sie nur Markdown ohne PDF, forciere Platzhalter. */
+function _nwvSyncPdfModeWithVorlage() {
+  const modal = document.getElementById('nwv-modal');
+  const sel   = document.getElementById('nwv-vorlage');
+  if (!modal || !sel || !sel.value) return;
+  const v = (modal._vorlagen||[]).find(x => x.id === sel.value);
+  if (!v) return;
+  const hasText = !!(v.fields.vorlage_text && v.fields.vorlage_text.trim());
+  const hasPdf  = !!(v.fields.quell_pdf && v.fields.quell_pdf[0]);
+  const radioPlatz = document.querySelector('input[name="nwv-pdf"][value="platzhalter"]');
+  const radioKi    = document.querySelector('input[name="nwv-pdf"][value="ki"]');
+  const lblPlatz   = document.getElementById('nwv-pdf-platz-lbl');
+  const lblKi      = document.getElementById('nwv-pdf-ki-lbl');
+  // Beide Optionen erst wieder aktivieren
+  if (radioPlatz) radioPlatz.disabled = false;
+  if (radioKi)    radioKi.disabled = false;
+  if (lblPlatz)   { lblPlatz.style.opacity = 1; lblPlatz.style.pointerEvents=''; }
+  if (lblKi)      { lblKi.style.opacity = 1;    lblKi.style.pointerEvents=''; }
+  if (hasPdf && !hasText) {
+    // Nur KI möglich
+    if (radioKi) { radioKi.checked = true; }
+    if (radioPlatz) radioPlatz.disabled = true;
+    if (lblPlatz) { lblPlatz.style.opacity = 0.4; lblPlatz.style.pointerEvents='none'; lblPlatz.title='Diese Vorlage hat keinen Markdown-Text — nur KI-Generierung möglich.'; }
+  } else if (hasText && !hasPdf) {
+    // Nur Platzhalter möglich (kein PDF für KI)
+    if (radioPlatz) { radioPlatz.checked = true; }
+    if (radioKi) radioKi.disabled = true;
+    if (lblKi) { lblKi.style.opacity = 0.4; lblKi.style.pointerEvents='none'; lblKi.title='Diese Vorlage hat kein Referenz-PDF — keine KI-Generierung möglich.'; }
+  }
 }
 
 /* Filtert die Kunden-Liste live nach dem Suchtext. Klick auf Eintrag wählt aus. */
@@ -12979,23 +13011,20 @@ async function _nwvSubmit() {
   }
 }
 
-/* Vorschau im Wizard: Vorlage-Text holen + Platzhalter mit den aktuellen Wizard-Eingaben ersetzen.
-   Keine DB-Schreibung — der User sieht, was das PDF enthalten würde, BEVOR er erstellt. */
+/* Vorschau im Wizard: baut ein echtes PDF mit den Wizard-Daten.
+   - PDF-Modus "Platzhalter": Markdown-Text aus Vorlage + Platzhalter-Ersetzung
+   - PDF-Modus "KI": Referenz-PDF + KI-Prompt + Wizard-Daten → Claude generiert Vertrag
+   PDF wird in einem iframe-Modal angezeigt — keine DB-Schreibung. */
 async function _nwvShowPreview() {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
-  const out = document.getElementById('nwv-preview-out');
-  const sec = document.getElementById('nwv-preview-section');
-  if (!out || !sec) return;
-  sec.style.display = 'block';
-  out.textContent = '⏳ Vorschau wird generiert…';
-
-  // Daten sammeln (gleich wie im Submit, aber ohne Validierung-Fehler-Toasts)
+  // Daten sammeln
   const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
   const kundeIdxStr = document.getElementById('nwv-kunde-id').value;
   const kundeIdx = parseInt(kundeIdxStr, 10);
   const kunde = (_kundenCache.items||[])[kundeIdx];
   const vorlageId = document.getElementById('nwv-vorlage')?.value || '';
+  const pdfModus = document.querySelector('input[name="nwv-pdf"]:checked')?.value || 'platzhalter';
   const wpa = +document.getElementById('nwv-wpa').value || 4;
   const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
   const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
@@ -13003,22 +13032,22 @@ async function _nwvShowPreview() {
   const titel = (document.getElementById('nwv-titel').value || '').trim();
   const sel = modal._selectedAnlagen || [];
 
-  if (!kunde) { out.textContent = '⚠ Wähle erst einen Kunden.'; return; }
-  if (!sel.length) { out.textContent = '⚠ Wähle erst eine oder mehrere Anlagen.'; return; }
-  if (!vorlageId) { out.textContent = '⚠ Wähle erst eine Vorlage. Falls keine vorhanden ist, lege sie in 📑 Vertragsvorlagen an.'; return; }
-
+  if (!kunde) return toast('Bitte erst Kunden wählen.','err');
+  if (!sel.length) return toast('Bitte erst Anlagen wählen.','err');
+  if (!vorlageId) return toast('Bitte erst Vorlage wählen.','err');
   const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
-  if (!vorlage) { out.textContent = '⚠ Vorlage nicht gefunden im Cache.'; return; }
-  const tpl = vorlage.fields.vorlage_text || '';
-  if (!tpl.trim()) { out.textContent = '⚠ Die Vorlage hat keinen Text. Bitte unter 📑 Vertragsvorlagen den Text eintragen.'; return; }
+  if (!vorlage) return toast('Vorlage nicht gefunden.','err');
 
-  // Anlagen-Daten sammeln (aus dem aktuellen Modal._anlagen)
+  const tpl       = vorlage.fields.vorlage_text || '';
+  const kiPrompt  = vorlage.fields.ki_prompt || '';
+  const pdfMeta   = vorlage.fields.quell_pdf && vorlage.fields.quell_pdf[0];
+
+  // Anlagen + Vars (echte Daten)
   const anlagenAll = modal._anlagen || [];
   const chosen = anlagenAll
     .map((a, i) => ({ a, i }))
     .filter(({ i }) => sel.includes(String(i)))
     .map(({ a }) => a);
-  // Vorlage-Vars bauen — analog zu _buildVertragVars, aber direkt aus Wizard-Daten
   const aufzugZeilen = chosen.map((a, i) =>
     (i+1)+'. '+(_buildAnlageAdresse(a)||'?')+
     (a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+
@@ -13047,16 +13076,34 @@ async function _nwvShowPreview() {
     start_datum:        start,
     laufzeit_monate:    String(laufzeit),
   };
-  const text = _ersetzePlatzhalter(tpl, vars);
-  // Zeige als pre-wrap Text (mit Hinweis welche Platzhalter ggf. nicht ersetzt sind)
-  const unresolved = (text.match(/\{\{(\w+)\}\}/g) || []);
-  let html = '<div style="background:#fff;border:1px solid var(--bdr);border-radius:4px;padding:14px;font-family:Georgia,serif;font-size:12px;line-height:1.7;white-space:pre-wrap">'+escapeHtml(text)+'</div>';
-  if (unresolved.length) {
-    html += '<div style="margin-top:8px;padding:8px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;font-size:10px;color:#92400e">⚠ Platzhalter ohne Werte: '+escapeHtml([...new Set(unresolved)].join(', '))+' — diese werden beim Erstellen vom System nachgefüllt (z.B. Beträge) oder bleiben leer.</div>';
+  try {
+    let finalText = '';
+    if (pdfModus === 'ki' && pdfMeta) {
+      // KI-Vorschau analog zu _previewVorlage
+      if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+      _showVorlagenWorking('🤖 KI generiert Vorschau aus Referenz-PDF + Wizard-Daten… (bis zu 60 Sekunden)');
+      try {
+        const pdfResp = await fetch(pdfMeta.url);
+        const blob = await pdfResp.blob();
+        const pdfFile = new File([blob], pdfMeta.filename||'referenz.pdf', { type:'application/pdf' });
+        const ki = (kiPrompt || VORLAGE_DEFAULT_VERGLEICH_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
+        finalText = await callClaude(pdfFile, ki, { maxTokens: 8000 });
+        finalText = String(finalText).replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+      } finally { _closeVorlagenWorking(); }
+    } else {
+      // Platzhalter-Modus
+      if (!tpl.trim()) return toast('Vorlage hat keinen Markdown-Text. Wechsle zu "KI-Generierung" (wenn Referenz-PDF vorhanden) oder ergänze Text in 📑 Vertragsvorlagen.','err');
+      finalText = _ersetzePlatzhalter(tpl, vars);
+    }
+    toast('📄 baue PDF…','');
+    const pdfBlob = await _buildVertragPDFBlob(finalText, vars);
+    // Wiederverwende das bestehende Vorlagen-Vorschau-Modal
+    _showVorlagenPreview(pdfBlob, (vars.kunde_name||'')+' · '+(pdfModus==='ki'?'KI-Generierung':'Platzhalter-Ersetzung'));
+  } catch(e) {
+    console.error('Wizard-Vorschau:', e);
+    _closeVorlagenWorking();
+    toast('❌ Vorschau-Fehler: '+e.message.slice(0,300),'err');
   }
-  out.innerHTML = html;
-  // Zur Vorschau scrollen
-  setTimeout(() => sec.scrollIntoView({ behavior:'smooth', block:'nearest' }), 100);
 }
 
 function _renderKundenViewList() {
