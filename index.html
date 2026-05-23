@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.72';
+const APP_VERSION = 'v3.73';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12117,21 +12117,29 @@ function _renderWartungsvertraegeList() {
   (items.length > 500 ? '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:11px">… 500 von '+items.length+' Verträgen werden angezeigt. Bitte Suche eingrenzen.</div>' : '');
 }
 
-/* App-Vertrag öffnen. Bei Legacy-Verträgen (ohne Vertragsnummer) zeigen wir vorher
-   ein kleines Migrate-Modal mit Optionen: Migrieren / Detail öffnen / Löschen. */
+/* App-Vertrag öffnen:
+   - Legacy-Vertrag → Choice-Modal (migrieren / öffnen / löschen)
+   - Hat PDF-Attachment → PDF-Viewer (Standard für Wizard-erstellte Verträge)
+   - Sonst → altes Edit-Modal (Fallback) */
 async function _openWartungsvertragDetail(recId) {
   const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Vertrag nicht gefunden.','err');
   const f = rec.fields || {};
-  const plId = f.preisliste_id;
+  const plId = f.preisliste_id || '';
   const isLegacy = !f.vertragsnummer;
   if (isLegacy) {
-    // Mini-Modal für Legacy-Vertrag: Migrate / Open / Delete
     _openLegacyVertragChoice(rec);
     return;
   }
+  // Hat das Vertrag-PDF-Feld einen Attachment? → PDF zeigen
+  const att = Array.isArray(f.vertrag_pdf) && f.vertrag_pdf[0];
+  if (att && att.url) {
+    _showAppVertragPDF(recId, att.url, f.kunde_name || '');
+    return;
+  }
+  // Kein PDF → altes Detail-Modal als Fallback
   if (typeof openVertragDetail === 'function') {
-    openVertragDetail(recId, plId||'');
+    openVertragDetail(recId, plId);
   } else {
     toast('Detail-Ansicht nicht verfügbar.','err');
   }
@@ -13112,14 +13120,140 @@ async function _nwvSubmit() {
     const rec = await atWrite('Vertraege', payload);
     if (!rec || !rec.id) throw new Error('Vertrag konnte nicht angelegt werden.');
     toast('✅ Vertrag '+nummer+' angelegt.','ok');
+
+    // PDF direkt mitgenerieren + hochladen — damit der User beim Klick sofort das PDF sieht
+    if (btn) btn.textContent = '📄 generiere PDF…';
+    let pdfBlob = null;
+    try {
+      const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
+      if (vorlage) {
+        pdfBlob = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, {
+          typ, turnus, wpa, start, laufzeit, titel, nummer
+        });
+        if (pdfBlob) {
+          if (btn) btn.textContent = '☁ speichere PDF…';
+          const fname = 'Wartungsvertrag-'+(kunde.firmenname||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+          await atBlobUpload(rec.id, 'vertrag_pdf', pdfBlob, fname, 'application/pdf');
+          toast('📄 PDF generiert + gespeichert','ok');
+        }
+      }
+    } catch(pdfErr) {
+      console.warn('[Wizard] PDF-Gen/Save fehlgeschlagen:', pdfErr);
+      toast('⚠ Vertrag erstellt, aber PDF konnte nicht generiert werden: '+(pdfErr.message||'?').slice(0,200), 'err');
+    }
+
     modal.remove();
-    // Liste neu laden — kein Auto-Open des Detail-Modals mehr (war doppelt mit Wizard-Eingaben).
-    // Der User landet in der Liste und sieht den neuen Vertrag oben.
     await renderWartungsvertraegeView({ force:true });
+    // Wenn PDF erfolgreich generiert → direkt im Viewer öffnen
+    if (pdfBlob) _showAppVertragPDF(rec.id, pdfBlob, kunde.firmenname || '');
   } catch(e) {
     console.error('createVertrag:', e);
     toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Vertrag erstellen'; }
+  }
+}
+
+/* Erzeugt einen PDF-Blob für den Wizard. Wiederverwendet die gleiche Logik wie
+   _nwvShowPreview, aber gibt nur den Blob zurück (kein UI-Modal). */
+async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, opts) {
+  const aufzugZeilen = chosenAnlagen.map((a, i) =>
+    (i+1)+'. '+(a.adresse||'?')+
+    (a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+
+    (a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')
+  );
+  const vars = {
+    kunde_name:         kunde.firmenname || '',
+    kunde_nummer:       String(kunde.kundennummer||''),
+    kunde_adresse:      [kunde.strasse, kunde.plz, kunde.ort].filter(Boolean).join(', '),
+    kontakt_name:       '',
+    kontakt_email:      kunde.email || '',
+    kontakt_telefon:    kunde.telefon || '',
+    vertrag_titel:      opts.titel || ('Wartungsvertrag '+(opts.typ==='einzel'?'Einzel':'Sammel')+' · '+(kunde.firmenname||'')),
+    abrechnung_typ:     opts.typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
+    abrechnung_turnus:  opts.turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
+    wartungen_pro_jahr: String(opts.wpa),
+    aufzug_liste:       aufzugZeilen.join('\n'),
+    aufzug_anzahl:      String(chosenAnlagen.length),
+    jahresumsatz:       '',
+    turnus_betrag:      '',
+    stundensatz:        '',
+    gueltig_bis:        '',
+    datum_heute:        new Date().toLocaleDateString('de-DE'),
+    firma_name:         'Aszendio Aufzugservice GmbH',
+    vertragsnummer:     opts.nummer || '',
+    start_datum:        opts.start || '',
+    laufzeit_monate:    String(opts.laufzeit||12),
+  };
+  const tpl = vorlage.fields.vorlage_text || '';
+  const pdfMeta = vorlage.fields.quell_pdf && vorlage.fields.quell_pdf[0];
+  let finalText = '';
+  if (pdfModus === 'ki' && pdfMeta && APP_KEYS.anthropicKey) {
+    const pdfResp = await fetch(pdfMeta.url);
+    const blob = await pdfResp.blob();
+    const pdfFile = new File([blob], pdfMeta.filename||'referenz.pdf', { type:'application/pdf' });
+    const ki = (vorlage.fields.ki_prompt || VORLAGE_DEFAULT_VERGLEICH_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
+    finalText = await callClaude(pdfFile, ki, { maxTokens: 8000 });
+    finalText = String(finalText).replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+  } else if (tpl.trim()) {
+    finalText = _ersetzePlatzhalter(tpl, vars);
+  } else {
+    throw new Error('Vorlage hat weder Markdown-Text noch nutzbares KI-PDF.');
+  }
+  return await _buildVertragPDFBlob(finalText, vars);
+}
+
+/* App-Vertrag-PDF-Viewer: zeigt das gespeicherte PDF in iframe.
+   Buttons: Neu generieren, Bearbeiten (öffnet altes Edit-Modal), Herunterladen. */
+function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
+  const old = document.getElementById('app-vt-pdf-modal'); if (old) old.remove();
+  const url = (typeof pdfBlobOrUrl === 'string') ? pdfBlobOrUrl : URL.createObjectURL(pdfBlobOrUrl);
+  const modal = document.createElement('div');
+  modal.id = 'app-vt-pdf-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10300;display:flex;align-items:center;justify-content:center;padding:12px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:1000px;width:100%;height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.6)">'+
+      '<div style="padding:14px 18px;background:#10b981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'+
+        '<span>📄 Wartungsvertrag · '+escapeHtml(kundeName||'')+'</span>'+
+        '<button onclick="document.getElementById(\'app-vt-pdf-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="flex:1;background:#525252;overflow:hidden">'+
+        '<iframe src="'+url+'" style="width:100%;height:100%;border:none;background:#fff"></iframe>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;flex-shrink:0">'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn" onclick="document.getElementById(\'app-vt-pdf-modal\').remove()">Schließen</button>'+
+          '<a class="btn" href="'+url+'" download="Wartungsvertrag.pdf" style="text-decoration:none">📥 Herunterladen</a>'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn" onclick="_editAppVertragRaw(\''+escapeHtml(recId)+'\')" title="Konditionen ändern / Anlagen verwalten">⚙ Konditionen bearbeiten</button>'+
+          '<button class="btn prim" style="background:#4F46E5;border-color:#4F46E5" onclick="_regenAppVertragPDF(\''+escapeHtml(recId)+'\')">🔄 Neu generieren</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+}
+
+/* Konditionen-Editor öffnen (das alte openVertragDetail) */
+function _editAppVertragRaw(recId) {
+  document.getElementById('app-vt-pdf-modal')?.remove();
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  const plId = (rec && rec.fields && rec.fields.preisliste_id) || '';
+  if (typeof openVertragDetail === 'function') {
+    openVertragDetail(recId, plId);
+  } else {
+    toast('Detail-Editor nicht verfügbar.','err');
+  }
+}
+
+/* Neu generieren: öffnet das bestehende Generator-Modal */
+function _regenAppVertragPDF(recId) {
+  document.getElementById('app-vt-pdf-modal')?.remove();
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  const plId = (rec && rec.fields && rec.fields.preisliste_id) || '';
+  if (typeof openVertragGenerator === 'function') {
+    openVertragGenerator(recId, plId);
+  } else {
+    toast('Generator nicht verfügbar.','err');
   }
 }
 
