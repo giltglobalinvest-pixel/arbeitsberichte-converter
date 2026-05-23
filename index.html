@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.66';
+const APP_VERSION = 'v3.67';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12278,46 +12278,19 @@ async function _loadRechnungenFromERP() {
       throw new Error('Kein ERP-Endpunkt gefunden. Probierte: '+candidates.join(', ')+'. Letzter Fehler: '+(lastErr && lastErr.message || '?').slice(0,200));
     }
     let raw = Array.isArray(result) ? result : (result.content || result.items || result.data || []);
-    if (raw[0]) console.log('[Rechnungen] Erste Rechnung — verfügbare Felder:', Object.keys(raw[0]));
+    if (raw[0]) {
+      console.log('[Rechnungen] Erste 3 Rechnungen — Top-Level-Felder:', Object.keys(raw[0]));
+      console.log('[Rechnungen] Sample 1:', raw[0]);
+      if (raw[1]) console.log('[Rechnungen] Sample 2:', raw[1]);
+      if (raw[2]) console.log('[Rechnungen] Sample 3:', raw[2]);
+    }
     // Firma-Daten für URL-Bauen
     const fm = (_firmenCache||[]).find(fr => fr.fields.slug === firmaSlug);
     const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
     const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
-    // Normalisieren
+    // Normalisieren über gemeinsame Funktion
     const today = new Date().toISOString().slice(0,10);
-    const items = raw.map(r => {
-      const id = String(r.id || r.rechnungsId || r.invoiceId || '');
-      const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber || ('R-'+id);
-      const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate || r.created || '').toString().slice(0,10);
-      const faellig = (r.faelligkeitsdatum || r.faellig || r.dueDate || r.zahlungsziel || '').toString().slice(0,10);
-      const bezahltAm = (r.bezahltAm || r.zahldatum || r.paidAt || '').toString().slice(0,10);
-      const brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.summe || r.betrag || r.amountGross || r.brutto || 0);
-      const netto  = +(r.nettobetrag  || r.gesamtnettobetrag  || r.amountNet  || r.netto  || 0);
-      const kunde  = r.kunde || {};
-      const kundeName = kunde.firmenname || kunde.name || r.kundenname || '';
-      const kundeNr   = String(kunde.kundennummer || r.kundennummer || '');
-      const auftragId = r.auftragId || r.auftrag?.id || r.auftrag_id || '';
-      // Status ableiten (flexibel, je nach ERP)
-      let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
-      const storniert = !!(r.storniert || r.canceled);
-      if (storniert) status = 'storniert';
-      else if (bezahltAm) status = 'bezahlt';
-      else if (status.includes('bezahlt') || status.includes('paid')) status = 'bezahlt';
-      else if (status.includes('storno')) status = 'storniert';
-      else if (faellig && faellig < today) status = 'ueberfaellig';
-      else status = 'offen';
-      const erpUrl = erpHost ? (erpHost + '/rechnungen/' + id) : '';
-      const erpAuftragUrl = (erpHost && auftragId) ? (erpHost + '/auftraege/' + auftragId) : '';
-      return {
-        id, nummer: String(nr), datum, faellig, bezahltAm, brutto, netto,
-        kunde_name: kundeName, kunde_nummer: kundeNr,
-        auftrag_id: String(auftragId),
-        status,
-        _erpUrl: erpUrl,
-        _erpAuftragUrl: erpAuftragUrl,
-        _raw: r,
-      };
-    });
+    const items = raw.map(r => _normalizeRechnung(r, erpHost, today));
     // Sort: neueste zuerst
     items.sort((a,b) => String(b.datum||'').localeCompare(String(a.datum||'')));
     _rechnungenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
@@ -13117,41 +13090,50 @@ async function _loadRechnungenFromERPSilent(firmaSlug) {
     const baseUrl = fm && fm.fields && fm.fields.erp_auftrag_url;
     const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
     const today = new Date().toISOString().slice(0,10);
-    const items = raw.map(r => {
-      const id = String(r.id || r.rechnungsId || r.invoiceId || '');
-      const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber || ('R-'+id);
-      const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate || r.created || '').toString().slice(0,10);
-      const faellig = (r.faelligkeitsdatum || r.faellig || r.dueDate || r.zahlungsziel || '').toString().slice(0,10);
-      const bezahltAm = (r.bezahltAm || r.zahldatum || r.paidAt || '').toString().slice(0,10);
-      const brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.summe || r.betrag || r.amountGross || r.brutto || 0);
-      const netto  = +(r.nettobetrag  || r.gesamtnettobetrag  || r.amountNet  || r.netto  || 0);
-      const kunde  = r.kunde || {};
-      const kundeName = kunde.firmenname || kunde.name || r.kundenname || '';
-      const kundeNr   = String(kunde.kundennummer || r.kundennummer || '');
-      const auftragId = r.auftragId || r.auftrag?.id || r.auftrag_id || '';
-      let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
-      const storniert = !!(r.storniert || r.canceled);
-      if (storniert) status = 'storniert';
-      else if (bezahltAm) status = 'bezahlt';
-      else if (status.includes('bezahlt') || status.includes('paid')) status = 'bezahlt';
-      else if (status.includes('storno')) status = 'storniert';
-      else if (faellig && faellig < today) status = 'ueberfaellig';
-      else status = 'offen';
-      return {
-        id, nummer: String(nr), datum, faellig, bezahltAm, brutto, netto,
-        kunde_name: kundeName, kunde_nummer: kundeNr,
-        auftrag_id: String(auftragId),
-        status,
-        _erpUrl: erpHost ? (erpHost + '/rechnungen/' + id) : '',
-        _erpAuftragUrl: (erpHost && auftragId) ? (erpHost + '/auftraege/' + auftragId) : '',
-        _raw: r,
-      };
-    });
+    const items = raw.map(r => _normalizeRechnung(r, erpHost, today));
     items.sort((a,b) => String(b.datum||'').localeCompare(String(a.datum||'')));
     _rechnungenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
   } finally {
     if (btn) btn.disabled = false;
   }
+}
+
+/* Gemeinsame Normalisierung — wird von beiden Loader-Varianten verwendet. */
+function _normalizeRechnung(r, erpHost, today) {
+  const auftrag = r.auftrag || r.bestellung || {};
+  const id = String(r.id || r.rechnungsId || r.invoiceId || r.belegId || '');
+  const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber || r.belegnummerStr || ('R-'+id);
+  const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate || r.erstelltAm || r.created || r.createdAt || '').toString().slice(0,10);
+  const faellig = (r.faelligkeitsdatum || r.faellig || r.dueDate || r.zahlungsziel || r.faelligAm || '').toString().slice(0,10);
+  const bezahltAm = (r.bezahltAm || r.zahldatum || r.paidAt || r.bezahltDatum || r.ausgleichsdatum || '').toString().slice(0,10);
+  const brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.bruttosumme || r.summeBrutto || r.summe ||
+                   r.endsumme || r.rechnungssumme || r.betragBrutto || r.gesamt || r.gesamtsumme ||
+                   r.amountGross || r.brutto || r.betrag || (auftrag && auftrag.bruttosumme) || 0);
+  const netto  = +(r.nettobetrag || r.gesamtnettobetrag || r.nettosumme || r.summeNetto || r.betragNetto ||
+                   r.amountNet || r.netto || (auftrag && auftrag.nettosumme) || 0);
+  const kundeRaw = r.kunde || r.rechnungsempfaenger || r.empfaenger || r.debitor ||
+                   r.auftraggeber || r.kundeRef || (auftrag && auftrag.kunde) || {};
+  const kundeName = kundeRaw.firmenname || kundeRaw.name || kundeRaw.bezeichnung || kundeRaw.kundenname ||
+                    r.kundenname || r.empfaengername || '';
+  const kundeNr   = String(kundeRaw.kundennummer || kundeRaw.id || r.kundennummer || r.empfaengernummer || '');
+  const auftragId = r.auftragId || (r.auftrag && r.auftrag.id) || r.auftrag_id || r.bestellnummer || auftrag.id || '';
+  let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
+  const storniert = !!(r.storniert || r.canceled);
+  if (storniert) status = 'storniert';
+  else if (bezahltAm) status = 'bezahlt';
+  else if (status.includes('bezahlt') || status.includes('paid')) status = 'bezahlt';
+  else if (status.includes('storno')) status = 'storniert';
+  else if (faellig && faellig < today) status = 'ueberfaellig';
+  else status = 'offen';
+  return {
+    id, nummer: String(nr), datum, faellig, bezahltAm, brutto, netto,
+    kunde_name: kundeName, kunde_nummer: kundeNr,
+    auftrag_id: String(auftragId),
+    status,
+    _erpUrl: erpHost ? (erpHost + '/rechnungen/' + id) : '',
+    _erpAuftragUrl: (erpHost && auftragId) ? (erpHost + '/auftraege/' + auftragId) : '',
+    _raw: r,
+  };
 }
 
 function _openNewKontaktFromKundeDetail() {
