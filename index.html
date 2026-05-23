@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.67';
+const APP_VERSION = 'v3.68';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12351,9 +12351,10 @@ function _renderRechnungenList() {
         '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:3px">'+
           '<strong style="font-family:monospace;color:var(--navy)">'+escapeHtml(String(it.nummer))+'</strong>'+
           '<span style="background:'+statColor+';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">'+statLabel+'</span>'+
-          (it.auftrag_id ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px" title="Verknüpft mit Auftrag '+escapeHtml(it.auftrag_id)+'">🛠 Auftrag</span>' : '')+
+          (it.auftrag_id ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px" title="Verknüpft mit Auftrag '+escapeHtml(it.auftrag_id)+(it.auftrag_nummer?' (Nr. '+escapeHtml(it.auftrag_nummer)+')':'')+'">🛠 Auftrag</span>' : '')+
         '</div>'+
         '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(it.kunde_name||'(ohne Kunde)')+(it.kunde_nummer?' <span style="font-weight:400;color:var(--txt3)">· Kd-Nr. '+escapeHtml(it.kunde_nummer)+'</span>':'')+'</div>'+
+        (it.anlage_adresse ? '<div style="font-size:11px;color:var(--txt3);margin-top:2px">🛗 '+escapeHtml(it.anlage_adresse)+'</div>' : '')+
       '</div>'+
       '<div style="text-align:right;font-size:12px;color:var(--txt2);min-width:140px">'+
         '<div style="font-size:14px;font-weight:600;color:var(--navy)">'+fmt(it.brutto)+' €</div>'+
@@ -12404,20 +12405,28 @@ function _openRechnungDetail(rechnungId) {
         '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Beträge</h4>'+
         '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
           row('Netto', it.netto ? fmt(it.netto)+' €' : '', true)+
-          row('Brutto', fmt(it.brutto)+' €', true)+
+          row('Brutto'+(it._bruttoCalc ? ' (berechnet, +19% MwSt)' : ''), fmt(it.brutto)+' €', true)+
         '</div>'+
         '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Kunde</h4>'+
         '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
           row('Name', it.kunde_name)+
           row('Kunden-Nr.', it.kunde_nummer, true)+
         '</div>'+
+        (it.anlage_adresse || it.fabriknummer ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Anlage</h4>'+
+          '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+            row('Standort', it.anlage_adresse)+
+            row('Fabrik-Nr.', it.fabriknummer, true)+
+            row('Anlage-ID', it.anlage_id, true)+
+          '</div>' : '')+
         (it.auftrag_id ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Verknüpfungen</h4>'+
           '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
             row('Auftrag-ID', it.auftrag_id, true)+
+            row('Vorgangsnummer', it.auftrag_nummer, true)+
           '</div>' : '')+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1px solid var(--bdr)">'+
           linkBtn(it._erpUrl, 'Rechnung im ERP', '💶', '#3730A3')+
           linkBtn(it._erpAuftragUrl, 'Auftrag im ERP', '🛠', '#ea580c')+
+          linkBtn(it._erpAnlageUrl, 'Anlage im ERP', '🛗', '#10b981')+
         '</div>'+
         (!it._erpUrl && !it._erpAuftragUrl
           ? '<div style="margin-top:12px;padding:10px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;font-size:11px;color:#92400e">⚠ Keine ERP-Links — hinterlege <strong>ERP-Auftrag-URL</strong> in Admin → Firmen-Verwaltung.</div>'
@@ -13098,25 +13107,54 @@ async function _loadRechnungenFromERPSilent(firmaSlug) {
   }
 }
 
-/* Gemeinsame Normalisierung — wird von beiden Loader-Varianten verwendet. */
+/* Gemeinsame Normalisierung für Aufzugshandwerk-Rechnungen.
+   Wichtigste Pfade (echte Felder aus dem ERP):
+   - Kunde: r.auftrag.anlage.kunde (oder Fallbacks)
+   - Datum: r.createdDate
+   - Netto: r.lohnanteilNetto (für Aufwand-Rechnungen)
+   - Brutto: berechnet als Netto * 1.19 (Standard-MwSt)
+   - Anlage-Adresse: r.auftrag.anlage.name */
 function _normalizeRechnung(r, erpHost, today) {
   const auftrag = r.auftrag || r.bestellung || {};
+  const anlage  = auftrag.anlage || {};
   const id = String(r.id || r.rechnungsId || r.invoiceId || r.belegId || '');
-  const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber || r.belegnummerStr || ('R-'+id);
-  const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate || r.erstelltAm || r.created || r.createdAt || '').toString().slice(0,10);
+  // Nummer: bevorzugt Vorgangsnummer aus Auftrag (das ist die "richtige" Nummer);
+  // sonst Rechnungs-ID mit R-Prefix als Fallback
+  const nr = r.rechnungsnummer || r.nummer || r.belegnummer || r.invoiceNumber ||
+             (auftrag.vorgangsnummer ? 'R-'+auftrag.vorgangsnummer : 'R-'+id);
+  const datum = (r.rechnungsdatum || r.datum || r.belegdatum || r.invoiceDate ||
+                 r.createdDate || r.erstelltAm || r.created || r.createdAt || '').toString().slice(0,10);
   const faellig = (r.faelligkeitsdatum || r.faellig || r.dueDate || r.zahlungsziel || r.faelligAm || '').toString().slice(0,10);
   const bezahltAm = (r.bezahltAm || r.zahldatum || r.paidAt || r.bezahltDatum || r.ausgleichsdatum || '').toString().slice(0,10);
-  const brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.bruttosumme || r.summeBrutto || r.summe ||
-                   r.endsumme || r.rechnungssumme || r.betragBrutto || r.gesamt || r.gesamtsumme ||
-                   r.amountGross || r.brutto || r.betrag || (auftrag && auftrag.bruttosumme) || 0);
-  const netto  = +(r.nettobetrag || r.gesamtnettobetrag || r.nettosumme || r.summeNetto || r.betragNetto ||
-                   r.amountNet || r.netto || (auftrag && auftrag.nettosumme) || 0);
-  const kundeRaw = r.kunde || r.rechnungsempfaenger || r.empfaenger || r.debitor ||
-                   r.auftraggeber || r.kundeRef || (auftrag && auftrag.kunde) || {};
+  // Beträge — Aufzugshandwerk gibt nur lohnanteilNetto direkt; Brutto wird mit 19% MwSt berechnet
+  let netto = +(r.nettobetrag || r.gesamtnettobetrag || r.nettosumme || r.summeNetto || r.betragNetto ||
+                r.amountNet || r.netto || r.lohnanteilNetto || (auftrag && auftrag.nettosumme) || 0);
+  // Positionen summieren falls vorhanden (rechnungPosten[])
+  if (!netto && Array.isArray(r.rechnungPosten)) {
+    for (const p of r.rechnungPosten) {
+      const pn = +(p.nettobetrag || p.netto || (p.einzelpreis * (p.menge||1)) || 0);
+      if (pn > 0) netto += pn;
+    }
+  }
+  let brutto = +(r.bruttobetrag || r.gesamtbruttobetrag || r.bruttosumme || r.summeBrutto || r.summe ||
+                 r.endsumme || r.rechnungssumme || r.betragBrutto || r.gesamt || r.gesamtsumme ||
+                 r.amountGross || r.brutto || r.betrag || (auftrag && auftrag.bruttosumme) || 0);
+  // Brutto aus Netto berechnen falls nicht explizit (Standard-MwSt 19%)
+  if (!brutto && netto > 0) brutto = Math.round(netto * 1.19 * 100) / 100;
+  // Kunde — primär via Auftrag→Anlage, sonst diverse Fallbacks
+  const kundeRaw = (anlage && anlage.kunde) ||
+                   (auftrag.empfaenger && auftrag.empfaenger.kunde) ||
+                   (r.kontakt && r.kontakt.kunde) ||
+                   r.kunde || r.empfaenger || r.debitor ||
+                   r.auftraggeber || r.kundeRef || {};
   const kundeName = kundeRaw.firmenname || kundeRaw.name || kundeRaw.bezeichnung || kundeRaw.kundenname ||
                     r.kundenname || r.empfaengername || '';
   const kundeNr   = String(kundeRaw.kundennummer || kundeRaw.id || r.kundennummer || r.empfaengernummer || '');
-  const auftragId = r.auftragId || (r.auftrag && r.auftrag.id) || r.auftrag_id || r.bestellnummer || auftrag.id || '';
+  const auftragId = r.auftragId || auftrag.id || r.auftrag_id || r.bestellnummer || '';
+  const auftragNummer = auftrag.vorgangsnummer || auftrag.auftragsnummer || '';
+  const anlageAdresse = anlage.name || anlage.anzeigeAdresse || '';
+  const anlageId = anlage.id || '';
+  const fabriknummer = anlage.fabriknummer || '';
   let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
   const storniert = !!(r.storniert || r.canceled);
   if (storniert) status = 'storniert';
@@ -13129,9 +13167,15 @@ function _normalizeRechnung(r, erpHost, today) {
     id, nummer: String(nr), datum, faellig, bezahltAm, brutto, netto,
     kunde_name: kundeName, kunde_nummer: kundeNr,
     auftrag_id: String(auftragId),
+    auftrag_nummer: String(auftragNummer),
+    anlage_adresse: anlageAdresse,
+    anlage_id: String(anlageId),
+    fabriknummer: fabriknummer,
     status,
+    _bruttoCalc: !(r.bruttobetrag || r.gesamtbruttobetrag || r.bruttosumme || r.summeBrutto) && netto > 0,
     _erpUrl: erpHost ? (erpHost + '/rechnungen/' + id) : '',
     _erpAuftragUrl: (erpHost && auftragId) ? (erpHost + '/auftraege/' + auftragId) : '',
+    _erpAnlageUrl:  (erpHost && anlageId)  ? (erpHost + '/anlagen/' + anlageId)    : '',
     _raw: r,
   };
 }
