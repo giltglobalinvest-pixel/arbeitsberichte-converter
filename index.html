@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.74';
+const APP_VERSION = 'v3.75';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -10077,7 +10077,8 @@ async function renderVertragsvorlagenView() {
         '</div>'+
         '<div style="font-size:12px;color:var(--txt2);margin-bottom:8px;font-family:monospace">'+escapeHtml(f.firma||'?')+'</div>'+
         '<div style="font-size:11px;color:var(--txt3);background:var(--bg);padding:8px;border-radius:4px;white-space:pre-wrap;line-height:1.4;max-height:60px;overflow:hidden">'+escapeHtml(textPreview)+(textPreview.length>=180?'…':'')+'</div>'+
-        '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">'+
+        '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap">'+
+          '<button class="btn" style="background:#EEF2FF;border-color:#A5B4FC;color:#3730A3" onclick="_previewVorlageFromList(\''+r.id+'\')" title="Vorschau-PDF mit Dummy-Daten">👁 Vorschau</button>'+
           '<button class="btn" onclick="openVorlageEditor(\''+r.id+'\')">✏ Bearbeiten</button>'+
           '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteVorlage(\''+r.id+'\')">🗑</button>'+
         '</div>'+
@@ -10258,6 +10259,75 @@ async function _previewVorlage(recId) {
     console.error('preview:', e);
     _closeVorlagenWorking();
     toast('❌ Vorschau-Fehler: '+e.message,'err');
+  }
+}
+
+/* Vorschau direkt aus der Vorlagen-Liste: lädt die Vorlage frisch aus Airtable
+   (mit allen Feldern + Attachment-URL) und ruft die gleiche Vorschau-Logik wie der Editor. */
+async function _previewVorlageFromList(recId) {
+  if (!recId) return;
+  try {
+    toast('📥 Lade Vorlage…','');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertragsvorlagen/'+recId, {
+      headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+    });
+    if (!r.ok) throw new Error('Vorlage nicht ladbar (HTTP '+r.status+')');
+    const data = await r.json();
+    const f = data.fields || {};
+    const text = f.vorlage_text || '';
+    const prompt = f.ki_prompt || '';
+    const pdfMeta = f.quell_pdf && f.quell_pdf[0];
+
+    // Dummy-Vars für Vorschau (wie im Editor)
+    const vars = {
+      kunde_name:         'Mustermann Hausverwaltung GmbH',
+      kunde_nummer:       '4711',
+      kunde_adresse:      'Musterstraße 12\n74369 Löchgau',
+      kontakt_name:       'Frau Anna Mustermann',
+      kontakt_email:      'a.mustermann@beispiel.de',
+      kontakt_telefon:    '+49 7123 456789',
+      vertrag_titel:      'Wartungsvertrag · Musteranlage',
+      vertragsnummer:     'WV-A-26-XXXX',
+      abrechnung_typ:     f.typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
+      abrechnung_turnus:  'Jährlich',
+      wartungen_pro_jahr: '4',
+      aufzug_liste:       '1. Musterstraße 12, Aufzug 1 (Fabrik-Nr. M-12345) · 5 Haltestellen\n2. Musterstraße 12, Aufzug 2 (Fabrik-Nr. M-12346) · 7 Haltestellen',
+      aufzug_anzahl:      '2',
+      jahresumsatz:       '1.440,00 € netto',
+      turnus_betrag:      '1.440,00 € netto',
+      stundensatz:        '162,00 €',
+      gueltig_bis:        '31.12.2027',
+      start_datum:        new Date().toISOString().slice(0,10),
+      laufzeit_monate:    '12',
+      datum_heute:        new Date().toLocaleDateString('de-DE'),
+      firma_name:         'Aszendio Aufzugservice GmbH',
+    };
+    let finalText = '';
+    if (text && text.trim()) {
+      // Bevorzugt: Platzhalter-Ersetzung (instant, keine KI)
+      finalText = _ersetzePlatzhalter(text, vars);
+    } else if (pdfMeta && APP_KEYS.anthropicKey) {
+      // Fallback: KI mit Referenz-PDF
+      _showVorlagenWorking('🤖 KI generiert Vorschau aus PDF + Dummy-Daten (bis zu 60 Sek.)…');
+      try {
+        const pdfResp = await fetch(pdfMeta.url);
+        const blob = await pdfResp.blob();
+        const pdfFile = new File([blob], pdfMeta.filename||'referenz.pdf', { type:'application/pdf' });
+        const ki = (prompt || VORLAGE_DEFAULT_VERGLEICH_PROMPT) + '\n\n```json\n' + JSON.stringify(vars, null, 2) + '\n```';
+        finalText = await callClaude(pdfFile, ki, { maxTokens: 8000 });
+        finalText = String(finalText).replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+      } finally { _closeVorlagenWorking(); }
+    } else {
+      return toast('⚠ Vorlage hat weder Markdown-Text noch Referenz-PDF.','err');
+    }
+    toast('📄 baue PDF…','');
+    const pdfBlob = await _buildVertragPDFBlob(finalText, vars);
+    _showVorlagenPreview(pdfBlob, (f.name||'Vorlage')+' (Dummy-Daten)');
+  } catch(e) {
+    _closeVorlagenWorking();
+    console.error('previewVorlageFromList:', e);
+    toast('❌ Vorschau-Fehler: '+e.message.slice(0,300),'err');
   }
 }
 
@@ -11037,6 +11107,7 @@ async function _ensureVertraegeTable() {
     await ensureField('Vertraege', 'laufzeit_monate', 'number', { precision:0 });
     await ensureField('Vertraege', 'vorlage_id',     'singleLineText');  // Verknüpfung zur Vertragsvorlage
     await ensureField('Vertraege', 'pdf_modus',      'singleLineText');  // 'platzhalter' | 'ki'
+    await ensureField('Vertraege', 'vertrag_text',   'multilineText');   // generierter Markdown — für Korrektur ohne KI-Neuwurf
   } catch(e) { console.warn('[Vertraege] Tabellen-Setup:', e.message); }
 }
 
@@ -13133,16 +13204,30 @@ async function _nwvSubmit() {
     // PDF direkt mitgenerieren + hochladen — damit der User beim Klick sofort das PDF sieht
     if (btn) btn.textContent = '📄 generiere PDF…';
     let pdfBlob = null;
+    let generatedText = '';
     try {
       const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
       if (vorlage) {
-        pdfBlob = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, {
+        const result = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, {
           typ, turnus, wpa, start, laufzeit, titel, nummer, vorgangExtra
         });
+        pdfBlob = result && result.pdfBlob;
+        generatedText = result && result.text || '';
         if (pdfBlob) {
           if (btn) btn.textContent = '☁ speichere PDF…';
           const fname = 'Wartungsvertrag-'+(kunde.firmenname||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
           await atBlobUpload(rec.id, 'vertrag_pdf', pdfBlob, fname, 'application/pdf');
+          // Markdown-Text auch persistieren — für spätere Korrektur ohne KI-Neuwurf
+          if (generatedText) {
+            try {
+              const baseIdT = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+              await fetch('https://api.airtable.com/v0/'+baseIdT+'/Vertraege/'+rec.id, {
+                method:'PATCH',
+                headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+                body: JSON.stringify({ fields: { vertrag_text: generatedText }})
+              });
+            } catch(_){}
+          }
           toast('📄 PDF generiert + gespeichert','ok');
         }
       }
@@ -13236,7 +13321,8 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
   } else {
     throw new Error('Vorlage hat weder Markdown-Text noch nutzbares KI-PDF.');
   }
-  return await _buildVertragPDFBlob(finalText, vars);
+  const pdfBlob = await _buildVertragPDFBlob(finalText, vars);
+  return { pdfBlob, text: finalText, vars };
 }
 
 /* App-Vertrag-PDF-Viewer: zeigt das gespeicherte PDF in iframe.
@@ -13262,12 +13348,134 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
           '<a class="btn" href="'+url+'" download="Wartungsvertrag.pdf" style="text-decoration:none">📥 Herunterladen</a>'+
         '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-          '<button class="btn" onclick="_editAppVertragRaw(\''+escapeHtml(recId)+'\')" title="Konditionen ändern / Anlagen verwalten">⚙ Konditionen bearbeiten</button>'+
-          '<button class="btn prim" style="background:#4F46E5;border-color:#4F46E5" onclick="_regenAppVertragPDF(\''+escapeHtml(recId)+'\')">🔄 Neu generieren</button>'+
+          '<button class="btn" onclick="_editAppVertragRaw(\''+escapeHtml(recId)+'\')" title="Konditionen ändern / Anlagen verwalten">⚙ Konditionen</button>'+
+          '<button class="btn" style="background:#FEF3C7;border-color:#FCD34D;color:#92400e" onclick="_openCorrectVertrag(\''+escapeHtml(recId)+'\')" title="Nur Text-Korrekturen anwenden (KI politiert nur den bestehenden Text — kein neues PDF-Durcharbeiten, viel schneller)">✏ Korrigieren</button>'+
+          '<button class="btn prim" style="background:#4F46E5;border-color:#4F46E5" onclick="_regenAppVertragPDF(\''+escapeHtml(recId)+'\')" title="Komplett neu aus Vorlage + PDF generieren">🔄 Komplett neu</button>'+
         '</div>'+
       '</div>'+
     '</div>';
   document.body.appendChild(modal);
+}
+
+/* Korrigieren: nur den bestehenden Vertragstext anpassen — KI politiert,
+   ohne das Referenz-PDF erneut zu analysieren. Viel schneller als "Neu generieren". */
+async function _openCorrectVertrag(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  const existingText = f.vertrag_text || '';
+  if (!existingText.trim()) {
+    return toast('⚠ Kein gespeicherter Vertragstext vorhanden. Nutze "🔄 Komplett neu" für die erste Generation.','err');
+  }
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+  document.getElementById('app-vt-pdf-modal')?.remove();
+  const old = document.getElementById('vt-correct-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'vt-correct-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:760px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#FCD34D;color:#78350F;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>✏ Vertrag korrigieren · '+escapeHtml(f.vertragsnummer||'')+'</span>'+
+        '<button onclick="document.getElementById(\'vt-correct-modal\').remove()" style="background:rgba(0,0,0,.15);border:none;color:#78350F;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        '<p style="font-size:12px;color:var(--txt2);margin:0 0 12px;line-height:1.6">Schreib unten konkrete Korrekturen — die KI wendet sie auf den vorhandenen Vertragstext an (politiert nur), <strong>ohne das Referenz-PDF erneut zu analysieren</strong>. Schneller und gezielter als "Komplett neu".</p>'+
+        '<div style="font-weight:600;font-size:13px;margin-bottom:6px">📝 Korrektur-Anweisungen</div>'+
+        '<textarea id="vt-correct-instr" placeholder="z.B.&#10;- § 5 (Haftung) komplett entfernen&#10;- In § 3 die Mehrwertsteuer von 19% auf 7% ändern&#10;- Den Satz über Notfälle in § 2 ausführlicher formulieren&#10;- Adresse von Auftragnehmer korrigieren: Boschstr. 10, 73734 Esslingen" style="width:100%;min-height:140px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5"></textarea>'+
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">📜 Aktueller Vertragstext anzeigen ('+existingText.length+' Zeichen)</summary>'+
+          '<pre style="background:#fafafa;border:1px solid var(--bdr);padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:280px;margin-top:6px;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">'+escapeHtml(existingText)+'</pre>'+
+        '</details>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'vt-correct-modal\').remove();_showAppVertragPDFFromCache(\''+escapeHtml(recId)+'\')">Abbrechen</button>'+
+        '<button class="btn prim" id="vt-correct-go" onclick="_applyCorrection(\''+escapeHtml(recId)+'\')">🤖 Korrekturen anwenden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._rec = rec;
+}
+
+/* Hilfsfunktion: PDF aus dem Cache wieder anzeigen (für Abbrechen aus Korrektur-Modal) */
+function _showAppVertragPDFFromCache(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  const f = rec.fields || {};
+  const att = Array.isArray(f.vertrag_pdf) && f.vertrag_pdf[0];
+  if (att && att.url) _showAppVertragPDF(recId, att.url, f.kunde_name || '');
+}
+
+async function _applyCorrection(recId) {
+  const modal = document.getElementById('vt-correct-modal');
+  if (!modal) return;
+  const instr = document.getElementById('vt-correct-instr').value.trim();
+  if (!instr) return toast('Bitte konkrete Korrektur-Anweisungen eingeben.','err');
+  const rec = modal._rec;
+  const f = rec.fields || {};
+  const existingText = f.vertrag_text || '';
+  const btn = document.getElementById('vt-correct-go');
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 KI arbeitet…'; }
+  _showVorlagenWorking('🤖 KI wendet Korrekturen auf bestehenden Text an…');
+  try {
+    let prompt = 'Du erhältst einen bestehenden Wartungsvertrags-Text in Markdown und konkrete Korrektur-Anweisungen. '+
+      'Wende NUR diese Korrekturen an. Behalte den gesamten anderen Inhalt UNVERÄNDERT — Struktur, Paragraphen-Reihenfolge, Wortlaute außerhalb der Korrektur-Bereiche bleiben gleich. '+
+      'KEINE Markennamen einfügen (KONE, Schindler usw.). KEINE Verweise auf Anlagen/Anhänge erfinden. '+
+      'Antworte AUSSCHLIESSLICH mit dem korrigierten Markdown — keine Erklärung, kein Vorwort, keine Code-Fences (```).\n\n'+
+      '--- KORREKTUR-ANWEISUNGEN ---\n' + instr + '\n\n'+
+      '--- BESTEHENDER VERTRAGSTEXT ---\n' + existingText;
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:8000, messages:[{ role:'user', content: prompt }] }),
+    });
+    if (!resp.ok) {
+      const e = await resp.json().catch(()=>({}));
+      throw new Error(e.error?.message || 'KI-Antwort HTTP '+resp.status);
+    }
+    const j = await resp.json();
+    let corrected = j.content[0].text;
+    corrected = corrected.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+    if (!corrected) throw new Error('KI hat einen leeren Text zurückgegeben.');
+    // Build PDF aus korrigiertem Text. Vars rekonstruieren grob aus dem Record.
+    let anlagen = []; try { anlagen = JSON.parse(f.anlagen_json||'[]'); } catch(_){}
+    const aufzugZeilen = anlagen.map((a, i) =>
+      (i+1)+'. '+(a.adresse||'?')+(a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+(a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')
+    );
+    const vars = {
+      kunde_name: f.kunde_name || '',
+      kunde_nummer: String(f.kunde_nummer||''),
+      vertrag_titel: f.titel || '',
+      vertragsnummer: f.vertragsnummer || '',
+      aufzug_liste: aufzugZeilen.join('\n'),
+      aufzug_anzahl: String(anlagen.length),
+      abrechnung_typ: f.abrechnung_typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
+      abrechnung_turnus: f.abrechnung_turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
+      wartungen_pro_jahr: String(f.wartungen_pro_jahr||4),
+      datum_heute: new Date().toLocaleDateString('de-DE'),
+      firma_name: 'Aszendio Aufzugservice GmbH',
+    };
+    const pdfBlob = await _buildVertragPDFBlob(corrected, vars);
+    const fname = 'Wartungsvertrag-'+(f.kunde_name||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+    // Erst PDF-Attachment leeren, dann neuen Blob hochladen
+    const baseIdT = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseIdT+'/Vertraege/'+recId, {
+      method:'PATCH',
+      headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+      body: JSON.stringify({ fields: { vertrag_pdf: [], vertrag_text: corrected }})
+    });
+    await atBlobUpload(recId, 'vertrag_pdf', pdfBlob, fname, 'application/pdf');
+    _closeVorlagenWorking();
+    toast('✅ Korrekturen angewendet — neues PDF gespeichert','ok');
+    modal.remove();
+    // Cache invalidieren + PDF anzeigen
+    await renderWartungsvertraegeView({ force:true });
+    _showAppVertragPDF(recId, pdfBlob, f.kunde_name || '');
+  } catch(e) {
+    _closeVorlagenWorking();
+    console.error('applyCorrection:', e);
+    toast('❌ Korrektur fehlgeschlagen: '+(e.message||'?').slice(0,300),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Korrekturen anwenden'; }
+  }
 }
 
 /* Konditionen-Editor öffnen (das alte openVertragDetail) */
@@ -13335,11 +13543,11 @@ async function _nwvShowPreview() {
     } else {
       toast('📄 baue PDF…','');
     }
-    const pdfBlob = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosen, {
+    const result = await _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosen, {
       typ, turnus, wpa, start, laufzeit, titel, nummer, vorgangExtra
     });
     _closeVorlagenWorking();
-    _showVorlagenPreview(pdfBlob, (kunde.firmenname||'')+' · '+(pdfModus==='ki'?'KI-Generierung':vorgangExtra?'Platzhalter+KI-Politur':'Platzhalter-Ersetzung'));
+    _showVorlagenPreview(result.pdfBlob, (kunde.firmenname||'')+' · '+(pdfModus==='ki'?'KI-Generierung':vorgangExtra?'Platzhalter+KI-Politur':'Platzhalter-Ersetzung'));
   } catch(e) {
     console.error('Wizard-Vorschau:', e);
     _closeVorlagenWorking();
