@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.69';
+const APP_VERSION = 'v3.70';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12676,10 +12676,19 @@ async function openNeuerVertragWizard() {
           '<input id="nwv-titel" type="text" placeholder="z.B. Wartungsvertrag 2026" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
         '</div>'+
         // Vorschau Nummer
-        '<div style="padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534"><strong>📋 Vertragsnummer wird generiert beim Erstellen:</strong> <code id="nwv-nummer-preview" style="font-family:monospace">…</code></div>'+
+        '<div style="padding:10px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534;margin-bottom:12px"><strong>📋 Vertragsnummer wird generiert beim Erstellen:</strong> <code id="nwv-nummer-preview" style="font-family:monospace">…</code></div>'+
+        // Vorschau-Container (initial leer/versteckt)
+        '<div id="nwv-preview-section" style="display:none;margin-top:12px">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">'+
+            '<strong style="font-size:13px;color:var(--navy)">👁 Vorschau (Platzhalter ersetzt)</strong>'+
+            '<button class="btn" onclick="document.getElementById(\'nwv-preview-section\').style.display=\'none\'" style="padding:4px 8px;font-size:11px">× ausblenden</button>'+
+          '</div>'+
+          '<div id="nwv-preview-out" style="max-height:320px;overflow-y:auto;background:#fafafa;border:1px solid var(--bdr);border-radius:6px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.6;white-space:pre-wrap"></div>'+
+        '</div>'+
       '</div>'+
-      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'nwv-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn" onclick="_nwvShowPreview()" style="background:#3730A3;color:#fff;border-color:#3730A3">👁 Vorschau</button>'+
         '<button class="btn prim" id="nwv-submit" onclick="_nwvSubmit()">🚀 Vertrag erstellen</button>'+
       '</div>'+
     '</div>';
@@ -12960,17 +12969,94 @@ async function _nwvSubmit() {
     if (!rec || !rec.id) throw new Error('Vertrag konnte nicht angelegt werden.');
     toast('✅ Vertrag '+nummer+' angelegt.','ok');
     modal.remove();
-    // Liste neu laden
+    // Liste neu laden — kein Auto-Open des Detail-Modals mehr (war doppelt mit Wizard-Eingaben).
+    // Der User landet in der Liste und sieht den neuen Vertrag oben.
     await renderWartungsvertraegeView({ force:true });
-    // Detail öffnen
-    if (typeof openVertragDetail === 'function') {
-      openVertragDetail(rec.id, preislisteId);
-    }
   } catch(e) {
     console.error('createVertrag:', e);
     toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Vertrag erstellen'; }
   }
+}
+
+/* Vorschau im Wizard: Vorlage-Text holen + Platzhalter mit den aktuellen Wizard-Eingaben ersetzen.
+   Keine DB-Schreibung — der User sieht, was das PDF enthalten würde, BEVOR er erstellt. */
+async function _nwvShowPreview() {
+  const modal = document.getElementById('nwv-modal');
+  if (!modal) return;
+  const out = document.getElementById('nwv-preview-out');
+  const sec = document.getElementById('nwv-preview-section');
+  if (!out || !sec) return;
+  sec.style.display = 'block';
+  out.textContent = '⏳ Vorschau wird generiert…';
+
+  // Daten sammeln (gleich wie im Submit, aber ohne Validierung-Fehler-Toasts)
+  const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
+  const kundeIdxStr = document.getElementById('nwv-kunde-id').value;
+  const kundeIdx = parseInt(kundeIdxStr, 10);
+  const kunde = (_kundenCache.items||[])[kundeIdx];
+  const vorlageId = document.getElementById('nwv-vorlage')?.value || '';
+  const wpa = +document.getElementById('nwv-wpa').value || 4;
+  const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
+  const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
+  const laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
+  const titel = (document.getElementById('nwv-titel').value || '').trim();
+  const sel = modal._selectedAnlagen || [];
+
+  if (!kunde) { out.textContent = '⚠ Wähle erst einen Kunden.'; return; }
+  if (!sel.length) { out.textContent = '⚠ Wähle erst eine oder mehrere Anlagen.'; return; }
+  if (!vorlageId) { out.textContent = '⚠ Wähle erst eine Vorlage. Falls keine vorhanden ist, lege sie in 📑 Vertragsvorlagen an.'; return; }
+
+  const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
+  if (!vorlage) { out.textContent = '⚠ Vorlage nicht gefunden im Cache.'; return; }
+  const tpl = vorlage.fields.vorlage_text || '';
+  if (!tpl.trim()) { out.textContent = '⚠ Die Vorlage hat keinen Text. Bitte unter 📑 Vertragsvorlagen den Text eintragen.'; return; }
+
+  // Anlagen-Daten sammeln (aus dem aktuellen Modal._anlagen)
+  const anlagenAll = modal._anlagen || [];
+  const chosen = anlagenAll
+    .map((a, i) => ({ a, i }))
+    .filter(({ i }) => sel.includes(String(i)))
+    .map(({ a }) => a);
+  // Vorlage-Vars bauen — analog zu _buildVertragVars, aber direkt aus Wizard-Daten
+  const aufzugZeilen = chosen.map((a, i) =>
+    (i+1)+'. '+(_buildAnlageAdresse(a)||'?')+
+    (a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+
+    (a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')
+  );
+  const vars = {
+    kunde_name:         kunde.firmenname || '',
+    kunde_nummer:       String(kunde.kundennummer||''),
+    kunde_adresse:      [kunde.strasse, kunde.plz, kunde.ort].filter(Boolean).join(', '),
+    kontakt_name:       '',
+    kontakt_email:      kunde.email || '',
+    kontakt_telefon:    kunde.telefon || '',
+    vertrag_titel:      titel || ('Wartungsvertrag '+(typ==='einzel'?'Einzel':'Sammel')+' · '+(kunde.firmenname||'')),
+    abrechnung_typ:     typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
+    abrechnung_turnus:  turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
+    wartungen_pro_jahr: String(wpa),
+    aufzug_liste:       aufzugZeilen.join('\n'),
+    aufzug_anzahl:      String(chosen.length),
+    jahresumsatz:       '(wird beim Erstellen berechnet)',
+    turnus_betrag:      '(wird beim Erstellen berechnet)',
+    stundensatz:        '',
+    gueltig_bis:        '',
+    datum_heute:        new Date().toLocaleDateString('de-DE'),
+    firma_name:         'Aszendio Aufzugservice GmbH',
+    vertragsnummer:     document.getElementById('nwv-nummer-preview')?.textContent || '',
+    start_datum:        start,
+    laufzeit_monate:    String(laufzeit),
+  };
+  const text = _ersetzePlatzhalter(tpl, vars);
+  // Zeige als pre-wrap Text (mit Hinweis welche Platzhalter ggf. nicht ersetzt sind)
+  const unresolved = (text.match(/\{\{(\w+)\}\}/g) || []);
+  let html = '<div style="background:#fff;border:1px solid var(--bdr);border-radius:4px;padding:14px;font-family:Georgia,serif;font-size:12px;line-height:1.7;white-space:pre-wrap">'+escapeHtml(text)+'</div>';
+  if (unresolved.length) {
+    html += '<div style="margin-top:8px;padding:8px 10px;background:#fef3c7;border:1px solid #fcd34d;border-radius:4px;font-size:10px;color:#92400e">⚠ Platzhalter ohne Werte: '+escapeHtml([...new Set(unresolved)].join(', '))+' — diese werden beim Erstellen vom System nachgefüllt (z.B. Beträge) oder bleiben leer.</div>';
+  }
+  out.innerHTML = html;
+  // Zur Vorschau scrollen
+  setTimeout(() => sec.scrollIntoView({ behavior:'smooth', block:'nearest' }), 100);
 }
 
 function _renderKundenViewList() {
