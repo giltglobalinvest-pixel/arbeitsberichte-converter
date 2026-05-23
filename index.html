@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.76';
+const APP_VERSION = 'v3.77';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -10436,6 +10436,7 @@ async function _applyVorlageCorrection() {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
       body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:8000, messages:[{ role:'user', content: prompt }] }),
+      signal: _getAbortSignal(),
     });
     if (!resp.ok) {
       const e = await resp.json().catch(()=>({}));
@@ -10451,26 +10452,65 @@ async function _applyVorlageCorrection() {
     document.getElementById('vlg-correct-modal')?.remove();
   } catch(e) {
     _closeVorlagenWorking();
+    if (e.name === 'AbortError') {
+      console.warn('applyVorlageCorrection: abgebrochen');
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 Korrekturen anwenden'; }
+      return;
+    }
     console.error('applyVorlageCorrection:', e);
     toast('❌ Korrektur fehlgeschlagen: '+(e.message||'?').slice(0,300),'err');
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Korrekturen anwenden'; }
   }
 }
 
-/* Working-Indicator während die KI arbeitet */
-function _showVorlagenWorking(msg) {
+/* Working-Indicator während die KI arbeitet — mit Zeit-Counter + Abbrechen-Button. */
+let _activeAbortController = null;
+function _showVorlagenWorking(msg, opts) {
+  opts = opts || {};
   const old = document.getElementById('vlg-working'); if (old) old.remove();
+  // Neuen AbortController erzeugen — globale Referenz für API-Calls
+  _activeAbortController = new AbortController();
   const m = document.createElement('div');
   m.id = 'vlg-working';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10600;display:flex;align-items:center;justify-content:center;padding:16px';
   m.innerHTML = '<div style="background:#fff;padding:30px 40px;border-radius:14px;box-shadow:0 10px 50px rgba(0,0,0,.4);text-align:center;max-width:480px">'+
     '<div class="spinner" style="margin:0 auto 16px;width:42px;height:42px;border-width:3px"></div>'+
     '<div style="font-size:14px;color:var(--navy);font-weight:600">'+escapeHtml(msg||'⏳ KI arbeitet…')+'</div>'+
-    '<div style="font-size:11px;color:var(--txt3);margin-top:10px;line-height:1.5">Großes PDF? → kann etwas länger dauern.<br>Du siehst das Ergebnis direkt nach Abschluss.</div>'+
+    '<div style="font-size:11px;color:var(--txt3);margin-top:10px;line-height:1.5">Großes PDF / langer Text? → kann bis zu 90 Sekunden dauern.<br>Du siehst das Ergebnis direkt nach Abschluss.</div>'+
+    '<div id="vlg-working-time" style="margin-top:14px;font-size:13px;color:var(--navy);font-weight:600;font-family:ui-monospace,Menlo,monospace">läuft seit 0 s</div>'+
+    '<button onclick="_abortVorlagenWorking()" style="margin-top:14px;padding:8px 18px;background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;border-radius:6px;font-weight:600;cursor:pointer;font-size:12px">⏹ Abbrechen</button>'+
   '</div>';
   document.body.appendChild(m);
+  // Zeit-Counter starten
+  const startedAt = Date.now();
+  m._timer = setInterval(() => {
+    const el = document.getElementById('vlg-working-time');
+    if (!el) return;
+    const secs = Math.floor((Date.now() - startedAt)/1000);
+    el.textContent = 'läuft seit '+secs+' s';
+    // Bei >120s automatisch abbrechen mit klarer Meldung
+    if (secs > 120 && !m._timeoutFired) {
+      m._timeoutFired = true;
+      _abortVorlagenWorking();
+      toast('⏱ KI-Anfrage über 120s — automatisch abgebrochen. Versuche es nochmal oder kürze den Text.','err');
+    }
+  }, 500);
 }
-function _closeVorlagenWorking() { const m = document.getElementById('vlg-working'); if (m) m.remove(); }
+function _closeVorlagenWorking() {
+  const m = document.getElementById('vlg-working');
+  if (m) { if (m._timer) clearInterval(m._timer); m.remove(); }
+  _activeAbortController = null;
+}
+function _abortVorlagenWorking() {
+  if (_activeAbortController) {
+    try { _activeAbortController.abort(); } catch(_){}
+  }
+  _closeVorlagenWorking();
+  toast('⏹ KI-Anfrage abgebrochen.','warn');
+}
+function _getAbortSignal() {
+  return _activeAbortController ? _activeAbortController.signal : null;
+}
 
 /* pdf.js dynamisch laden (Lazy). Wird für Multi-Page-Rendering benutzt — auf Mobile zeigen
    iframes mit PDFs nur die erste Seite, deshalb rendern wir alle Seiten als Canvas. */
@@ -13570,6 +13610,7 @@ async function _applyCorrection(recId) {
       method:'POST',
       headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
       body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:8000, messages:[{ role:'user', content: prompt }] }),
+      signal: _getAbortSignal(),
     });
     if (!resp.ok) {
       const e = await resp.json().catch(()=>({}));
@@ -13615,6 +13656,10 @@ async function _applyCorrection(recId) {
     _showAppVertragPDF(recId, pdfBlob, f.kunde_name || '');
   } catch(e) {
     _closeVorlagenWorking();
+    if (e.name === 'AbortError') {
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 Korrekturen anwenden'; }
+      return;
+    }
     console.error('applyCorrection:', e);
     toast('❌ Korrektur fehlgeschlagen: '+(e.message||'?').slice(0,300),'err');
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Korrekturen anwenden'; }
