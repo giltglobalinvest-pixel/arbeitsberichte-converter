@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.75';
+const APP_VERSION = 'v3.76';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -10149,8 +10149,9 @@ async function openVorlageEditor(recId) {
         '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;max-height:64px;overflow-y:auto">'+placeholderChips+'</div>'+
         '<textarea id="vlg-text" style="width:100%;min-height:200px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.5">'+escapeHtml(data.vorlage_text||'')+'</textarea>'+
         '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
-          '<button class="btn prim" style="background:#10b981;border-color:#10b981;font-size:11px;padding:6px 14px" onclick="_generateVorlageFromPDF('+(recId?'\''+recId+'\'':'null')+')" title="KI generiert aus dem Referenz-PDF eine wiederverwendbare Markdown-Vorlage mit Platzhaltern (statt konkreter Werte). Läuft EINMAL — spätere Verträge brauchen dann keine KI mehr.">🤖 Aus PDF generieren (mit Platzhaltern)</button>'+
-          '<span style="font-size:10px;color:var(--txt3)">Überschreibt das Textfeld oben. Setzt einen PDF-Upload voraus.</span>'+
+          '<button class="btn prim" style="background:#10b981;border-color:#10b981;font-size:11px;padding:6px 14px" onclick="_generateVorlageFromPDF('+(recId?'\''+recId+'\'':'null')+')" title="KI generiert aus dem Referenz-PDF eine wiederverwendbare Markdown-Vorlage mit Platzhaltern (statt konkreter Werte). Läuft EINMAL — spätere Verträge brauchen dann keine KI mehr.">🤖 Aus PDF generieren</button>'+
+          '<button class="btn" style="background:#FEF3C7;border-color:#FCD34D;color:#92400e;font-size:11px;padding:6px 14px" onclick="_openCorrectVorlage()" title="Nur Text-Korrekturen anwenden (KI politiert den vorhandenen Markdown-Text, ohne das PDF erneut zu analysieren).">✏ Korrigieren</button>'+
+          '<span style="font-size:10px;color:var(--txt3)">Generieren = komplett neu aus PDF · Korrigieren = nur Text politieren</span>'+
         '</div>'+
         '<h4 style="margin:14px 0 4px;font-size:13px;color:var(--navy)">🤖 KI-Prompt</h4>'+
         '<div style="font-size:11px;color:var(--txt3);margin-bottom:6px">Mit PDF: Anweisung, wie der neue Vertrag aus der Referenz erstellt werden soll. Ohne PDF: Politur-Anweisung nach Platzhalter-Ersetzung.</div>'+
@@ -10381,6 +10382,81 @@ async function _generateVorlageFromPDF(recId) {
   }
 }
 
+/* Korrigieren der Vorlage: KI politiert den im Editor stehenden Markdown-Text
+   anhand von Anweisungen. Liest aus vlg-text Textarea, schreibt zurück. */
+async function _openCorrectVorlage() {
+  const ta = document.getElementById('vlg-text');
+  if (!ta) return;
+  const existingText = ta.value.trim();
+  if (!existingText) return toast('⚠ Kein Vorlagentext zum Korrigieren — erst "🤖 Aus PDF generieren" oder Text einfügen.','err');
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+  const old = document.getElementById('vlg-correct-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'vlg-correct-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10700;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:720px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#FCD34D;color:#78350F;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>✏ Vorlage korrigieren</span>'+
+        '<button onclick="document.getElementById(\'vlg-correct-modal\').remove()" style="background:rgba(0,0,0,.15);border:none;color:#78350F;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        '<p style="font-size:12px;color:var(--txt2);margin:0 0 12px;line-height:1.6">KI politiert <strong>nur den vorhandenen Markdown-Text</strong> der Vorlage mit deinen Korrekturen. Schneller als "🤖 Aus PDF generieren" — und behält Platzhalter ({{kunde_name}}, etc.).</p>'+
+        '<div style="font-weight:600;font-size:13px;margin-bottom:6px">📝 Korrektur-Anweisungen</div>'+
+        '<textarea id="vlg-correct-instr" placeholder="z.B.&#10;- § 5 (Haftung) ausführlicher formulieren&#10;- Notrufpauschale in § 3 ergänzen&#10;- Den Begriff &quot;Wartungsdienst&quot; durch &quot;Service&quot; ersetzen&#10;- Adresse Auftragnehmer: Boschstr. 10, 73734 Esslingen" style="width:100%;min-height:140px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5"></textarea>'+
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">📜 Aktueller Vorlagentext anzeigen ('+existingText.length+' Zeichen)</summary>'+
+          '<pre style="background:#fafafa;border:1px solid var(--bdr);padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:280px;margin-top:6px;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace">'+escapeHtml(existingText)+'</pre>'+
+        '</details>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'vlg-correct-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="vlg-correct-go" onclick="_applyVorlageCorrection()">🤖 Korrekturen anwenden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+
+async function _applyVorlageCorrection() {
+  const instr = document.getElementById('vlg-correct-instr')?.value.trim();
+  if (!instr) return toast('Bitte konkrete Korrektur-Anweisungen eingeben.','err');
+  const ta = document.getElementById('vlg-text');
+  if (!ta) return;
+  const existingText = ta.value.trim();
+  const btn = document.getElementById('vlg-correct-go');
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 KI arbeitet…'; }
+  _showVorlagenWorking('🤖 KI politiert die Vorlage…');
+  try {
+    let prompt = 'Du erhältst eine WIEDERVERWENDBARE Markdown-Wartungsvertragsvorlage (mit Platzhaltern wie {{kunde_name}}, {{aufzug_liste}}) und konkrete Korrektur-Anweisungen. '+
+      'Wende NUR diese Korrekturen an. Behalte den gesamten anderen Inhalt UNVERÄNDERT — Struktur, Paragraphen-Reihenfolge, Wortlaute außerhalb der Korrektur-Bereiche bleiben gleich. '+
+      'WICHTIG: Behalte ALLE Platzhalter ({{...}}) im Text — ersetze sie NICHT mit konkreten Werten. KEINE Markennamen einfügen (KONE, Schindler usw.). KEINE Verweise auf Anlagen/Anhänge erfinden. '+
+      'Antworte AUSSCHLIESSLICH mit dem korrigierten Markdown — keine Erklärung, kein Vorwort, keine Code-Fences.\n\n'+
+      '--- KORREKTUR-ANWEISUNGEN ---\n' + instr + '\n\n'+
+      '--- BESTEHENDE VORLAGE ---\n' + existingText;
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:8000, messages:[{ role:'user', content: prompt }] }),
+    });
+    if (!resp.ok) {
+      const e = await resp.json().catch(()=>({}));
+      throw new Error(e.error?.message || 'KI-Antwort HTTP '+resp.status);
+    }
+    const j = await resp.json();
+    let corrected = j.content[0].text;
+    corrected = corrected.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+    if (!corrected) throw new Error('KI hat einen leeren Text zurückgegeben.');
+    ta.value = corrected;
+    _closeVorlagenWorking();
+    toast('✅ Korrekturen angewendet. Bitte prüfen und speichern.','ok');
+    document.getElementById('vlg-correct-modal')?.remove();
+  } catch(e) {
+    _closeVorlagenWorking();
+    console.error('applyVorlageCorrection:', e);
+    toast('❌ Korrektur fehlgeschlagen: '+(e.message||'?').slice(0,300),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Korrekturen anwenden'; }
+  }
+}
+
 /* Working-Indicator während die KI arbeitet */
 function _showVorlagenWorking(msg) {
   const old = document.getElementById('vlg-working'); if (old) old.remove();
@@ -10396,6 +10472,75 @@ function _showVorlagenWorking(msg) {
 }
 function _closeVorlagenWorking() { const m = document.getElementById('vlg-working'); if (m) m.remove(); }
 
+/* pdf.js dynamisch laden (Lazy). Wird für Multi-Page-Rendering benutzt — auf Mobile zeigen
+   iframes mit PDFs nur die erste Seite, deshalb rendern wir alle Seiten als Canvas. */
+let _pdfJsLoading = null;
+async function _ensurePdfJs() {
+  if (window.pdfjsLib) return window.pdfjsLib;
+  if (_pdfJsLoading) return _pdfJsLoading;
+  _pdfJsLoading = (async () => {
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload = resolve; s.onerror = () => reject(new Error('pdf.js konnte nicht geladen werden'));
+      document.head.appendChild(s);
+    });
+    if (window.pdfjsLib) {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+    return window.pdfjsLib;
+  })();
+  return _pdfJsLoading;
+}
+
+/* Rendert ein PDF (Blob oder Object-URL oder String-URL) als Folge von Canvas-Elementen
+   in einen Container. Mobile-tauglich (kein iframe, das nur Seite 1 zeigt). */
+async function _renderPdfIntoContainer(pdfSrc, container) {
+  container.innerHTML = '<div style="padding:40px;text-align:center;color:#ccc"><div class="spinner" style="margin:0 auto 10px;border-color:rgba(255,255,255,.2);border-top-color:#fff"></div>Lade PDF…</div>';
+  try {
+    const pdfjsLib = await _ensurePdfJs();
+    let data;
+    if (pdfSrc instanceof Blob) {
+      data = await pdfSrc.arrayBuffer();
+    } else if (typeof pdfSrc === 'string' && pdfSrc.startsWith('blob:')) {
+      const r = await fetch(pdfSrc);
+      data = await r.arrayBuffer();
+    } else if (typeof pdfSrc === 'string') {
+      // CORS-Probleme bei externen URLs? Versuche direkt.
+      const r = await fetch(pdfSrc);
+      if (!r.ok) throw new Error('PDF-Download HTTP '+r.status);
+      data = await r.arrayBuffer();
+    } else {
+      throw new Error('Unbekannter PDF-Source-Typ');
+    }
+    const pdf = await pdfjsLib.getDocument({ data }).promise;
+    container.innerHTML = '';
+    // Skalierung: höhere DPR auf Retina, aber max 1.8 für Performance
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.8);
+    const baseScale = 1.4;
+    for (let p = 1; p <= pdf.numPages; p++) {
+      const page = await pdf.getPage(p);
+      const viewport = page.getViewport({ scale: baseScale * dpr });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      // CSS-Skalierung: Canvas wird auf logische Pixel runter-skaliert, hohe DPI bleibt aber scharf
+      canvas.style.cssText = 'display:block;margin:10px auto;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.35);width:100%;max-width:'+(viewport.width/dpr)+'px;height:auto';
+      container.appendChild(canvas);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+    }
+    if (pdf.numPages > 1) {
+      const info = document.createElement('div');
+      info.style.cssText = 'text-align:center;padding:8px;color:#bbb;font-size:11px';
+      info.textContent = pdf.numPages+' Seiten';
+      container.appendChild(info);
+    }
+  } catch(e) {
+    container.innerHTML = '<div style="padding:30px;text-align:center;color:#fca5a5;font-size:13px;line-height:1.6">⚠ PDF konnte nicht gerendert werden:<br><code style="font-size:11px">'+escapeHtml(e.message||'?')+'</code><br><br>Versuche den <strong>📥 Herunterladen</strong>-Button um das PDF lokal zu öffnen.</div>';
+  }
+}
+
 function _showVorlagenPreview(pdfBlob, label) {
   const old = document.getElementById('vlg-preview-modal'); if (old) old.remove();
   const url = URL.createObjectURL(pdfBlob);
@@ -10405,19 +10550,19 @@ function _showVorlagenPreview(pdfBlob, label) {
   modal.innerHTML =
     '<div style="background:var(--surf,#fff);max-width:1000px;width:100%;height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.6)">'+
       '<div style="padding:14px 18px;background:#3730A3;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
-        '<span>👁 Vorlagen-Vorschau · '+escapeHtml(label||'')+' <span style="font-weight:400;opacity:.8;font-size:11px;margin-left:8px">mit Dummy-Daten</span></span>'+
+        '<span>👁 Vorlagen-Vorschau · '+escapeHtml(label||'')+'</span>'+
         '<button onclick="_closeVorlagenPreview()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
-      '<div style="flex:1;background:#525252;overflow:hidden">'+
-        '<iframe src="'+url+'" style="width:100%;height:100%;border:none;background:#fff"></iframe>'+
-      '</div>'+
-      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+      '<div id="vlg-preview-canvas-wrap" style="flex:1;background:#525252;overflow-y:auto;overflow-x:hidden;padding:8px"></div>'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">'+
+        '<a class="btn" href="'+url+'" download="Vorschau.pdf" style="text-decoration:none">📥 Herunterladen</a>'+
         '<button class="btn" onclick="_closeVorlagenPreview()">Schließen</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(modal);
   modal._url = url;
   modal.onclick = (e) => { if (e.target === modal) _closeVorlagenPreview(); };
+  _renderPdfIntoContainer(pdfBlob, document.getElementById('vlg-preview-canvas-wrap'));
 }
 
 function _closeVorlagenPreview() {
@@ -13325,8 +13470,7 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
   return { pdfBlob, text: finalText, vars };
 }
 
-/* App-Vertrag-PDF-Viewer: zeigt das gespeicherte PDF in iframe.
-   Buttons: Neu generieren, Bearbeiten (öffnet altes Edit-Modal), Herunterladen. */
+/* App-Vertrag-PDF-Viewer: rendert PDF mit pdf.js als Multi-Page-Canvas (Mobile-tauglich). */
 function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
   const old = document.getElementById('app-vt-pdf-modal'); if (old) old.remove();
   const url = (typeof pdfBlobOrUrl === 'string') ? pdfBlobOrUrl : URL.createObjectURL(pdfBlobOrUrl);
@@ -13339,9 +13483,7 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
         '<span>📄 Wartungsvertrag · '+escapeHtml(kundeName||'')+'</span>'+
         '<button onclick="document.getElementById(\'app-vt-pdf-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
-      '<div style="flex:1;background:#525252;overflow:hidden">'+
-        '<iframe src="'+url+'" style="width:100%;height:100%;border:none;background:#fff"></iframe>'+
-      '</div>'+
+      '<div id="app-vt-pdf-canvas-wrap" style="flex:1;background:#525252;overflow-y:auto;overflow-x:hidden;padding:8px"></div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;flex-shrink:0">'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="document.getElementById(\'app-vt-pdf-modal\').remove()">Schließen</button>'+
@@ -13355,6 +13497,7 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
       '</div>'+
     '</div>';
   document.body.appendChild(modal);
+  _renderPdfIntoContainer(pdfBlobOrUrl instanceof Blob ? pdfBlobOrUrl : url, document.getElementById('app-vt-pdf-canvas-wrap'));
 }
 
 /* Korrigieren: nur den bestehenden Vertragstext anpassen — KI politiert,
