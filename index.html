@@ -2389,7 +2389,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.77';
+const APP_VERSION = 'v3.78';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3123,18 +3123,61 @@ function esc(v) { return(v||'').toString().replace(/&/g,'&amp;').replace(/"/g,'&
 function fi(f,l,v,cls='') { return`<div class="field ${cls}"><div class="field-lbl">${l} <span class="ai-b">KI</span></div><input class="fi${v?' aif':''}" data-f="${f}" value="${esc(v)}"></div>`; }
 function ta(f,l,v,h='78px') { return`<div class="field"><div class="field-lbl">${l} <span class="ai-b">KI</span></div><textarea class="fta${v?' aif':''}" data-f="${f}" style="min-height:${h}">${esc(v)}</textarea></div>`; }
 
+/* Ja/Nein-Toggle-Buttons. Wert wird in hidden input mit data-f gespeichert,
+   damit collectForm() weiterhin .value lesen kann und im PDF "Ja"/"Nein" als Text ankommt. */
+function fiBool(f,l,v) {
+  const norm = String(v||'').trim().toLowerCase();
+  const isJa   = /^(ja|yes|true|1|✓|✔|in betrieb|ok)$/.test(norm);
+  const isNein = /^(nein|no|false|0|✗|✘|außer betrieb|nicht in betrieb)$/.test(norm);
+  const initial = isJa ? 'Ja' : (isNein ? 'Nein' : '');
+  const jaActive   = initial === 'Ja';
+  const neinActive = initial === 'Nein';
+  const baseBtn = 'flex:1;padding:11px 8px;border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;transition:all .12s;display:flex;align-items:center;justify-content:center;gap:5px';
+  return `<div class="field">
+    <div class="field-lbl">${l} <span class="ai-b">KI</span></div>
+    <div class="toggle-yn" style="display:flex;gap:6px">
+      <button type="button" onclick="_setToggleYN(this,'${f}','Ja')" data-val="Ja" style="${baseBtn};border:2px solid ${jaActive?'#10b981':'var(--bdr)'};background:${jaActive?'#dcfce7':'var(--surf)'};color:${jaActive?'#065f46':'var(--txt2)'}">✓ Ja</button>
+      <button type="button" onclick="_setToggleYN(this,'${f}','Nein')" data-val="Nein" style="${baseBtn};border:2px solid ${neinActive?'#dc2626':'var(--bdr)'};background:${neinActive?'#fee2e2':'var(--surf)'};color:${neinActive?'#991b1b':'var(--txt2)'}">✗ Nein</button>
+    </div>
+    <input type="hidden" class="fi${initial?' aif':''}" data-f="${f}" value="${esc(initial)}">
+  </div>`;
+}
+
+function _setToggleYN(btn, f, val) {
+  const wrap = btn.closest('.field');
+  if (!wrap) return;
+  const hidden = wrap.querySelector('input[type="hidden"][data-f="'+f+'"]');
+  if (hidden) {
+    hidden.value = val;
+    hidden.classList.add('aif');  // markiert als ausgefüllt
+  }
+  const buttons = wrap.querySelectorAll('.toggle-yn button');
+  buttons.forEach(b => {
+    const isMatch = b.dataset.val === val;
+    if (b.dataset.val === 'Ja') {
+      b.style.borderColor = isMatch ? '#10b981' : 'var(--bdr)';
+      b.style.background  = isMatch ? '#dcfce7' : 'var(--surf)';
+      b.style.color       = isMatch ? '#065f46' : 'var(--txt2)';
+    } else {
+      b.style.borderColor = isMatch ? '#dc2626' : 'var(--bdr)';
+      b.style.background  = isMatch ? '#fee2e2' : 'var(--surf)';
+      b.style.color       = isMatch ? '#991b1b' : 'var(--txt2)';
+    }
+  });
+}
+
 function frmArbeit(d) { return`
 <div class="card"><div class="card-title">📋 Bericht-Kopf</div><div class="fg c3">${fi('datum','Datum',d.datum)}${fi('auftragsnummer','Auftragsnummer',d.auftragsnummer)}${fi('durchgefuehrt_von','Durchgeführt von',d.durchgefuehrt_von)}</div></div>
 <div class="card"><div class="card-title">📍 Standort</div><div class="fg c1">${fi('standort','Standort der Anlage',d.standort)}</div></div>
 <div class="card"><div class="card-title">🛗 Anlagendaten</div><div class="fg c3">${fi('fabriknummer','Fabriknummer',d.fabriknummer)}${fi('arbeitszeit','Arbeitszeit vor Ort',d.arbeitszeit)}${fi('anzahl_monteure','Anzahl Monteure',d.anzahl_monteure)}</div></div>
-<div class="card"><div class="card-title">🔍 Zustand</div><div class="fg c3">${fi('aufzug_ankunft_in_betrieb','Bei Ankunft in Betrieb?',d.aufzug_ankunft_in_betrieb)}${fi('aufzug_verlassen_in_betrieb','Bei Verlassen in Betrieb?',d.aufzug_verlassen_in_betrieb)}${fi('auftrag_vollstaendig','Vollständig erfüllt?',d.auftrag_vollstaendig)}</div></div>
+<div class="card"><div class="card-title">🔍 Zustand</div><div class="fg c3">${fiBool('aufzug_ankunft_in_betrieb','Bei Ankunft in Betrieb?',d.aufzug_ankunft_in_betrieb)}${fiBool('aufzug_verlassen_in_betrieb','Bei Verlassen in Betrieb?',d.aufzug_verlassen_in_betrieb)}${fiBool('auftrag_vollstaendig','Vollständig erfüllt?',d.auftrag_vollstaendig)}</div></div>
 <div class="card"><div class="card-title">🛠 Beschreibung durchgeführter Arbeiten</div>${ta('beschreibung','Arbeiten',d.beschreibung,'110px')}</div>
 <div class="card"><div class="card-title">💬 Sonstiges</div>${ta('sonstiges','Sonstiges',d.sonstiges,'80px')}</div>`; }
 
 function frmWartung(d) { return`
 <div class="card"><div class="card-title">📋 Bericht-Kopf</div><div class="fg c3">${fi('datum','Datum',d.datum)}${fi('auftragsnummer','Auftragsnummer',d.auftragsnummer)}${fi('vertragsnummer','Vertragsnummer',d.vertragsnummer)}${fi('durchgefuehrt_von','Durchgeführt von',d.durchgefuehrt_von)}</div></div>
 <div class="card"><div class="card-title">📍 Standort</div><div class="fg c1">${fi('standort','Standort der Anlage',d.standort)}</div></div>
-<div class="card"><div class="card-title">🛗 Anlagendaten</div><div class="fg c3">${fi('fabriknummer','Fabriknummer',d.fabriknummer)}${fi('aufzug_ankunft_in_betrieb','Bei Ankunft in Betrieb?',d.aufzug_ankunft_in_betrieb)}${fi('aufzug_verlassen_in_betrieb','Bei Verlassen in Betrieb?',d.aufzug_verlassen_in_betrieb)}</div></div>
+<div class="card"><div class="card-title">🛗 Anlagendaten</div><div class="fg c3">${fi('fabriknummer','Fabriknummer',d.fabriknummer)}${fiBool('aufzug_ankunft_in_betrieb','Bei Ankunft in Betrieb?',d.aufzug_ankunft_in_betrieb)}${fiBool('aufzug_verlassen_in_betrieb','Bei Verlassen in Betrieb?',d.aufzug_verlassen_in_betrieb)}</div></div>
 <div class="card" style="border-color:rgba(33,82,169,.3);background:rgba(33,82,169,.02)">
   <div class="card-title" style="color:#1e4fa8">📊 Prüfergebnisse – DIN 13015</div>
   <div style="font-size:12px;color:var(--txt2);margin-bottom:10px">Details: <em>Aufzugswartung nach DIN 13015</em> (fest vorgegeben)</div>
