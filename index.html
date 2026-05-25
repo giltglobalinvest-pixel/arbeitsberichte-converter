@@ -2433,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.82';
+const APP_VERSION = 'v3.83';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16668,13 +16668,29 @@ export default async function (req) {
   //   POST /liftaro/checks/<id>/decline         → Ablehnen
   //   POST /liftaro/webhook-test                → Test-Webhook auslösen
   if (path === "liftaro" || path.startsWith("liftaro/")) {
-    const liftaroKey = Deno.env.get("LIFTARO_PARTNER_KEY");
+    const liftaroKeyRaw = Deno.env.get("LIFTARO_PARTNER_KEY") || "";
+    const liftaroKey = liftaroKeyRaw.trim();  // gegen versehentliche Whitespace/Newlines
+    const sub = path.replace(/^liftaro\\/?/, "");
+
+    // Debug-Endpoint: zeigt Key-Status OHNE den Wert zu leaken
+    if (sub === "debug") {
+      return json({
+        env_var_set: !!liftaroKeyRaw,
+        raw_length: liftaroKeyRaw.length,
+        trimmed_length: liftaroKey.length,
+        had_whitespace: liftaroKeyRaw.length !== liftaroKey.length,
+        preview: liftaroKey.length > 8 ? (liftaroKey.slice(0,4) + "..." + liftaroKey.slice(-4)) : "(zu kurz)",
+        looks_like_hex_64: /^[0-9a-fA-F]{64}$/.test(liftaroKey),
+      });
+    }
+
     if (!liftaroKey) return json({
-      error:"LIFTARO_PARTNER_KEY env-var nicht gesetzt",
-      hint:"Trage den Liftaro-Partner-Key in val.town Settings → Environment Variables ein."
+      error:"LIFTARO_PARTNER_KEY env-var nicht gesetzt (oder leer nach trim)",
+      hint:"Trage den Liftaro-Partner-Key in val.town Settings → Environment Variables ein.",
+      raw_set: !!liftaroKeyRaw,
+      raw_length: liftaroKeyRaw.length
     }, 500);
     const LIFTARO_BASE = "https://giltglobalinvest--4c42aaf257b611f19fa0ee650bb23af1.web.val.run/api/v2";
-    const sub = path.replace(/^liftaro\\/?/, "");  // z.B. "me", "checks", "checks/PA-2026-0001/offer"
     if (!sub) return json({ error:"Bad path. Erwartet: /liftaro/<endpoint>" }, 400);
     const target = LIFTARO_BASE + "/" + sub + url.search;
     const init = {
@@ -18319,13 +18335,33 @@ async function _liftaroTestPing(btn) {
       '<div style="margin-top:6px;font-size:12px"><pre style="background:#f0fdf4;border:1px solid #86efac;padding:8px;border-radius:6px;font-size:11px;overflow:auto;margin:6px 0">'+escapeHtml(JSON.stringify(me, null, 2))+'</pre></div>';
   } catch(e) {
     const hint = (e.body && typeof e.body === 'object' && e.body.hint) ? e.body.hint : null;
+    const detail = (e.body && typeof e.body === 'object' && e.body.detail) ? e.body.detail : null;
+    // Bei Auth-Fehler: hole Debug-Info um zu sehen ob Key gesetzt + sinnvolle Form hat
+    let debugInfo = '';
+    try {
+      const d = await liftaroFetch('debug');
+      const tags = [];
+      if (!d.env_var_set) tags.push('<span style="color:#dc2626">⚠ Env-Var NICHT gesetzt</span>');
+      else {
+        tags.push('✓ Env-Var gesetzt ('+d.raw_length+' Zeichen)');
+        if (d.had_whitespace) tags.push('<span style="color:#dc2626">⚠ Whitespace/Newline im Key — bitte neu kopieren</span>');
+        if (!d.looks_like_hex_64) tags.push('<span style="color:#ea580c">⚠ Key sieht nicht wie 64-Hex aus (Länge: '+d.trimmed_length+')</span>');
+        else tags.push('✓ Key-Format korrekt (64 Hex)');
+        tags.push('Preview: <code>'+d.preview+'</code>');
+      }
+      debugInfo = '<div style="margin-top:8px;padding:8px 10px;background:#0f172a;color:#cbd5e1;border-radius:6px;font-size:11px;line-height:1.6;font-family:ui-monospace,Menlo,monospace">'+
+        '<strong style="color:#93c5fd">🔍 Debug:</strong><br>' + tags.join('<br>') +
+      '</div>';
+    } catch(_){}
     if (log) log.innerHTML = '<div style="color:var(--err)">❌ '+escapeHtml((e.message||'Fehler').slice(0,400))+'</div>'+
+      (detail ? '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">Liftaro-Antwort: '+escapeHtml(String(detail).slice(0,400))+'</div>' : '')+
       (hint ? '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">💡 '+escapeHtml(hint)+'</div>' : '')+
+      debugInfo+
       '<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:11px;color:var(--txt2);line-height:1.5">'+
         '<strong>Checkliste:</strong><br>'+
-        '1. <code>LIFTARO_PARTNER_KEY</code> als Env-Var in val.town gesetzt?<br>'+
-        '2. <strong>⬆ Proxy-Code aktualisieren</strong> geklickt? (Pflicht, damit val.town die neuen Liftaro-Routen kennt.)<br>'+
-        '3. Bei Key-Problemen: <a href="mailto:check@liftaro.de">check@liftaro.de</a> kontaktieren.'+
+        '1. Bei HTTP 401: Key falsch/abgelaufen oder Whitespace mitgekopiert → <strong>🔑 Schlüssel einrichten</strong> nochmal mit frisch kopiertem Key.<br>'+
+        '2. <strong>⬆ Proxy-Code aktualisieren</strong> geklickt? (Pflicht nach App-Update.)<br>'+
+        '3. Bei Key-Problemen: <a href="mailto:check@liftaro.de">check@liftaro.de</a>.'+
       '</div>';
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🩺 Verbindung testen'; }
@@ -18429,8 +18465,24 @@ async function _runLiftaroSetup() {
       if (btn) { btn.disabled = false; btn.textContent = '✓ Fertig — Schließen'; btn.setAttribute('onclick',"document.getElementById('lif-setup-modal').remove()"); }
     } catch(eMe) {
       _lifSetupLog('  ⚠ Liftaro /me-Aufruf fehlgeschlagen: '+(eMe.message||'?').slice(0,300), 'err');
-      _lifSetupLog('  Mögliche Ursachen: Key falsch, Liftaro-Server down, oder Proxy-Code-Push braucht 5-10 Sek bis aktiv.', 'info');
-      _lifSetupLog('  Versuche in 10 Sek nochmal "🩺 Verbindung testen" in der Card oben.', 'info');
+      // Debug-Info holen — ist der Key in val.town tatsächlich angekommen?
+      try {
+        const d = await liftaroFetch('debug');
+        _lifSetupLog('', '');
+        _lifSetupLog('  🔍 Key-Status in val.town:', 'info');
+        _lifSetupLog('     Env-Var gesetzt:    '+(d.env_var_set ? 'JA' : 'NEIN'), d.env_var_set?'ok':'err');
+        _lifSetupLog('     Rohe Länge:         '+d.raw_length+' Zeichen', '');
+        _lifSetupLog('     Whitespace drin?    '+(d.had_whitespace ? 'JA (problematisch!)' : 'nein'), d.had_whitespace?'err':'ok');
+        _lifSetupLog('     64-Hex-Format?      '+(d.looks_like_hex_64 ? 'JA' : 'NEIN'), d.looks_like_hex_64?'ok':'err');
+        _lifSetupLog('     Preview:            '+d.preview, '');
+        _lifSetupLog('', '');
+        if (!d.env_var_set) _lifSetupLog('  → Env-Var wurde NICHT gesetzt. val.town-API-Problem? Setze sie manuell in val.town Settings.', 'err');
+        else if (d.had_whitespace) _lifSetupLog('  → Key hat Whitespace. Bitte erneut frisch kopieren (📋-Icon im Liftaro-Admin nutzen, nicht Maus-Selektion).', 'err');
+        else if (!d.looks_like_hex_64) _lifSetupLog('  → Key sieht nicht wie 64 Hex-Zeichen aus. Korrekten Key im Liftaro-Admin (Settings → Pool → Aszendio) abholen.', 'err');
+        else _lifSetupLog('  → Key sieht formal korrekt aus, wurde aber von Liftaro abgelehnt. → check@liftaro.de kontaktieren.', 'err');
+      } catch(eDbg) {
+        _lifSetupLog('  Debug-Endpoint nicht erreichbar (vermutlich Proxy-Code-Push noch nicht aktiv) — in 10 Sek "🩺 Verbindung testen" in der Card oben nochmal klicken.', 'info');
+      }
       if (btn) { btn.disabled = false; btn.textContent = '🚀 Einrichten + Testen'; }
     }
   } catch(e) {
