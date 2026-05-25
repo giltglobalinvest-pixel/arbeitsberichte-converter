@@ -2433,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.81';
+const APP_VERSION = 'v3.82';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13086,7 +13086,8 @@ async function _loadLiftaroChecks(opts) {
     for (const st of statiToLoad) {
       try {
         const res = await liftaroListChecks(st);
-        const items = Array.isArray(res) ? res : ((res && (res.items || res.checks || res.data)) || []);
+        // Liftaro-Schema: { ok, count, anfragen: [...] }
+        const items = Array.isArray(res) ? res : ((res && (res.anfragen || res.items || res.checks || res.data)) || []);
         for (const it of items) {
           const id = it.anfrage_id || it.id || ('lif-'+Math.random());
           if (seen.has(id)) continue;
@@ -13189,8 +13190,11 @@ async function _openLiftaroDetail(anfrageId) {
   if (!anfrageId) return;
   toast('📥 Lade Anfrage…','');
   let data;
-  try { data = await liftaroGetCheck(anfrageId); }
-  catch(e) { return toast('❌ '+(e.message||'?').slice(0,300),'err'); }
+  try {
+    const res = await liftaroGetCheck(anfrageId);
+    // Defensive unwrap: könnte direkt das Objekt sein oder { ok, anfrage } / { ok, data }
+    data = (res && (res.anfrage || res.data || res.check)) || res || {};
+  } catch(e) { return toast('❌ '+(e.message||'?').slice(0,300),'err'); }
   const old = document.getElementById('lif-detail-modal'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'lif-detail-modal';
