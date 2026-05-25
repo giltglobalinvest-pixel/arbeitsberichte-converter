@@ -2433,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.84';
+const APP_VERSION = 'v3.85';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13320,14 +13320,101 @@ async function _openLiftaroOffer(anfrageId) {
         '<div><label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:3px">PDF anhängen (optional, max 8 MB)</label>'+
           '<input id="lif-off-pdf" type="file" accept="application/pdf" style="width:100%;font-size:12px"></div>'+
       '</div>'+
-      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'lif-offer-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn" style="background:#3730A3;color:#fff;border-color:#3730A3" onclick="_liftaroShowPreview(\''+escapeHtml(anfrageId)+'\')">👁 Vorschau</button>'+
         '<button class="btn prim" id="lif-off-submit" onclick="_submitLiftaroOffer(\''+escapeHtml(anfrageId)+'\')">🚀 Angebot senden</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
   m._vorlagen = vorlagen;
   m._anfrage = anfrageData;
+}
+
+/* Vorschau des Angebots-PDF vor dem Senden:
+   - wenn PDF angehängt → das angehängte PDF zeigen
+   - sonst wenn Vorlage gewählt → PDF aus Vorlage + Form-Daten generieren
+   - sonst → klare Fehlermeldung */
+async function _liftaroShowPreview(anfrageId) {
+  const modal = document.getElementById('lif-offer-modal');
+  if (!modal) return;
+  // Zuerst: PDF-Anhang (wenn vorhanden, das ist DAS Angebot)
+  const pdfInput = document.getElementById('lif-off-pdf');
+  const pdfFile = pdfInput && pdfInput.files && pdfInput.files[0];
+  if (pdfFile) {
+    if (pdfFile.size > 8 * 1024 * 1024) return toast('❌ PDF zu groß (max 8 MB).','err');
+    _showVorlagenPreview(pdfFile, 'Anhang: '+pdfFile.name);
+    return;
+  }
+  // Sonst: aus Vorlage generieren
+  const vorlageId = document.getElementById('lif-off-vorlage')?.value || '';
+  if (!vorlageId) {
+    return toast('💡 Wähle eine Vorlage oder hänge ein PDF an, um eine Vorschau zu sehen.','err');
+  }
+  const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
+  if (!vorlage) return toast('Vorlage nicht gefunden.','err');
+  const tpl = vorlage.fields.vorlage_text || '';
+  if (!tpl.trim()) {
+    return toast('Diese Vorlage hat keinen Markdown-Text (nur KI-Prompt + Referenz-PDF). Lade unter 📑 Vertragsvorlagen die Vorlage und klicke "🤖 Aus PDF generieren", dann gibt es Markdown.','err');
+  }
+  // Form-Werte sammeln
+  const preis    = (document.getElementById('lif-off-preis').value || '').trim();
+  const laufzeit = (document.getElementById('lif-off-laufzeit').value || '').trim();
+  const kuendig  = (document.getElementById('lif-off-kuendig').value || '').trim();
+  const wpa      = (document.getElementById('lif-off-wpa').value || '').trim();
+  const kommentar = (document.getElementById('lif-off-kommentar').value || '').trim();
+  const vollwartung = document.getElementById('lif-off-vollwartung').checked;
+  const notruf      = document.getElementById('lif-off-notruf').checked;
+  const tuevBegl    = document.getElementById('lif-off-tuev-begl').checked;
+  const tuevPruef   = document.getElementById('lif-off-tuev-pruef').checked;
+  const entst       = document.getElementById('lif-off-entst').checked;
+  const anfrage = modal._anfrage || {};
+  const adresse = [anfrage.objekt_strasse, anfrage.objekt_plz, anfrage.objekt_ort].filter(Boolean).join(', ');
+  // Leistungen-Liste für Aufzug-Liste-Platzhalter (wird in der Vorlage oft als Aufzählung gerendert)
+  const leistungen = [
+    vollwartung ? 'Vollwartung' : null,
+    notruf      ? 'Notruf-Aufschaltung' : null,
+    tuevBegl    ? 'TÜV-Begleitung' : null,
+    tuevPruef   ? 'TÜV-Prüfung' : null,
+    entst       ? 'Entstörung 24/7' : null,
+  ].filter(Boolean);
+  const fmtEur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' € netto';
+  const aufzugAnz = +(anfrage.anzahl_aufzuege||'').replace(/\D/g,'') || 1;
+  const aufzugListe = (anfrage.anzahl_aufzuege ? '1. ' : '')+(adresse||'(Objekt-Anschrift über Liftaro)')+
+    (anfrage.anlagenart ? ' · '+anfrage.anlagenart : '');
+  const vars = {
+    kunde_name:         '(Empfänger wird von Liftaro eingesetzt)',
+    kunde_nummer:       '',
+    kunde_adresse:      adresse,
+    kontakt_name:       '',
+    kontakt_email:      '',
+    kontakt_telefon:    '',
+    vertrag_titel:      'Wartungsvertrag-Angebot · '+anfrageId,
+    abrechnung_typ:     'Sammelrechnung über alle Aufzüge',
+    abrechnung_turnus:  'Jährlich',
+    wartungen_pro_jahr: wpa || '',
+    aufzug_liste:       aufzugListe + (leistungen.length ? '\n\nLeistungen: '+leistungen.join(', ') : ''),
+    aufzug_anzahl:      String(aufzugAnz),
+    jahresumsatz:       preis ? fmtEur(preis) : '',
+    turnus_betrag:      preis ? fmtEur(preis) : '',
+    stundensatz:        '',
+    gueltig_bis:        '',
+    datum_heute:        new Date().toLocaleDateString('de-DE'),
+    firma_name:         'Aszendio Aufzugservice GmbH',
+    vertragsnummer:     'Angebot · '+anfrageId,
+    start_datum:        '',
+    laufzeit_monate:    laufzeit ? String((+laufzeit)*12) : '',
+  };
+  try {
+    toast('📄 baue Vorschau…','');
+    let text = _ersetzePlatzhalter(tpl, vars);
+    // Kommentar am Ende einfügen wenn gefüllt
+    if (kommentar) text += '\n\n## Anmerkungen\n\n' + kommentar;
+    const pdfBlob = await _buildVertragPDFBlob(text, vars);
+    _showVorlagenPreview(pdfBlob, 'Angebots-Vorschau · '+anfrageId);
+  } catch(e) {
+    toast('❌ Vorschau: '+(e.message||'?').slice(0,300),'err');
+  }
 }
 
 /* Übernimmt Defaults aus der gewählten Vorlage in das Offer-Form. */
