@@ -1357,6 +1357,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-kontakte" onclick="switchView('kontakte')" style="display:none">👤 Kontakte</button>
     <button class="tnav" id="tnav-vertraege" onclick="switchView('vertraege')" style="display:none">📑 Wartungsverträge</button>
     <button class="tnav" id="tnav-rechnungen" onclick="switchView('rechnungen')" style="display:none">💶 Rechnungen</button>
+    <button class="tnav" id="tnav-liftaro" onclick="switchView('liftaro')" style="display:none">📋 Liftaro Checks</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1849,6 +1850,29 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-body" id="rch-list" style="padding:20px"></div>
 </div>
 
+<!-- LIFTARO CHECKS (Admin-only) -->
+<div class="firma-view" id="lif-view">
+  <div class="firma-hdr">
+    <h2>📋 Liftaro Checks <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="lif-count">0</span></h2>
+    <button class="btn" onclick="renderLiftaroView({force:true})">↻ Neu laden</button>
+    <button class="btn" id="lif-poll-btn" onclick="_toggleLiftaroPolling()" title="Automatisch alle 5 Minuten nachladen">⏰ Auto-Refresh</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="lif-search" placeholder="Suchen nach ID, Ort, PLZ…" oninput="_renderLiftaroList()">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-offen" checked onchange="_renderLiftaroList()"> 🟠 Offen</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-geoeffnet" checked onchange="_renderLiftaroList()"> 👁 Geöffnet</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-angeboten" onchange="_renderLiftaroList()"> ✅ Angeboten</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-abgelehnt" onchange="_renderLiftaroList()"> ❌ Abgelehnt</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-timeout" onchange="_renderLiftaroList()"> ⏱ Timeout</label>
+    </div>
+  </div>
+  <div class="firma-body" id="lif-list" style="padding:20px"></div>
+</div>
+
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
 <div class="firma-view" id="pl-view">
   <div class="firma-hdr">
@@ -2019,6 +2043,26 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       </div>
       <div class="intg-hint">Sync-Trigger: <strong>automatisch</strong> beim Anlegen eines Kontakts · <strong>manuell</strong> über 📧-Button im Kunde-Detail · <strong>bulk</strong> über die Kunden-View.</div>
       <div class="intg-log" id="intg-mc-log"></div>
+    </div>
+
+    <!-- LIFTARO -->
+    <div class="intg-card">
+      <h3>📋 Liftaro Partner-Plattform</h3>
+      <p class="intg-desc">
+        Liftaro ist eine Vergleichsplattform für Wartungsverträge. Wir agieren als Subunternehmer-Partner und können auf Anfragen Angebote abgeben. Liste offener Anfragen + Submit-Workflow in <a href="#" onclick="event.preventDefault();switchView('liftaro')" style="color:var(--navy);font-weight:600">📋 Liftaro Checks</a>.
+      </p>
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.6;margin-bottom:10px">
+        <strong>Setup (einmalig in val.town → Settings → Environment Variables):</strong><br>
+        <code>LIFTARO_PARTNER_KEY</code> = der Partner-Key (von Liftaro vergeben)<br>
+        <span style="color:var(--txt3)">Der Key bleibt im val.town-Backend — niemals im Frontend sichtbar. Bei jedem API-Call fügt der Proxy automatisch <code>X-Partner-Key</code> als Header ein.</span>
+      </div>
+      <div class="intg-row">
+        <button class="btn" onclick="_liftaroTestPing(this)" title="Ruft /api/v2/me auf — validiert Key + zeigt Partner-Info">🩺 Verbindung testen</button>
+        <button class="btn" onclick="_liftaroWebhookTestBtn(this)" title="Sendet Probe-Webhook an die bei Liftaro hinterlegte URL">📡 Webhook-Test</button>
+        <button class="btn" onclick="valtownUpdateProxyCode(this)" title="Push neuesten Proxy-Code (inkl. Liftaro-Routen)">⬆ Proxy-Code aktualisieren</button>
+      </div>
+      <div class="intg-hint">API-Doku: <a href="https://check.liftaro.de/partner/api/" target="_blank" rel="noopener" style="color:var(--navy)">check.liftaro.de/partner/api/</a> · Bei Key-Problemen: <a href="mailto:check@liftaro.de">check@liftaro.de</a></div>
+      <div class="intg-log" id="intg-lif-log"></div>
     </div>
 
     <!-- ERP-SYNC + DEBUG -->
@@ -2389,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.78';
+const APP_VERSION = 'v3.79';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3021,6 +3065,7 @@ async function showApp() {
     document.getElementById('tnav-kontakte').style.display = '';
     document.getElementById('tnav-vertraege').style.display = '';
     document.getElementById('tnav-rechnungen').style.display = '';
+    document.getElementById('tnav-liftaro').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
@@ -3033,6 +3078,7 @@ async function showApp() {
     document.getElementById('tnav-kontakte').style.display = 'none';
     document.getElementById('tnav-vertraege').style.display = 'none';
     document.getElementById('tnav-rechnungen').style.display = 'none';
+    document.getElementById('tnav-liftaro').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3508,6 +3554,7 @@ function switchView(view) {
   if (view==='kontakte' && !isAdmin()) return;
   if (view==='vertraege' && !isAdmin()) return;
   if (view==='rechnungen' && !isAdmin()) return;
+  if (view==='liftaro' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3529,9 +3576,10 @@ function switchView(view) {
   const ktv  = document.getElementById('kt-view');
   const wv   = document.getElementById('wv-view');
   const rch  = document.getElementById('rch-view');
+  const lif  = document.getElementById('lif-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3550,6 +3598,7 @@ function switchView(view) {
   if (ktv)  ktv.classList.toggle('show',  view==='kontakte');
   if (wv)   wv.classList.toggle('show',   view==='vertraege');
   if (rch)  rch.classList.toggle('show',  view==='rechnungen');
+  if (lif)  lif.classList.toggle('show',  view==='liftaro');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3564,6 +3613,7 @@ function switchView(view) {
   if (view==='kontakte') renderKontakteView();
   if (view==='vertraege') renderWartungsvertraegeView();
   if (view==='rechnungen') renderRechnungenView();
+  if (view==='liftaro') renderLiftaroView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -9297,6 +9347,12 @@ function renderDashboard() {
         <div class="dash-tool-desc">Übersicht aller ERP-Rechnungen mit Status (offen/bezahlt/überfällig). Suche + Filter, später eigenes Erstellen.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>
+      <button class="dash-tool" onclick="switchView('liftaro')">
+        <div class="dash-tool-icon">📋</div>
+        <div class="dash-tool-label">Liftaro Checks</div>
+        <div class="dash-tool-desc">Offene Wartungsvertrag-Anfragen von Liftaro. Angebot abgeben oder ablehnen direkt aus der App.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
       <button class="dash-tool" onclick="switchView('users')">
         <div class="dash-tool-icon">🧑‍💼</div>
         <div class="dash-tool-label">User-Verwaltung</div>
@@ -12990,6 +13046,318 @@ function _openRechnungDetail(rechnungId) {
 }
 
 /* ════════════════════════════════════════════════════════════
+   LIFTARO CHECKS — View, Detail, Offer/Decline
+   ════════════════════════════════════════════════════════════ */
+let _liftaroCache = { items: [], loadedAt: 0 };
+let _liftaroPollTimer = null;
+
+async function renderLiftaroView(opts) {
+  if (!isAdmin()) return;
+  const list = document.getElementById('lif-list');
+  if (!list) return;
+  // Hydrieren aus localStorage
+  if (!_liftaroCache.items.length) {
+    const ec = _erpCacheGet('liftaro', 'global');
+    if (ec && ec.items.length) {
+      _liftaroCache = { items: ec.items, loadedAt: ec.loadedAt };
+    }
+  }
+  const force = opts && opts.force;
+  if (_liftaroCache.items.length) {
+    _renderLiftaroList();
+  } else {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Liftaro-Anfragen…</div>';
+  }
+  const isFresh = _liftaroCache.loadedAt && (Date.now() - _liftaroCache.loadedAt) < ERP_CACHE_FRESH;
+  if (force || !isFresh) {
+    _loadLiftaroChecks({ silent: _liftaroCache.items.length > 0 }).catch(() => {});
+  }
+}
+
+async function _loadLiftaroChecks(opts) {
+  opts = opts || {};
+  const silent = !!opts.silent;
+  try {
+    // Liste mit Status 'offen' + 'geoeffnet' (offene Arbeit) — andere via Filter sichtbar machen
+    // Liftaro API erwartet einen Status pro Aufruf; wir kombinieren mehrere
+    const statiToLoad = ['offen', 'geoeffnet'];
+    let combined = [];
+    const seen = new Set();
+    for (const st of statiToLoad) {
+      try {
+        const res = await liftaroListChecks(st);
+        const items = Array.isArray(res) ? res : ((res && (res.items || res.checks || res.data)) || []);
+        for (const it of items) {
+          const id = it.anfrage_id || it.id || ('lif-'+Math.random());
+          if (seen.has(id)) continue;
+          seen.add(id);
+          combined.push(it);
+        }
+      } catch(e) {
+        if (!silent) console.warn('[Liftaro] '+st+': '+e.message);
+      }
+    }
+    _liftaroCache = { items: combined, loadedAt: Date.now() };
+    _erpCacheSet('liftaro', 'global', combined);
+    if (!silent) toast('✅ '+combined.length+' Liftaro-Anfragen geladen','ok');
+    _renderLiftaroList();
+  } catch(e) {
+    if (!silent) toast('❌ Liftaro-Sync: '+(e.message||'?').slice(0,300),'err');
+    console.warn('[Liftaro] Sync:', e);
+  }
+}
+
+function _renderLiftaroList() {
+  const list = document.getElementById('lif-list');
+  const cnt  = document.getElementById('lif-count');
+  if (!list) return;
+  const q = (document.getElementById('lif-search')?.value || '').toLowerCase().trim();
+  const showOffen   = document.getElementById('lif-flt-offen')?.checked !== false;
+  const showGeoeff  = document.getElementById('lif-flt-geoeffnet')?.checked !== false;
+  const showAng     = document.getElementById('lif-flt-angeboten')?.checked === true;
+  const showAbg     = document.getElementById('lif-flt-abgelehnt')?.checked === true;
+  const showTo      = document.getElementById('lif-flt-timeout')?.checked === true;
+  let items = (_liftaroCache.items||[]).slice();
+  items = items.filter(it => {
+    const s = String(it.status||'').toLowerCase();
+    if (s === 'offen' || s === 'gesendet') return showOffen;
+    if (s === 'geoeffnet') return showGeoeff;
+    if (s === 'angeboten') return showAng;
+    if (s === 'abgelehnt') return showAbg;
+    if (s === 'timeout') return showTo;
+    return true;
+  });
+  if (q) items = items.filter(it =>
+    String(it.anfrage_id||'').toLowerCase().includes(q) ||
+    String(it.objekt_plz||'').toLowerCase().includes(q) ||
+    String(it.objekt_ort||'').toLowerCase().includes(q) ||
+    String(it.objekt_strasse||'').toLowerCase().includes(q) ||
+    String(it.anlagenart||'').toLowerCase().includes(q)
+  );
+  // Sort: ältest zuerst gibt's nicht (Frist wichtig), neueste sent_at zuerst
+  items.sort((a,b) => String(b.sent_at||'').localeCompare(String(a.sent_at||'')));
+  const age = _liftaroCache.loadedAt ? _erpCacheAgeLabel(_liftaroCache.loadedAt) : '';
+  if (cnt) cnt.textContent = items.length + ' Anfragen' + (age ? ' · '+age : '');
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer.':'Keine Liftaro-Anfragen in den gewählten Filtern.<br><br>Falls noch nie verbunden: Setze <strong>LIFTARO_PARTNER_KEY</strong> in val.town und klicke <strong>↻ Neu laden</strong>.')+'</div>';
+    return;
+  }
+  const now = Date.now();
+  list.innerHTML = '<div style="display:grid;gap:8px">'+items.slice(0, 500).map(it => {
+    const s = String(it.status||'').toLowerCase();
+    const statColor = s === 'angeboten' ? '#10b981'
+                    : s === 'abgelehnt' ? '#6b7280'
+                    : s === 'timeout' ? '#dc2626'
+                    : s === 'geoeffnet' ? '#3730A3'
+                    : '#ea580c';
+    const statLabel = {
+      'offen':'🟠 offen', 'gesendet':'🟠 gesendet',
+      'geoeffnet':'👁 geöffnet',
+      'angeboten':'✅ angeboten',
+      'abgelehnt':'❌ abgelehnt',
+      'timeout':'⏱ timeout'
+    }[s] || s;
+    // Frist-Anzeige
+    let fristTxt = '';
+    let fristColor = '';
+    if (it.deadline_at) {
+      const dl = new Date(it.deadline_at).getTime();
+      const diff = dl - now;
+      if (diff < 0) { fristTxt = '⏰ Frist abgelaufen'; fristColor = '#dc2626'; }
+      else if (diff < 24*3600*1000) { fristTxt = '⏰ <24h'; fristColor = '#dc2626'; }
+      else if (diff < 72*3600*1000) { fristTxt = '⏰ '+Math.floor(diff/(24*3600*1000))+'d'; fristColor = '#ea580c'; }
+      else fristTxt = 'Frist: '+(it.deadline_at||'').slice(0,10);
+    }
+    const adresse = [it.objekt_strasse, it.objekt_plz, it.objekt_ort].filter(Boolean).join(' · ');
+    return '<div onclick="_openLiftaroDetail(\''+escapeHtml(String(it.anfrage_id||''))+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+statColor+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
+      '<div style="flex:1;min-width:240px">'+
+        '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'+
+          '<strong style="font-family:monospace;color:var(--navy)">'+escapeHtml(String(it.anfrage_id||''))+'</strong>'+
+          '<span style="background:'+statColor+';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">'+statLabel+'</span>'+
+          (it.anzahl_aufzuege ? '<span style="background:#EEF2FF;color:#3730A3;font-size:10px;padding:2px 6px;border-radius:4px">🛗 '+escapeHtml(String(it.anzahl_aufzuege))+' Aufz.</span>' : '')+
+          (it.vorliegendes_pdf_url ? '<span style="background:#fef3c7;color:#92400e;font-size:10px;padding:2px 6px;border-radius:4px">📄 PDF</span>' : '')+
+        '</div>'+
+        '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(adresse||'(ohne Adresse)')+'</div>'+
+        (it.anlagenart ? '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml(it.anlagenart)+'</div>' : '')+
+      '</div>'+
+      (fristTxt ? '<div style="text-align:right;font-size:11px;color:'+(fristColor||'var(--txt2)')+';font-weight:600">'+escapeHtml(fristTxt)+'</div>' : '')+
+    '</div>';
+  }).join('')+'</div>';
+}
+
+async function _openLiftaroDetail(anfrageId) {
+  if (!anfrageId) return;
+  toast('📥 Lade Anfrage…','');
+  let data;
+  try { data = await liftaroGetCheck(anfrageId); }
+  catch(e) { return toast('❌ '+(e.message||'?').slice(0,300),'err'); }
+  const old = document.getElementById('lif-detail-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'lif-detail-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const row = (label, value, mono) => value
+    ? '<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--bdr);font-size:12px">'+
+        '<div style="min-width:130px;color:var(--txt3)">'+escapeHtml(label)+'</div>'+
+        '<div style="flex:1;color:var(--txt)'+(mono?';font-family:monospace':'')+'">'+escapeHtml(String(value))+'</div>'+
+      '</div>'
+    : '';
+  const s = String(data.status||'').toLowerCase();
+  const isDone = (s==='angeboten' || s==='abgelehnt' || s==='timeout');
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:780px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#1A3353;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📋 Liftaro-Anfrage <span style="font-family:monospace;font-weight:400;opacity:.85">· '+escapeHtml(data.anfrage_id||'')+'</span></span>'+
+        '<button onclick="document.getElementById(\'lif-detail-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Stammdaten</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Anfrage-ID', data.anfrage_id, true)+
+          row('Status', data.status)+
+          row('Versendet am', String(data.sent_at||'').slice(0,16).replace('T',' '))+
+          row('Frist bis', String(data.deadline_at||'').slice(0,16).replace('T',' '))+
+        '</div>'+
+        '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Objekt</h4>'+
+        '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          row('Adresse', [data.objekt_strasse, data.objekt_plz, data.objekt_ort].filter(Boolean).join(', '))+
+          row('Anzahl Aufzüge', data.anzahl_aufzuege)+
+          row('Anlagenart', data.anlagenart)+
+        '</div>'+
+        (data.leistungsumfang_text ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Leistungsumfang (Kunden-Soll)</h4>'+
+          '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;white-space:pre-wrap;line-height:1.5">'+escapeHtml(data.leistungsumfang_text)+'</div>' : '')+
+        (data.vorliegendes_pdf_url ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Bestands-Angebot (PDF)</h4>'+
+          '<div style="margin-bottom:14px"><a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(data.vorliegendes_pdf_url)+'" style="text-decoration:none">📄 PDF in neuem Tab öffnen</a></div>' : '')+
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">🔍 Rohe Liftaro-Daten</summary><pre style="background:#0f172a;color:#cbd5e1;padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:240px;margin-top:6px">'+escapeHtml(JSON.stringify(data, null, 2))+'</pre></details>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'lif-detail-modal\').remove()">Schließen</button>'+
+        (!isDone
+          ? '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+              '<button class="btn" style="color:#dc2626;border-color:#fca5a5" onclick="_openLiftaroDecline(\''+escapeHtml(data.anfrage_id||'')+'\')">❌ Ablehnen</button>'+
+              '<button class="btn prim" style="background:#10b981;border-color:#10b981" onclick="_openLiftaroOffer(\''+escapeHtml(data.anfrage_id||'')+'\')">✅ Angebot abgeben</button>'+
+            '</div>'
+          : '<div style="font-size:11px;color:var(--txt3);align-self:center">Anfrage bereits abgeschlossen ('+escapeHtml(s)+')</div>')+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (ev) => { if (ev.target === m) m.remove(); };
+}
+
+function _openLiftaroOffer(anfrageId) {
+  document.getElementById('lif-detail-modal')?.remove();
+  const old = document.getElementById('lif-offer-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'lif-offer-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const inp = (id, lbl, type, ph) =>
+    '<div><label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:3px">'+lbl+'</label>'+
+    '<input id="'+id+'" type="'+(type||'text')+'" placeholder="'+(ph||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>';
+  const chk = (id, lbl) =>
+    '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:5px;font-size:12px"><input id="'+id+'" type="checkbox"> '+lbl+'</label>';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#10b981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>✅ Angebot abgeben · '+escapeHtml(anfrageId)+'</span>'+
+        '<button onclick="document.getElementById(\'lif-offer-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+
+          inp('lif-off-id','Eigene Angebots-Nr (optional)','text','z.B. ANG-2026-9911')+
+          inp('lif-off-preis','Preis netto/Jahr € *','number','1980.00')+
+        '</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">'+
+          inp('lif-off-laufzeit','Laufzeit (Jahre)','number','3')+
+          inp('lif-off-kuendig','Kündigungsfrist (Monate)','number','3')+
+          inp('lif-off-wpa','Wartungen pro Jahr','number','2')+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-bottom:4px">Leistungsumfang (was ist enthalten?)</div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">'+
+          chk('lif-off-vollwartung','Vollwartung')+
+          chk('lif-off-notruf','Notruf-Aufschaltung')+
+          chk('lif-off-tuev-begl','TÜV-Begleitung')+
+          chk('lif-off-tuev-pruef','TÜV-Prüfung')+
+          chk('lif-off-entst','Entstörung 24/7')+
+        '</div>'+
+        '<div style="margin-bottom:12px"><label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:3px">Kommentar (max 4000 Zeichen)</label>'+
+          '<textarea id="lif-off-kommentar" rows="4" placeholder="Freitext für Liftaro / Kunde" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit"></textarea>'+
+        '</div>'+
+        '<div><label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:3px">PDF anhängen (optional, max 8 MB)</label>'+
+          '<input id="lif-off-pdf" type="file" accept="application/pdf" style="width:100%;font-size:12px"></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'lif-offer-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="lif-off-submit" onclick="_submitLiftaroOffer(\''+escapeHtml(anfrageId)+'\')">🚀 Angebot senden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+
+async function _submitLiftaroOffer(anfrageId) {
+  const preis = (document.getElementById('lif-off-preis').value || '').trim();
+  if (!preis) return toast('Bitte Preis netto/Jahr eintragen.','err');
+  const payload = {
+    response_offer_id: (document.getElementById('lif-off-id').value || '').trim(),
+    response_preis_netto: preis,
+    response_laufzeit_jahre: (document.getElementById('lif-off-laufzeit').value || '').trim(),
+    response_kuendigungsfrist_monate: (document.getElementById('lif-off-kuendig').value || '').trim(),
+    response_wartungen_pro_jahr: (document.getElementById('lif-off-wpa').value || '').trim(),
+    response_vollwartung: document.getElementById('lif-off-vollwartung').checked,
+    response_notruf: document.getElementById('lif-off-notruf').checked,
+    response_tuev_begl: document.getElementById('lif-off-tuev-begl').checked,
+    response_tuev_pruef: document.getElementById('lif-off-tuev-pruef').checked,
+    response_entstoerung: document.getElementById('lif-off-entst').checked,
+    response_kommentar: (document.getElementById('lif-off-kommentar').value || '').trim().slice(0, 4000),
+  };
+  // PDF optional einlesen
+  const pdfInput = document.getElementById('lif-off-pdf');
+  const pdfFile = pdfInput && pdfInput.files && pdfInput.files[0];
+  if (pdfFile) {
+    if (pdfFile.size > 8 * 1024 * 1024) return toast('❌ PDF zu groß (max 8 MB).','err');
+    const buf = await pdfFile.arrayBuffer();
+    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+    payload.pdf_base64 = b64;
+    payload.pdf_filename = pdfFile.name;
+  }
+  const btn = document.getElementById('lif-off-submit');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ sende…'; }
+  try {
+    const res = await liftaroSubmitOffer(anfrageId, payload);
+    toast('✅ Angebot übermittelt','ok');
+    document.getElementById('lif-offer-modal')?.remove();
+    await _loadLiftaroChecks({ silent:true });
+  } catch(e) {
+    toast('❌ '+(e.message||'?').slice(0,300),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Angebot senden'; }
+  }
+}
+
+function _openLiftaroDecline(anfrageId) {
+  document.getElementById('lif-detail-modal')?.remove();
+  const grund = prompt('Anfrage '+anfrageId+' ablehnen?\nOptionaler Grund (wird an Liftaro übermittelt):', '');
+  if (grund === null) return; // Abbrechen
+  liftaroDecline(anfrageId, grund.trim())
+    .then(() => {
+      toast('❌ Anfrage abgelehnt','ok');
+      _loadLiftaroChecks({ silent:true });
+    })
+    .catch(e => toast('❌ '+(e.message||'?').slice(0,300),'err'));
+}
+
+function _toggleLiftaroPolling() {
+  const btn = document.getElementById('lif-poll-btn');
+  if (_liftaroPollTimer) {
+    clearInterval(_liftaroPollTimer);
+    _liftaroPollTimer = null;
+    if (btn) { btn.textContent = '⏰ Auto-Refresh'; btn.style.background=''; btn.style.color=''; }
+    toast('⏹ Auto-Refresh aus','');
+  } else {
+    _liftaroPollTimer = setInterval(() => _loadLiftaroChecks({ silent:true }), 5*60*1000);
+    if (btn) { btn.textContent = '⏰ Auto-Refresh AN (5 Min)'; btn.style.background='#10b981'; btn.style.color='#fff'; }
+    toast('▶ Auto-Refresh aktiv (alle 5 Min)','ok');
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
    NEUER-VERTRAG-WIZARD
    Alle Schritte in einem Modal: Typ → Kunde → Anlagen → Konditionen → Submit
    ════════════════════════════════════════════════════════════ */
@@ -16285,6 +16653,68 @@ export default async function (req) {
     return json({ error:"Unbekannte Mailchimp-Action: "+action, available:["ping","upsert","bulk"] }, 404);
   }
 
+  // ══════════ LIFTARO PARTNER API PROXY ══════════
+  // Liftaro = neutrale Vergleichsplattform für Wartungsverträge.
+  // Wir agieren als Subunternehmer-Partner und beantworten Anfragen.
+  // Routes (X-Partner-Key wird serverseitig aus LIFTARO_PARTNER_KEY env-var gesetzt):
+  //   GET  /liftaro/me                          → Self-Identify
+  //   GET  /liftaro/checks?status=…             → Liste Anfragen
+  //   GET  /liftaro/checks/<id>                 → Detail
+  //   POST /liftaro/checks/<id>/offer           → Angebot abgeben
+  //   POST /liftaro/checks/<id>/decline         → Ablehnen
+  //   POST /liftaro/webhook-test                → Test-Webhook auslösen
+  if (path === "liftaro" || path.startsWith("liftaro/")) {
+    const liftaroKey = Deno.env.get("LIFTARO_PARTNER_KEY");
+    if (!liftaroKey) return json({
+      error:"LIFTARO_PARTNER_KEY env-var nicht gesetzt",
+      hint:"Trage den Liftaro-Partner-Key in val.town Settings → Environment Variables ein."
+    }, 500);
+    const LIFTARO_BASE = "https://check.liftaro.de/partner/api/v2";
+    const sub = path.replace(/^liftaro\\/?/, "");  // z.B. "me", "checks", "checks/PA-2026-0001/offer"
+    if (!sub) return json({ error:"Bad path. Erwartet: /liftaro/<endpoint>" }, 400);
+    const target = LIFTARO_BASE + "/" + sub + url.search;
+    const init = {
+      method: req.method,
+      headers: {
+        "X-Partner-Key": liftaroKey,
+        "Accept": "application/json",
+      }
+    };
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      const ct = req.headers.get("content-type") || "application/json";
+      init.headers["Content-Type"] = ct;
+      try { init.body = await req.text(); } catch(_){}
+    }
+    const t0 = Date.now();
+    let up, body;
+    try {
+      up = await fetch(target, init);
+      body = await up.text();
+    } catch(e) {
+      return json({ error:"Liftaro-Verbindung fehlgeschlagen", target, message:e.message }, 502);
+    }
+    if (up.status >= 400) {
+      let detail = body;
+      try { const j = JSON.parse(body); detail = j.detail || j.error || j.message || body; } catch(_){}
+      return json({
+        error:"Liftaro HTTP "+up.status,
+        target,
+        status: up.status,
+        detail: String(detail).slice(0, 1500),
+        duration_ms: Date.now()-t0,
+      }, up.status);
+    }
+    return new Response(body, {
+      status: up.status,
+      headers: {
+        "content-type": up.headers.get("content-type") || "application/json",
+        "access-control-allow-origin": "*",
+        "x-liftaro-target": target,
+        "x-liftaro-duration-ms": String(Date.now()-t0),
+      }
+    });
+  }
+
   // ══════════ BACKGROUND-SYNC ENDPOINTS ══════════
 
   if (path === "sync/run" && req.method === "POST") {
@@ -17793,6 +18223,31 @@ async function mailchimpListAudiences(firmaSlug, apiKeyOverride) {
   return await erpFetch('/mailchimp/'+encodeURIComponent(firmaSlug)+'/lists', { method:'POST', body });
 }
 
+/* ════════════════════════════════════════════════════════════
+   LIFTARO PARTNER API HELPER
+   ════════════════════════════════════════════════════════════ */
+function _liftaroEnabled() { return !!APP_KEYS.valtownProxyUrl; }
+
+async function liftaroFetch(subpath, options) {
+  if (!_liftaroEnabled()) throw new Error('Proxy nicht eingerichtet');
+  options = options || {};
+  return await erpFetch('/liftaro/' + subpath, options);
+}
+
+async function liftaroMe()         { return await liftaroFetch('me'); }
+async function liftaroListChecks(status) {
+  const q = status ? '?status=' + encodeURIComponent(status) : '';
+  return await liftaroFetch('checks' + q);
+}
+async function liftaroGetCheck(id) { return await liftaroFetch('checks/' + encodeURIComponent(id)); }
+async function liftaroSubmitOffer(id, payload) {
+  return await liftaroFetch('checks/' + encodeURIComponent(id) + '/offer', { method:'POST', body: payload });
+}
+async function liftaroDecline(id, grund) {
+  return await liftaroFetch('checks/' + encodeURIComponent(id) + '/decline', { method:'POST', body: { grund: grund || '' }});
+}
+async function liftaroWebhookTest() { return await liftaroFetch('webhook-test', { method:'POST', body: {} }); }
+
 /* 1 Kontakt zu Mailchimp synchronisieren (idempotent — anlegen oder updaten). */
 async function mailchimpUpsertContact(firmaSlug, kontakt, kundeName) {
   if (!_mailchimpEnabled()) throw new Error('Proxy nicht eingerichtet');
@@ -17846,6 +18301,45 @@ async function _mailchimpTestPing(btn) {
       '</div>';
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🩺 Verbindung testen'; }
+  }
+}
+
+/* Liftaro-Verbindungstest */
+async function _liftaroTestPing(btn) {
+  const log = document.getElementById('intg-lif-log');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ teste…'; }
+  if (log) { log.style.display = 'block'; log.innerHTML = '<div style="color:var(--txt3)">Validiere Liftaro-Key über /api/v2/me …</div>'; }
+  try {
+    const me = await liftaroMe();
+    if (log) log.innerHTML = '<div style="color:#10b981;font-weight:600">✅ Verbindung OK</div>'+
+      '<div style="margin-top:6px;font-size:12px"><pre style="background:#f0fdf4;border:1px solid #86efac;padding:8px;border-radius:6px;font-size:11px;overflow:auto;margin:6px 0">'+escapeHtml(JSON.stringify(me, null, 2))+'</pre></div>';
+  } catch(e) {
+    const hint = (e.body && typeof e.body === 'object' && e.body.hint) ? e.body.hint : null;
+    if (log) log.innerHTML = '<div style="color:var(--err)">❌ '+escapeHtml((e.message||'Fehler').slice(0,400))+'</div>'+
+      (hint ? '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">💡 '+escapeHtml(hint)+'</div>' : '')+
+      '<div style="margin-top:8px;padding:8px 10px;background:var(--bg);border-radius:6px;font-size:11px;color:var(--txt2);line-height:1.5">'+
+        '<strong>Checkliste:</strong><br>'+
+        '1. <code>LIFTARO_PARTNER_KEY</code> als Env-Var in val.town gesetzt?<br>'+
+        '2. <strong>⬆ Proxy-Code aktualisieren</strong> geklickt? (Pflicht, damit val.town die neuen Liftaro-Routen kennt.)<br>'+
+        '3. Bei Key-Problemen: <a href="mailto:check@liftaro.de">check@liftaro.de</a> kontaktieren.'+
+      '</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🩺 Verbindung testen'; }
+  }
+}
+
+async function _liftaroWebhookTestBtn(btn) {
+  const log = document.getElementById('intg-lif-log');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ sende…'; }
+  if (log) { log.style.display = 'block'; log.innerHTML = '<div style="color:var(--txt3)">Sende Test-Webhook…</div>'; }
+  try {
+    const r = await liftaroWebhookTest();
+    if (log) log.innerHTML = '<div style="color:#10b981;font-weight:600">✅ Test-Webhook gesendet</div>'+
+      '<pre style="background:#f0fdf4;border:1px solid #86efac;padding:8px;border-radius:6px;font-size:11px;overflow:auto;margin-top:6px">'+escapeHtml(JSON.stringify(r, null, 2))+'</pre>';
+  } catch(e) {
+    if (log) log.innerHTML = '<div style="color:var(--err)">❌ '+escapeHtml((e.message||'Fehler').slice(0,400))+'</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📡 Webhook-Test'; }
   }
 }
 
