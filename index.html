@@ -2433,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.87';
+const APP_VERSION = 'v3.88';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13564,12 +13564,63 @@ async function _submitLiftaroOffer(anfrageId) {
     const res = await liftaroSubmitOffer(anfrageId, payload);
     trackEvent('liftaro', 'offer_submit', { anfrage_id: anfrageId, preis: payload.response_preis_netto, with_pdf: !!payload.pdf_base64 });
     toast('✅ Angebot übermittelt','ok');
-    document.getElementById('lif-offer-modal')?.remove();
-    await _loadLiftaroChecks({ silent:true });
+    _showLiftaroOfferSuccess(anfrageId, payload, !!pdfFile);
+    _loadLiftaroChecks({ silent:true }).catch(()=>{});
   } catch(e) {
     toast('❌ '+(e.message||'?').slice(0,300),'err');
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Angebot senden'; }
   }
+}
+
+/* Ersetzt den Offer-Modal-Inhalt durch einen großen Erfolgs-Bildschirm
+   mit Zusammenfassung der gesendeten Daten. */
+function _showLiftaroOfferSuccess(anfrageId, payload, withPdf) {
+  const modal = document.getElementById('lif-offer-modal');
+  if (!modal) return;
+  const box = modal.querySelector('div[style*="background:var(--surf"]') || modal.firstChild;
+  if (!box) return;
+  const fmtEur = (v) => Number(v||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const row = (label, value) => value
+    ? '<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--bdr);font-size:13px">'+
+        '<div style="min-width:160px;color:var(--txt3)">'+escapeHtml(label)+'</div>'+
+        '<div style="flex:1;color:var(--txt);font-weight:500">'+escapeHtml(String(value))+'</div>'+
+      '</div>'
+    : '';
+  const leistungen = [
+    payload.response_vollwartung   ? 'Vollwartung' : null,
+    payload.response_notruf        ? 'Notruf-Aufschaltung' : null,
+    payload.response_tuev_begl     ? 'TÜV-Begleitung' : null,
+    payload.response_tuev_pruef    ? 'TÜV-Prüfung' : null,
+    payload.response_entstoerung   ? 'Entstörung 24/7' : null,
+  ].filter(Boolean).join(', ') || '–';
+  box.innerHTML =
+    '<div style="padding:24px 22px 0;text-align:center">'+
+      '<div style="font-size:64px;line-height:1;margin-bottom:10px">✅</div>'+
+      '<div style="font-size:20px;font-weight:700;color:#065f46;margin-bottom:6px">Angebot erfolgreich übermittelt</div>'+
+      '<div style="font-size:13px;color:var(--txt2)">Liftaro hat dein Angebot empfangen. Der Status der Anfrage wechselt jetzt auf <strong>„angeboten"</strong>.</div>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+      '<h4 style="margin:14px 0 6px;font-size:12px;color:var(--navy);text-transform:uppercase;letter-spacing:.05em">Was gesendet wurde</h4>'+
+      '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:12px 16px">'+
+        row('Anfrage-ID', anfrageId)+
+        row('Eigene Angebots-Nr', payload.response_offer_id || '—')+
+        row('Preis netto/Jahr', payload.response_preis_netto ? fmtEur(payload.response_preis_netto)+' €' : '—')+
+        row('Laufzeit', payload.response_laufzeit_jahre ? payload.response_laufzeit_jahre+' Jahr(e)' : '—')+
+        row('Kündigungsfrist', payload.response_kuendigungsfrist_monate ? payload.response_kuendigungsfrist_monate+' Monat(e)' : '—')+
+        row('Wartungen pro Jahr', payload.response_wartungen_pro_jahr || '—')+
+        row('Leistungen', leistungen)+
+        row('PDF angehängt', withPdf ? '📎 Ja ('+(payload.pdf_filename||'Angebot.pdf')+')' : 'nein')+
+        row('Kommentar', payload.response_kommentar ? (payload.response_kommentar.length > 200 ? payload.response_kommentar.slice(0,200)+'…' : payload.response_kommentar) : '—')+
+        row('Gesendet am', new Date().toLocaleString('de-DE'))+
+      '</div>'+
+      '<div style="margin-top:16px;padding:10px 14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;font-size:12px;color:#3730A3;line-height:1.5">'+
+        '💡 <strong>Wie geht es weiter?</strong><br>'+
+        'Liftaro vergleicht dein Angebot mit denen der anderen Partner und legt der Hausverwaltung den Vergleich vor. Bei Annahme bekommst du eine Benachrichtigung. Den aktuellen Status siehst du immer in 📋 <a href="#" onclick="event.preventDefault();document.getElementById(\'lif-offer-modal\').remove();switchView(\'liftaro\')" style="color:#3730A3;font-weight:600">Liftaro Checks</a>.'+
+      '</div>'+
+    '</div>'+
+    '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+      '<button class="btn prim" style="background:#10b981;border-color:#10b981" onclick="document.getElementById(\'lif-offer-modal\').remove();switchView(\'liftaro\')">✓ Schließen + zur Liste</button>'+
+    '</div>';
 }
 
 function _openLiftaroDecline(anfrageId) {
