@@ -2433,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.85';
+const APP_VERSION = 'v3.86';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9471,11 +9471,47 @@ async function loadDashboardStats() {
     });
     const topTool = Object.entries(toolCounts).sort((a,b) => b[1]-a[1])[0];
 
+    // Liftaro-Statistik (nur für Admin)
+    let liftaroCards = '';
+    if (isAdmin()) {
+      // Offene Anfragen aus In-Memory/localStorage-Cache (keine API-Call → schnell)
+      let lifOpen = 0;
+      try {
+        const cached = _liftaroCache && _liftaroCache.items ? _liftaroCache.items : [];
+        let items = cached;
+        if (!items.length) {
+          const ec = _erpCacheGet('liftaro', 'global');
+          if (ec && ec.items) items = ec.items;
+        }
+        lifOpen = items.filter(it => {
+          const s = String(it.status||'').toLowerCase();
+          return s === 'offen' || s === 'gesendet' || s === 'geoeffnet';
+        }).length;
+      } catch(_){}
+      // Liftaro-Angebote diesen Monat (aus Statistik-Events)
+      const firstOfMonth = new Date(); firstOfMonth.setDate(1); firstOfMonth.setHours(0,0,0,0);
+      const lifMonthOffers = events.filter(e =>
+        e.fields.tool === 'liftaro' &&
+        e.fields.action === 'offer_submit' &&
+        Date.parse(e.fields.timestamp||'') >= firstOfMonth.getTime()
+      ).length;
+      const lifMonthDeclines = events.filter(e =>
+        e.fields.tool === 'liftaro' &&
+        e.fields.action === 'decline' &&
+        Date.parse(e.fields.timestamp||'') >= firstOfMonth.getTime()
+      ).length;
+      const monatLabel = new Date().toLocaleDateString('de-DE',{month:'long'});
+      liftaroCards =
+        statCard('📋', lifOpen, 'Offene Liftaro-Anfragen', 'Klick → 📋 Liftaro Checks') +
+        statCard('✅', lifMonthOffers, 'Angebote '+monatLabel, lifMonthDeclines+' abgelehnt');
+    }
+
     c.innerHTML =
       statCard('📋', reports.length, 'Berichte gesamt', '') +
       statCard('✏', todayReports, 'Heute erstellt', '') +
       statCard('🚀', todayLaunches, 'Tool-Starts heute', '') +
       statCard('👥', activeUsers, 'Aktive User', 'in 30 Tagen') +
+      liftaroCards +
       (topTool ? statCard('⭐', topTool[1], 'Beliebt: ' + (TOOLS[topTool[0]]?.label || topTool[0]), 'Starts gesamt') : '');
 
     // Per-Tool Statistik in den Tool-Cards eintragen
@@ -13053,6 +13089,7 @@ let _liftaroPollTimer = null;
 
 async function renderLiftaroView(opts) {
   if (!isAdmin()) return;
+  trackEvent('liftaro', 'launch');
   const list = document.getElementById('lif-list');
   if (!list) return;
   // Hydrieren aus localStorage
@@ -13195,6 +13232,7 @@ async function _openLiftaroDetail(anfrageId) {
     // Defensive unwrap: könnte direkt das Objekt sein oder { ok, anfrage } / { ok, data }
     data = (res && (res.anfrage || res.data || res.check)) || res || {};
   } catch(e) { return toast('❌ '+(e.message||'?').slice(0,300),'err'); }
+  trackEvent('liftaro', 'check_open', { anfrage_id: anfrageId, status: data.status||'' });
   const old = document.getElementById('lif-detail-modal'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'lif-detail-modal';
@@ -13523,6 +13561,7 @@ async function _submitLiftaroOffer(anfrageId) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ sende…'; }
   try {
     const res = await liftaroSubmitOffer(anfrageId, payload);
+    trackEvent('liftaro', 'offer_submit', { anfrage_id: anfrageId, preis: payload.response_preis_netto, with_pdf: !!payload.pdf_base64 });
     toast('✅ Angebot übermittelt','ok');
     document.getElementById('lif-offer-modal')?.remove();
     await _loadLiftaroChecks({ silent:true });
@@ -13538,6 +13577,7 @@ function _openLiftaroDecline(anfrageId) {
   if (grund === null) return; // Abbrechen
   liftaroDecline(anfrageId, grund.trim())
     .then(() => {
+      trackEvent('liftaro', 'decline', { anfrage_id: anfrageId, grund: (grund||'').slice(0,200) });
       toast('❌ Anfrage abgelehnt','ok');
       _loadLiftaroChecks({ silent:true });
     })
