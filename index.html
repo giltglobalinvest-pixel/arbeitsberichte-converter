@@ -2433,7 +2433,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.83';
+const APP_VERSION = 'v3.84';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13230,7 +13230,8 @@ async function _openLiftaroDetail(anfrageId) {
         (data.leistungsumfang_text ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Leistungsumfang (Kunden-Soll)</h4>'+
           '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;white-space:pre-wrap;line-height:1.5">'+escapeHtml(data.leistungsumfang_text)+'</div>' : '')+
         (data.vorliegendes_pdf_url ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Bestands-Angebot (PDF)</h4>'+
-          '<div style="margin-bottom:14px"><a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(data.vorliegendes_pdf_url)+'" style="text-decoration:none">📄 PDF in neuem Tab öffnen</a></div>' : '')+
+          '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(data.vorliegendes_pdf_url)+'" style="text-decoration:none">📄 Im neuen Tab</a><button class="btn" onclick="document.getElementById(\'lif-pdf-inline\').style.display=document.getElementById(\'lif-pdf-inline\').style.display===\'none\'?\'block\':\'none\'">👁 Inline-Vorschau ein/aus</button></div>'+
+          '<div id="lif-pdf-inline" style="background:#525252;border-radius:8px;padding:6px;margin-bottom:14px;max-height:600px;overflow-y:auto"></div>' : '')+
         '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">🔍 Rohe Liftaro-Daten</summary><pre style="background:#0f172a;color:#cbd5e1;padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:240px;margin-top:6px">'+escapeHtml(JSON.stringify(data, null, 2))+'</pre></details>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
@@ -13244,10 +13245,25 @@ async function _openLiftaroDetail(anfrageId) {
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+  m._anfrage = data;  // für späteren Zugriff im Offer-Modal
   m.onclick = (ev) => { if (ev.target === m) m.remove(); };
+  // PDF inline rendern wenn vorhanden
+  if (data.vorliegendes_pdf_url) {
+    const wrap = document.getElementById('lif-pdf-inline');
+    if (wrap) _renderPdfIntoContainer(data.vorliegendes_pdf_url, wrap);
+  }
 }
 
-function _openLiftaroOffer(anfrageId) {
+async function _openLiftaroOffer(anfrageId) {
+  // Vor dem Render die Anfrage-Daten + Vertragsvorlagen laden (für Vorschlag)
+  const detailModal = document.getElementById('lif-detail-modal');
+  const anfrageData = detailModal && detailModal._anfrage || null;
+  let vorlagen = [];
+  try {
+    const firmaSlug = getCurrentFirmaSlug();
+    const all = await atRead('Vertragsvorlagen', null);
+    vorlagen = (all||[]).filter(v => v.fields.aktiv !== false && (!firmaSlug || isFirmaAll() || String(v.fields.firma||'')===firmaSlug));
+  } catch(_){}
   document.getElementById('lif-detail-modal')?.remove();
   const old = document.getElementById('lif-offer-modal'); if (old) old.remove();
   const m = document.createElement('div');
@@ -13258,6 +13274,9 @@ function _openLiftaroOffer(anfrageId) {
     '<input id="'+id+'" type="'+(type||'text')+'" placeholder="'+(ph||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>';
   const chk = (id, lbl) =>
     '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:6px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:5px;font-size:12px"><input id="'+id+'" type="checkbox"> '+lbl+'</label>';
+  const vorlagenOptions = vorlagen.length
+    ? vorlagen.map(v => '<option value="'+escapeHtml(v.id)+'">'+escapeHtml(v.fields.name||'(ohne Name)')+' ('+escapeHtml(v.fields.typ||'')+')</option>').join('')
+    : '';
   m.innerHTML =
     '<div style="background:var(--surf,#fff);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:#10b981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
@@ -13265,6 +13284,19 @@ function _openLiftaroOffer(anfrageId) {
         '<button onclick="document.getElementById(\'lif-offer-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px">'+
+        // Vorlage-Picker — füllt Werte vor
+        (vorlagen.length ? '<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px">'+
+            '<strong style="font-size:12px;color:#065f46">📑 Vorlage als Basis (Defaults vorbefüllen)</strong>'+
+            (anfrageData && anfrageData.vorliegendes_pdf_url && APP_KEYS.anthropicKey
+              ? '<button class="btn" onclick="_liftaroAutoMatchVorlage(\''+escapeHtml(anfrageId)+'\')" style="padding:3px 10px;font-size:11px;background:#4F46E5;border-color:#4F46E5;color:#fff" title="KI analysiert das PDF und schlägt die passende Vorlage vor">🤖 Vorlage erkennen</button>'
+              : '')+
+          '</div>'+
+          '<select id="lif-off-vorlage" onchange="_liftaroApplyVorlageDefaults()" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+            '<option value="">– keine, manuell ausfüllen –</option>'+
+            vorlagenOptions+
+          '</select>'+
+        '</div>' : '')+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">'+
           inp('lif-off-id','Eigene Angebots-Nr (optional)','text','z.B. ANG-2026-9911')+
           inp('lif-off-preis','Preis netto/Jahr € *','number','1980.00')+
@@ -13294,6 +13326,84 @@ function _openLiftaroOffer(anfrageId) {
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+  m._vorlagen = vorlagen;
+  m._anfrage = anfrageData;
+}
+
+/* Übernimmt Defaults aus der gewählten Vorlage in das Offer-Form. */
+function _liftaroApplyVorlageDefaults() {
+  const modal = document.getElementById('lif-offer-modal');
+  const sel = document.getElementById('lif-off-vorlage');
+  if (!modal || !sel) return;
+  const id = sel.value;
+  if (!id) return;
+  const v = (modal._vorlagen||[]).find(x => x.id === id);
+  if (!v || !v.fields) return;
+  const f = v.fields;
+  // Heuristische Defaults aus typischen Vorlage-Daten (falls vorhanden)
+  // Wir setzen die Felder nur wenn sie aktuell leer sind (überschreiben nicht)
+  const setIfEmpty = (id, val) => { const el = document.getElementById(id); if (el && !el.value && val) el.value = val; };
+  if (f.default_wartungen_pro_jahr) setIfEmpty('lif-off-wpa', String(f.default_wartungen_pro_jahr));
+  if (f.default_laufzeit_jahre)     setIfEmpty('lif-off-laufzeit', String(f.default_laufzeit_jahre));
+  if (f.default_kuendigungsfrist_monate) setIfEmpty('lif-off-kuendig', String(f.default_kuendigungsfrist_monate));
+  // Aus dem ki_prompt_extra kann man oft Defaults ableiten — als Hinweis im Kommentar
+  if (f.ki_prompt_extra && !document.getElementById('lif-off-kommentar').value) {
+    // Keine direkte Übernahme — die Hinweise sind interne KI-Anweisungen, nicht für den Kunden
+  }
+  toast('📑 Vorlage "'+(f.name||'')+'" übernommen — bitte Werte prüfen + Preis manuell ergänzen.','ok');
+}
+
+/* KI-basiertes Vorlage-Matching: KI bekommt das Bestands-PDF + Liste aller Vorlagen,
+   antwortet welche Vorlage am besten passt. Setzt das Dropdown automatisch. */
+async function _liftaroAutoMatchVorlage(anfrageId) {
+  const modal = document.getElementById('lif-offer-modal');
+  if (!modal) return;
+  const anfrage = modal._anfrage;
+  const vorlagen = modal._vorlagen || [];
+  if (!anfrage || !anfrage.vorliegendes_pdf_url) return toast('Kein Bestands-PDF in der Anfrage.','err');
+  if (!vorlagen.length) return toast('Keine Vorlagen verfügbar.','err');
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key.','err');
+  _showVorlagenWorking('🤖 KI analysiert das Bestands-PDF und sucht passende Vorlage…');
+  try {
+    // PDF runterladen
+    const pdfResp = await fetch(anfrage.vorliegendes_pdf_url, { signal: _getAbortSignal() });
+    if (!pdfResp.ok) throw new Error('PDF nicht ladbar (HTTP '+pdfResp.status+')');
+    const blob = await pdfResp.blob();
+    const pdfFile = new File([blob], 'liftaro-anfrage.pdf', { type:'application/pdf' });
+    // Prompt mit Vorlagen-Liste
+    const vorlagenListe = vorlagen.map((v, i) =>
+      (i+1)+'. id: '+v.id+' | Name: '+(v.fields.name||'')+' | Typ: '+(v.fields.typ||'')
+    ).join('\n');
+    const prompt = 'Du erhältst ein PDF mit einem bestehenden Wartungsvertrag eines Wettbewerbers. ' +
+      'Analysiere den Hersteller (KONE, Schindler, Otis, ThyssenKrupp, Schmitt+Sohn, ...) und den Vertragstyp (Einzelvertrag vs Sammelvertrag). ' +
+      'Gleiche dann mit folgender Liste meiner Vorlagen ab und sage, welche am besten passt:\n\n' +
+      vorlagenListe + '\n\n' +
+      'Antworte AUSSCHLIESSLICH als kompaktes JSON in dieser Form (kein Vorwort, keine Code-Fences):\n' +
+      '{"hersteller":"KONE","typ":"einzel","match_id":"<id>","confidence":"hoch|mittel|niedrig","reason":"kurz warum"}\n\n' +
+      'Wenn keine Vorlage gut passt, setze match_id auf null.';
+    const result = await callClaude(pdfFile, prompt, { maxTokens: 800 });
+    _closeVorlagenWorking();
+    let parsed = null;
+    try {
+      const m = String(result).match(/\{[\s\S]*\}/);
+      if (m) parsed = JSON.parse(m[0]);
+    } catch(_){}
+    if (!parsed) return toast('KI-Antwort konnte nicht geparst werden.','err');
+    if (!parsed.match_id) {
+      toast('🤔 Hersteller: '+(parsed.hersteller||'?')+' — keine passende Vorlage gefunden. Bitte manuell wählen oder neu anlegen.','ok');
+      return;
+    }
+    const sel = document.getElementById('lif-off-vorlage');
+    if (sel) {
+      sel.value = parsed.match_id;
+      _liftaroApplyVorlageDefaults();
+    }
+    toast('✅ Vorlage erkannt: '+(parsed.hersteller||'')+' / '+(parsed.typ||'')+' · '+(parsed.confidence||'')+' Vertrauen','ok');
+  } catch(e) {
+    _closeVorlagenWorking();
+    if (e.name === 'AbortError') return;
+    toast('❌ Vorlage-Erkennung: '+(e.message||'?').slice(0,300),'err');
+  }
 }
 
 async function _submitLiftaroOffer(anfrageId) {
