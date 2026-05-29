@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.90';
+const APP_VERSION = 'v3.91';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13867,10 +13867,71 @@ async function _openGbuDetail(recId) {
   const f = rec.fields || {};
   const att = Array.isArray(f.gbu_pdf) && f.gbu_pdf[0];
   if (att && att.url) {
-    _showAppVertragPDF(recId, att.url, f.anlage_adresse || '');
+    _showGbuPdf(recId, att.url, f.anlage_adresse || '', f);
     return;
   }
   toast('Diese GBU hat noch kein PDF. Erstmal die GBU im Wizard fertigstellen.', 'err');
+}
+
+/* Eigener PDF-Viewer für GBUs — keine Vertrags-Buttons (Konditionen/Korrigieren/Komplett neu).
+   Hat stattdessen GBU-spezifische Actions: Löschen, Status auf "aktiv" setzen. */
+function _showGbuPdf(recId, pdfBlobOrUrl, label, fields) {
+  const old = document.getElementById('gbu-pdf-modal'); if (old) old.remove();
+  const url = (typeof pdfBlobOrUrl === 'string') ? pdfBlobOrUrl : URL.createObjectURL(pdfBlobOrUrl);
+  const f = fields || {};
+  const status = f.status || 'entwurf';
+  const modal = document.createElement('div');
+  modal.id = 'gbu-pdf-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10300;display:flex;align-items:center;justify-content:center;padding:12px';
+  modal.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:1000px;width:100%;height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.6)">'+
+      '<div style="padding:14px 18px;background:#dc2626;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'+
+        '<span>⚠️ Gefährdungsbeurteilung · '+escapeHtml(label||'')+'</span>'+
+        '<button onclick="document.getElementById(\'gbu-pdf-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="gbu-pdf-canvas-wrap" style="flex:1;background:#525252;overflow-y:auto;overflow-x:hidden;padding:8px"></div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;flex-shrink:0">'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn" onclick="document.getElementById(\'gbu-pdf-modal\').remove()">Schließen</button>'+
+          '<a class="btn" href="'+url+'" download="GBU.pdf" style="text-decoration:none">📥 Herunterladen</a>'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          (status==='entwurf' ? '<button class="btn" style="background:#10b981;color:#fff;border-color:#10b981" onclick="_gbuSetStatus(\''+escapeHtml(recId)+'\',\'aktiv\')" title="GBU freigeben → Status auf aktiv">✓ Freigeben (aktiv)</button>' : '')+
+          (status==='aktiv' ? '<button class="btn" onclick="_gbuSetStatus(\''+escapeHtml(recId)+'\',\'entwurf\')" title="GBU zurück auf Entwurf">↩ Zurück auf Entwurf</button>' : '')+
+          '<button class="btn" style="color:#dc2626;border-color:rgba(220,38,38,.4)" onclick="_gbuDelete(\''+escapeHtml(recId)+'\')">🗑 Löschen</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(modal);
+  _renderPdfIntoContainer(pdfBlobOrUrl instanceof Blob ? pdfBlobOrUrl : url, document.getElementById('gbu-pdf-canvas-wrap'));
+}
+
+async function _gbuSetStatus(recId, status) {
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/GBUs/'+recId, {
+      method:'PATCH',
+      headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+      body: JSON.stringify({ fields: { status }})
+    });
+    toast('✅ Status: '+status, 'ok');
+    document.getElementById('gbu-pdf-modal')?.remove();
+    await renderGbuView({ force:true });
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function _gbuDelete(recId) {
+  if (!confirm('Diese GBU wirklich löschen? (PDF bleibt nicht erhalten.)')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/GBUs/'+recId, {
+      method:'DELETE',
+      headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey}
+    });
+    toast('🗑 GBU gelöscht', 'ok');
+    document.getElementById('gbu-pdf-modal')?.remove();
+    await renderGbuView({ force:true });
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /* GBU-Wizard öffnen. Pro Item: Status (ok/maßnahme/n.z.) + Maßnahme-Text + Zusatzmaßnahme. */
@@ -14232,7 +14293,7 @@ async function _gbuSubmit() {
     }
     modal.remove();
     await renderGbuView({ force:true });
-    if (pdfBlob) _showAppVertragPDF(rec.id, pdfBlob, _buildAnlageAdresse(d.anlage)||'GBU');
+    if (pdfBlob) _showGbuPdf(rec.id, pdfBlob, _buildAnlageAdresse(d.anlage)||'GBU', fields);
   } catch(e) {
     console.error('gbuSubmit:', e);
     toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
@@ -14300,9 +14361,9 @@ async function _buildGbuPdf(d) {
   }
   if (y > 240) { doc.addPage(); y = 20; }
   doc.setFontSize(11); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
-  doc.text('Übersicht Bewertung', ml, y); y += 6;
+  doc.text('Uebersicht Bewertung', ml, y); y += 6;
   doc.setFontSize(9); doc.setFont('helvetica','normal');
-  doc.text('✓ OK: '+ok+'   ⚠ Maßnahme: '+mass+'   — n.z.: '+nz+'   ◯ leer: '+leer, ml, y);
+  doc.text('OK: '+ok+'   Massnahme noetig: '+mass+'   nicht zutreffend: '+nz+'   noch leer: '+leer, ml, y);
   y += 8;
 
   // Gefährdungstabelle
@@ -14319,11 +14380,11 @@ async function _buildGbuPdf(d) {
     for (const it of cat.items) {
       if (y > 275) { doc.addPage(); y = 18; }
       const data = (d.items||{})[it.id] || {};
-      const stat = data.status==='ok' ? '✓' : data.status==='massnahme' ? '⚠' : data.status==='nz' ? '—' : '◯';
+      const stat = data.status==='ok' ? '[OK]' : data.status==='massnahme' ? '[M!]' : data.status==='nz' ? '[NZ]' : '[ ]';
       doc.setTextColor(...GREY);
       doc.text(stat+' '+it.label.slice(0,80), ml+2, y); y += 4;
       if (data.massnahme_bestehend) {
-        const lines = doc.splitTextToSize('Maßn.: '+data.massnahme_bestehend, cw-8);
+        const lines = doc.splitTextToSize('Bestehend: '+data.massnahme_bestehend, cw-8);
         doc.setTextColor(...GREY_L); doc.setFontSize(7);
         for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.2; if (y > 285) { doc.addPage(); y = 18; } }
         doc.setFontSize(8);
@@ -14339,22 +14400,22 @@ async function _buildGbuPdf(d) {
     y += 3;
   }
 
-  // Maßnahmen-Aktionsplan
+  // Massnahmen-Aktionsplan
   const offene = Object.entries(d.items||{}).filter(([_,v]) => v.status === 'massnahme');
   if (offene.length) {
     doc.addPage(); y = 18;
     doc.setFontSize(13); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
-    doc.text('Maßnahmen-Aktionsplan', ml, y); y += 7;
+    doc.text('Massnahmen-Aktionsplan', ml, y); y += 7;
     doc.setFontSize(9); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
-    doc.text(offene.length+' offene Maßnahme(n) — abzuarbeiten bis zur nächsten GBU-Überprüfung', ml, y); y += 6;
+    doc.text(offene.length+' offene Massnahme(n) - abzuarbeiten bis zur naechsten GBU-Ueberpruefung', ml, y); y += 6;
     for (const [id, v] of offene) {
       if (y > 275) { doc.addPage(); y = 18; }
       const it = GBU_HAZARD_CATALOG.flatMap(c => c.items).find(i => i.id === id);
       doc.setFontSize(9); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
-      doc.text('• '+(it?.label||id), ml+2, y); y += 4.5;
+      doc.text('- '+(it?.label||id), ml+2, y); y += 4.5;
       doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
       if (v.massnahme_zusatz) {
-        const lines = doc.splitTextToSize('Maßnahme: '+v.massnahme_zusatz, cw-8);
+        const lines = doc.splitTextToSize('Massnahme: '+v.massnahme_zusatz, cw-8);
         for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.5; if (y > 285) { doc.addPage(); y = 18; } }
       }
       y += 2;
