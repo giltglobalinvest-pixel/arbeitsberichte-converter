@@ -1357,6 +1357,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-kontakte" onclick="switchView('kontakte')" style="display:none">👤 Kontakte</button>
     <button class="tnav" id="tnav-vertraege" onclick="switchView('vertraege')" style="display:none">📑 Wartungsverträge</button>
     <button class="tnav" id="tnav-rechnungen" onclick="switchView('rechnungen')" style="display:none">💶 Rechnungen</button>
+    <button class="tnav" id="tnav-gbu" onclick="switchView('gbu')" style="display:none">⚠️ Gefährdungsbeurteilung</button>
     <button class="tnav" id="tnav-liftaro" onclick="switchView('liftaro')" style="display:none">📋 Liftaro Checks</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
@@ -1871,6 +1872,27 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="lif-list" style="padding:20px"></div>
+</div>
+
+<!-- GBU (Gefährdungsbeurteilung Aufzüge, nur Admin) -->
+<div class="firma-view" id="gbu-view">
+  <div class="firma-hdr">
+    <h2>⚠️ Gefährdungsbeurteilung <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="gbu-count">0</span></h2>
+    <button class="btn" onclick="renderGbuView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" onclick="openGbuWizard()">+ Neue GBU</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="gbu-search" placeholder="Suchen nach Anlage, Adresse, Fabrik-Nr…" oninput="_renderGbuList()">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="gbu-flt-entwurf" checked onchange="_renderGbuList()"> ✏ Entwurf</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="gbu-flt-aktiv" checked onchange="_renderGbuList()"> 🟢 Aktiv</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="gbu-flt-abgelaufen" checked onchange="_renderGbuList()"> 🔴 Abgelaufen</label>
+    </div>
+  </div>
+  <div class="firma-body" id="gbu-list" style="padding:20px"></div>
 </div>
 
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
@@ -2433,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.88';
+const APP_VERSION = 'v3.89';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3066,6 +3088,7 @@ async function showApp() {
     document.getElementById('tnav-vertraege').style.display = '';
     document.getElementById('tnav-rechnungen').style.display = '';
     document.getElementById('tnav-liftaro').style.display = '';
+    document.getElementById('tnav-gbu').style.display = '';
     ensureUsersFieldsForAdmin().catch(e => console.warn('ensureUsersFields:', e));
     ensureLegacyFirmaFields().catch(e => console.warn('ensureLegacyFirmaFields:', e));
     ensureFirmenSeeded().catch(e => console.warn('ensureFirmenSeeded:', e));
@@ -3079,6 +3102,7 @@ async function showApp() {
     document.getElementById('tnav-vertraege').style.display = 'none';
     document.getElementById('tnav-rechnungen').style.display = 'none';
     document.getElementById('tnav-liftaro').style.display = 'none';
+    document.getElementById('tnav-gbu').style.display = 'none';
   }
 
   // Firmen laden + initiale Firma setzen
@@ -3555,6 +3579,7 @@ function switchView(view) {
   if (view==='vertraege' && !isAdmin()) return;
   if (view==='rechnungen' && !isAdmin()) return;
   if (view==='liftaro' && !isAdmin()) return;
+  if (view==='gbu' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3577,9 +3602,10 @@ function switchView(view) {
   const wv   = document.getElementById('wv-view');
   const rch  = document.getElementById('rch-view');
   const lif  = document.getElementById('lif-view');
+  const gbu  = document.getElementById('gbu-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3599,6 +3625,7 @@ function switchView(view) {
   if (wv)   wv.classList.toggle('show',   view==='vertraege');
   if (rch)  rch.classList.toggle('show',  view==='rechnungen');
   if (lif)  lif.classList.toggle('show',  view==='liftaro');
+  if (gbu)  gbu.classList.toggle('show',  view==='gbu');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3614,6 +3641,7 @@ function switchView(view) {
   if (view==='vertraege') renderWartungsvertraegeView();
   if (view==='rechnungen') renderRechnungenView();
   if (view==='liftaro') renderLiftaroView();
+  if (view==='gbu') renderGbuView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -9353,6 +9381,12 @@ function renderDashboard() {
         <div class="dash-tool-desc">Offene Wartungsvertrag-Anfragen von Liftaro. Angebot abgeben oder ablehnen direkt aus der App.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>
+      <button class="dash-tool" onclick="switchView('gbu')">
+        <div class="dash-tool-icon">⚠️</div>
+        <div class="dash-tool-label">Gefährdungsbeurteilung</div>
+        <div class="dash-tool-desc">GBU für Aufzugsanlagen nach BetrSichV § 3. Wizard mit allen ~50 Checkpunkten, PDF-Export mit Maßnahmen-Aktionsplan.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
       <button class="dash-tool" onclick="switchView('users')">
         <div class="dash-tool-icon">🧑‍💼</div>
         <div class="dash-tool-label">User-Verwaltung</div>
@@ -13648,6 +13682,684 @@ function _toggleLiftaroPolling() {
     if (btn) { btn.textContent = '⏰ Auto-Refresh AN (5 Min)'; btn.style.background='#10b981'; btn.style.color='#fff'; }
     toast('▶ Auto-Refresh aktiv (alle 5 Min)','ok');
   }
+}
+
+/* ════════════════════════════════════════════════════════════
+   GBU — GEFÄHRDUNGSBEURTEILUNG FÜR AUFZUGSANLAGEN
+   Nach BetrSichV § 3, TRBS 1111, TRBS 2181 (Eingeschlossensein), TRBS 3121.
+   Workflow: Liste → "+ Neue GBU" → Wizard (Anlage / Verantwortliche /
+   Gefährdungskatalog / Freigabe) → PDF + Speichern.
+   ════════════════════════════════════════════════════════════ */
+
+/* Gefährdungs-Katalog: alle Kategorien + Items.
+   Items pro Kategorie haben id, label und (optional) typische bestehende Maßnahme. */
+const GBU_HAZARD_CATALOG = [
+  { id:'mech', label:'Mechanische Gefährdungen', items:[
+    { id:'mech_quetsch_tuer',  label:'Quetschen an Schacht-/Kabinentür', massnahme:'Lichtschranke + Schließkraftbegrenzung ≤ 150 N (DIN EN 81-20)' },
+    { id:'mech_scher_kabine',  label:'Scheren zwischen Kabine und Schachtwand',  massnahme:'Schutzabstände nach DIN EN 81-20' },
+    { id:'mech_stoss_bewegung',label:'Stoßen durch unkontrollierte Kabinenbewegung', massnahme:'Geschwindigkeitsbegrenzer + Fangvorrichtung' },
+    { id:'mech_absturz_schacht',label:'Absturz in Schacht bei geöffneter Schachttür', massnahme:'Türverriegelung + Bündigkeitskontrolle' },
+    { id:'mech_sturz_kabine', label:'Sturz in der Kabine durch Niveau-Differenz', massnahme:'Bündige Haltestellenanfahrt, rutschfester Boden' },
+    { id:'mech_quetsch_kabine',label:'Quetschen unter/über Kabine bei Wartung', massnahme:'Freiraum Schachtkopf/-grube nach DIN EN 81-20, Endschalter' },
+    { id:'mech_herabfallend', label:'Herabfallende Teile (Deckenverkleidung, Beleuchtung)', massnahme:'Visuelle Prüfung bei Wartung, sichere Befestigung' },
+  ]},
+  { id:'elek', label:'Elektrische Gefährdungen', items:[
+    { id:'elek_direkt',  label:'Direktes Berühren spannungsführender Teile', massnahme:'IP-Schutz, Abdeckungen Steuerschrank' },
+    { id:'elek_indirekt',label:'Indirektes Berühren (Körperschluss)', massnahme:'Schutzleiter, RCD, Potentialausgleich' },
+    { id:'elek_lichtbogen', label:'Lichtbogen bei Schaltvorgängen', massnahme:'FI/LS, qualifizierte Elektrofachkraft, DGUV V3-Prüfung' },
+    { id:'elek_statisch',label:'Statische Aufladung', massnahme:'Ableitung Steuerschrank' },
+    { id:'elek_dguv_v3', label:'Wiederkehrende Prüfung nach DGUV Vorschrift 3', massnahme:'Prüfung durch Elektrofachkraft, Protokoll archiviert' },
+  ]},
+  { id:'stoff', label:'Gefahrstoffe / Werkstoffe', items:[
+    { id:'stoff_hydraul', label:'Hydrauliköl-Austritt bei Hydraulikaufzügen', massnahme:'Auffangwanne, Leckageüberwachung' },
+    { id:'stoff_fett',   label:'Schmierfette Führungsschienen', massnahme:'SDB vorhanden, Hautschutzplan für Wartungspersonal' },
+    { id:'stoff_asbest', label:'Asbestverdacht bei Altanlagen vor 1993', massnahme:'Bestandsaufnahme nach TRGS 519, ggf. Sanierungskonzept' },
+    { id:'stoff_reinig', label:'Reinigungsmittel Kabine', massnahme:'Sicherheitsdatenblätter vorhanden, sichere Lagerung' },
+  ]},
+  { id:'brand', label:'Brand- und Explosionsgefährdung', items:[
+    { id:'brand_last',     label:'Brandlast im Maschinenraum', massnahme:'F90-Abschottung, keine Fremdlagerung im Maschinenraum' },
+    { id:'brand_steuerung',label:'Brandfallsteuerung / Evakuierungsfahrt', massnahme:'Hauptebenenfahrt nach DIN EN 81-73' },
+    { id:'brand_schild',   label:'Beschilderung „Aufzug im Brandfall nicht benutzen"', massnahme:'Schild gut sichtbar an allen Haltestellen' },
+    { id:'brand_rauch',    label:'Rauchableitung im Schacht', massnahme:'Schachtentrauchung gem. Bauordnung' },
+    { id:'brand_feuerwehr',label:'Feuerwehraufzug bei Hochhaus > 22 m', massnahme:'DIN EN 81-72 falls einschlägig' },
+  ]},
+  { id:'therm', label:'Thermische Gefährdungen', items:[
+    { id:'therm_heiss', label:'Heiße Oberflächen Antrieb/Motor', massnahme:'Berührungsschutz / Warnhinweise' },
+    { id:'therm_kalt',  label:'Frost-/Kältegefahr im Außenaufzug', massnahme:'Frostschutz Hydraulik, beheizte Steuerung' },
+  ]},
+  { id:'phys', label:'Physikalische Einwirkungen', items:[
+    { id:'phys_laerm',     label:'Lärm im Maschinenraum (>80 dB(A))', massnahme:'Gehörschutz für Wartungspersonal, Lärmkataster' },
+    { id:'phys_vibration', label:'Vibration durch Antrieb', massnahme:'Schwingungsdämpfer Antrieb, Lagerungen' },
+    { id:'phys_emv',       label:'EMV / Strahlung Frequenzumrichter', massnahme:'EMV-Konformitätserklärung, Abschirmung' },
+    { id:'phys_notbel',    label:'Notbeleuchtung Kabine ≥ 1h bei Stromausfall', massnahme:'Batterie-Notbeleuchtung nach DIN EN 81-20' },
+  ]},
+  { id:'umgeb', label:'Arbeitsumgebung', items:[
+    { id:'umgeb_licht_kabine',  label:'Beleuchtung Kabine ≥ 100 lx', massnahme:'Beleuchtungsmessung, defekte Leuchten umgehend ersetzen' },
+    { id:'umgeb_licht_maschine',label:'Beleuchtung Maschinenraum/Schacht ≥ 200 lx', massnahme:'Schaltbare Beleuchtung am Eingang' },
+    { id:'umgeb_belueft',       label:'Belüftung Kabine — Lüftungsöffnungen frei', massnahme:'Regelmäßige Sichtprüfung' },
+    { id:'umgeb_klima',         label:'Klima Maschinenraum 5–40 °C', massnahme:'Klimagerät bei maschinenraumlosen Anlagen prüfen' },
+    { id:'umgeb_zugang',        label:'Sicherer Zugang zum Maschinenraum', massnahme:'Festes Aufstieg, beleuchtet, abschließbar' },
+  ]},
+  { id:'physisch', label:'Physische Belastung (Wartung)', items:[
+    { id:'physisch_zwangshaltung', label:'Zwangshaltungen im Schacht/Kabinendach', massnahme:'Unterweisung Wartungspersonal' },
+    { id:'physisch_heben',         label:'Heben/Tragen schwerer Bauteile', massnahme:'Hebehilfen, max. Lastgrenzen einhalten' },
+    { id:'physisch_absturz',       label:'Absturzsicherung Kabinendach', massnahme:'Geländer Kabinendach, PSA gegen Absturz' },
+  ]},
+  { id:'psych', label:'Psychische Belastung', items:[
+    { id:'psych_stress',     label:'Stress eingeschlossener Personen', massnahme:'Klare Verhaltensanweisungen, sichtbarer Notruf' },
+    { id:'psych_befreiung',  label:'Belastung Hilfeleistender bei Befreiung', massnahme:'Geschulte Befreier nach TRBS 2181' },
+    { id:'psych_unterweis',  label:'Unterweisung Verhalten im Notfall', massnahme:'Aushang in Kabine + Online-Schulung jährlich' },
+  ]},
+  { id:'eing', label:'TRBS 2181 – Eingeschlossensein (PFLICHTSEKTION)', items:[
+    { id:'eing_notruf',      label:'Notruftaster im Fahrkorb (einmalig betätigen)', massnahme:'Notruftaster geprüft, beleuchtet, beschriftet' },
+    { id:'eing_sprech',      label:'Zweiwege-Sprechverbindung zu ständig besetzter Stelle', massnahme:'Vertrag mit Notrufzentrale, 24/7-Erreichbarkeit' },
+    { id:'eing_notstrom',    label:'Notstromversorgung Notruf ≥ 1 h', massnahme:'Akku-Notstrom + monatlicher Funktionstest' },
+    { id:'eing_standort',    label:'Standortübermittlung Anlagen-ID automatisch', massnahme:'GSM-Wählgerät mit fester Anlagen-Kennung' },
+    { id:'eing_befreiung30', label:'Befreiung innerhalb 30 Minuten gewährleistet', massnahme:'Reaktionszeit Wartungsfirma vertraglich fixiert' },
+    { id:'eing_plan',        label:'Schriftlicher Alarm- und Rettungsplan', massnahme:'Plan im Maschinenraum + bei Hausverwaltung' },
+    { id:'eing_geschult',    label:'Geschulte Hilfeleistende vor Ort', massnahme:'Jährliche Schulung Befreier + Übung dokumentiert' },
+    { id:'eing_test',        label:'Monatlicher Notruftest dokumentiert', massnahme:'Test-Protokoll Wartungsfirma, Aufbewahrung 2 Jahre' },
+    { id:'eing_vertrag',     label:'Vertragliche Regelung mit Notrufzentrale', massnahme:'Vertrag aktiv, Vertragsende geprüft' },
+  ]},
+];
+
+/* Gesamt-Anzahl Items (für Progress + UI-Hints) */
+const GBU_TOTAL_ITEMS = GBU_HAZARD_CATALOG.reduce((sum, cat) => sum + cat.items.length, 0);
+
+/* GBU-Cache (in-memory + localStorage über _erpCache nicht — Airtable ist source of truth) */
+let _gbuCache = { items: [], loadedAt: 0 };
+
+async function _ensureGbuTable() {
+  try {
+    await ensureTable('GBUs', [
+      { name:'firma',             type:'singleLineText' },
+      { name:'anlage_id',         type:'singleLineText' },
+      { name:'anlage_adresse',    type:'singleLineText' },
+      { name:'anlage_fabriknummer',type:'singleLineText' },
+      { name:'status',            type:'singleLineText' },  // 'entwurf' | 'aktiv' | 'abgelaufen'
+      { name:'erstellt_am',       type:'singleLineText' },
+      { name:'erstellt_von',      type:'singleLineText' },
+      { name:'naechste_pruefung', type:'singleLineText' },
+      { name:'gbu_data_json',     type:'multilineText' },
+      { name:'gbu_pdf',           type:'multipleAttachments' },
+    ]);
+  } catch(e) { console.warn('[GBU] Schema-Setup:', e.message); }
+}
+
+async function renderGbuView(opts) {
+  if (!isAdmin()) return;
+  trackEvent('gbu', 'launch');
+  const list = document.getElementById('gbu-list');
+  if (!list) return;
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Gefährdungsbeurteilungen…</div>';
+  try {
+    await _ensureGbuTable();
+    const force = opts && opts.force;
+    const fresh = !force && _gbuCache.items.length && (Date.now() - _gbuCache.loadedAt) < 5*60*1000;
+    if (!fresh) {
+      const records = await atRead('GBUs', null).catch(()=>[]);
+      _gbuCache = { items: records, loadedAt: Date.now() };
+    }
+    _renderGbuList();
+  } catch(e) {
+    list.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function _renderGbuList() {
+  const list = document.getElementById('gbu-list');
+  const cnt  = document.getElementById('gbu-count');
+  if (!list) return;
+  const q = (document.getElementById('gbu-search')?.value || '').toLowerCase().trim();
+  const showEntwurf    = document.getElementById('gbu-flt-entwurf')?.checked !== false;
+  const showAktiv      = document.getElementById('gbu-flt-aktiv')?.checked !== false;
+  const showAbgelaufen = document.getElementById('gbu-flt-abgelaufen')?.checked !== false;
+  const firmaSlug = getCurrentFirmaSlug();
+  const all = isFirmaAll();
+  let items = (_gbuCache.items||[]).filter(r => {
+    const f = r.fields || {};
+    if (!all && String(f.firma||'') !== firmaSlug) return false;
+    const s = String(f.status||'entwurf');
+    if (s === 'entwurf' && !showEntwurf) return false;
+    if (s === 'aktiv' && !showAktiv) return false;
+    if (s === 'abgelaufen' && !showAbgelaufen) return false;
+    return true;
+  });
+  if (q) items = items.filter(r => {
+    const f = r.fields || {};
+    return String(f.anlage_adresse||'').toLowerCase().includes(q) ||
+           String(f.anlage_fabriknummer||'').toLowerCase().includes(q) ||
+           String(f.anlage_id||'').toLowerCase().includes(q);
+  });
+  items.sort((a,b) => String(b.fields.erstellt_am||'').localeCompare(String(a.fields.erstellt_am||'')));
+  if (cnt) cnt.textContent = items.length+' GBUs';
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer.':'Noch keine GBU vorhanden. Klick <strong>+ Neue GBU</strong> um eine zu erstellen.')+'</div>';
+    return;
+  }
+  list.innerHTML = '<div style="display:grid;gap:8px">'+items.slice(0,300).map(r => {
+    const f = r.fields || {};
+    const status = String(f.status||'entwurf');
+    const color = status==='aktiv'?'#10b981':status==='abgelaufen'?'#dc2626':'#6b7280';
+    const label = status==='aktiv'?'🟢 aktiv':status==='abgelaufen'?'🔴 abgelaufen':'✏ Entwurf';
+    const hasPdf = Array.isArray(f.gbu_pdf) && f.gbu_pdf[0];
+    return '<div style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+color+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center" onclick="_openGbuDetail(\''+escapeHtml(r.id)+'\')">'+
+      '<div style="flex:1;min-width:240px">'+
+        '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:3px">'+
+          '<span style="background:'+color+';color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">'+label+'</span>'+
+          (hasPdf ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px">📄 PDF</span>' : '')+
+        '</div>'+
+        '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(f.anlage_adresse||'(ohne Adresse)')+'</div>'+
+        (f.anlage_fabriknummer ? '<div style="font-size:11px;color:var(--txt2)">🔧 Fabrik-Nr. '+escapeHtml(f.anlage_fabriknummer)+'</div>' : '')+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--txt3);text-align:right">'+
+        '<div>Erstellt: '+escapeHtml(String(f.erstellt_am||'').slice(0,10))+'</div>'+
+        (f.naechste_pruefung ? '<div>Nächste Prüfung: '+escapeHtml(String(f.naechste_pruefung).slice(0,10))+'</div>' : '')+
+      '</div>'+
+    '</div>';
+  }).join('')+'</div>';
+}
+
+/* GBU Detail/PDF zeigen */
+async function _openGbuDetail(recId) {
+  const rec = (_gbuCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('GBU nicht gefunden.','err');
+  const f = rec.fields || {};
+  const att = Array.isArray(f.gbu_pdf) && f.gbu_pdf[0];
+  if (att && att.url) {
+    _showAppVertragPDF(recId, att.url, f.anlage_adresse || '');
+    return;
+  }
+  toast('Diese GBU hat noch kein PDF. Erstmal die GBU im Wizard fertigstellen.', 'err');
+}
+
+/* GBU-Wizard öffnen. Pro Item: Status (ok/maßnahme/n.z.) + Maßnahme-Text + Zusatzmaßnahme. */
+async function openGbuWizard() {
+  if (!isAdmin()) return toast('🔒 Nur Admin','err');
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  // Anlagen laden
+  toast('⏳ Lade Anlagen…','');
+  try { await _loadAnlagenForFirma(firmaSlug); }
+  catch(e) { return toast('❌ Anlagen laden: '+e.message.slice(0,200),'err'); }
+  const old = document.getElementById('gbu-wiz-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'gbu-wiz-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:900px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#dc2626;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>⚠️ Neue Gefährdungsbeurteilung · Aufzugsanlage</span>'+
+        '<button onclick="document.getElementById(\'gbu-wiz-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="gbu-wiz-stepbar" style="padding:10px 18px;background:var(--bg);border-bottom:1px solid var(--bdr);display:flex;gap:8px;flex-wrap:wrap;font-size:11px;font-weight:600"></div>'+
+      '<div id="gbu-wiz-body" style="flex:1;overflow-y:auto;padding:18px 22px;font-size:13px"></div>'+
+      '<div id="gbu-wiz-footer" style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap"></div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._step = 1;
+  m._data = {
+    anlage: null,
+    verantwortliche: { betreiber:'', verantwortlich_betriebssicherheit:'', wartungsfirma:'Aszendio Aufzugservice GmbH', notrufzentrale:'', hilfeleistende:'' },
+    nutzung: { nutzerkreis:'', betriebszeiten:'24/7', besondere_nutzer:'', umgebung:'Innen' },
+    items: {},          // hazard_id → { status, massnahme_bestehend, massnahme_zusatz, verantwortlich, frist }
+    pruefintervalle: { hauptpruefung:'2 Jahre', zwischenpruefung:'2 Jahre versetzt', wartung:'4× p.a.', notruftest:'monatlich', gbu_review:'jährlich' },
+    freigabe: { ersteller:APP_KEYS.user?.name || '', erstellt_am:new Date().toISOString().slice(0,10), naechste_pruefung:'' },
+  };
+  // Items mit Defaults aus dem Katalog vorbefüllen
+  for (const cat of GBU_HAZARD_CATALOG) {
+    for (const it of cat.items) {
+      m._data.items[it.id] = {
+        status: '',                    // 'ok' | 'massnahme' | 'nz' | ''
+        massnahme_bestehend: it.massnahme || '',
+        massnahme_zusatz: '',
+        verantwortlich: '',
+        frist: '',
+      };
+    }
+  }
+  _gbuRenderStep();
+}
+
+function _gbuRenderStep() {
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  const step = modal._step;
+  const body = document.getElementById('gbu-wiz-body');
+  const stepbar = document.getElementById('gbu-wiz-stepbar');
+  const footer = document.getElementById('gbu-wiz-footer');
+  const stepNames = ['1. Anlage', '2. Verantwortliche', '3. Gefährdungskatalog', '4. Freigabe & PDF'];
+  stepbar.innerHTML = stepNames.map((name, i) => {
+    const num = i+1;
+    const active = num === step;
+    const done = num < step;
+    return '<div style="padding:5px 10px;border-radius:99px;background:'+(active?'#dc2626':done?'#10b981':'var(--surf)')+';color:'+(active||done?'#fff':'var(--txt3)')+';border:1px solid '+(active?'#dc2626':done?'#10b981':'var(--bdr)')+'">'+(done?'✓ ':'')+escapeHtml(name)+'</div>';
+  }).join('');
+  if (step === 1) _gbuStep1Anlage(body);
+  else if (step === 2) _gbuStep2Verantwortliche(body);
+  else if (step === 3) _gbuStep3Hazards(body);
+  else if (step === 4) _gbuStep4Freigabe(body);
+  // Footer
+  const nextLbl = step === 4 ? '🚀 GBU erstellen + PDF' : 'Weiter →';
+  const prevLbl = '← Zurück';
+  footer.innerHTML =
+    '<button class="btn" onclick="document.getElementById(\'gbu-wiz-modal\').remove()">Abbrechen</button>'+
+    '<div style="display:flex;gap:8px">'+
+      (step > 1 ? '<button class="btn" onclick="_gbuPrev()">'+prevLbl+'</button>' : '')+
+      '<button class="btn prim" style="background:#dc2626;border-color:#dc2626" id="gbu-wiz-next" onclick="_gbuNext()">'+nextLbl+'</button>'+
+    '</div>';
+}
+
+function _gbuPrev() {
+  _gbuCollectStep();
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  if (modal._step > 1) { modal._step--; _gbuRenderStep(); }
+}
+async function _gbuNext() {
+  _gbuCollectStep();
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  const step = modal._step;
+  // Validierung pro Schritt
+  if (step === 1 && !modal._data.anlage) return toast('Bitte erst eine Anlage wählen.','err');
+  if (step === 3) {
+    const offen = Object.values(modal._data.items).filter(it => !it.status).length;
+    if (offen > 0 && !confirm(offen+' Items sind noch unbewertet. Trotzdem weiter? (Du kannst auch später korrigieren.)')) return;
+  }
+  if (step < 4) { modal._step++; _gbuRenderStep(); return; }
+  // Step 4 = Submit
+  await _gbuSubmit();
+}
+
+function _gbuCollectStep() {
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  const step = modal._step;
+  const d = modal._data;
+  if (step === 2) {
+    d.verantwortliche.betreiber = document.getElementById('gbu-v-betreiber')?.value || '';
+    d.verantwortliche.verantwortlich_betriebssicherheit = document.getElementById('gbu-v-bs')?.value || '';
+    d.verantwortliche.wartungsfirma = document.getElementById('gbu-v-wartung')?.value || '';
+    d.verantwortliche.notrufzentrale = document.getElementById('gbu-v-notruf')?.value || '';
+    d.verantwortliche.hilfeleistende = document.getElementById('gbu-v-hilf')?.value || '';
+    d.nutzung.nutzerkreis = document.getElementById('gbu-n-nutzer')?.value || '';
+    d.nutzung.betriebszeiten = document.getElementById('gbu-n-zeit')?.value || '';
+    d.nutzung.besondere_nutzer = document.getElementById('gbu-n-besondere')?.value || '';
+    d.nutzung.umgebung = document.getElementById('gbu-n-umgeb')?.value || '';
+  }
+  if (step === 3) {
+    for (const cat of GBU_HAZARD_CATALOG) {
+      for (const it of cat.items) {
+        const sel = document.querySelector('input[name="gbu-st-'+it.id+'"]:checked');
+        const massB = document.getElementById('gbu-mb-'+it.id);
+        const massZ = document.getElementById('gbu-mz-'+it.id);
+        if (sel) d.items[it.id].status = sel.value;
+        if (massB) d.items[it.id].massnahme_bestehend = massB.value;
+        if (massZ) d.items[it.id].massnahme_zusatz = massZ.value;
+      }
+    }
+  }
+  if (step === 4) {
+    d.freigabe.ersteller = document.getElementById('gbu-f-ersteller')?.value || '';
+    d.freigabe.naechste_pruefung = document.getElementById('gbu-f-naechste')?.value || '';
+  }
+}
+
+function _gbuStep1Anlage(body) {
+  const modal = document.getElementById('gbu-wiz-modal');
+  const all = _anlagenCache.items || [];
+  body.innerHTML =
+    '<h3 style="margin:0 0 10px;font-size:14px;color:var(--navy)">🛗 Anlage auswählen</h3>'+
+    '<p style="font-size:12px;color:var(--txt2);margin:0 0 12px">Die Gefährdungsbeurteilung wird für eine konkrete Aufzugsanlage erstellt. Suche unten:</p>'+
+    '<input type="text" id="gbu-anlage-search" oninput="_gbuFilterAnlagen()" placeholder="🔍 Suchen nach Adresse, Fabrik-Nr, Objekttyp…" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-bottom:6px">'+
+    '<div id="gbu-anlage-list" style="max-height:320px;overflow-y:auto;background:var(--bg);border:1px solid var(--bdr);border-radius:6px"></div>';
+  _gbuFilterAnlagen();
+}
+
+function _gbuFilterAnlagen() {
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  const q = (document.getElementById('gbu-anlage-search')?.value || '').toLowerCase().trim();
+  const all = _anlagenCache.items || [];
+  const filtered = q
+    ? all.filter(a => (
+        String(_buildAnlageAdresse(a)||'').toLowerCase().includes(q) ||
+        String(a.fabriknummer||'').toLowerCase().includes(q) ||
+        String(a.objektTyp||'').toLowerCase().includes(q) ||
+        String((a.kunde?.firmenname)||'').toLowerCase().includes(q)
+      )).slice(0, 80)
+    : all.slice(0, 60);
+  const selected = modal._data.anlage;
+  const listEl = document.getElementById('gbu-anlage-list');
+  if (!filtered.length) { listEl.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3)">Keine Treffer</div>'; return; }
+  listEl.innerHTML = filtered.map((a, i) => {
+    const adresse = _buildAnlageAdresse(a)||'(ohne Adresse)';
+    const isSel = selected && String(selected.id) === String(a.id);
+    return '<div onclick="_gbuSelectAnlage('+i+', \''+escapeHtml(String(a.id||''))+'\')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;'+(isSel?'background:#fef2f2;border-left:3px solid #dc2626':'')+'">'+
+      '<div style="font-weight:600;font-size:13px;color:var(--navy)">🛗 '+escapeHtml(adresse)+(isSel?' <span style="color:#dc2626">✓</span>':'')+'</div>'+
+      '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([a.fabriknummer?'Fabrik-Nr. '+a.fabriknummer:'', a.objektTyp, a.haltestellen?a.haltestellen+' HS':''].filter(Boolean).join(' · '))+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function _gbuSelectAnlage(idx, id) {
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  const q = (document.getElementById('gbu-anlage-search')?.value || '').toLowerCase().trim();
+  const all = _anlagenCache.items || [];
+  const filtered = q ? all.filter(a => (
+    String(_buildAnlageAdresse(a)||'').toLowerCase().includes(q) ||
+    String(a.fabriknummer||'').toLowerCase().includes(q) ||
+    String(a.objektTyp||'').toLowerCase().includes(q) ||
+    String((a.kunde?.firmenname)||'').toLowerCase().includes(q)
+  )).slice(0, 80) : all.slice(0, 60);
+  modal._data.anlage = filtered[idx] || null;
+  _gbuFilterAnlagen();
+}
+
+function _gbuStep2Verantwortliche(body) {
+  const modal = document.getElementById('gbu-wiz-modal');
+  const d = modal._data;
+  const inp = (id, lbl, val, ph) =>
+    '<div style="margin-bottom:10px"><label style="font-size:12px;font-weight:600;color:var(--navy);display:block;margin-bottom:3px">'+escapeHtml(lbl)+'</label>'+
+    '<input id="'+id+'" type="text" value="'+escapeHtml(val||'')+'" placeholder="'+escapeHtml(ph||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>';
+  body.innerHTML =
+    '<h3 style="margin:0 0 10px;font-size:14px;color:var(--navy)">👤 Verantwortliche Personen</h3>'+
+    inp('gbu-v-betreiber','Betreiber / Arbeitgeber *', d.verantwortliche.betreiber, 'Hausverwaltung XY GmbH')+
+    inp('gbu-v-bs','Verantwortliche Person nach § 13 BetrSichV', d.verantwortliche.verantwortlich_betriebssicherheit, 'Hr. Mustermann')+
+    inp('gbu-v-wartung','Wartungsfirma', d.verantwortliche.wartungsfirma, 'Aszendio Aufzugservice GmbH')+
+    inp('gbu-v-notruf','Notrufzentrale (24/7)', d.verantwortliche.notrufzentrale, 'Aufzugsservice Notruf · +49 ...')+
+    inp('gbu-v-hilf','Hilfeleistende / Befreier (TRBS 2181)', d.verantwortliche.hilfeleistende, 'Hausmeister M. Müller, geschult am ...')+
+    '<h3 style="margin:14px 0 10px;font-size:14px;color:var(--navy)">🚪 Nutzungskontext</h3>'+
+    inp('gbu-n-nutzer','Nutzerkreis', d.nutzung.nutzerkreis, 'Mieter, Besucher, Publikumsverkehr')+
+    inp('gbu-n-zeit','Betriebszeiten', d.nutzung.betriebszeiten, '24/7')+
+    inp('gbu-n-besondere','Besondere Nutzer', d.nutzung.besondere_nutzer, 'Kinder, Rollstuhlfahrer, Pflegebedürftige')+
+    inp('gbu-n-umgeb','Umgebung', d.nutzung.umgebung, 'Innen / Außen / feucht / Ex-Zone');
+}
+
+function _gbuStep3Hazards(body) {
+  const modal = document.getElementById('gbu-wiz-modal');
+  const d = modal._data;
+  let progressDone = 0;
+  for (const it of Object.values(d.items)) if (it.status) progressDone++;
+  body.innerHTML =
+    '<h3 style="margin:0 0 6px;font-size:14px;color:var(--navy)">⚠️ Gefährdungskatalog</h3>'+
+    '<p style="font-size:11px;color:var(--txt2);margin:0 0 14px">Für jeden Punkt: <strong>OK</strong> (Maßnahme reicht), <strong>Maßnahme nötig</strong> (Zusatzmaßnahme angeben) oder <strong>nicht zutreffend</strong>. '+
+    progressDone+' / '+GBU_TOTAL_ITEMS+' bewertet</p>'+
+    GBU_HAZARD_CATALOG.map(cat => {
+      const pflicht = cat.id === 'eing';
+      return '<details '+(pflicht?'open':'')+' style="margin-bottom:10px;border:1px solid '+(pflicht?'#fcd34d':'var(--bdr)')+';border-radius:8px;background:'+(pflicht?'#fffbeb':'var(--surf)')+'">'+
+        '<summary style="cursor:pointer;padding:10px 12px;font-weight:600;font-size:13px;color:var(--navy)">'+
+          escapeHtml(cat.label)+
+          (pflicht ? ' <span style="font-size:10px;background:#dc2626;color:#fff;padding:2px 6px;border-radius:4px;margin-left:6px">PFLICHT</span>' : '')+
+          ' <span style="font-size:10px;color:var(--txt3);font-weight:400">('+cat.items.length+' Items)</span>'+
+        '</summary>'+
+        '<div style="padding:0 12px 10px">'+
+          cat.items.map(it => _gbuRenderHazardItem(it, d.items[it.id])).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+}
+
+function _gbuRenderHazardItem(item, data) {
+  const id = item.id;
+  const sStatus = data.status || '';
+  const radio = (val, lbl, color) =>
+    '<label style="display:inline-flex;align-items:center;gap:4px;padding:4px 8px;border:1px solid '+(sStatus===val?color:'var(--bdr)')+';background:'+(sStatus===val?color+'22':'var(--surf)')+';color:'+(sStatus===val?color:'var(--txt2)')+';border-radius:5px;cursor:pointer;font-size:11px;margin-right:4px">'+
+    '<input type="radio" name="gbu-st-'+id+'" value="'+val+'" '+(sStatus===val?'checked':'')+' style="margin:0">'+lbl+
+    '</label>';
+  return '<div style="border-top:1px dashed var(--bdr);padding:10px 0">'+
+    '<div style="font-weight:500;font-size:12px;color:var(--navy);margin-bottom:6px">'+escapeHtml(item.label)+'</div>'+
+    '<div style="margin-bottom:6px">'+
+      radio('ok','✓ OK','#10b981')+
+      radio('massnahme','⚠ Maßnahme nötig','#ea580c')+
+      radio('nz','— n.z.','#6b7280')+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">'+
+      '<div><label style="color:var(--txt3);display:block;margin-bottom:2px">Bestehende Maßnahme</label>'+
+        '<textarea id="gbu-mb-'+id+'" style="width:100%;padding:5px 7px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;min-height:42px;font-family:inherit;line-height:1.4">'+escapeHtml(data.massnahme_bestehend||'')+'</textarea>'+
+      '</div>'+
+      '<div><label style="color:var(--txt3);display:block;margin-bottom:2px">Zusatzmaßnahme (falls nötig)</label>'+
+        '<textarea id="gbu-mz-'+id+'" placeholder="—" style="width:100%;padding:5px 7px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;min-height:42px;font-family:inherit;line-height:1.4">'+escapeHtml(data.massnahme_zusatz||'')+'</textarea>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+function _gbuStep4Freigabe(body) {
+  const modal = document.getElementById('gbu-wiz-modal');
+  const d = modal._data;
+  // Stats
+  let ok = 0, mass = 0, nz = 0, leer = 0;
+  for (const it of Object.values(d.items)) {
+    if (it.status === 'ok') ok++;
+    else if (it.status === 'massnahme') mass++;
+    else if (it.status === 'nz') nz++;
+    else leer++;
+  }
+  const offeneMassnahmen = Object.entries(d.items)
+    .filter(([_, v]) => v.status === 'massnahme')
+    .map(([id, v]) => ({ id, item: GBU_HAZARD_CATALOG.flatMap(c => c.items).find(i=>i.id===id), v }));
+  // Default-Nächste-Prüfung: in 1 Jahr
+  if (!d.freigabe.naechste_pruefung) {
+    const next = new Date(); next.setFullYear(next.getFullYear()+1);
+    d.freigabe.naechste_pruefung = next.toISOString().slice(0,10);
+  }
+  const anlAdr = _buildAnlageAdresse(d.anlage)||'(ohne Adresse)';
+  body.innerHTML =
+    '<h3 style="margin:0 0 10px;font-size:14px;color:var(--navy)">✅ Zusammenfassung & Freigabe</h3>'+
+    '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:12px">'+
+      '<div style="display:grid;grid-template-columns:140px 1fr;gap:6px">'+
+        '<div style="color:var(--txt3)">Anlage</div><div style="font-weight:500">'+escapeHtml(anlAdr)+'</div>'+
+        '<div style="color:var(--txt3)">Fabrik-Nr.</div><div>'+escapeHtml(d.anlage?.fabriknummer||'—')+'</div>'+
+        '<div style="color:var(--txt3)">Betreiber</div><div>'+escapeHtml(d.verantwortliche.betreiber||'—')+'</div>'+
+      '</div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">'+
+      '<div style="background:#dcfce7;border-radius:8px;padding:10px;text-align:center"><div style="font-size:22px;font-weight:700;color:#065f46">'+ok+'</div><div style="font-size:10px;color:#065f46">✓ OK</div></div>'+
+      '<div style="background:#fed7aa;border-radius:8px;padding:10px;text-align:center"><div style="font-size:22px;font-weight:700;color:#9a3412">'+mass+'</div><div style="font-size:10px;color:#9a3412">⚠ Maßnahme</div></div>'+
+      '<div style="background:#f3f4f6;border-radius:8px;padding:10px;text-align:center"><div style="font-size:22px;font-weight:700;color:#374151">'+nz+'</div><div style="font-size:10px;color:#374151">n.z.</div></div>'+
+      '<div style="background:'+(leer>0?'#fef2f2':'#f9fafb')+';border-radius:8px;padding:10px;text-align:center"><div style="font-size:22px;font-weight:700;color:'+(leer>0?'#991b1b':'#9ca3af')+'">'+leer+'</div><div style="font-size:10px;color:'+(leer>0?'#991b1b':'#9ca3af')+'">leer</div></div>'+
+    '</div>'+
+    (offeneMassnahmen.length ? '<div style="margin-bottom:14px"><div style="font-weight:600;font-size:12px;margin-bottom:6px">📋 Maßnahmen-Aktionsplan ('+offeneMassnahmen.length+')</div>'+
+      '<div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;font-size:11px;max-height:160px;overflow-y:auto">'+
+        offeneMassnahmen.map(o => '• '+escapeHtml(o.item?.label||o.id)+(o.v.massnahme_zusatz?': '+escapeHtml(o.v.massnahme_zusatz):'')).join('<br>')+
+      '</div></div>' : '')+
+    '<h4 style="margin:12px 0 6px;font-size:13px">Freigabe</h4>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+      '<div><label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:2px">Ersteller</label>'+
+        '<input id="gbu-f-ersteller" type="text" value="'+escapeHtml(d.freigabe.ersteller||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:2px">Nächste Überprüfung</label>'+
+        '<input id="gbu-f-naechste" type="date" value="'+escapeHtml(d.freigabe.naechste_pruefung||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+    '</div>';
+}
+
+async function _gbuSubmit() {
+  const modal = document.getElementById('gbu-wiz-modal');
+  if (!modal) return;
+  const d = modal._data;
+  const firmaSlug = getCurrentFirmaSlug();
+  const next = document.getElementById('gbu-wiz-next');
+  if (next) { next.disabled = true; next.textContent = '⏳ erstelle…'; }
+  try {
+    await _ensureGbuTable();
+    const fields = {
+      firma: firmaSlug,
+      anlage_id: String(d.anlage?.id||''),
+      anlage_adresse: _buildAnlageAdresse(d.anlage)||'',
+      anlage_fabriknummer: d.anlage?.fabriknummer||'',
+      status: 'entwurf',
+      erstellt_am: d.freigabe.erstellt_am || new Date().toISOString().slice(0,10),
+      erstellt_von: d.freigabe.ersteller || (APP_KEYS.user?.name||''),
+      naechste_pruefung: d.freigabe.naechste_pruefung || '',
+      gbu_data_json: JSON.stringify(d),
+    };
+    const rec = await atWrite('GBUs', fields);
+    if (!rec || !rec.id) throw new Error('GBU konnte nicht angelegt werden.');
+    trackEvent('gbu', 'create', { anlage_id: fields.anlage_id });
+    // PDF erstellen + hochladen
+    if (next) next.textContent = '📄 generiere PDF…';
+    const pdfBlob = await _buildGbuPdf(d);
+    if (pdfBlob) {
+      const fname = 'GBU-'+(d.anlage?.fabriknummer||d.anlage?.id||'Aufzug').toString().replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+      await atBlobUpload(rec.id, 'gbu_pdf', pdfBlob, fname, 'application/pdf');
+      toast('✅ GBU '+fname+' erstellt','ok');
+    }
+    modal.remove();
+    await renderGbuView({ force:true });
+    if (pdfBlob) _showAppVertragPDF(rec.id, pdfBlob, _buildAnlageAdresse(d.anlage)||'GBU');
+  } catch(e) {
+    console.error('gbuSubmit:', e);
+    toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
+    if (next) { next.disabled = false; next.textContent = '🚀 GBU erstellen + PDF'; }
+  }
+}
+
+/* ════════════════════════════════════════════════════════════
+   GBU PDF-Generator
+   ════════════════════════════════════════════════════════════ */
+async function _buildGbuPdf(d) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const ml = 18, mr = 192, cw = mr - ml, H = 297;
+  const NAVY = [26, 51, 83], RED = [220, 38, 38], GREY = [55, 65, 81], GREY_L = [156, 163, 175];
+  let y = 18;
+
+  // Logo + Kopfzeile
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',mr-46,12,46,7.6); } catch(_){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text('Aszendio Aufzugservice GmbH · service@aszendio.com', ml, 16);
+  y = 28;
+
+  // Titel
+  doc.setFontSize(20); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
+  doc.text('Gefährdungsbeurteilung', ml, y);
+  y += 7;
+  doc.setFontSize(11); doc.setTextColor(...NAVY); doc.setFont('helvetica','normal');
+  doc.text('Aufzugsanlage · nach BetrSichV § 3, TRBS 1111 + 2181', ml, y);
+  y += 10;
+
+  // Stammdaten Box
+  doc.setFillColor(248, 250, 252);
+  const adresse = _buildAnlageAdresse(d.anlage) || '—';
+  doc.setDrawColor(...GREY_L); doc.setLineWidth(0.2);
+  const stammRows = [
+    ['Anlage / Standort', adresse],
+    ['Fabriknummer', d.anlage?.fabriknummer || '—'],
+    ['Anlagentyp', d.anlage?.objektTyp || '—'],
+    ['Haltestellen', String(d.anlage?.haltestellen||'—')],
+    ['Betreiber', d.verantwortliche.betreiber || '—'],
+    ['Verantw. § 13 BetrSichV', d.verantwortliche.verantwortlich_betriebssicherheit || '—'],
+    ['Wartungsfirma', d.verantwortliche.wartungsfirma || '—'],
+    ['Notrufzentrale', d.verantwortliche.notrufzentrale || '—'],
+    ['Erstellt von', d.freigabe.ersteller || '—'],
+    ['Erstellt am', d.freigabe.erstellt_am || '—'],
+    ['Nächste Überprüfung', d.freigabe.naechste_pruefung || '—'],
+  ];
+  doc.setFontSize(9);
+  for (const [lbl, val] of stammRows) {
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setTextColor(...GREY_L); doc.text(lbl, ml, y);
+    doc.setTextColor(...GREY); doc.text(String(val).slice(0,80), ml+50, y);
+    y += 5.5;
+  }
+  y += 4;
+
+  // Stats
+  let ok = 0, mass = 0, nz = 0, leer = 0;
+  for (const it of Object.values(d.items||{})) {
+    if (it.status === 'ok') ok++;
+    else if (it.status === 'massnahme') mass++;
+    else if (it.status === 'nz') nz++;
+    else leer++;
+  }
+  if (y > 240) { doc.addPage(); y = 20; }
+  doc.setFontSize(11); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+  doc.text('Übersicht Bewertung', ml, y); y += 6;
+  doc.setFontSize(9); doc.setFont('helvetica','normal');
+  doc.text('✓ OK: '+ok+'   ⚠ Maßnahme: '+mass+'   — n.z.: '+nz+'   ◯ leer: '+leer, ml, y);
+  y += 8;
+
+  // Gefährdungstabelle
+  doc.addPage(); y = 18;
+  doc.setFontSize(13); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
+  doc.text('Gefährdungskatalog', ml, y); y += 7;
+  doc.setFontSize(8); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+
+  for (const cat of GBU_HAZARD_CATALOG) {
+    if (y > 270) { doc.addPage(); y = 18; }
+    doc.setFontSize(10); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+    doc.text(cat.label, ml, y); y += 5;
+    doc.setFontSize(8); doc.setFont('helvetica','normal');
+    for (const it of cat.items) {
+      if (y > 275) { doc.addPage(); y = 18; }
+      const data = (d.items||{})[it.id] || {};
+      const stat = data.status==='ok' ? '✓' : data.status==='massnahme' ? '⚠' : data.status==='nz' ? '—' : '◯';
+      doc.setTextColor(...GREY);
+      doc.text(stat+' '+it.label.slice(0,80), ml+2, y); y += 4;
+      if (data.massnahme_bestehend) {
+        const lines = doc.splitTextToSize('Maßn.: '+data.massnahme_bestehend, cw-8);
+        doc.setTextColor(...GREY_L); doc.setFontSize(7);
+        for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.2; if (y > 285) { doc.addPage(); y = 18; } }
+        doc.setFontSize(8);
+      }
+      if (data.massnahme_zusatz) {
+        const lines = doc.splitTextToSize('Zusatz: '+data.massnahme_zusatz, cw-8);
+        doc.setTextColor(...RED); doc.setFontSize(7);
+        for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.2; if (y > 285) { doc.addPage(); y = 18; } }
+        doc.setFontSize(8); doc.setTextColor(...GREY);
+      }
+      y += 1.5;
+    }
+    y += 3;
+  }
+
+  // Maßnahmen-Aktionsplan
+  const offene = Object.entries(d.items||{}).filter(([_,v]) => v.status === 'massnahme');
+  if (offene.length) {
+    doc.addPage(); y = 18;
+    doc.setFontSize(13); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
+    doc.text('Maßnahmen-Aktionsplan', ml, y); y += 7;
+    doc.setFontSize(9); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+    doc.text(offene.length+' offene Maßnahme(n) — abzuarbeiten bis zur nächsten GBU-Überprüfung', ml, y); y += 6;
+    for (const [id, v] of offene) {
+      if (y > 275) { doc.addPage(); y = 18; }
+      const it = GBU_HAZARD_CATALOG.flatMap(c => c.items).find(i => i.id === id);
+      doc.setFontSize(9); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+      doc.text('• '+(it?.label||id), ml+2, y); y += 4.5;
+      doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+      if (v.massnahme_zusatz) {
+        const lines = doc.splitTextToSize('Maßnahme: '+v.massnahme_zusatz, cw-8);
+        for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.5; if (y > 285) { doc.addPage(); y = 18; } }
+      }
+      y += 2;
+    }
+  }
+
+  // Unterschriftenseite
+  doc.addPage(); y = 18;
+  doc.setFontSize(13); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+  doc.text('Freigabe & Unterschriften', ml, y); y += 10;
+  doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+  doc.text('Die vorliegende Gefährdungsbeurteilung wurde nach BetrSichV § 3 und TRBS 1111 erstellt.', ml, y); y += 5;
+  doc.text('Erstellt am: '+(d.freigabe.erstellt_am||'—')+' · Nächste Überprüfung: '+(d.freigabe.naechste_pruefung||'—'), ml, y); y += 14;
+  // 2 Unterschriftslinien
+  doc.setDrawColor(0); doc.setLineWidth(0.3);
+  for (const sig of ['Betreiber / Arbeitgeber', 'Verantw. Person § 13 BetrSichV']) {
+    doc.line(ml, y, ml+80, y);
+    doc.setFontSize(9); doc.text(sig, ml, y+4);
+    y += 22;
+  }
+  // Footer alle Seiten
+  const pages = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setFontSize(7); doc.setTextColor(...GREY_L);
+    doc.text('GBU · '+(d.anlage?.fabriknummer||'-')+' · '+(d.freigabe.erstellt_am||'-'), ml, H-10);
+    doc.text('Seite '+p+' / '+pages, mr, H-10, { align:'right' });
+  }
+  return doc.output('blob');
 }
 
 /* ════════════════════════════════════════════════════════════
