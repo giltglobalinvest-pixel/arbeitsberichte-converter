@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.02';
+const APP_VERSION = 'v4.03';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16444,21 +16444,146 @@ function _renderKundeKontakteList(kontakte) {
     return;
   }
   const mcOn = _mailchimpEnabled();
+  // Standard-Kontakt: defensiv anhand verschiedener Feldnamen erkennen
+  const isStandardKontakt = k => !!(
+    k.istStandardansprechpartner || k.istStandardAnsprechpartner ||
+    k.isStandard || k.standard || k.isDefault || k.default ||
+    k.hauptansprechpartner || k.isPrimary || k.primary
+  );
   el.innerHTML = '<div style="display:grid;gap:6px">'+kontakte.map((k, i) => {
     const name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
     const hasEmail = !!(k.email && String(k.email).trim());
+    const isStd = isStandardKontakt(k);
     const mcBtn = (mcOn && hasEmail)
       ? '<button class="btn" onclick="event.stopPropagation();_mailchimpSyncKontakt('+i+', this)" title="Diesen Kontakt jetzt zu Mailchimp pushen" style="padding:4px 10px;font-size:11px;background:#FFE01B;color:#222;border:1px solid #d4ba0b;font-weight:600">📧 → Mailchimp</button>'
       : '';
-    return '<div style="padding:10px 12px;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">'+
-      '<div style="font-size:18px">👤</div>'+
+    // Standard-Button: aktiv (gold) wenn Standard, sonst "Als Standard setzen"
+    const stdBtn = isStd
+      ? '<button class="btn" disabled title="Aktueller Standard-Ansprechpartner" style="padding:4px 10px;font-size:11px;background:#FBBF24;color:#78350F;border:1px solid #D97706;font-weight:700;cursor:default;opacity:1">⭐ Standard</button>'
+      : '<button class="btn" onclick="event.stopPropagation();_setStandardAnsprechpartner('+i+', this)" title="Diesen Kontakt im ERP als Standard-Ansprechpartner setzen (nötig damit Bulk-Import funktioniert)" style="padding:4px 10px;font-size:11px;background:#fff;border:1px solid #FBBF24;color:#92400E">☆ Als Standard</button>';
+    return '<div style="padding:10px 12px;background:'+(isStd?'#FFFBEB':'var(--surf)')+';border:1px solid '+(isStd?'#FBBF24':'var(--bdr)')+';border-radius:6px;display:flex;flex-wrap:wrap;gap:10px;align-items:center">'+
+      '<div style="font-size:18px">'+(isStd?'⭐':'👤')+'</div>'+
       '<div style="flex:1;min-width:160px">'+
         '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(name)+(k.rolle?' <span style="font-weight:400;font-size:11px;color:var(--txt3)">· '+escapeHtml(k.rolle)+'</span>':'')+'</div>'+
         '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml([k.email, k.telefon||k.mobile].filter(Boolean).join(' · '))+'</div>'+
       '</div>'+
+      stdBtn+
       mcBtn+
     '</div>';
   }).join('')+'</div>';
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Standard-Ansprechpartner im ERP setzen
+   Da Aufzugshandwerk-API hier kein dokumentierter Standard-Endpoint
+   existiert, probieren wir mehrere gängige Patterns durch und melden
+   transparent welcher funktioniert hat. Der erste 2xx gewinnt.
+   ─────────────────────────────────────────────────────────────── */
+async function _setStandardAnsprechpartner(idx, btn) {
+  const modal = document.getElementById('kde-detail-modal');
+  if (!modal || !modal._kontakte) return toast('Kontakt-Liste nicht verfügbar.','err');
+  const k = modal._kontakte[idx];
+  if (!k) return;
+  const kunde = modal._kunde || {};
+  const kundenNr = String(kunde.kundennummer || kunde.id || '');
+  const kontaktId = k.id || k.kontaktId || k.kontaktnummer;
+  const firmaSlug = modal._firmaSlug || getCurrentFirmaSlug();
+  if (!kundenNr) return toast('Keine Kundennummer.','err');
+  if (!kontaktId) return toast('Kein Kontakt-ID (ERP).','err');
+
+  if (!confirm('Diesen Kontakt im ERP als Standard-Ansprechpartner setzen?\n\n'
+             + (k.vorname||'')+' '+(k.nachname||'')+'\n'+(k.email||'(keine E-Mail)')
+             + '\n\nDamit funktioniert der Bulk-Import von Anlagen.')) return;
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ setze…'; }
+
+  // Mehrere Endpoint-Varianten probieren — der erste 2xx gewinnt
+  const attempts = [
+    // 1) PATCH /api/kontakte/{id} mit verschiedenen Boolean-Flags
+    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ istStandardansprechpartner: true } },
+    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ standard: true } },
+    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ isStandard: true } },
+    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ hauptansprechpartner: true } },
+    // 2) Dedizierte Endpoints auf dem Kunden
+    { method:'PUT',  path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/standardansprechpartner', body:{ kontaktId: +kontaktId } },
+    { method:'POST', path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/standardansprechpartner', body:{ kontaktId: +kontaktId } },
+    { method:'PUT',  path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/ansprechpartner/standard', body:{ kontaktId: +kontaktId } },
+    { method:'POST', path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/ansprechpartner/'+kontaktId+'/standard' },
+    // 3) PATCH auf den Kunden mit Standard-Verweis
+    { method:'PATCH', path:'api/kunden/'+encodeURIComponent(kundenNr), body:{ standardansprechpartnerId: +kontaktId } },
+    { method:'PATCH', path:'api/kunden/'+encodeURIComponent(kundenNr), body:{ ansprechpartnerId: +kontaktId } },
+  ];
+
+  const tried = [];
+  let success = null;
+  for (const a of attempts) {
+    try {
+      console.log('[Standard-Ansp] Probiere', a.method, a.path, a.body||'');
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/'+a.path, {
+        method: a.method,
+        body: a.body || undefined,
+      });
+      // erpFetch wirft bei !ok → wenn wir hier sind, war's erfolgreich
+      tried.push({ ...a, status:'OK', response: res });
+      success = a;
+      console.log('[Standard-Ansp] ✓ Erfolgreich via', a.method, a.path);
+      break;
+    } catch(e) {
+      tried.push({ ...a, status:'FAIL', error:String(e.message||e).slice(0,200) });
+      // bei 404/405 → weitermachen; bei 400/422 = Endpoint existiert aber Payload falsch → weitermachen
+      // bei 401/403 = Auth/Permission Problem → abbrechen wäre auch valid, aber wir probieren weiter
+    }
+  }
+
+  if (success) {
+    // Cache invalidieren + Liste neu laden
+    _kontakteCache.delete(String(kundenNr));
+    if (btn) { btn.textContent = '⭐ Standard'; btn.style.background='#FBBF24'; btn.style.color='#78350F'; }
+    toast('⭐ Standard-Ansprechpartner gesetzt ('+success.method+' '+success.path.split('/').pop()+')','ok');
+    // Kontakte neu laden + Liste rendern
+    try {
+      const fresh = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+      const list = Array.isArray(fresh) ? fresh : ((fresh && (fresh.content||fresh.items||fresh.data))||[]);
+      _kontakteCache.set(String(kundenNr), list);
+      _renderKundeKontakteList(list);
+    } catch(_) {}
+    return;
+  }
+
+  // Kein Endpoint hat funktioniert → Debug-Modal mit allen Versuchen
+  if (btn) { btn.disabled = false; btn.textContent = '☆ Als Standard'; }
+  _showStandardAnsprechFailModal(tried, kundenNr, kontaktId);
+}
+
+function _showStandardAnsprechFailModal(tried, kundenNr, kontaktId) {
+  const old = document.getElementById('std-ansp-fail'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'std-ansp-fail';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:#fff;max-width:680px;width:100%;max-height:88vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#DC2626;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>❌ Standard-Ansprechpartner konnte nicht gesetzt werden</span>'+
+        '<button onclick="document.getElementById(\'std-ansp-fail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<p>Keiner der bekannten ERP-Endpoints funktionierte für Kunde <strong>'+escapeHtml(kundenNr)+'</strong>, Kontakt-ID <strong>'+escapeHtml(String(kontaktId))+'</strong>.</p>'+
+        '<p style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px;border-radius:4px;font-size:12px">'+
+          '<strong>Was tun?</strong> Bitte den Standard im Aufzugshandwerk-ERP-UI direkt setzen. Schicke das untenstehende Log an den ERP-Support (<a href="mailto:support@aufzugshandwerk.de">support@aufzugshandwerk.de</a>) — damit kann der korrekte Endpoint dokumentiert werden.'+
+        '</p>'+
+        '<details open style="margin-top:14px">'+
+          '<summary style="cursor:pointer;font-weight:600;font-size:12px">Versuchte Endpoints (zum Kopieren)</summary>'+
+          '<pre style="background:#0F172A;color:#A5F3FC;padding:12px;border-radius:6px;font-size:11px;overflow:auto;margin-top:8px;max-height:300px">'+
+          escapeHtml(JSON.stringify(tried, null, 2))+
+          '</pre>'+
+        '</details>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:#F8FAFC;border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="navigator.clipboard.writeText(document.querySelector(\'#std-ansp-fail pre\').textContent);toast(\'📋 in Zwischenablage\',\'ok\')">📋 Log kopieren</button>'+
+        '<button class="btn prim" onclick="document.getElementById(\'std-ansp-fail\').remove()">Verstanden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
 }
 
 /* Manueller Mailchimp-Sync für einen Kontakt aus dem Kunde-Detail-Modal. */
