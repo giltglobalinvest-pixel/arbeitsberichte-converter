@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.07';
+const APP_VERSION = 'v4.08';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6947,8 +6947,10 @@ function _bulkResetState() {
     firmaSlug: getCurrentFirmaSlug(),
     kunden: null,
     kunde: null,
-    kontakte: null,             // Kontakte des gewählten Kunden
-    ansprechpartnerIdx: -1,     // Index in kontakte[], wird im Anlagen-Payload mitgesendet
+    kontakte: null,             // CRM-Kontakte (Hausverwaltung etc.) - /api/Kunden/{nr}/Kontakte
+    ansprechpartner: null,      // Vor-Ort-Ansprechpartner (Hausmeister/Mieter) - /api/ansprechpartner
+    kontaktIdx: -1,             // gewählter Kontakt (-1 = keiner)
+    ansprechpartnerIdx: -1,     // gewählter Ansprechpartner (-1 = keiner)
     defaults: { stundensatz: 70, einsatzpauschale: 50, objektTyp: 'Wohnen', betreiberTyp: 'Hausverwaltung', rechnungsempfaenger: '', isWartung: true },
     excelRows: null,        // [[col1, col2, ...], ...] inkl. Header
     excelHeaders: null,
@@ -7121,41 +7123,48 @@ function _bulkReadTypeSelect(id, fallback) {
   return sel.value || fallback;
 }
 
-/* Ansprechpartner-Section unter dem Kunden-Picker */
+/* Kontakt + Ansprechpartner Section — zwei separate Dropdowns */
 function _bulkRenderAnsprechpartnerSection() {
   const kontakte = _bulkImport.kontakte;
-  if (kontakte === null) {
-    return '<div style="margin-top:10px;padding:8px 12px;background:#F8FAFC;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt2)"><span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:6px;width:14px;height:14px"></span> Lade Kontakte des Kunden…</div>';
+  const ansprech = _bulkImport.ansprechpartner;
+  const stillLoading = (kontakte === null || ansprech === null);
+  if (stillLoading) {
+    return '<div style="margin-top:10px;padding:8px 12px;background:#F8FAFC;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt2)"><span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:6px;width:14px;height:14px"></span> Lade Kontakte und Ansprechpartner des Kunden…</div>';
   }
-  if (!Array.isArray(kontakte) || kontakte.length === 0) {
-    return '<div style="margin-top:10px;padding:10px 12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;font-size:12px;color:#92400E">'+
-      '⚠ <strong>Keine Kontakte beim Kunden hinterlegt.</strong><br>'+
-      'Bulk-Import wird vermutlich an einem NullPointerException im ERP scheitern. '+
-      'Bitte zuerst im Kunden-Detail oder ERP-Web einen Kontakt anlegen.</div>';
-  }
-  const sel = _bulkImport.ansprechpartnerIdx;
-  const isFallback = _bulkImport._isKontakteFallback;
-  const endpoint   = _bulkImport._ansprechpartnerEndpoint || '?';
+
+  const renderSelect = (id, list, sel, emptyHint) => {
+    if (!Array.isArray(list) || list.length === 0) {
+      return '<select class="auf-input" disabled><option>— '+emptyHint+' —</option></select>';
+    }
+    return '<select id="'+id+'" class="auf-input" onchange="_bulkImport.'+
+           (id==='bulk-kontakt'?'kontaktIdx':'ansprechpartnerIdx')+
+           ' = +this.value" style="cursor:pointer">'+
+      '<option value="-1"'+(sel<0?' selected':'')+'>— keinen wählen —</option>'+
+      list.map((c, i) => {
+        const name = [c.anrede, c.vorname, c.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
+        const meta = [c.rolle, c.email, c.id != null ? 'ID '+c.id : null].filter(Boolean).join(' · ');
+        return '<option value="'+i+'"'+(i===sel?' selected':'')+'>'+
+          (name+(meta?' — '+meta:'')).replace(/</g,'&lt;').replace(/"/g,'&quot;')+
+        '</option>';
+      }).join('')+
+    '</select>';
+  };
+
   return (
-    '<div style="margin-top:14px">'+
-      '<label class="auf-label">Ansprechpartner für alle Anlagen <span style="font-size:10px;color:var(--txt3);font-weight:400">(wird im Anlagen-Payload mitgesendet)</span></label>'+
-      '<select id="bulk-ansprechpartner" class="auf-input" onchange="_bulkImport.ansprechpartnerIdx = +this.value" style="cursor:pointer">'+
-        kontakte.map((c, i) => {
-          const name = [c.anrede, c.vorname, c.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
-          const meta = [c.rolle, c.email, c.id ? 'ID '+c.id : null].filter(Boolean).join(' · ');
-          return '<option value="'+i+'"'+(i===sel?' selected':'')+'>'+
-            (name+(meta?' — '+meta:'')).replace(/</g,'&lt;').replace(/"/g,'&quot;')+
-          '</option>';
-        }).join('')+
-      '</select>'+
-      (isFallback
-        ? '<div style="font-size:11px;color:#92400E;margin-top:4px;background:#FEF3C7;padding:6px 10px;border-radius:4px;border-left:3px solid #F59E0B">'+
-          '⚠ Keine echten Ansprechpartner-Endpoints gefunden — falle zurück auf CRM-Kontakte. Falls der Import wieder mit "Ansprechpartner not found" abbricht, sind die Kontakt-IDs ≠ Ansprechpartner-IDs (zwei Tabellen im ERP).'+
-        '</div>'
-        : '<div style="font-size:11px;color:var(--ok);margin-top:4px">'+
-          '✓ Echte Ansprechpartner geladen aus <code style="background:var(--bg);padding:1px 4px;border-radius:3px">'+endpoint+'</code>'+
-        '</div>'
-      )+
+    '<div style="margin-top:14px;display:grid;gap:12px">'+
+      // KONTAKT (CRM)
+      '<div>'+
+        '<label class="auf-label">📇 Kontakt des Kunden <span style="font-size:10px;color:var(--txt3);font-weight:400">(CRM — Hausverwaltung, Buchhaltung etc.)</span></label>'+
+        renderSelect('bulk-kontakt', kontakte, _bulkImport.kontaktIdx, 'keine Kontakte beim Kunden hinterlegt')+
+      '</div>'+
+      // ANSPRECHPARTNER (Vor Ort)
+      '<div>'+
+        '<label class="auf-label">🛗 Ansprechpartner vor Ort <span style="font-size:10px;color:var(--txt3);font-weight:400">(Hausmeister, Mieter etc. — vom ERP für Anlagen erwartet)</span></label>'+
+        renderSelect('bulk-ansprech', ansprech, _bulkImport.ansprechpartnerIdx, 'keine Ansprechpartner für diesen Kunden')+
+      '</div>'+
+      '<div style="font-size:11px;color:var(--txt3);background:#F0FDF4;border-left:3px solid #10B981;padding:6px 10px;border-radius:4px">'+
+        '💡 Beide werden im Anlagen-Payload mitgesendet — Kontakt für Kunden-Kommunikation, Ansprechpartner für Vor-Ort-Termine.'+
+      '</div>'+
     '</div>'
   );
 }
@@ -7243,69 +7252,74 @@ function _bulkSelectKunde(idx) {
   const k = _bulkImport._kundenMatches[idx];
   if (!k) return;
   _bulkImport.kunde = k;
-  _bulkImport.kontakte = null;     // Kontakte des Kunden — werden gleich geladen
+  _bulkImport.kontakte = null;
+  _bulkImport.ansprechpartner = null;
+  _bulkImport.kontaktIdx = -1;
   _bulkImport.ansprechpartnerIdx = -1;
   document.getElementById('bulk-kunde-search').value = k.firmenname || ('Kunde #'+k.kundennummer);
   document.getElementById('bulk-kunde-dropdown').style.display = 'none';
   document.getElementById('bulk-kunde-selected').textContent = '✓ Kunde gewählt: '+(k.firmenname||'')+' (Nr. '+k.kundennummer+')';
-  // Kontakte des Kunden im Hintergrund laden + UI neu rendern
-  _bulkLoadKontakteForKunde(k).catch(e => console.warn('Kontakte-Load:', e));
+  // Beide Listen parallel im Hintergrund laden + UI neu rendern
+  _bulkLoadKontakteAndAnsprech(k).catch(e => console.warn('Bulk-Load:', e));
 }
 
-async function _bulkLoadKontakteForKunde(kunde) {
+async function _bulkLoadKontakteAndAnsprech(kunde) {
   const firmaSlug = _bulkImport.firmaSlug;
   const kundenNr = kunde.kundennummer || kunde.id;
   if (!kundenNr) return;
-  // ERP unterscheidet zwischen "Kontakte" (CRM-Adressbuch) und
-  // "Ansprechpartner" (technischer Verknüpfungs-Datensatz auf Anlagen).
-  // Wir brauchen Ansprechpartner — probiere mehrere Endpoints.
+  // Beide parallel laden — KOMPLETT separate Endpoints und Tabellen im ERP:
+  //   Kontakte           = CRM-Adressbuch (Hausverwaltung, Buchhaltung …)
+  //   Ansprechpartner    = Vor-Ort-Person an der Anlage (Hausmeister, Mieter …)
+  const [kontakte, ansprech] = await Promise.all([
+    _bulkLoadKontaktList(firmaSlug, kundenNr),
+    _bulkLoadAnsprechList(firmaSlug, kundenNr),
+  ]);
+  _bulkImport.kontakte       = kontakte;
+  _bulkImport.ansprechpartner = ansprech;
+  // Auto-Select: Standard/Haupt-Rolle bevorzugt, sonst erstes Element
+  _bulkImport.kontaktIdx          = _bulkAutoSelectIdx(kontakte);
+  _bulkImport.ansprechpartnerIdx  = _bulkAutoSelectIdx(ansprech);
+  if (_bulkImport.step === 'setup') _bulkRender();
+}
+
+function _bulkAutoSelectIdx(list) {
+  if (!Array.isArray(list) || list.length === 0) return -1;
+  const stdIdx = list.findIndex(c => /standard|haupt|primaer|primary/i.test(String(c.rolle||'')));
+  return stdIdx >= 0 ? stdIdx : 0;
+}
+
+async function _bulkLoadKontaktList(firmaSlug, kundenNr) {
+  try {
+    const r = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+    const list = Array.isArray(r) ? r : ((r && (r.content||r.items||r.data))||[]);
+    console.log('[Bulk] '+list.length+' Kontakte geladen');
+    return list;
+  } catch(e) {
+    console.warn('[Bulk] Kontakte-Load fehlgeschlagen:', e);
+    return [];
+  }
+}
+
+async function _bulkLoadAnsprechList(firmaSlug, kundenNr) {
   const candidates = [
+    'api/ansprechpartner?kundennummer='+encodeURIComponent(kundenNr),
     'api/Kunden/'+encodeURIComponent(kundenNr)+'/Ansprechpartner',
     'api/kunden/'+encodeURIComponent(kundenNr)+'/ansprechpartner',
-    'api/ansprechpartner?kundennummer='+encodeURIComponent(kundenNr),
     'api/ansprechpartner?kundenId='+encodeURIComponent(kundenNr),
     'api/ansprechpartner/kunde/'+encodeURIComponent(kundenNr),
   ];
-  let list = null, usedPath = null;
   for (const p of candidates) {
     try {
       const r = await erpFetch('/aufzug/'+firmaSlug+'/'+p);
       const arr = Array.isArray(r) ? r : ((r && (r.content||r.items||r.data))||[]);
-      // Nur akzeptieren wenn wir EIN Array von Ansprechpartnern bekommen
       if (Array.isArray(arr)) {
-        list = arr; usedPath = p;
-        console.log('[Bulk] Ansprechpartner via', p, '→', arr.length);
-        break;
+        console.log('[Bulk] '+arr.length+' Ansprechpartner via '+p);
+        return arr;
       }
-    } catch(e) {
-      console.log('[Bulk] ', p, 'fehlgeschlagen:', String(e.message||e).slice(0,80));
-    }
+    } catch(_) { /* nächsten probieren */ }
   }
-
-  // Fallback: Kontakte holen (CRM-Adressbuch) — werden zumindest angezeigt,
-  // aber im Payload als kontaktId mitgegeben (deren ID matched evtl. doch).
-  if (!list) {
-    try {
-      const r = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
-      list = Array.isArray(r) ? r : ((r && (r.content||r.items||r.data))||[]);
-      usedPath = 'api/Kunden/.../Kontakte (Fallback)';
-      console.warn('[Bulk] Keine Ansprechpartner-Endpoints gefunden, falle zurück auf Kontakte:', list.length);
-      _bulkImport._isKontakteFallback = true;
-    } catch(e) {
-      list = [];
-    }
-  } else {
-    _bulkImport._isKontakteFallback = false;
-  }
-
-  _bulkImport.kontakte = list;
-  _bulkImport._ansprechpartnerEndpoint = usedPath;
-  // Auto-Auswahl: Standard-Rolle bevorzugen, sonst ersten
-  const stdIdx = list.findIndex(c =>
-    /standard|haupt|primaer|primary/i.test(String(c.rolle||''))
-  );
-  _bulkImport.ansprechpartnerIdx = stdIdx >= 0 ? stdIdx : (list.length > 0 ? 0 : -1);
-  if (_bulkImport.step === 'setup') _bulkRender();
+  console.warn('[Bulk] Kein Ansprechpartner-Endpoint funktioniert');
+  return [];
 }
 
 function _bulkNextSetup() {
@@ -7668,15 +7682,21 @@ function _bulkBuildPayload(a, kundenId, d, wartungsHinweis) {
     sonstigerHinweis:   wartungsHinweis,
     archived:           false,
   };
-  // Ansprechpartner mitsenden, falls einer ausgewählt wurde — in mehreren
-  // Feldvarianten, damit das ERP sich das passende heraussucht.
+  // ── KONTAKT (CRM) mitsenden, falls einer ausgewählt wurde ──
   const kontakte = _bulkImport.kontakte;
-  const kontakt  = (Array.isArray(kontakte) && _bulkImport.ansprechpartnerIdx >= 0)
-                   ? kontakte[_bulkImport.ansprechpartnerIdx] : null;
+  const kontakt  = (Array.isArray(kontakte) && _bulkImport.kontaktIdx >= 0)
+                   ? kontakte[_bulkImport.kontaktIdx] : null;
   if (kontakt && kontakt.id != null) {
-    payload.ansprechpartnerId = +kontakt.id;
-    payload.kontaktId         = +kontakt.id;
-    payload.ansprechpartner   = kontakt;        // verschachtelt — falls erwartet
+    payload.kontaktId = +kontakt.id;
+    payload.kontakt   = kontakt;
+  }
+  // ── ANSPRECHPARTNER (Vor Ort) — DAS ist was das ERP für die Anlage braucht ──
+  const ansprList = _bulkImport.ansprechpartner;
+  const ansprech  = (Array.isArray(ansprList) && _bulkImport.ansprechpartnerIdx >= 0)
+                    ? ansprList[_bulkImport.ansprechpartnerIdx] : null;
+  if (ansprech && ansprech.id != null) {
+    payload.ansprechpartnerId = +ansprech.id;
+    payload.ansprechpartner   = ansprech;
   }
   return payload;
 }
