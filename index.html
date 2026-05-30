@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.98';
+const APP_VERSION = 'v3.99';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7408,46 +7408,137 @@ function _bulkRenderPreview(body, foot) {
   `;
 }
 
+/* ERP-Fehlertext in deutsche Klartextmeldung übersetzen */
+function _bulkExplainErpError(msg) {
+  const m = String(msg||'');
+  if (/AnsprechpartnerController|AnsprechpartnerService.*getAnsprechpartner/i.test(m)) {
+    return { short:'Kein Standard-Ansprechpartner beim Kunden',
+             long:'Der Kunde hat keinen Standard-Ansprechpartner im ERP. Bitte im Aufzugshandwerk-ERP zuerst einen Ansprechpartner anlegen und als Standard markieren.' };
+  }
+  if (/NullPointerException/.test(m)) {
+    return { short:'Server-Fehler (NPE) im ERP', long:'Das ERP wirft eine NullPointerException. Häufige Ursache: Stammdaten beim Kunden unvollständig (Ansprechpartner, Adresse, Preisliste).' };
+  }
+  if (/HTTP 401|Unauthorized/i.test(m)) {
+    return { short:'Nicht autorisiert (401)', long:'Der ERP-API-Key ist abgelaufen oder fehlt.' };
+  }
+  if (/HTTP 403|Forbidden/i.test(m)) {
+    return { short:'Keine Berechtigung (403)', long:'Der ERP-User darf keine Anlagen anlegen.' };
+  }
+  if (/HTTP 4\d\d/.test(m)) {
+    const code = m.match(/HTTP (\d+)/);
+    return { short:'Client-Fehler '+(code?code[1]:'4xx'), long:'Daten ungültig (Pflichtfeld fehlt o.ä.). Original: '+m.slice(0,160) };
+  }
+  if (/HTTP 5\d\d|Internal Server Error/.test(m)) {
+    return { short:'ERP-Server-Fehler (5xx)', long:'Das ERP konnte die Anlage nicht anlegen. Original: '+m.slice(0,160) };
+  }
+  return { short:'Unbekannter Fehler', long:m.slice(0,200) };
+}
+
+function _bulkBuildPayload(a, kundenId, d, wartungsHinweis) {
+  return {
+    kundenId:           +kundenId,
+    adresseId:          a.anzeigeAdresse || '',
+    anzeigeAdresse:     a.anzeigeAdresse || '',
+    anzahlAufzuege:     1,
+    stundensatz:        d.stundensatz,
+    einsatzPauschale:   d.einsatzpauschale,
+    objektTyp:          d.objektTyp,
+    betreiberTyp:       d.betreiberTyp,
+    rechnungsempfaenger: d.rechnungsempfaenger || (_bulkImport.kunde.firmenname||''),
+    fabriknummer:       a.fabriknummer || '',
+    sonstigerHinweis:   wartungsHinweis,
+    archived:           false,
+  };
+}
+
 /* ── STEP 5: Bulk-Create ── */
-async function _bulkStartCreating() {
+async function _bulkStartCreating(opts) {
+  opts = opts || {};
+  const items = opts.retryList || _bulkImport.toCreate;
   _bulkImport.step = 'creating';
-  _bulkImport.result = { ok:[], errors:[], current:0, total:_bulkImport.toCreate.length };
+  _bulkImport.result = { ok:[], errors:[], current:0, total:items.length };
   _bulkRender();
   const d = _bulkImport.defaults;
   const kundenId = _bulkImport.kunde.kundennummer || _bulkImport.kunde.id;
   const wartungsHinweis = d.isWartung ? 'Wartungsanlage (Bulk-Import '+new Date().toISOString().slice(0,10)+')' : '';
 
-  for (let i = 0; i < _bulkImport.toCreate.length; i++) {
-    const a = _bulkImport.toCreate[i];
-    _bulkImport.result.current = i+1;
-    document.getElementById('bulk-creating-current').textContent = (i+1)+' / '+_bulkImport.toCreate.length+' – '+(a.fabriknummer||'?');
-    document.getElementById('bulk-creating-bar').style.width = ((i+1)/_bulkImport.toCreate.length*100)+'%';
-    const payload = {
-      kundenId:           +kundenId,
-      adresseId:          a.anzeigeAdresse || '',
-      anzeigeAdresse:     a.anzeigeAdresse || '',
-      anzahlAufzuege:     1,
-      stundensatz:        d.stundensatz,
-      einsatzPauschale:   d.einsatzpauschale,
-      objektTyp:          d.objektTyp,
-      betreiberTyp:       d.betreiberTyp,
-      rechnungsempfaenger: d.rechnungsempfaenger || (_bulkImport.kunde.firmenname||''),
-      fabriknummer:       a.fabriknummer || '',
-      sonstigerHinweis:   wartungsHinweis,
-      archived:           false,
-    };
+  // ─── Pre-Flight-Check: erste Anlage testweise anlegen ──────────────────
+  if (!opts.skipPreflight && items.length > 0) {
+    const first = items[0];
+    const updCur = document.getElementById('bulk-creating-current');
+    if (updCur) updCur.textContent = 'Pre-Flight-Check…';
     try {
-      const r = await erpFetch('/aufzug/'+_bulkImport.firmaSlug+'/api/anlagen', { method:'POST', body: payload });
+      const r = await erpFetch('/aufzug/'+_bulkImport.firmaSlug+'/api/anlagen',
+        { method:'POST', body:_bulkBuildPayload(first, kundenId, d, wartungsHinweis) });
+      _bulkImport.result.ok.push({ a:first, r });
+      _bulkImport.result.current = 1;
+      // Pre-Flight OK → ab Index 1 weitermachen
+      _bulkImport._startAt = 1;
+    } catch(e) {
+      console.warn('[Bulk] Pre-Flight fehlgeschlagen:', e);
+      const explained = _bulkExplainErpError(e.message);
+      // Bei dem typischen Ansprechpartner-NPE: ALLE als ein Fehler markieren und abbrechen
+      _bulkImport.result.errors = items.map(a => ({ a, error: e.message, explained }));
+      _bulkImport.result.preflightAbort = explained;
+      _bulkImport.step = 'done';
+      _bulkRender();
+      return;
+    }
+  } else {
+    _bulkImport._startAt = 0;
+  }
+
+  // ─── Restliche Anlagen sequentiell mit kleiner Pause ─────────────────
+  for (let i = _bulkImport._startAt || 0; i < items.length; i++) {
+    const a = items[i];
+    _bulkImport.result.current = i+1;
+    const curEl = document.getElementById('bulk-creating-current');
+    const barEl = document.getElementById('bulk-creating-bar');
+    if (curEl) curEl.textContent = (i+1)+' / '+items.length+' – '+(a.fabriknummer||a.anzeigeAdresse||'?').toString().slice(0,40);
+    if (barEl) barEl.style.width = ((i+1)/items.length*100)+'%';
+    try {
+      const r = await erpFetch('/aufzug/'+_bulkImport.firmaSlug+'/api/anlagen',
+        { method:'POST', body:_bulkBuildPayload(a, kundenId, d, wartungsHinweis) });
       _bulkImport.result.ok.push({ a, r });
     } catch(e) {
-      _bulkImport.result.errors.push({ a, error: e.message });
+      _bulkImport.result.errors.push({ a, error: e.message, explained:_bulkExplainErpError(e.message) });
       console.warn('Bulk-Create Fehler:', a, e);
     }
+    // Kleine Pause damit das ERP nicht überrollt wird
+    if (i < items.length - 1) await new Promise(r => setTimeout(r, 200));
   }
   // Anlagen-Cache invalidieren damit die neuen sofort sichtbar sind
   _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
   _bulkImport.step = 'done';
   _bulkRender();
+}
+
+/* Nur fehlgeschlagene Anlagen erneut versuchen */
+async function _bulkRetryFailed() {
+  const failed = (_bulkImport.result?.errors||[]).map(e => e.a);
+  if (failed.length === 0) return;
+  if (!confirm('Erneut '+failed.length+' fehlgeschlagene Anlagen versuchen?')) return;
+  await _bulkStartCreating({ retryList: failed, skipPreflight: false });
+}
+
+/* Fehlgeschlagene Anlagen als CSV exportieren */
+function _bulkExportFailed() {
+  const errs = _bulkImport.result?.errors||[];
+  if (errs.length === 0) return;
+  const rows = [['Fabriknummer','Adresse','Fehler']]
+    .concat(errs.map(e => [
+      (e.a.fabriknummer||'').toString(),
+      (e.a.anzeigeAdresse||'').toString(),
+      (e.explained?.short||e.error||'').toString()
+    ]));
+  const csv = rows.map(r => r.map(c =>
+    '"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
+  const blob = new Blob(['﻿'+csv], { type:'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'bulk-import-fehler.csv';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
 }
 
 function _bulkRenderCreating(body, foot) {
@@ -7468,26 +7559,60 @@ function _bulkRenderCreating(body, foot) {
 /* ── STEP 6: DONE ── */
 function _bulkRenderDone(body, foot) {
   const r = _bulkImport.result;
+  // Gruppiere Fehler nach Klartext-Kurzform
+  const errGrouped = {};
+  for (const e of (r.errors||[])) {
+    const key = e.explained?.short || 'Unbekannter Fehler';
+    if (!errGrouped[key]) errGrouped[key] = { count:0, long:e.explained?.long||'', items:[] };
+    errGrouped[key].count++;
+    errGrouped[key].items.push(e);
+  }
+  const groupKeys = Object.keys(errGrouped);
+
   body.innerHTML = `
     <div class="auf-section">
       <h3>${r.errors.length===0 ? '✅ Erfolg!' : '⚠ Mit Fehlern abgeschlossen'}</h3>
       <div style="font-size:14px;color:var(--txt);margin:14px 0;line-height:1.8">
         <div>✓ <strong>${r.ok.length}</strong> Anlagen erfolgreich im ERP erstellt</div>
-        ${_bulkImport.duplicates.length > 0 ? '<div>↪ <strong>'+_bulkImport.duplicates.length+'</strong> Duplikate übersprungen (Fabriknummer existierte)</div>' : ''}
+        ${_bulkImport.duplicates.length > 0 ? '<div>↪ <strong>'+_bulkImport.duplicates.length+'</strong> Duplikate übersprungen</div>' : ''}
         ${r.errors.length > 0 ? '<div style="color:var(--err)">❌ <strong>'+r.errors.length+'</strong> Fehler</div>' : ''}
       </div>
+
+      ${r.preflightAbort ? `
+      <div style="background:#FEF2F2;border:1px solid #FCA5A5;border-radius:8px;padding:14px;margin-top:10px">
+        <div style="font-weight:700;color:#B91C1C;margin-bottom:6px">🛑 Pre-Flight-Check fehlgeschlagen — Import abgebrochen</div>
+        <div style="font-size:13px;color:#7F1D1D;line-height:1.5">${r.preflightAbort.long.replace(/</g,'&lt;')}</div>
+        <div style="font-size:12px;color:var(--txt2);margin-top:8px"><strong>Was tun?</strong> Behebe das Problem im ERP, schließe diesen Dialog und starte den Import erneut. Es wurde noch keine Anlage angelegt.</div>
+      </div>` : ''}
+
+      ${groupKeys.length > 0 && !r.preflightAbort ? `
+      <div style="margin-top:14px">
+        <div style="font-size:13px;font-weight:600;margin-bottom:8px">Fehler-Übersicht:</div>
+        ${groupKeys.map(k => `
+          <div style="background:#FEF2F2;border-left:3px solid #DC2626;border-radius:4px;padding:10px 12px;margin-bottom:8px">
+            <div style="font-weight:600;color:#B91C1C">${errGrouped[k].count}× ${k.replace(/</g,'&lt;')}</div>
+            ${errGrouped[k].long ? '<div style="font-size:12px;color:var(--txt2);margin-top:4px;line-height:1.4">'+errGrouped[k].long.replace(/</g,'&lt;')+'</div>' : ''}
+          </div>
+        `).join('')}
+      </div>` : ''}
+
       ${r.errors.length > 0 ? `
       <details style="margin-top:14px">
-        <summary style="cursor:pointer;font-size:12px;color:var(--err);font-weight:600">Fehler-Details anzeigen</summary>
+        <summary style="cursor:pointer;font-size:12px;color:var(--err);font-weight:600">▸ Technische Details (für Support)</summary>
         <div style="margin-top:8px;max-height:200px;overflow:auto;font-size:11px;font-family:monospace;background:#FEF2F2;padding:8px;border-radius:5px">
           ${r.errors.map(e => '<div style="border-bottom:1px solid #FECACA;padding:4px 0">'
             + '<strong>'+((e.a.fabriknummer||'?')+'').replace(/</g,'&lt;')+'</strong> ('+(e.a.anzeigeAdresse||'').replace(/</g,'&lt;')+')<br>'
-            + '<span style="color:#B91C1C">'+e.error.replace(/</g,'&lt;')+'</span></div>').join('')}
+            + '<span style="color:#B91C1C">'+String(e.error||'').replace(/</g,'&lt;').slice(0,500)+'</span></div>').join('')}
         </div>
       </details>` : ''}
     </div>
   `;
-  foot.innerHTML = '<button class="btn prim" onclick="closeBulkImport();renderAnlagenView({force:true})">✓ Schließen + Anlagen neu laden</button>';
+  const hasErrors = r.errors.length > 0;
+  foot.innerHTML = `
+    ${hasErrors ? '<button class="btn" onclick="_bulkExportFailed()" title="Fehlgeschlagene Anlagen als CSV downloaden">📥 CSV-Export Fehler</button>' : ''}
+    ${hasErrors && !r.preflightAbort ? '<button class="btn" onclick="_bulkRetryFailed()" title="Nur die fehlgeschlagenen Anlagen erneut versuchen">🔁 Fehlgeschlagene erneut versuchen</button>' : ''}
+    <button class="btn prim" onclick="closeBulkImport();renderAnlagenView({force:true})">✓ Schließen + Anlagen neu laden</button>
+  `;
 }
 
 
