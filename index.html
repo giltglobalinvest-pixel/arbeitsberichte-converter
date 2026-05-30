@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.00';
+const APP_VERSION = 'v4.01';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6970,25 +6970,91 @@ async function openBulkImport() {
   _bulkLoadTypesFromAnlagen().catch(e => console.warn('Typen:', e));
 }
 
-/* ObjektTyp & BetreiberTyp aus existierenden Anlagen der Firma sammeln */
-const BULK_OBJEKT_FALLBACK    = ['Wohnen','Büro','Gewerbe','Industrie','Hotel','Krankenhaus','Schule','Öffentlich','Mischnutzung'];
-const BULK_BETREIBER_FALLBACK = ['Hausverwaltung','WEG','Eigentümer','Firma','Privat','Kommune'];
+/* ── ERP-Stammdaten: Objekt-/Betreibertypen ─────────────────────────────
+   Versucht zuerst echte Stammdaten-Endpoints; fällt zurück auf die in
+   existierenden Anlagen verwendeten Werte (sind ebenfalls vom ERP vorgegeben).
+   Cached pro Firma 10 min. */
+let _erpTypesCache = { firma:null, data:null, loadedAt:0 };
+
+async function _erpTryTypeEndpoint(firmaSlug, candidates) {
+  for (const path of candidates) {
+    try {
+      const r = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
+      let list = [];
+      if (Array.isArray(r)) list = r;
+      else if (r && Array.isArray(r.content)) list = r.content;
+      else if (r && Array.isArray(r.items))   list = r.items;
+      else if (r && Array.isArray(r.data))    list = r.data;
+      const flat = list.map(it => {
+        if (typeof it === 'string') return it.trim();
+        return String(it?.name || it?.bezeichnung || it?.label || it?.value || it?.key || '').trim();
+      }).filter(Boolean);
+      if (flat.length > 0) {
+        console.log('[ERP-Types] geladen via',path,'→',flat.length,'Werte');
+        return [...new Set(flat)].sort();
+      }
+    } catch(_) { /* 404/Fehler → nächsten Pfad */ }
+  }
+  return null;
+}
+
+async function _loadErpTypes(firmaSlug) {
+  // Cache (10 min)
+  if (_erpTypesCache.firma === firmaSlug && _erpTypesCache.data
+      && (Date.now() - _erpTypesCache.loadedAt) < 10*60*1000) {
+    return _erpTypesCache.data;
+  }
+  const [erpObjekt, erpBetreiber] = await Promise.all([
+    _erpTryTypeEndpoint(firmaSlug, [
+      'api/stammdaten/objekttypen','api/stammdaten/objekttyp',
+      'api/objekttypen','api/objekttyp',
+      'api/anlagen/objekttypen','api/lookups/objekttypen',
+      'api/enums/objekttyp',
+    ]),
+    _erpTryTypeEndpoint(firmaSlug, [
+      'api/stammdaten/betreibertypen','api/stammdaten/betreibertyp',
+      'api/betreibertypen','api/betreibertyp',
+      'api/anlagen/betreibertypen','api/lookups/betreibertypen',
+      'api/enums/betreibertyp',
+    ]),
+  ]);
+
+  // Fallback: aus existierenden Anlagen
+  let objekt = erpObjekt, betreiber = erpBetreiber;
+  if (!objekt || !betreiber) {
+    if (_anlagenCache.firma !== firmaSlug || !_anlagenCache.items) {
+      try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+    }
+    const items = _anlagenCache.items || [];
+    if (!objekt) {
+      const set = new Set();
+      for (const a of items) { const o = String(a.objektTyp||'').trim(); if (o) set.add(o); }
+      objekt = [...set].sort();
+      console.log('[ERP-Types] Objekttypen aus existierenden Anlagen:', objekt.length);
+    }
+    if (!betreiber) {
+      const set = new Set();
+      for (const a of items) { const b = String(a.betreiberTyp||'').trim(); if (b) set.add(b); }
+      betreiber = [...set].sort();
+      console.log('[ERP-Types] Betreibertypen aus existierenden Anlagen:', betreiber.length);
+    }
+  }
+
+  _erpTypesCache = { firma:firmaSlug, data:{ objekt, betreiber }, loadedAt:Date.now() };
+  return _erpTypesCache.data;
+}
 
 async function _bulkLoadTypesFromAnlagen() {
-  // Wenn _anlagenCache zur Firma passt → direkt nutzen
-  if (_anlagenCache.firma !== _bulkImport.firmaSlug || !_anlagenCache.items) {
-    try { await _loadAnlagenForFirma(_bulkImport.firmaSlug); } catch(_){}
+  const t = await _loadErpTypes(_bulkImport.firmaSlug);
+  _bulkImport._objektTypen    = t.objekt;
+  _bulkImport._betreiberTypen = t.betreiber;
+  // Defaults auf erste ERP-Werte korrigieren falls noch unbekannt
+  if (t.objekt.length > 0 && !t.objekt.includes(_bulkImport.defaults.objektTyp)) {
+    _bulkImport.defaults.objektTyp = t.objekt[0];
   }
-  const items = _anlagenCache.items || [];
-  const objektSet    = new Set(BULK_OBJEKT_FALLBACK);
-  const betreiberSet = new Set(BULK_BETREIBER_FALLBACK);
-  for (const a of items) {
-    const o = String(a.objektTyp||'').trim();    if (o) objektSet.add(o);
-    const b = String(a.betreiberTyp||'').trim(); if (b) betreiberSet.add(b);
+  if (t.betreiber.length > 0 && !t.betreiber.includes(_bulkImport.defaults.betreiberTyp)) {
+    _bulkImport.defaults.betreiberTyp = t.betreiber[0];
   }
-  _bulkImport._objektTypen    = [...objektSet].sort();
-  _bulkImport._betreiberTypen = [...betreiberSet].sort();
-  // Nur neu rendern wenn wir noch im Setup-Schritt sind
   if (_bulkImport.step === 'setup') _bulkRender();
 }
 
@@ -7025,41 +7091,31 @@ function _bulkRender() {
   else if (_bulkImport.step === 'done')     _bulkRenderDone(body, foot);
 }
 
-/* Helper: Select mit "Andere…" → Text-Input einblenden */
+/* Helper: reines <select> — nur ERP-Werte, KEINE Custom-Option */
 function _bulkRenderTypeSelect(id, options, currentValue) {
   const opts = Array.isArray(options) ? options : [];
-  const isCustom = currentValue && !opts.includes(currentValue);
   const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
-  return (
-    '<select id="'+id+'" class="auf-input" onchange="_bulkOnTypeSelect(\''+id+'\')" style="cursor:pointer">'
-    + opts.map(o => '<option value="'+esc(o)+'"'+(o===currentValue?' selected':'')+'>'+esc(o)+'</option>').join('')
-    + '<option value="__custom__"'+(isCustom?' selected':'')+'>+ Andere…</option>'
-    + '</select>'
-    + '<input type="text" id="'+id+'-custom" class="auf-input" '
-    + 'value="'+(isCustom?esc(currentValue):'')+'" '
-    + 'placeholder="Eigenen Typ eingeben…" '
-    + 'style="margin-top:6px;display:'+(isCustom?'block':'none')+'">'
-  );
-}
-
-function _bulkOnTypeSelect(id) {
-  const sel = document.getElementById(id);
-  const inp = document.getElementById(id+'-custom');
-  if (!sel || !inp) return;
-  if (sel.value === '__custom__') {
-    inp.style.display = 'block';
-    inp.focus();
-  } else {
-    inp.style.display = 'none';
-    inp.value = '';
+  // Wenn Typen noch nicht geladen wurden
+  if (!_bulkImport._objektTypen && !_bulkImport._betreiberTypen) {
+    return '<select class="auf-input" disabled><option>⏳ lade Werte aus ERP…</option></select>';
   }
+  // Wenn ERP keine Werte liefert UND in Anlagen keine vorkommen
+  if (opts.length === 0) {
+    return '<select class="auf-input" disabled><option>— keine Werte im ERP gepflegt —</option></select>'
+         + '<div style="font-size:11px;color:#B45309;margin-top:4px">⚠ Im ERP fehlen Stammdaten. Bitte zuerst eine Anlage im ERP anlegen, damit der Typ bekannt ist.</div>';
+  }
+  // Wenn der aktuelle Wert (Default) nicht in der ERP-Liste ist → ersten ERP-Wert wählen
+  const value = opts.includes(currentValue) ? currentValue : opts[0];
+  return (
+    '<select id="'+id+'" class="auf-input" style="cursor:pointer">'
+    + opts.map(o => '<option value="'+esc(o)+'"'+(o===value?' selected':'')+'>'+esc(o)+'</option>').join('')
+    + '</select>'
+  );
 }
 
 function _bulkReadTypeSelect(id, fallback) {
   const sel = document.getElementById(id);
-  const inp = document.getElementById(id+'-custom');
-  if (!sel) return fallback;
-  if (sel.value === '__custom__') return (inp?.value || '').trim() || fallback;
+  if (!sel || sel.disabled) return fallback;
   return sel.value || fallback;
 }
 
@@ -7092,12 +7148,12 @@ function _bulkRenderSetup(body, foot) {
           <input type="number" class="auf-input" id="bulk-d-einsatz" value="${d.einsatzpauschale}" step="0.5" min="0">
         </div>
         <div class="auf-field">
-          <label class="auf-label">Objekt-Typ</label>
-          ${_bulkRenderTypeSelect('bulk-d-objekt', _bulkImport._objektTypen||BULK_OBJEKT_FALLBACK, d.objektTyp)}
+          <label class="auf-label">Objekt-Typ (vom ERP)</label>
+          ${_bulkRenderTypeSelect('bulk-d-objekt', _bulkImport._objektTypen||[], d.objektTyp)}
         </div>
         <div class="auf-field">
-          <label class="auf-label">Betreiber-Typ</label>
-          ${_bulkRenderTypeSelect('bulk-d-betreiber', _bulkImport._betreiberTypen||BULK_BETREIBER_FALLBACK, d.betreiberTyp)}
+          <label class="auf-label">Betreiber-Typ (vom ERP)</label>
+          ${_bulkRenderTypeSelect('bulk-d-betreiber', _bulkImport._betreiberTypen||[], d.betreiberTyp)}
         </div>
       </div>
       <div class="auf-field">
@@ -16716,12 +16772,24 @@ function _proceedToAnlageForm(kunde) {
   _openCreateAnlageStandaloneForm(kunde);
 }
 
-function _openCreateAnlageStandaloneForm(kunde) {
+async function _openCreateAnlageStandaloneForm(kunde) {
   const firmaSlug = getCurrentFirmaSlug();
   const adresseDefault = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
-  const allAnlagen = _anlagenCache.items || [];
-  const objektTypen    = [...new Set(allAnlagen.map(a => String(a.objektTyp||'').trim()).filter(Boolean))].sort();
-  const betreiberTypen = [...new Set(allAnlagen.map(a => String(a.betreiberTyp||'').trim()).filter(Boolean))].sort();
+
+  // Stammdaten-Typen: zuerst ERP-Endpoints probieren, sonst aus existing Anlagen
+  // (kleiner State-Hack: wir nutzen die selbe Funktion wie der Bulk-Import,
+  //  brauchen aber kein _bulkImport-Objekt im Standalone-Kontext)
+  const types = await _loadErpTypes(firmaSlug);
+  const objektTypen    = types.objekt;
+  const betreiberTypen = types.betreiber;
+  const optHtml = (arr, sel) => arr.map(t =>
+    '<option value="'+escapeHtml(t)+'"'+(t===sel?' selected':'')+'>'+escapeHtml(t)+'</option>').join('');
+  const selectHtml = (id, arr) => {
+    if (!arr || arr.length === 0) {
+      return '<select id="'+id+'" class="auf-input" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px" disabled><option>— keine Werte im ERP gepflegt —</option></select>';
+    }
+    return '<select id="'+id+'" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;cursor:pointer">'+optHtml(arr, arr[0])+'</select>';
+  };
 
   const old = document.getElementById('pl-create-anlage'); if (old) old.remove();
   const m = document.createElement('div');
@@ -16742,12 +16810,10 @@ function _openCreateAnlageStandaloneForm(kunde) {
           '<div><strong>Fabriknummer</strong><br>'+
             '<input id="pl-new-fabriknr" type="text" placeholder="z.B. 12345" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-            '<div><strong>Objekt-Typ *</strong><br>'+
-              '<input id="pl-new-objekttyp" type="text" list="pl-new-objekttyp-list" placeholder="aus ERP wählen / tippen" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
-              '<datalist id="pl-new-objekttyp-list">'+objektTypen.map(t => '<option value="'+escapeHtml(t)+'">').join('')+'</datalist></div>'+
-            '<div><strong>Betreiber-Typ *</strong><br>'+
-              '<input id="pl-new-betreibertyp" type="text" list="pl-new-betreibertyp-list" placeholder="aus ERP wählen / tippen" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
-              '<datalist id="pl-new-betreibertyp-list">'+betreiberTypen.map(t => '<option value="'+escapeHtml(t)+'">').join('')+'</datalist></div>'+
+            '<div><strong>Objekt-Typ *</strong> <span style="font-size:10px;color:var(--txt3)">(vom ERP)</span><br>'+
+              selectHtml('pl-new-objekttyp', objektTypen)+'</div>'+
+            '<div><strong>Betreiber-Typ *</strong> <span style="font-size:10px;color:var(--txt3)">(vom ERP)</span><br>'+
+              selectHtml('pl-new-betreibertyp', betreiberTypen)+'</div>'+
           '</div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
             '<div><strong>Stundensatz €</strong><br>'+
@@ -16777,13 +16843,15 @@ async function _submitCreateAnlageStandalone() {
   const firmaSlug = m._firmaSlug;
   const adresse        = document.getElementById('pl-new-adresse').value.trim();
   const fabriknummer   = document.getElementById('pl-new-fabriknr').value.trim();
-  const objektTyp      = document.getElementById('pl-new-objekttyp').value.trim();
-  const betreiberTyp   = document.getElementById('pl-new-betreibertyp').value.trim();
+  const objektSel      = document.getElementById('pl-new-objekttyp');
+  const betreiberSel   = document.getElementById('pl-new-betreibertyp');
+  const objektTyp      = (objektSel && !objektSel.disabled) ? (objektSel.value||'').trim() : '';
+  const betreiberTyp   = (betreiberSel && !betreiberSel.disabled) ? (betreiberSel.value||'').trim() : '';
   const stundensatz    = +document.getElementById('pl-new-stundensatz').value || 0;
   const einsatzPausch  = +document.getElementById('pl-new-einsatzpauschale').value || 0;
   const hinweis        = document.getElementById('pl-new-hinweis').value.trim();
   if (!adresse) return toast('Bitte Adresse eintragen.','err');
-  if (!objektTyp || !betreiberTyp) return toast('Bitte Objekt- und Betreiber-Typ wählen.','err');
+  if (!objektTyp || !betreiberTyp) return toast('Im ERP sind noch keine Objekt-/Betreibertypen gepflegt. Bitte zuerst im ERP eine Anlage anlegen.','err');
 
   const kundenId = kunde.kundennummer || kunde.id;
   const payload = {
