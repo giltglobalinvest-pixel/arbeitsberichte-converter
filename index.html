@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.92';
+const APP_VERSION = 'v3.93';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14137,38 +14137,81 @@ async function _gbuSaveAndRegenPdf() {
   if (!modal) return;
   const rec = modal._rec;
   const regenBtn = document.getElementById('gbu-edit-regen');
-  if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = '⏳ baue PDF…'; }
+  if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = '⏳ speichere…'; }
+  console.log('[GBU-Regen] Start für Record', rec.id);
   try {
+    // Schritt 1: Speichern
     const d = await _gbuSaveEdit();
-    if (!d) throw new Error('Speichern fehlgeschlagen');
-    // Anlage-Objekt aus aktuellem Cache holen (für PDF-Generator)
-    const anlageData = (_anlagenCache.items||[]).find(a => String(a.id||'') === String(rec.fields.anlage_id||'')) || {};
-    // Falls anlage nicht im Cache: bauen aus rec.fields
+    if (!d) throw new Error('Speichern fehlgeschlagen — siehe Toast oben');
+    console.log('[GBU-Regen] Daten gespeichert, items:', Object.keys(d.items||{}).length);
+
+    // Schritt 2: Anlage-Daten zusammenstellen (defensiv)
+    if (regenBtn) regenBtn.textContent = '⏳ lade Anlage…';
+    let anlageData = {};
+    if (_anlagenCache && _anlagenCache.items) {
+      anlageData = _anlagenCache.items.find(a => String(a.id||'') === String(rec.fields.anlage_id||'')) || {};
+    }
+    // Anlagen aktiv nachladen falls Cache leer
+    if (!anlageData.id) {
+      const firmaSlug = rec.fields.firma || getCurrentFirmaSlug();
+      try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+      if (_anlagenCache && _anlagenCache.items) {
+        anlageData = _anlagenCache.items.find(a => String(a.id||'') === String(rec.fields.anlage_id||'')) || {};
+      }
+    }
+    // Fallback: aus dem Record selbst zusammenbauen
     d.anlage = {
-      id: rec.fields.anlage_id,
-      fabriknummer: rec.fields.anlage_fabriknummer,
+      id: rec.fields.anlage_id || anlageData.id || '',
+      fabriknummer: rec.fields.anlage_fabriknummer || anlageData.fabriknummer || '',
       objektTyp: anlageData.objektTyp || '',
       haltestellen: anlageData.haltestellen || '',
       kunde: anlageData.kunde || {},
-      anzeigeAdresse: rec.fields.anlage_adresse,
+      anzeigeAdresse: rec.fields.anlage_adresse || anlageData.anzeigeAdresse || '',
     };
-    const pdfBlob = await _buildGbuPdf(d);
-    const fname = 'GBU-'+(rec.fields.anlage_fabriknummer||'Anlage').toString().replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
-    // Altes PDF löschen + neues hochladen
+    // Sicherstellen dass verantwortliche/nutzung/freigabe-Objekte existieren
+    if (!d.verantwortliche) d.verantwortliche = {};
+    if (!d.nutzung)         d.nutzung = {};
+    if (!d.freigabe)        d.freigabe = {};
+    if (!d.freigabe.erstellt_am) d.freigabe.erstellt_am = (rec.fields.erstellt_am||new Date().toISOString().slice(0,10));
+    console.log('[GBU-Regen] Anlage prepared:', d.anlage);
+
+    // Schritt 3: PDF bauen
+    if (regenBtn) regenBtn.textContent = '⏳ baue PDF…';
+    let pdfBlob;
+    try {
+      pdfBlob = await _buildGbuPdf(d);
+      console.log('[GBU-Regen] PDF gebaut, Größe:', pdfBlob?.size, 'bytes');
+    } catch(buildErr) {
+      console.error('[GBU-Regen] PDF-Build fehlgeschlagen:', buildErr);
+      throw new Error('PDF-Build: '+(buildErr.message||'unbekannter Fehler'));
+    }
+    if (!pdfBlob || pdfBlob.size === 0) throw new Error('PDF ist leer — bitte mit Konsole prüfen');
+
+    // Schritt 4: Hochladen
+    if (regenBtn) regenBtn.textContent = '⏳ lade PDF hoch…';
+    const fname = 'GBU-'+String(rec.fields.anlage_fabriknummer||'Anlage').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-    await fetch('https://api.airtable.com/v0/'+baseId+'/GBUs/'+rec.id, {
+    // Altes PDF leeren
+    const clearRes = await fetch('https://api.airtable.com/v0/'+baseId+'/GBUs/'+rec.id, {
       method:'PATCH',
       headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
       body: JSON.stringify({ fields: { gbu_pdf: [] }})
     });
+    if (!clearRes.ok) {
+      const j = await clearRes.json().catch(()=>({}));
+      throw new Error('Altes PDF nicht entfernbar: '+(j.error?.message||'HTTP '+clearRes.status));
+    }
+    console.log('[GBU-Regen] Altes PDF entfernt');
     await atBlobUpload(rec.id, 'gbu_pdf', pdfBlob, fname, 'application/pdf');
+    console.log('[GBU-Regen] Neues PDF hochgeladen:', fname);
+
     toast('📄 PDF aktualisiert','ok');
     document.getElementById('gbu-edit-modal')?.remove();
     await renderGbuView({ force:true });
     _showGbuPdf(rec.id, pdfBlob, rec.fields.anlage_adresse||'GBU', rec.fields);
   } catch(e) {
-    console.error('gbuRegenPdf:', e);
-    toast('❌ '+(e.message||'?').slice(0,250),'err');
+    console.error('[GBU-Regen] Fehler:', e);
+    toast('❌ PDF-Erzeugung: '+(e.message||'?').slice(0,300),'err');
     if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = '📄 Speichern + PDF erzeugen'; }
   }
 }
@@ -14181,6 +14224,14 @@ function _gbuViewPdfFromEdit() {
   const att = Array.isArray(f.gbu_pdf) && f.gbu_pdf[0];
   if (!att || !att.url) return toast('Kein PDF gespeichert. Klick "📄 Speichern + PDF erzeugen".','err');
   _showGbuPdf(rec.id, att.url, f.anlage_adresse||'GBU', f);
+}
+
+/* Vom PDF-Viewer zurück ins Edit-Modal — User möchte bearbeiten + neues PDF. */
+function _gbuEditFromPdf(recId) {
+  document.getElementById('gbu-pdf-modal')?.remove();
+  const rec = (_gbuCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('GBU nicht gefunden — bitte Liste neu laden.','err');
+  _openGbuEdit(rec);
 }
 
 /* Eigener PDF-Viewer für GBUs — keine Vertrags-Buttons (Konditionen/Korrigieren/Komplett neu).
@@ -14204,6 +14255,7 @@ function _showGbuPdf(recId, pdfBlobOrUrl, label, fields) {
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="document.getElementById(\'gbu-pdf-modal\').remove()">Schließen</button>'+
           '<a class="btn" href="'+url+'" download="GBU.pdf" style="text-decoration:none">📥 Herunterladen</a>'+
+          '<button class="btn prim" style="background:#3730A3;border-color:#3730A3" onclick="_gbuEditFromPdf(\''+escapeHtml(recId)+'\')" title="GBU bearbeiten / PDF neu erzeugen">✏ Bearbeiten</button>'+
         '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           (status==='entwurf' ? '<button class="btn" style="background:#10b981;color:#fff;border-color:#10b981" onclick="_gbuSetStatus(\''+escapeHtml(recId)+'\',\'aktiv\')" title="GBU freigeben → Status auf aktiv">✓ Freigeben (aktiv)</button>' : '')+
