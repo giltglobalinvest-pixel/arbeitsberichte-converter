@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.01';
+const APP_VERSION = 'v4.02';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12581,7 +12581,9 @@ function _renderKontakteViewList() {
       ? '<button class="btn" onclick="event.stopPropagation();_mailchimpSyncKontaktFromView('+idx+', this)" title="Diesen Kontakt zu Mailchimp pushen" style="padding:4px 10px;font-size:11px;background:#FFE01B;color:#222;border:1px solid #d4ba0b;font-weight:600">📧</button>'
       : '';
     const meta = [c.email, c.telefon||c.mobile, c.rolle].filter(Boolean).join(' · ');
-    return '<div onclick="openKundeDetail(\''+escapeHtml(String(c._kundeId||''))+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(35,74,117,.25)\'" onmouseout="this.style.borderColor=\'var(--bdr)\'">'+
+    // Bevorzugt Kundennummer (zuverlässig), Fallback auf ERP-ID
+    const kKey = c._kundenNr || c._kundeId || '';
+    return '<div onclick="openKundeDetail(\''+escapeHtml(String(kKey))+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(35,74,117,.25)\'" onmouseout="this.style.borderColor=\'var(--bdr)\'">'+
       '<div style="font-size:18px">👤</div>'+
       '<div style="flex:1;min-width:200px">'+
         '<div style="font-weight:600;font-size:13px;color:var(--navy)">'+escapeHtml(name)+'</div>'+
@@ -16314,8 +16316,12 @@ function _renderKundenViewList() {
     list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer für "'+escapeHtml(q)+'".':'Keine Kunden vorhanden.')+'</div>';
     return;
   }
+  // Stable array indices in den Cache schreiben — ERP-IDs sind unzuverlässig
+  // (manche Kunden haben nur kundennummer, kein id-Feld) → undefined-Matching-Bug.
+  items.forEach((k, i) => { k.__cacheIdx = i; });
+
   list.innerHTML = '<div style="display:grid;gap:8px">'+filtered.slice(0,500).map(k =>
-    '<div onclick="openKundeDetail(\''+escapeHtml(String(k.id))+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\';this.style.borderColor=\'rgba(35,74,117,.25)\'" onmouseout="this.style.boxShadow=\'0 1px 3px rgba(0,0,0,.05)\';this.style.borderColor=\'var(--bdr)\'">'+
+    '<div onclick="openKundeDetail('+k.__cacheIdx+')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,.05);transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\';this.style.borderColor=\'rgba(35,74,117,.25)\'" onmouseout="this.style.boxShadow=\'0 1px 3px rgba(0,0,0,.05)\';this.style.borderColor=\'var(--bdr)\'">'+
       '<div style="flex:1;min-width:220px">'+
         '<div style="font-size:14px;font-weight:600;color:var(--navy)">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
         '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
@@ -16329,8 +16335,22 @@ function _renderKundenViewList() {
   ).join('')+'</div>';
 }
 
-async function openKundeDetail(kundeId) {
-  const kunde = (_kundenCache.items||[]).find(x => String(x.id) === String(kundeId));
+async function openKundeDetail(kundeIdOrIdx) {
+  const items = _kundenCache.items || [];
+  let kunde = null;
+  // Bevorzugt: numerischer Cache-Index (stable, immer korrekt)
+  if (typeof kundeIdOrIdx === 'number' || /^\d+$/.test(String(kundeIdOrIdx))) {
+    const idx = +kundeIdOrIdx;
+    if (idx >= 0 && idx < items.length) kunde = items[idx];
+  }
+  // Fallback: per ERP-ID / Kundennummer suchen (für Aufrufe von ausserhalb)
+  if (!kunde) {
+    const key = String(kundeIdOrIdx);
+    kunde = items.find(x =>
+      (x.id != null && String(x.id) === key) ||
+      (x.kundennummer != null && String(x.kundennummer) === key)
+    );
+  }
   if (!kunde) return toast('Kunde nicht gefunden im Cache.','err');
   const firmaSlug = getCurrentFirmaSlug();
   const old = document.getElementById('kde-detail-modal'); if (old) old.remove();
