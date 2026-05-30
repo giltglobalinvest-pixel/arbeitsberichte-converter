@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.05';
+const APP_VERSION = 'v4.06';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6947,6 +6947,8 @@ function _bulkResetState() {
     firmaSlug: getCurrentFirmaSlug(),
     kunden: null,
     kunde: null,
+    kontakte: null,             // Kontakte des gewählten Kunden
+    ansprechpartnerIdx: -1,     // Index in kontakte[], wird im Anlagen-Payload mitgesendet
     defaults: { stundensatz: 70, einsatzpauschale: 50, objektTyp: 'Wohnen', betreiberTyp: 'Hausverwaltung', rechnungsempfaenger: '', isWartung: true },
     excelRows: null,        // [[col1, col2, ...], ...] inkl. Header
     excelHeaders: null,
@@ -7119,6 +7121,38 @@ function _bulkReadTypeSelect(id, fallback) {
   return sel.value || fallback;
 }
 
+/* Ansprechpartner-Section unter dem Kunden-Picker */
+function _bulkRenderAnsprechpartnerSection() {
+  const kontakte = _bulkImport.kontakte;
+  if (kontakte === null) {
+    return '<div style="margin-top:10px;padding:8px 12px;background:#F8FAFC;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt2)"><span class="spinner" style="display:inline-block;vertical-align:middle;margin-right:6px;width:14px;height:14px"></span> Lade Kontakte des Kunden…</div>';
+  }
+  if (!Array.isArray(kontakte) || kontakte.length === 0) {
+    return '<div style="margin-top:10px;padding:10px 12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;font-size:12px;color:#92400E">'+
+      '⚠ <strong>Keine Kontakte beim Kunden hinterlegt.</strong><br>'+
+      'Bulk-Import wird vermutlich an einem NullPointerException im ERP scheitern. '+
+      'Bitte zuerst im Kunden-Detail oder ERP-Web einen Kontakt anlegen.</div>';
+  }
+  const sel = _bulkImport.ansprechpartnerIdx;
+  return (
+    '<div style="margin-top:14px">'+
+      '<label class="auf-label">Ansprechpartner für alle Anlagen <span style="font-size:10px;color:var(--txt3);font-weight:400">(wird im Anlagen-Payload mitgesendet)</span></label>'+
+      '<select id="bulk-ansprechpartner" class="auf-input" onchange="_bulkImport.ansprechpartnerIdx = +this.value" style="cursor:pointer">'+
+        kontakte.map((c, i) => {
+          const name = [c.anrede, c.vorname, c.nachname].filter(Boolean).join(' ').trim() || '(ohne Name)';
+          const meta = [c.rolle, c.email].filter(Boolean).join(' · ');
+          return '<option value="'+i+'"'+(i===sel?' selected':'')+'>'+
+            (name+(meta?' — '+meta:'')).replace(/</g,'&lt;').replace(/"/g,'&quot;')+
+          '</option>';
+        }).join('')+
+      '</select>'+
+      '<div style="font-size:11px;color:var(--txt3);margin-top:4px">'+
+        '💡 Wir senden Kontakt-ID + ganzes Kontakt-Objekt im Payload mit — das ERP nimmt sich was es kennt.'+
+      '</div>'+
+    '</div>'
+  );
+}
+
 /* ── STEP 1: SETUP (Kunde + Defaults) ── */
 function _bulkRenderSetup(body, foot) {
   const d = _bulkImport.defaults;
@@ -7135,6 +7169,7 @@ function _bulkRenderSetup(body, foot) {
         <div class="anlage-dropdown" id="bulk-kunde-dropdown" style="display:none"></div>
       </div>
       <div id="bulk-kunde-selected" style="font-size:12px;color:var(--ok);margin-top:6px"></div>
+      ${_bulkImport.kunde ? _bulkRenderAnsprechpartnerSection() : ''}
     </div>
     <div class="auf-section">
       <h3>Gemeinsame Werte für alle Anlagen</h3>
@@ -7201,9 +7236,35 @@ function _bulkSelectKunde(idx) {
   const k = _bulkImport._kundenMatches[idx];
   if (!k) return;
   _bulkImport.kunde = k;
+  _bulkImport.kontakte = null;     // Kontakte des Kunden — werden gleich geladen
+  _bulkImport.ansprechpartnerIdx = -1;
   document.getElementById('bulk-kunde-search').value = k.firmenname || ('Kunde #'+k.kundennummer);
   document.getElementById('bulk-kunde-dropdown').style.display = 'none';
   document.getElementById('bulk-kunde-selected').textContent = '✓ Kunde gewählt: '+(k.firmenname||'')+' (Nr. '+k.kundennummer+')';
+  // Kontakte des Kunden im Hintergrund laden + UI neu rendern
+  _bulkLoadKontakteForKunde(k).catch(e => console.warn('Kontakte-Load:', e));
+}
+
+async function _bulkLoadKontakteForKunde(kunde) {
+  const firmaSlug = _bulkImport.firmaSlug;
+  const kundenNr = kunde.kundennummer || kunde.id;
+  if (!kundenNr) return;
+  try {
+    const r = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+    const list = Array.isArray(r) ? r : ((r && (r.content||r.items||r.data))||[]);
+    _bulkImport.kontakte = list;
+    console.log('[Bulk] '+list.length+' Kontakte für Kunde '+kundenNr+' geladen');
+    // Auto-Auswahl: nach "Standard"-Rolle suchen, sonst ersten Kontakt
+    const stdIdx = list.findIndex(c =>
+      /standard|haupt|primaer|primary/i.test(String(c.rolle||''))
+    );
+    _bulkImport.ansprechpartnerIdx = stdIdx >= 0 ? stdIdx : (list.length > 0 ? 0 : -1);
+    if (_bulkImport.step === 'setup') _bulkRender();
+  } catch(e) {
+    console.warn('Bulk: Kontakte-Load fehlgeschlagen:', e);
+    _bulkImport.kontakte = [];
+    if (_bulkImport.step === 'setup') _bulkRender();
+  }
 }
 
 function _bulkNextSetup() {
@@ -7552,7 +7613,7 @@ function _bulkExplainErpError(msg) {
 }
 
 function _bulkBuildPayload(a, kundenId, d, wartungsHinweis) {
-  return {
+  const payload = {
     kundenId:           +kundenId,
     adresseId:          a.anzeigeAdresse || '',
     anzeigeAdresse:     a.anzeigeAdresse || '',
@@ -7566,6 +7627,17 @@ function _bulkBuildPayload(a, kundenId, d, wartungsHinweis) {
     sonstigerHinweis:   wartungsHinweis,
     archived:           false,
   };
+  // Ansprechpartner mitsenden, falls einer ausgewählt wurde — in mehreren
+  // Feldvarianten, damit das ERP sich das passende heraussucht.
+  const kontakte = _bulkImport.kontakte;
+  const kontakt  = (Array.isArray(kontakte) && _bulkImport.ansprechpartnerIdx >= 0)
+                   ? kontakte[_bulkImport.ansprechpartnerIdx] : null;
+  if (kontakt && kontakt.id != null) {
+    payload.ansprechpartnerId = +kontakt.id;
+    payload.kontaktId         = +kontakt.id;
+    payload.ansprechpartner   = kontakt;        // verschachtelt — falls erwartet
+  }
+  return payload;
 }
 
 /* ── STEP 5: Bulk-Create ── */
