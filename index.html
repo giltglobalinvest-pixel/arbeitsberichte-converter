@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.99';
+const APP_VERSION = 'v4.00';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6965,8 +6965,31 @@ async function openBulkImport() {
   document.getElementById('anl-bulk-modal').classList.add('show');
   document.body.classList.add('has-modal');
   _bulkRender();
-  // Kunden im Hintergrund laden
+  // Kunden + Anlagen (für Dropdown-Werte) parallel im Hintergrund laden
   _bulkLoadKunden().catch(e => console.warn('Kunden:', e));
+  _bulkLoadTypesFromAnlagen().catch(e => console.warn('Typen:', e));
+}
+
+/* ObjektTyp & BetreiberTyp aus existierenden Anlagen der Firma sammeln */
+const BULK_OBJEKT_FALLBACK    = ['Wohnen','Büro','Gewerbe','Industrie','Hotel','Krankenhaus','Schule','Öffentlich','Mischnutzung'];
+const BULK_BETREIBER_FALLBACK = ['Hausverwaltung','WEG','Eigentümer','Firma','Privat','Kommune'];
+
+async function _bulkLoadTypesFromAnlagen() {
+  // Wenn _anlagenCache zur Firma passt → direkt nutzen
+  if (_anlagenCache.firma !== _bulkImport.firmaSlug || !_anlagenCache.items) {
+    try { await _loadAnlagenForFirma(_bulkImport.firmaSlug); } catch(_){}
+  }
+  const items = _anlagenCache.items || [];
+  const objektSet    = new Set(BULK_OBJEKT_FALLBACK);
+  const betreiberSet = new Set(BULK_BETREIBER_FALLBACK);
+  for (const a of items) {
+    const o = String(a.objektTyp||'').trim();    if (o) objektSet.add(o);
+    const b = String(a.betreiberTyp||'').trim(); if (b) betreiberSet.add(b);
+  }
+  _bulkImport._objektTypen    = [...objektSet].sort();
+  _bulkImport._betreiberTypen = [...betreiberSet].sort();
+  // Nur neu rendern wenn wir noch im Setup-Schritt sind
+  if (_bulkImport.step === 'setup') _bulkRender();
 }
 
 function closeBulkImport() {
@@ -7002,6 +7025,44 @@ function _bulkRender() {
   else if (_bulkImport.step === 'done')     _bulkRenderDone(body, foot);
 }
 
+/* Helper: Select mit "Andere…" → Text-Input einblenden */
+function _bulkRenderTypeSelect(id, options, currentValue) {
+  const opts = Array.isArray(options) ? options : [];
+  const isCustom = currentValue && !opts.includes(currentValue);
+  const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  return (
+    '<select id="'+id+'" class="auf-input" onchange="_bulkOnTypeSelect(\''+id+'\')" style="cursor:pointer">'
+    + opts.map(o => '<option value="'+esc(o)+'"'+(o===currentValue?' selected':'')+'>'+esc(o)+'</option>').join('')
+    + '<option value="__custom__"'+(isCustom?' selected':'')+'>+ Andere…</option>'
+    + '</select>'
+    + '<input type="text" id="'+id+'-custom" class="auf-input" '
+    + 'value="'+(isCustom?esc(currentValue):'')+'" '
+    + 'placeholder="Eigenen Typ eingeben…" '
+    + 'style="margin-top:6px;display:'+(isCustom?'block':'none')+'">'
+  );
+}
+
+function _bulkOnTypeSelect(id) {
+  const sel = document.getElementById(id);
+  const inp = document.getElementById(id+'-custom');
+  if (!sel || !inp) return;
+  if (sel.value === '__custom__') {
+    inp.style.display = 'block';
+    inp.focus();
+  } else {
+    inp.style.display = 'none';
+    inp.value = '';
+  }
+}
+
+function _bulkReadTypeSelect(id, fallback) {
+  const sel = document.getElementById(id);
+  const inp = document.getElementById(id+'-custom');
+  if (!sel) return fallback;
+  if (sel.value === '__custom__') return (inp?.value || '').trim() || fallback;
+  return sel.value || fallback;
+}
+
 /* ── STEP 1: SETUP (Kunde + Defaults) ── */
 function _bulkRenderSetup(body, foot) {
   const d = _bulkImport.defaults;
@@ -7032,11 +7093,11 @@ function _bulkRenderSetup(body, foot) {
         </div>
         <div class="auf-field">
           <label class="auf-label">Objekt-Typ</label>
-          <input type="text" class="auf-input" id="bulk-d-objekt" value="${d.objektTyp.replace(/"/g,'&quot;')}" placeholder="z.B. Wohnen, Büro, Gewerbe">
+          ${_bulkRenderTypeSelect('bulk-d-objekt', _bulkImport._objektTypen||BULK_OBJEKT_FALLBACK, d.objektTyp)}
         </div>
         <div class="auf-field">
           <label class="auf-label">Betreiber-Typ</label>
-          <input type="text" class="auf-input" id="bulk-d-betreiber" value="${d.betreiberTyp.replace(/"/g,'&quot;')}" placeholder="z.B. Hausverwaltung, WEG, Eigentümer">
+          ${_bulkRenderTypeSelect('bulk-d-betreiber', _bulkImport._betreiberTypen||BULK_BETREIBER_FALLBACK, d.betreiberTyp)}
         </div>
       </div>
       <div class="auf-field">
@@ -7093,8 +7154,8 @@ function _bulkNextSetup() {
   if (!_bulkImport.kunde) return toast('Bitte einen Kunden wählen.', 'err');
   _bulkImport.defaults.stundensatz       = +document.getElementById('bulk-d-stundensatz').value || 0;
   _bulkImport.defaults.einsatzpauschale  = +document.getElementById('bulk-d-einsatz').value || 0;
-  _bulkImport.defaults.objektTyp         = document.getElementById('bulk-d-objekt').value.trim() || 'Wohnen';
-  _bulkImport.defaults.betreiberTyp      = document.getElementById('bulk-d-betreiber').value.trim() || 'Hausverwaltung';
+  _bulkImport.defaults.objektTyp         = _bulkReadTypeSelect('bulk-d-objekt', 'Wohnen');
+  _bulkImport.defaults.betreiberTyp      = _bulkReadTypeSelect('bulk-d-betreiber', 'Hausverwaltung');
   _bulkImport.defaults.rechnungsempfaenger = document.getElementById('bulk-d-rechn').value.trim();
   _bulkImport.defaults.isWartung         = document.getElementById('bulk-d-wartung').checked;
   _bulkImport.step = 'upload';
