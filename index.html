@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.08';
+const APP_VERSION = 'v4.09';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7682,21 +7682,33 @@ function _bulkBuildPayload(a, kundenId, d, wartungsHinweis) {
     sonstigerHinweis:   wartungsHinweis,
     archived:           false,
   };
-  // ── KONTAKT (CRM) mitsenden, falls einer ausgewählt wurde ──
+  // ── KONTAKT (CRM) mitsenden ──
   const kontakte = _bulkImport.kontakte;
   const kontakt  = (Array.isArray(kontakte) && _bulkImport.kontaktIdx >= 0)
                    ? kontakte[_bulkImport.kontaktIdx] : null;
   if (kontakt && kontakt.id != null) {
-    payload.kontaktId = +kontakt.id;
-    payload.kontakt   = kontakt;
+    payload.kontaktId         = +kontakt.id;
+    payload.kontakt           = kontakt;
+    payload.kundenkontaktId   = +kontakt.id;
   }
-  // ── ANSPRECHPARTNER (Vor Ort) — DAS ist was das ERP für die Anlage braucht ──
+  // ── ANSPRECHPARTNER (Vor Ort) — ALLE bekannten Feld-Varianten gleichzeitig.
+  //    Spring/Jackson ignoriert unbekannte Felder, also schadet das nicht. ──
   const ansprList = _bulkImport.ansprechpartner;
   const ansprech  = (Array.isArray(ansprList) && _bulkImport.ansprechpartnerIdx >= 0)
                     ? ansprList[_bulkImport.ansprechpartnerIdx] : null;
   if (ansprech && ansprech.id != null) {
-    payload.ansprechpartnerId = +ansprech.id;
-    payload.ansprechpartner   = ansprech;
+    const aid = +ansprech.id;
+    payload.ansprechpartnerId            = aid;
+    payload.ansprechpartner              = ansprech;
+    payload.standardansprechpartnerId    = aid;
+    payload.standardAnsprechpartnerId    = aid;
+    payload.standardansprechpartner      = ansprech;
+    payload.standardAnsprechpartner      = ansprech;
+    payload.defaultAnsprechpartnerId     = aid;
+    payload.defaultAnsprechpartner       = ansprech;
+    payload.hauptansprechpartnerId       = aid;
+    payload.hauptAnsprechpartnerId       = aid;
+    payload.hauptansprechpartner         = ansprech;
   }
   return payload;
 }
@@ -7717,19 +7729,21 @@ async function _bulkStartCreating(opts) {
     const first = items[0];
     const updCur = document.getElementById('bulk-creating-current');
     if (updCur) updCur.textContent = 'Pre-Flight-Check…';
+    const payload = _bulkBuildPayload(first, kundenId, d, wartungsHinweis);
+    console.log('[Pre-Flight] Payload:', payload);
     try {
       const r = await erpFetch('/aufzug/'+_bulkImport.firmaSlug+'/api/anlagen',
-        { method:'POST', body:_bulkBuildPayload(first, kundenId, d, wartungsHinweis) });
+        { method:'POST', body: payload });
       _bulkImport.result.ok.push({ a:first, r });
       _bulkImport.result.current = 1;
-      // Pre-Flight OK → ab Index 1 weitermachen
       _bulkImport._startAt = 1;
     } catch(e) {
-      console.warn('[Bulk] Pre-Flight fehlgeschlagen:', e);
+      console.error('[Bulk] Pre-Flight fehlgeschlagen — VOLLER Fehler:', e.message);
+      console.log('[Bulk] Pre-Flight Payload war:', JSON.stringify(payload, null, 2));
       const explained = _bulkExplainErpError(e.message);
-      // Bei dem typischen Ansprechpartner-NPE: ALLE als ein Fehler markieren und abbrechen
       _bulkImport.result.errors = items.map(a => ({ a, error: e.message, explained }));
       _bulkImport.result.preflightAbort = explained;
+      _bulkImport.result.preflightPayload = payload;
       _bulkImport.step = 'done';
       _bulkRender();
       return;
@@ -7833,6 +7847,20 @@ function _bulkRenderDone(body, foot) {
         <div style="font-weight:700;color:#B91C1C;margin-bottom:6px">🛑 Pre-Flight-Check fehlgeschlagen — Import abgebrochen</div>
         <div style="font-size:13px;color:#7F1D1D;line-height:1.5">${r.preflightAbort.long.replace(/</g,'&lt;')}</div>
         <div style="font-size:12px;color:var(--txt2);margin-top:8px"><strong>Was tun?</strong> Behebe das Problem im ERP, schließe diesen Dialog und starte den Import erneut. Es wurde noch keine Anlage angelegt.</div>
+        ${r.errors[0] ? `
+        <details open style="margin-top:12px">
+          <summary style="cursor:pointer;font-size:11px;color:#991B1B;font-weight:600">▾ Voller ERP-Fehler (zum Kopieren / an Support)</summary>
+          <pre style="background:#0F172A;color:#FCA5A5;padding:10px;border-radius:4px;font-size:10px;overflow:auto;margin-top:6px;max-height:240px;white-space:pre-wrap;word-break:break-word">${escapeHtml(String(r.errors[0].error||''))}</pre>
+        </details>` : ''}
+        ${r.preflightPayload ? `
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;font-size:11px;color:#991B1B;font-weight:600">▸ Gesendetes Payload</summary>
+          <pre style="background:#0F172A;color:#A5F3FC;padding:10px;border-radius:4px;font-size:10px;overflow:auto;margin-top:6px;max-height:240px">${escapeHtml(JSON.stringify(r.preflightPayload, null, 2))}</pre>
+        </details>` : ''}
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn" onclick="navigator.clipboard.writeText(${JSON.stringify(String(r.errors[0]?.error||''))});toast('📋 Fehler kopiert','ok')" style="font-size:11px">📋 Fehler kopieren</button>
+          ${r.preflightPayload ? '<button class="btn" onclick="navigator.clipboard.writeText('+JSON.stringify(JSON.stringify(r.preflightPayload, null, 2))+');toast(\'📋 Payload kopiert\',\'ok\')" style="font-size:11px">📋 Payload kopieren</button>' : ''}
+        </div>
       </div>` : ''}
 
       ${groupKeys.length > 0 && !r.preflightAbort ? `
