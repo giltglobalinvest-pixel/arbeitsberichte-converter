@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.04';
+const APP_VERSION = 'v4.05';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16524,39 +16524,26 @@ async function _setStandardAnsprechpartner(idx, btn) {
 
   if (btn) btn.textContent = '⏳ setze…';
 
-  // 2) PUT-Versuche: pro Variante komplettes Objekt + Standard-Flag setzen
+  // 2) Erkenntnisse aus v4.04: PUT auf /api/kontakte und /api/kunden wirft HTTP 405.
+  //    Das ERP-API ist read-only für diese Ressourcen. Verbleibende Optionen:
+  //    a) POST-Upsert (manche Spring-APIs akzeptieren POST mit ID als Update)
+  //    b) POST auf den existierenden Kontakt-Endpoint
+  //    c) /save Konvention (älteres Spring-Pattern)
   const attempts = [];
   if (fullKontakt) {
-    // Kontakt mit Standard-Flag
     for (const field of ['istStandardansprechpartner','standardansprechpartner','standard','isStandard','hauptansprechpartner','primaer']) {
-      attempts.push({
-        method:'PUT', path:'api/kontakte/'+kontaktId,
-        body: { ...fullKontakt, [field]: true },
-        _hint: 'Kontakt + Flag "'+field+'"'
-      });
+      const body = { ...fullKontakt, [field]: true };
+      attempts.push({ method:'POST', path:'api/kontakte', body, _hint:'POST kontakt (Upsert) + Flag "'+field+'"' });
+      attempts.push({ method:'POST', path:'api/kontakte/'+kontaktId, body, _hint:'POST kontakte/{id} + Flag "'+field+'"' });
+      attempts.push({ method:'POST', path:'api/kontakte/save', body, _hint:'POST kontakte/save + Flag "'+field+'"' });
     }
   }
-  if (fullKunde) {
-    // Kunde mit Verweis-Feld auf Kontakt
+  if (fullKunde && fullKontakt) {
     for (const field of ['standardansprechpartnerId','standardKontaktId','ansprechpartnerId','hauptansprechpartnerId']) {
-      attempts.push({
-        method:'PUT', path:'api/kunden/'+encodeURIComponent(kundenNr),
-        body: { ...fullKunde, [field]: +kontaktId },
-        _hint: 'Kunde + Verweis "'+field+'"'
-      });
-    }
-    // Kunde mit verschachteltem Standard-Objekt
-    if (fullKontakt) {
-      attempts.push({
-        method:'PUT', path:'api/kunden/'+encodeURIComponent(kundenNr),
-        body: { ...fullKunde, standardansprechpartner: fullKontakt },
-        _hint: 'Kunde + verschachtelter Kontakt'
-      });
-      attempts.push({
-        method:'PUT', path:'api/kunden/'+encodeURIComponent(kundenNr),
-        body: { ...fullKunde, ansprechpartner: fullKontakt },
-        _hint: 'Kunde + ansprechpartner-Objekt'
-      });
+      const body = { ...fullKunde, [field]: +kontaktId };
+      attempts.push({ method:'POST', path:'api/kunden',          body, _hint:'POST kunden (Upsert) + Verweis "'+field+'"' });
+      attempts.push({ method:'POST', path:'api/kunden/'+encodeURIComponent(kundenNr), body, _hint:'POST kunden/{nr} + Verweis "'+field+'"' });
+      attempts.push({ method:'POST', path:'api/kunden/save',     body, _hint:'POST kunden/save + Verweis "'+field+'"' });
     }
   }
 
@@ -16600,35 +16587,109 @@ async function _setStandardAnsprechpartner(idx, btn) {
   }
 
   if (btn) { btn.disabled = false; btn.textContent = '☆ Als Standard'; }
-  _showStandardAnsprechFailModal(tried, kundenNr, kontaktId);
+  _showStandardAnsprechFailModal(tried, kundenNr, kontaktId, k);
 }
 
-function _showStandardAnsprechFailModal(tried, kundenNr, kontaktId) {
+/* Workaround: Neuen Kontakt mit Rolle "Standardansprechpartner" anlegen.
+   Vielleicht erkennt das ERP das anhand der Rolle als Standard. */
+async function _createStandardKontaktWorkaround(kundenNr, basisKontakt) {
+  const firmaSlug = getCurrentFirmaSlug();
+  const rolle = prompt(
+    'Welche Rolle soll der neue Standard-Kontakt bekommen?\n\n'+
+    'Tipp: "Standardansprechpartner" probieren — manche ERPs erkennen das automatisch.',
+    'Standardansprechpartner'
+  );
+  if (!rolle) return;
+
+  const payload = {
+    kunde: { kundennummer: +kundenNr },
+    rolle: rolle,
+    anrede: basisKontakt?.anrede || 'Herr',
+    vorname: basisKontakt?.vorname || 'Standard',
+    nachname: basisKontakt?.nachname || 'Ansprechpartner',
+    email: basisKontakt?.email || '',
+    telefon: basisKontakt?.telefon || '',
+    mobile: basisKontakt?.mobile || '',
+    fax: basisKontakt?.fax || '',
+  };
+  if (!confirm('Neuen Kontakt im ERP anlegen?\n\n'
+             + 'Kunde: '+kundenNr+'\n'
+             + 'Name:  '+payload.anrede+' '+payload.vorname+' '+payload.nachname+'\n'
+             + 'Rolle: '+rolle+'\n'
+             + 'Email: '+(payload.email||'(leer)'))) return;
+
+  try {
+    const r = await erpFetch('/aufzug/'+firmaSlug+'/api/kontakte', { method:'POST', body: payload });
+    console.log('[Workaround] Neuer Kontakt angelegt:', r);
+    toast('✅ Neuer Kontakt mit Rolle "'+rolle+'" angelegt','ok');
+    document.getElementById('std-ansp-fail')?.remove();
+    // Kontakte-Cache leeren + neu laden
+    _kontakteCache.delete(String(kundenNr));
+    const fresh = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+    const list = Array.isArray(fresh) ? fresh : ((fresh && (fresh.content||fresh.items||fresh.data))||[]);
+    _kontakteCache.set(String(kundenNr), list);
+    _renderKundeKontakteList(list);
+    setTimeout(() => {
+      alert('Kontakt angelegt. Bitte jetzt einen Bulk-Import-Test machen — wenn der durchläuft, '+
+            'erkennt das ERP "'+rolle+'" automatisch als Standard.\n\n'+
+            'Wenn nicht: Bitte im Aufzugshandwerk-Web-UI den Standard manuell setzen.');
+    }, 200);
+  } catch(e) {
+    toast('❌ Anlegen fehlgeschlagen: '+e.message.slice(0,200),'err');
+  }
+}
+
+function _showStandardAnsprechFailModal(tried, kundenNr, kontaktId, kontakt) {
+  // Aus den Trys herauslesen: nur 405/404? Dann ist klar dass die API gar nichts kann.
+  const allBlocked = tried.filter(t => t.method).every(t =>
+    /HTTP 405|HTTP 404|Method Not Allowed|not supported/i.test(String(t.error||''))
+  );
+  const kontaktDaten = JSON.stringify(kontakt, null, 2);
   const old = document.getElementById('std-ansp-fail'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'std-ansp-fail';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
   m.innerHTML =
-    '<div style="background:#fff;max-width:680px;width:100%;max-height:88vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="background:#fff;max-width:720px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:#DC2626;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
-        '<span>❌ Standard-Ansprechpartner konnte nicht gesetzt werden</span>'+
+        '<span>❌ Aufzugshandwerk-API erlaubt keinen Update</span>'+
         '<button onclick="document.getElementById(\'std-ansp-fail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
-        '<p>Keiner der bekannten ERP-Endpoints funktionierte für Kunde <strong>'+escapeHtml(kundenNr)+'</strong>, Kontakt-ID <strong>'+escapeHtml(String(kontaktId))+'</strong>.</p>'+
-        '<p style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px;border-radius:4px;font-size:12px">'+
-          '<strong>Was tun?</strong> Bitte den Standard im Aufzugshandwerk-ERP-UI direkt setzen. Schicke das untenstehende Log an den ERP-Support (<a href="mailto:support@aufzugshandwerk.de">support@aufzugshandwerk.de</a>) — damit kann der korrekte Endpoint dokumentiert werden.'+
-        '</p>'+
-        '<details open style="margin-top:14px">'+
-          '<summary style="cursor:pointer;font-weight:600;font-size:12px">Versuchte Endpoints (zum Kopieren)</summary>'+
-          '<pre style="background:#0F172A;color:#A5F3FC;padding:12px;border-radius:6px;font-size:11px;overflow:auto;margin-top:8px;max-height:300px">'+
+        (allBlocked ? (
+          '<div style="background:#FEF2F2;border-left:3px solid #DC2626;padding:12px 14px;border-radius:4px;margin-bottom:14px">'+
+            '<div style="font-weight:700;color:#991B1B;margin-bottom:6px">Diagnose: Read-only API</div>'+
+            '<div style="font-size:12px;color:#7F1D1D;line-height:1.5">'+
+              'Das Aufzugshandwerk-API exposed <strong>nur GET und POST (neuer Kontakt)</strong> — kein PUT/PATCH zum Update bestehender Kontakte oder Kunden.<br><br>'+
+              'Zusätzlich existiert im Datenmodell <strong>kein Standard-Flag</strong>: Der Kontakt hat nur <code>rolle</code>, der Kunde nur <code>defaultrechnungsempfaenger</code>. Das "Standard-Ansprechpartner"-Konzept lebt vermutlich nur in der ERP-Web-UI.'+
+            '</div>'+
+          '</div>'
+        ) : '')+
+        '<div style="background:#ECFDF5;border:1px solid #6EE7B7;padding:12px 14px;border-radius:6px;margin-bottom:14px">'+
+          '<div style="font-weight:700;color:#065F46;margin-bottom:8px">💡 Workaround: Neuen Kontakt mit Rolle "Standardansprechpartner" anlegen</div>'+
+          '<div style="font-size:12px;color:#064E3B;line-height:1.5;margin-bottom:10px">'+
+            'Manche ERPs erkennen den Standard-Ansprechpartner anhand der Rolle. Wir legen einen neuen Kontakt mit einer aussagekräftigen Rolle an — wenn der Bulk-Import danach durchläuft, war es das.'+
+          '</div>'+
+          '<button class="btn prim" style="background:#10B981;border-color:#10B981" onclick="_createStandardKontaktWorkaround(\''+escapeHtml(kundenNr)+'\','+(kontakt ? JSON.stringify(kontakt).replace(/"/g,'&quot;') : 'null')+')">'+
+            '✨ Workaround starten'+
+          '</button>'+
+        '</div>'+
+        '<div style="background:#EFF6FF;border:1px solid #93C5FD;padding:12px 14px;border-radius:6px;margin-bottom:14px">'+
+          '<div style="font-weight:700;color:#1E40AF;margin-bottom:6px">🌐 Im Aufzugshandwerk-Web setzen</div>'+
+          '<div style="font-size:12px;color:#1E3A8A;line-height:1.5">'+
+            'Garantierter Weg: Im Aufzugshandwerk-Web-UI den Kunden <strong>'+escapeHtml(kundenNr)+'</strong> öffnen und dort einen Kontakt als Standard markieren. Danach läuft der Bulk-Import.'+
+          '</div>'+
+        '</div>'+
+        '<details style="margin-top:14px">'+
+          '<summary style="cursor:pointer;font-weight:600;font-size:12px;color:var(--txt2)">▸ Technisches Log (für Support)</summary>'+
+          '<pre style="background:#0F172A;color:#A5F3FC;padding:12px;border-radius:6px;font-size:11px;overflow:auto;margin-top:8px;max-height:260px">'+
           escapeHtml(JSON.stringify(tried, null, 2))+
           '</pre>'+
         '</details>'+
       '</div>'+
       '<div style="padding:12px 18px;background:#F8FAFC;border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
         '<button class="btn" onclick="navigator.clipboard.writeText(document.querySelector(\'#std-ansp-fail pre\').textContent);toast(\'📋 in Zwischenablage\',\'ok\')">📋 Log kopieren</button>'+
-        '<button class="btn prim" onclick="document.getElementById(\'std-ansp-fail\').remove()">Verstanden</button>'+
+        '<button class="btn prim" onclick="document.getElementById(\'std-ansp-fail\').remove()">Schließen</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
