@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.97';
+const APP_VERSION = 'v3.98';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7245,31 +7245,100 @@ ${JSON.stringify(sample, null, 2)}`;
   }
 }
 
+/* Adresse vergleichbar normalisieren: lowercase, häufige Abkürzungen vereinheitlichen, Whitespace komprimieren */
+function _normAddr(s) {
+  if (!s) return '';
+  return String(s)
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+    .replace(/\bstrasse\b/g, 'str')
+    .replace(/\bstr\.?\b/g, 'str')
+    .replace(/\bplatz\b/g, 'pl')
+    .replace(/\bpl\.?\b/g, 'pl')
+    .replace(/\bweg\b/g, 'weg')
+    .replace(/\ballee\b/g, 'allee')
+    .replace(/[.,;]/g, ' ')          // Satzzeichen weg
+    .replace(/[^a-z0-9\s]/g, ' ')   // Sonderzeichen weg
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/* Fabriknummer normalisieren: lowercase, Spaces und gängige Trenner weg */
+function _normFab(s) {
+  if (!s) return '';
+  return String(s).toLowerCase().replace(/[\s\-_/\\]/g, '').trim();
+}
+
 async function _bulkCheckDuplicatesAndRender() {
-  // Lade alle Anlagen (oder Cache nutzen) und prüfe Fabriknummern
+  // IMMER frisch laden, damit kürzlich angelegte Anlagen auch erkannt werden
   try {
-    if (!_anlagenCache.items || _anlagenCache.firma !== _bulkImport.firmaSlug) {
-      await _loadAnlagenForFirma(_bulkImport.firmaSlug);
-    }
-    const existing = new Set();
+    // Cache invalidieren für frische Daten
+    _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+    await _loadAnlagenForFirma(_bulkImport.firmaSlug);
+
+    // Existierende Anlagen indizieren — per Fabriknummer UND per Adresse
+    const existingByFab  = new Map();   // normFab → { fabriknummer, anzeigeAdresse }
+    const existingByAddr = new Map();   // normAddr → { fabriknummer, anzeigeAdresse }
     for (const a of (_anlagenCache.items||[])) {
-      if (a.fabriknummer) existing.add(String(a.fabriknummer).trim().toLowerCase());
+      if (a.fabriknummer) {
+        const k = _normFab(a.fabriknummer);
+        if (k) existingByFab.set(k, a);
+      }
+      const addr = a.anzeigeAdresse || a.adresse || '';
+      if (addr) {
+        const k = _normAddr(addr);
+        if (k && !existingByAddr.has(k)) existingByAddr.set(k, a);
+      }
     }
+    console.log('[Bulk] Existierende Anlagen indiziert:',
+      existingByFab.size, 'Fabriknummern,', existingByAddr.size, 'Adressen');
+
     _bulkImport.duplicates = [];
     _bulkImport.toCreate = [];
+
+    // Excel-interne Duplikate erkennen (Reihenfolge: erste gewinnt, Rest skip)
+    const seenFabInFile  = new Set();
+    const seenAddrInFile = new Set();
+
     for (const p of _bulkImport.parsed) {
-      const fn = (p.fabriknummer||'').toString().trim();
-      if (!fn) {
-        // Ohne Fabriknummer: trotzdem als "neu" einbeziehen, aber markieren
-        _bulkImport.toCreate.push({ ...p, _warning:'Keine Fabriknummer (Duplikat-Check unmöglich)' });
+      const fnRaw = (p.fabriknummer||'').toString().trim();
+      const addrRaw = (p.anzeigeAdresse||'').toString().trim();
+      const fnNorm   = _normFab(fnRaw);
+      const addrNorm = _normAddr(addrRaw);
+
+      // 1) Match per Fabriknummer (zuverlässigster Match)
+      if (fnNorm && existingByFab.has(fnNorm)) {
+        const e = existingByFab.get(fnNorm);
+        _bulkImport.duplicates.push({ ...p, _dupReason:'Fabriknummer "'+e.fabriknummer+'" existiert bereits' });
         continue;
       }
-      if (existing.has(fn.toLowerCase())) {
-        _bulkImport.duplicates.push(p);
-      } else {
-        _bulkImport.toCreate.push(p);
+      // 2) Match per Adresse — nur wenn KEINE Fabriknummer in der Excel-Zeile
+      //    (Anlagen mit unterschiedlicher Fabriknummer aber selber Adresse sind LEGITIM,
+      //     z.B. Mehrfachaufzüge im selben Haus)
+      if (!fnNorm && addrNorm && existingByAddr.has(addrNorm)) {
+        const e = existingByAddr.get(addrNorm);
+        _bulkImport.duplicates.push({ ...p, _dupReason:'Adresse existiert bereits (Anlage '+(e.fabriknummer||'ohne Fabriknummer')+')' });
+        continue;
       }
+      // 3) Excel-interne Dupes: gleiche Fabriknummer in Datei
+      if (fnNorm && seenFabInFile.has(fnNorm)) {
+        _bulkImport.duplicates.push({ ...p, _dupReason:'Fabriknummer "'+fnRaw+'" mehrfach in dieser Excel' });
+        continue;
+      }
+      // 4) Excel-interne Dupes: gleiche Adresse OHNE Fabriknummer mehrfach
+      if (!fnNorm && addrNorm && seenAddrInFile.has(addrNorm)) {
+        _bulkImport.duplicates.push({ ...p, _dupReason:'Adresse mehrfach in dieser Excel (ohne Fabriknummer)' });
+        continue;
+      }
+      // → toCreate
+      if (fnNorm) seenFabInFile.add(fnNorm);
+      if (addrNorm) seenAddrInFile.add(addrNorm);
+      const item = { ...p };
+      if (!fnNorm) item._warning = 'Keine Fabriknummer — nur Adress-Duplikat-Check möglich';
+      _bulkImport.toCreate.push(item);
     }
+    console.log('[Bulk] Ergebnis:', _bulkImport.toCreate.length, 'neu,', _bulkImport.duplicates.length, 'Duplikate');
     _bulkRender();
   } catch(e) {
     toast('❌ Duplikat-Check: '+e.message, 'err');
@@ -7312,8 +7381,23 @@ function _bulkRenderPreview(body, foot) {
     ${dupes.length > 0 ? `
     <div class="auf-section">
       <h3 style="color:#B45309">⚠ ${dupes.length} Duplikate erkannt – werden übersprungen</h3>
-      <div style="font-size:12px;color:var(--txt2)">Diese Fabriknummern existieren bereits in deinem ERP:</div>
-      <div style="margin-top:6px;font-family:monospace;font-size:11px">${dupes.map(d => (d.fabriknummer||'?').toString().replace(/</g,'&lt;')).join(', ')}</div>
+      <div style="font-size:12px;color:var(--txt2);margin-bottom:6px">Folgende Zeilen werden NICHT angelegt:</div>
+      <div style="max-height:200px;overflow:auto;border:1px solid var(--bdr);border-radius:6px">
+        <table style="width:100%;font-size:11px;border-collapse:collapse">
+          <thead style="position:sticky;top:0;background:#FEF3C7">
+            <tr><th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--bdr)">Fabriknummer</th>
+                <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--bdr)">Adresse</th>
+                <th style="text-align:left;padding:5px 8px;border-bottom:1px solid var(--bdr)">Grund</th></tr>
+          </thead>
+          <tbody>
+            ${dupes.map(d => `<tr>
+              <td style="padding:4px 8px;font-family:monospace">${(d.fabriknummer||'<em style="color:var(--txt3)">—</em>').toString().replace(/</g,'&lt;')}</td>
+              <td style="padding:4px 8px;color:var(--txt2)">${(d.anzeigeAdresse||'—').toString().replace(/</g,'&lt;')}</td>
+              <td style="padding:4px 8px;color:#B45309">${(d._dupReason||'Duplikat').replace(/</g,'&lt;')}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
     </div>` : ''}
   `;
   const canCreate = toCreate.length > 0 && toCreate.every(a => a.anzeigeAdresse);
