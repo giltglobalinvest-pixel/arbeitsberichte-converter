@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.94';
+const APP_VERSION = 'v3.95';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14665,40 +14665,48 @@ async function _gbuSubmit() {
 }
 
 /* ════════════════════════════════════════════════════════════
-   GBU PDF-Generator — modernes tabellarisches Layout
+   GBU PDF-Generator — modernes Aszendio-Briefkopf-Layout
    ════════════════════════════════════════════════════════════ */
 async function _buildGbuPdf(d) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const ml = 15, mr = 195, cw = mr - ml, H = 297;
-  // Farbpalette modern
-  const NAVY  = [26, 51, 83];
-  const RED   = [220, 38, 38];
-  const GREEN = [16, 185, 129];
-  const ORANGE= [234, 88, 12];
-  const GREY  = [55, 65, 81];
-  const GREY_L= [156, 163, 175];
-  const GREY_X= [229, 231, 235];
-  const BG_OK    = [220, 252, 231];
-  const BG_M     = [254, 215, 170];
-  const BG_NZ    = [243, 244, 246];
+  // Farbpalette: Navy als Hauptfarbe (Aszendio-Branding), Rot nur für echte Warnungen
+  const NAVY   = [26, 51, 83];
+  const ACCENT = [33, 82, 169];      // Aszendio-Akzentblau
+  const RED    = [220, 38, 38];      // nur für PFLICHT / Warnungen
+  const GREEN  = [16, 185, 129];
+  const ORANGE = [234, 88, 12];
+  const GREY   = [55, 65, 81];
+  const GREY_L = [156, 163, 175];
+  const GREY_X = [229, 231, 235];
+  const BG_OK  = [220, 252, 231];
+  const BG_M   = [254, 215, 170];
+  const BG_NZ  = [243, 244, 246];
   let y = 0;
 
-  // === DECKBLATT ===
-  // Roter Banner oben
-  doc.setFillColor(...RED); doc.rect(0, 0, 210, 28, 'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(18);
-  doc.text('GEFAEHRDUNGSBEURTEILUNG', ml, 14);
-  doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  doc.text('Aufzugsanlage  ·  nach BetrSichV §3, TRBS 1111 + 2181', ml, 22);
-  // Logo oben rechts (in weiß-Box)
-  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',mr-42,8,40,6.6); } catch(_){}
-  y = 36;
+  // === KOPFBEREICH (klassischer Geschäftsbrief) ===
+  // Logo oben rechts (proportional: ca. 36×6mm, dann nimmt jsPDF die echten Pixel-Proportionen)
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG', mr-36, 12, 36, 6); } catch(_){}
+  // Absenderzeile oben links
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text('Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com', ml, 16);
+  // Akzent-Linie
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
+  y = 32;
+
+  // Titel
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(22);
+  doc.text('Gefaehrdungsbeurteilung', ml, y);
+  y += 7;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
+  doc.text('Aufzugsanlage  ·  nach BetrSichV §3, TRBS 1111 + 2181', ml, y);
+  y += 12;
 
   // === STAMMDATEN-TABELLE ===
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(13);
   doc.text('Anlage & Stammdaten', ml, y); y += 1;
-  doc.setDrawColor(...RED); doc.setLineWidth(0.6); doc.line(ml, y, ml+50, y); y += 6;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, y, ml+50, y); y += 6;
   // Tabellen-Layout 2 Spalten
   const adresse = _buildAnlageAdresse(d.anlage) || '—';
   const stammRows = [
@@ -14748,7 +14756,7 @@ async function _buildGbuPdf(d) {
   if (y > 240) { doc.addPage(); y = 20; }
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(13);
   doc.text('Uebersicht Bewertung', ml, y); y += 1;
-  doc.setDrawColor(...RED); doc.line(ml, y, ml+50, y); y += 6;
+  doc.setDrawColor(...ACCENT); doc.line(ml, y, ml+50, y); y += 6;
   // 4 Statistik-Kacheln nebeneinander
   const cardW = (cw - 9) / 4;
   const cardH = 18;
@@ -14768,11 +14776,11 @@ async function _buildGbuPdf(d) {
   });
   y += cardH + 8;
 
-  // === GEFÄHRDUNGSKATALOG — TABELLARISCH ===
+  // === GEFAHRENKATALOG — TABELLARISCH ===
   doc.addPage(); y = 18;
-  doc.setTextColor(...RED); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text('Gefaehrdungskatalog', ml, y); y += 2;
-  doc.setDrawColor(...RED); doc.setLineWidth(0.8); doc.line(ml, y, ml+60, y); y += 8;
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Gefahrenkatalog', ml, y); y += 2;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, ml+45, y); y += 8;
 
   // Tabellenkopf
   const colWStatus = 18, colWLabel = 70, colWBest = (cw - colWStatus - colWLabel) / 2, colWZus = colWBest;
@@ -14886,7 +14894,7 @@ async function _buildGbuPdf(d) {
   doc.addPage(); y = 18;
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
   doc.text('Freigabe & Unterschriften', ml, y); y += 2;
-  doc.setDrawColor(...NAVY); doc.setLineWidth(0.8); doc.line(ml, y, ml+70, y); y += 8;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, ml+70, y); y += 8;
   doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
   const introLines = doc.splitTextToSize('Die vorliegende Gefaehrdungsbeurteilung wurde nach BetrSichV §3 und den Technischen Regeln fuer Betriebssicherheit (TRBS 1111, TRBS 2181) erstellt. Sie ist gueltig bis zur naechsten turnusmaessigen Ueberpruefung oder bei wesentlicher Aenderung der Anlage.', cw);
   for (const ln of introLines) { doc.text(ln, ml, y); y += 5; }
