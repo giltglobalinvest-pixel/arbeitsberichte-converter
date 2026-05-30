@@ -1366,6 +1366,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <div class="drawer-user-info"><span style="font-size:18px">👤</span><span id="drawer-user-name" style="font-weight:600">–</span></div>
     <button type="button" class="drawer-action" onclick="toggleTheme()">🎨 Design wechseln</button>
     <button type="button" class="drawer-action" id="drawer-install-btn" onclick="triggerInstallPwa()" style="display:none">📥 Als App installieren</button>
+    <button type="button" class="drawer-action" onclick="openTechnikerAnleitung()">📘 Techniker-Anleitung (PDF)</button>
     <button type="button" class="drawer-action" onclick="forceUpdate()">↻ Update prüfen</button>
     <button type="button" class="drawer-action drawer-logout" onclick="logout()">⏏ Abmelden</button>
     <div class="drawer-footer" id="drawer-version">–</div>
@@ -1377,6 +1378,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <button class="topbar-btn" id="btn-reset" onclick="confirmReset()" style="display:none;background:rgba(220,38,38,.25);border-color:rgba(220,38,38,.4)">↺ Reset</button>
   <span class="ver-pill" id="ver-pill" title="App-Version">–</span>
   <button class="topbar-btn tb-only-desktop" id="theme-toggle-btn" onclick="toggleTheme()" title="Design wechseln (Modern / Playful / Classic)">🎨</button>
+  <button class="topbar-btn tb-only-desktop" onclick="openTechnikerAnleitung()" title="Techniker-Anleitung als PDF herunterladen (zum Versenden)">📘 Anleitung</button>
   <button class="topbar-btn tb-only-desktop" onclick="forceUpdate()" title="Auf neueste Version prüfen und App neu laden">↻ Update</button>
   <div class="firma-pill-wrap">
     <button class="firma-pill" id="firma-pill" onclick="toggleFirmaDropdown(event)" title="Aktuelle Firma – klicken zum Wechseln">
@@ -2455,7 +2457,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.09';
+const APP_VERSION = 'v4.10';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15310,6 +15312,235 @@ async function _gbuSubmit() {
 /* ════════════════════════════════════════════════════════════
    GBU PDF-Generator — modernes Aszendio-Briefkopf-Layout
    ════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+   Techniker-Anleitung als PDF
+   - Schritt-für-Schritt: Arbeitsbericht zu Auftrag erstellen
+   - Variante A: bestehender Auftrag · Variante B: neu (nach Aufwand)
+   - Aszendio-Branding (Navy + Accent Blue), zum Mailen an Techniker
+   ─────────────────────────────────────────────────────────────────────── */
+async function openTechnikerAnleitung() {
+  toast('📘 Anleitung wird erzeugt…','');
+  try {
+    const blob = await _buildTechnikerAnleitungPdf();
+    // Download anstoßen
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Aszendio-Techniker-Anleitung-Arbeitsberichte.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('📥 Anleitung heruntergeladen','ok');
+  } catch(e) {
+    console.error('Anleitung-PDF:', e);
+    toast('❌ PDF-Build: '+e.message.slice(0,180),'err');
+  }
+}
+
+async function _buildTechnikerAnleitungPdf() {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const ml = 18, mr = 192, cw = mr - ml, H = 297;
+  const NAVY   = [26, 51, 83];
+  const ACCENT = [33, 82, 169];
+  const GREEN  = [16, 185, 129];
+  const ORANGE = [234, 88, 12];
+  const GREY   = [55, 65, 81];
+  const GREY_L = [120, 130, 145];
+  const GREY_X = [229, 231, 235];
+  const BG_TIP = [240, 253, 244];
+
+  // ───────────────────────── COVER ─────────────────────────
+  // Hintergrund-Akzentbalken oben
+  doc.setFillColor(...NAVY); doc.rect(0, 0, 210, 60, 'F');
+  doc.setFillColor(...ACCENT); doc.rect(0, 60, 210, 4, 'F');
+  // Logo (weiss-Variante simulieren über Negative? Wir nehmen Original auf weissem Karton)
+  doc.setFillColor(255,255,255); doc.rect(ml, 18, 60, 14, 'F');
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64, 'PNG', ml+3, 22, 54, 8); } catch(_){}
+  // Titel
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(26);
+  doc.text('Anleitung fuer Techniker', ml, 48);
+  doc.setFontSize(13); doc.setFont('helvetica','normal');
+  doc.text('Arbeitsberichte zu Auftraegen erstellen', ml, 56);
+  // Unter dem Balken: Untertitel + Datum
+  let y = 78;
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+  doc.text('Elevator Servicebox', ml, y);
+  doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+  doc.text('Mobile App fuer Wartungs- und Reparaturauftraege', ml, y+5);
+  y += 16;
+
+  // ───────────────────────── EINFÜHRUNG ─────────────────────────
+  doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.setTextColor(...NAVY);
+  doc.text('Was ist die Elevator Servicebox?', ml, y); y += 6;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
+  const introText = doc.splitTextToSize(
+    'Mit der Servicebox erstellst du auf dem Smartphone oder Tablet alle Arbeitsberichte digital - direkt vor Ort, '
+    +'mit Unterschrift, Foto und automatischer Synchronisation ins Aufzugshandwerk-ERP. '
+    +'Kein Papier mehr, keine Doppel-Eingabe im Buero.',
+    cw);
+  doc.text(introText, ml, y); y += introText.length * 5 + 6;
+
+  // Quick-Facts-Box
+  doc.setFillColor(...BG_TIP); doc.setDrawColor(...GREEN); doc.setLineWidth(0.4);
+  doc.roundedRect(ml, y, cw, 24, 2, 2, 'FD');
+  doc.setTextColor(21, 128, 61); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text('Vorteile auf einen Blick', ml+4, y+6);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+  const facts = [
+    '* Offline-faehig - funktioniert auch ohne Internet (Synchronisation spaeter)',
+    '* Auf jedem Geraet - Smartphone, Tablet oder PC',
+    '* Direkt im ERP - jeder Bericht landet sofort im richtigen Auftrag',
+  ];
+  facts.forEach((f, i) => doc.text(f, ml+4, y+11.5+i*4.5));
+  y += 32;
+
+  // ───────────────────────── SCHRITT 1 ─────────────────────────
+  y = _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, 1,
+    'App oeffnen',
+    [
+      'Im Browser des Smartphones diesen Link aufrufen oder die App vom Startbildschirm starten:',
+      '   https://giltglobalinvest-pixel.github.io/arbeitsberichte-converter/',
+      'Mit eigener E-Mail-Adresse und Passwort anmelden.',
+      'Tipp: Beim ersten Aufruf "Als App installieren" wahlen (Pop-up oder Drawer-Menue).'
+      +' Danach gibt es ein eigenes Icon auf dem Startbildschirm.',
+    ]);
+
+  // ───────────────────────── SCHRITT 2 ─────────────────────────
+  y = _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, 2,
+    'Auftrag waehlen ODER neu anlegen',
+    null);
+  // Variante A
+  doc.setFillColor(245, 247, 250); doc.roundedRect(ml, y, cw, 30, 2, 2, 'F');
+  doc.setTextColor(...ACCENT); doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
+  doc.text('A   Bestehenden Auftrag oeffnen (Wartung, vorher angemeldet)', ml+4, y+6);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+  const aSteps = [
+    '1. Im Menue auf "Uebersicht" tippen',
+    '2. Auftrag in der Liste suchen (Anlage, Adresse, Datum) oder die Suche oben benutzen',
+    '3. Auftrag anklicken - es oeffnet sich die Auftragsmaske',
+  ];
+  aSteps.forEach((s, i) => doc.text(s, ml+6, y+13+i*4.5));
+  y += 36;
+  // Variante B
+  doc.setFillColor(254, 249, 240); doc.roundedRect(ml, y, cw, 38, 2, 2, 'F');
+  doc.setTextColor(...ORANGE); doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
+  doc.text('B   Neuen Auftrag anlegen (Reparatur nach Aufwand)', ml+4, y+6);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+  const bSteps = [
+    '1. Im Menue auf "Uebersicht" tippen',
+    '2. Oben rechts auf "+ Neuer Auftrag" tippen',
+    '3. Kunde, Anlage und Auftragsart waehlen - bei Aufwand: "nach Aufwand"',
+    '4. Kurzbeschreibung der Arbeit eintragen, dann "Speichern"',
+    '5. Auftrag oeffnet sich - weiter zu Schritt 3',
+  ];
+  bSteps.forEach((s, i) => doc.text(s, ml+6, y+13+i*4.5));
+  y += 44;
+
+  // ───────────────────────── Page 2 ─────────────────────────
+  doc.addPage(); y = 22;
+  // Kopfzeile leicht
+  doc.setTextColor(...GREY_L); doc.setFontSize(8);
+  doc.text('Anleitung fuer Techniker  ·  Arbeitsberichte zu Auftraegen', ml, 14);
+  doc.setDrawColor(...GREY_X); doc.line(ml, 17, mr, 17);
+
+  // ───────────────────────── SCHRITT 3 ─────────────────────────
+  y = _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, 3,
+    'Arbeitsbericht ausfuellen',
+    [
+      'Im geoeffneten Auftrag auf "Arbeitsbericht erstellen" tippen.',
+      'Tragt folgende Felder ein:',
+      '   * Ausgefuehrte Arbeiten (Beschreibung der Taetigkeit)',
+      '   * Verwendete Materialien / Ersatzteile',
+      '   * Arbeitszeit (An- und Abfahrt, Taetigkeit vor Ort)',
+      '   * Optional: Fotos der Anlage / Mangel anhaengen',
+      'Pflichtfelder sind markiert. Fehlende Eingaben werden vor dem Speichern hervorgehoben.',
+    ]);
+
+  // ───────────────────────── SCHRITT 4 ─────────────────────────
+  y = _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, 4,
+    'Unterschrift + Speichern',
+    [
+      'Kundenunterschrift digital aufzeichnen (mit dem Finger oder Stift im Touch-Feld).',
+      'Eigene Unterschrift ebenfalls eintragen.',
+      'Auf "Speichern" tippen - der Bericht wird als PDF erzeugt.',
+      'Hinweis: Ohne Internet funktioniert das auch - die App synchronisiert spaeter automatisch.',
+    ]);
+
+  // ───────────────────────── SCHRITT 5 ─────────────────────────
+  y = _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, 5,
+    'PDF versenden oder ablegen',
+    [
+      'Nach dem Speichern wird das PDF angezeigt.',
+      'Optionen:',
+      '   * "Per E-Mail senden" - oeffnet das Mail-Programm mit PDF im Anhang',
+      '   * "Im ERP anhaengen" - haengt das PDF am Auftrag im Aufzugshandwerk-ERP an',
+      '   * "Herunterladen" - speichert lokal auf dem Geraet',
+    ]);
+
+  // ───────────────────────── TIPPS-BOX ─────────────────────────
+  if (y > 240) { doc.addPage(); y = 22; }
+  y += 4;
+  doc.setFillColor(...BG_TIP); doc.setDrawColor(...GREEN); doc.setLineWidth(0.4);
+  doc.roundedRect(ml, y, cw, 36, 2, 2, 'FD');
+  doc.setTextColor(21, 128, 61); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+  doc.text('Tipps & Tricks', ml+4, y+7);
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+  const tips = [
+    '* Offline arbeiten ist kein Problem - die App speichert lokal und syncht sobald online.',
+    '* Fotos vor Ort gleich einfuegen - spart spaeteres Nachhole-Tippen.',
+    '* Bei Pflichtmangel direkt einen Folgeauftrag anlegen (Verknuepfung wird automatisch gesetzt).',
+    '* Bei Stockschwierigkeiten "Update pruefen" im Menue tippen - holt die neueste Version.',
+  ];
+  tips.forEach((t, i) => doc.text(t, ml+4, y+13+i*4.5));
+  y += 44;
+
+  // ───────────────────────── KONTAKT ─────────────────────────
+  if (y > 250) { doc.addPage(); y = 22; }
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text('Fragen oder Probleme?', ml, y); y += 6;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+  doc.text('Bei technischen Fragen wendet euch an:', ml, y); y += 5;
+  doc.setFont('helvetica','bold'); doc.setTextColor(...ACCENT);
+  doc.text('service@aszendio.com', ml, y); y += 6;
+  doc.setFont('helvetica','normal'); doc.setTextColor(...GREY); doc.setFontSize(9.5);
+  doc.text('Wir helfen schnellstmoeglich weiter. Screenshots oder kurze Bildschirmaufnahmen helfen uns enorm.', ml, y);
+
+  // ───────────────────────── FOOTER auf jeder Seite ─────────────────────────
+  const total = doc.getNumberOfPages();
+  for (let i = 1; i <= total; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(...GREY_X); doc.line(ml, 285, mr, 285);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
+    doc.text('Aszendio Aufzugservice GmbH  ·  Stand '+new Date().toLocaleDateString('de-DE')+'  ·  '+APP_VERSION, ml, 290);
+    doc.text('Seite '+i+' / '+total, mr, 290, { align:'right' });
+  }
+
+  return doc.output('blob');
+}
+
+function _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, num, titel, bulletLines) {
+  const cw = mr - ml;
+  if (y > 235) { doc.addPage(); y = 22; }
+  // Nummer-Kreis + Titel
+  doc.setFillColor(...ACCENT); doc.circle(ml+5, y, 5, 'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text(String(num), ml+5, y+1.6, { align:'center' });
+  doc.setTextColor(...NAVY); doc.setFontSize(14);
+  doc.text('Schritt '+num+': '+titel, ml+13, y+1.5);
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.line(ml+13, y+4, ml+13+60, y+4);
+  y += 9;
+  if (bulletLines) {
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    for (const line of bulletLines) {
+      const wrapped = doc.splitTextToSize(line, cw - 4);
+      doc.text(wrapped, ml+2, y);
+      y += wrapped.length * 4.8 + 1.5;
+    }
+    y += 4;
+  }
+  return y;
+}
+
 async function _buildGbuPdf(d) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
