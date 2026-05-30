@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.95';
+const APP_VERSION = 'v3.96';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14026,8 +14026,21 @@ function _gbuEditField(id, lbl, val) {
 function _gbuRenderEditItem(item, data) {
   const id = item.id;
   const s = data?.status || '';
+  const bilder = data?.bilder || [];
   const tabBtn = (val, icon, lbl, color) =>
     '<button type="button" onclick="_gbuSetItemStatus(\''+id+'\',\''+val+'\')" data-gbu-st="'+id+':'+val+'" style="padding:6px 12px;border-radius:6px;border:2px solid '+(s===val?color:'var(--bdr)')+';background:'+(s===val?color+'22':'var(--surf)')+';color:'+(s===val?color:'var(--txt2)')+';font-weight:600;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px">'+icon+' '+lbl+'</button>';
+  // Bilder-Galerie
+  const bilderHtml = '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+    bilder.map((b, i) =>
+      '<div style="position:relative;width:56px;height:56px;border:1px solid var(--bdr);border-radius:4px;overflow:hidden;background:#f9fafb">'+
+        '<img src="'+b+'" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in" onclick="_gbuViewImage(\''+id+'\','+i+')">'+
+        '<button onclick="_gbuRemoveImage(\''+id+'\','+i+')" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.92);color:#fff;border:none;width:18px;height:18px;border-radius:50%;font-size:11px;cursor:pointer;line-height:1" title="Bild entfernen">×</button>'+
+      '</div>'
+    ).join('')+
+    '<button onclick="_gbuAddImage(\''+id+'\')" style="width:56px;height:56px;border:2px dashed var(--bdr);border-radius:4px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px" title="Bild hinzufügen">'+
+      '<span style="font-size:18px">📷</span><span>+ Bild</span>'+
+    '</button>'+
+  '</div>';
   return '<div style="border-top:1px dashed var(--bdr);padding:10px 0">'+
     '<div style="font-weight:500;font-size:13px;color:var(--navy);margin-bottom:6px">'+escapeHtml(item.label)+'</div>'+
     '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">'+
@@ -14043,7 +14056,81 @@ function _gbuRenderEditItem(item, data) {
         '<textarea id="gbu-ez-'+id+'" placeholder="—" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;min-height:50px;font-family:inherit;line-height:1.4">'+escapeHtml(data?.massnahme_zusatz||'')+'</textarea>'+
       '</div>'+
     '</div>'+
+    bilderHtml+
   '</div>';
+}
+
+/* Bild-Datei laden, auf 1024px begrenzen, als JPEG base64 zurückgeben. */
+async function _gbuResizeImage(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let w = img.width, h = img.height;
+        if (w > maxDim || h > maxDim) {
+          const ratio = Math.min(maxDim/w, maxDim/h);
+          w = Math.round(w * ratio);
+          h = Math.round(h * ratio);
+        }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', quality||0.7));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function _gbuAddImage(itemId) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return toast('Bitte eine Bilddatei wählen.','err');
+    if (file.size > 15 * 1024 * 1024) return toast('Bild zu groß (max 15 MB).','err');
+    toast('🖼 Komprimiere…','');
+    try {
+      const dataUrl = await _gbuResizeImage(file, 1024, 0.72);
+      const modal = document.getElementById('gbu-edit-modal');
+      if (!modal) return;
+      _gbuCollectEditData(); // aktuelle Textfeld-Inhalte sichern bevor Re-Render
+      if (!modal._data.items[itemId]) modal._data.items[itemId] = { status:'', massnahme_bestehend:'', massnahme_zusatz:'', bilder:[] };
+      if (!modal._data.items[itemId].bilder) modal._data.items[itemId].bilder = [];
+      modal._data.items[itemId].bilder.push(dataUrl);
+      _gbuRenderEdit();
+      toast('🖼 Bild hinzugefügt','ok');
+    } catch(e) { toast('❌ Bild-Verarbeitung: '+e.message,'err'); }
+  };
+  input.click();
+}
+
+function _gbuRemoveImage(itemId, idx) {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal || !modal._data.items[itemId]?.bilder) return;
+  if (!confirm('Bild wirklich entfernen?')) return;
+  _gbuCollectEditData();
+  modal._data.items[itemId].bilder.splice(idx, 1);
+  _gbuRenderEdit();
+}
+
+/* Vollbild-Lightbox für Bild-Vorschau im Edit-Modal */
+function _gbuViewImage(itemId, idx) {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  const img = modal._data.items[itemId]?.bilder?.[idx];
+  if (!img) return;
+  const lb = document.createElement('div');
+  lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10900;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:20px';
+  lb.innerHTML = '<img src="'+img+'" style="max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5)">';
+  lb.onclick = () => lb.remove();
+  document.body.appendChild(lb);
 }
 
 function _gbuSetItemStatus(itemId, status) {
@@ -14776,6 +14863,24 @@ async function _buildGbuPdf(d) {
   });
   y += cardH + 8;
 
+  // === BILDER SAMMELN (für Anhang + Mini-Vorschauen) ===
+  const allImages = [];  // { catLabel, itemLabel, itemId, imgData, anhangPage:null }
+  const itemImagesMap = {};
+  for (const cat of GBU_HAZARD_CATALOG) {
+    for (const it of cat.items) {
+      const data = (d.items||{})[it.id];
+      if (data?.bilder?.length) {
+        if (!itemImagesMap[it.id]) itemImagesMap[it.id] = [];
+        for (const img of data.bilder) {
+          itemImagesMap[it.id].push(allImages.length);
+          allImages.push({ catLabel: cat.label, itemLabel: it.label, itemId: it.id, imgData: img, anhangPage: null });
+        }
+      }
+    }
+  }
+  // miniLinkPositions: später Links setzen wenn anhangPage bekannt
+  const miniLinkPositions = [];
+
   // === GEFAHRENKATALOG — TABELLARISCH ===
   doc.addPage(); y = 18;
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
@@ -14812,12 +14917,16 @@ async function _buildGbuPdf(d) {
     let rowIdx = 0;
     for (const it of cat.items) {
       const data = (d.items||{})[it.id] || {};
+      const imgIndices = itemImagesMap[it.id] || [];
+      const hasImages = imgIndices.length > 0;
       // Zeilen-Höhe dynamisch berechnen
       const labelLines = doc.splitTextToSize(it.label, colWLabel - 4);
       const bestLines  = doc.splitTextToSize(data.massnahme_bestehend || '—', colWBest - 4);
       const zusLines   = doc.splitTextToSize(data.massnahme_zusatz || '—', colWZus - 4);
       const lh = 3.5;
-      const rowH = Math.max(8, Math.max(labelLines.length, bestLines.length, zusLines.length) * lh + 2.5);
+      const textH = Math.max(labelLines.length, bestLines.length, zusLines.length) * lh + 2.5;
+      const imgRowH = hasImages ? 17 : 0;  // 14mm Bild + 3mm padding
+      const rowH = Math.max(8, textH + imgRowH);
       if (y + rowH > 280) { doc.addPage(); y = 18; drawTableHeader(); }
       // Hintergrund Zebra
       if (rowIdx % 2 === 0) { doc.setFillColor(252,252,253); doc.rect(ml, y, cw, rowH, 'F'); }
@@ -14846,6 +14955,25 @@ async function _buildGbuPdf(d) {
       doc.setTextColor(...(data.massnahme_zusatz ? ORANGE : GREY_L));
       let zyy = y + 4;
       for (const ln of zusLines) { doc.text(ln, ml+colWStatus+colWLabel+colWBest+2, zyy); zyy += lh; }
+      // Bilder als Mini-Vorschauen unten in der Zeile
+      if (hasImages) {
+        const imgSize = 14;  // 14×14mm quadratisch
+        const imgY = y + textH;
+        let imgX = ml + colWStatus + 2;
+        const currentPage = doc.internal.getCurrentPageInfo().pageNumber;
+        for (const gi of imgIndices) {
+          if (imgX + imgSize > mr - 2) break;
+          try {
+            doc.addImage(allImages[gi].imgData, 'JPEG', imgX, imgY, imgSize, imgSize);
+            // Position für späteren Link merken
+            miniLinkPositions.push({ page: currentPage, x: imgX, y: imgY, w: imgSize, h: imgSize, globalIdx: gi });
+            // Rahmen
+            doc.setDrawColor(...GREY_L); doc.setLineWidth(0.2);
+            doc.rect(imgX, imgY, imgSize, imgSize);
+          } catch(e) { console.warn('GBU PDF: addImage', e.message); }
+          imgX += imgSize + 2;
+        }
+      }
       // Trennlinie unten
       doc.setDrawColor(...GREY_X); doc.setLineWidth(0.15); doc.line(ml, y+rowH-0.5, mr, y+rowH-0.5);
       y += rowH;
@@ -14924,6 +15052,48 @@ async function _buildGbuPdf(d) {
     doc.text('Unterschrift', ml+70, y+3.5);
     y += 22;
   }
+  // === ANHANG: FOTOS ===
+  if (allImages.length) {
+    doc.addPage(); y = 18;
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+    doc.text('Anhang: Fotos', ml, y); y += 2;
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, ml+40, y); y += 6;
+    doc.setFontSize(9); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+    doc.text(String(allImages.length)+' Foto(s) zur Dokumentation der Anlage und Gefaehrdungen.', ml, y);
+    y += 8;
+    const imgW = 80, imgH = 80, gapX = 8, gapY = 14;
+    let col = 0;
+    for (let i = 0; i < allImages.length; i++) {
+      const img = allImages[i];
+      if (col % 2 === 0 && y + imgH + 14 > 275) { doc.addPage(); y = 18; }
+      const x = ml + (col % 2) * (imgW + gapX);
+      try {
+        doc.addImage(img.imgData, 'JPEG', x, y, imgW, imgH);
+        doc.setDrawColor(...GREY_L); doc.setLineWidth(0.3);
+        doc.rect(x, y, imgW, imgH);
+        img.anhangPage = doc.internal.getCurrentPageInfo().pageNumber;
+      } catch(e) { console.warn('GBU PDF anhang addImage:', e.message); }
+      // Beschriftung unter dem Bild
+      doc.setFontSize(8.5); doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+      doc.text(img.catLabel.slice(0,38), x, y + imgH + 4);
+      doc.setFont('helvetica','normal'); doc.setTextColor(...GREY); doc.setFontSize(7.5);
+      const lblLines = doc.splitTextToSize(img.itemLabel, imgW);
+      doc.text(lblLines[0]||'', x, y + imgH + 8);
+      if (lblLines.length > 1) doc.text(lblLines[1], x, y + imgH + 11);
+      col++;
+      if (col % 2 === 0) y += imgH + gapY;
+    }
+  }
+
+  // === Mini-Vorschau-Links zur Anhangseite setzen ===
+  for (const link of miniLinkPositions) {
+    const img = allImages[link.globalIdx];
+    if (img.anhangPage) {
+      doc.setPage(link.page);
+      try { doc.link(link.x, link.y, link.w, link.h, { pageNumber: img.anhangPage }); } catch(_){}
+    }
+  }
+
   // Footer alle Seiten
   const pages = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
