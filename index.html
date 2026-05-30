@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.96';
+const APP_VERSION = 'v3.97';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14060,7 +14060,7 @@ function _gbuRenderEditItem(item, data) {
   '</div>';
 }
 
-/* Bild-Datei laden, auf 1024px begrenzen, als JPEG base64 zurückgeben. */
+/* Bild-Datei laden, auf maxDim begrenzen, als JPEG base64 zurückgeben. */
 async function _gbuResizeImage(file, maxDim, quality) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -14076,7 +14076,7 @@ async function _gbuResizeImage(file, maxDim, quality) {
         }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL('image/jpeg', quality||0.7));
+        resolve(canvas.toDataURL('image/jpeg', quality||0.55));
       };
       img.onerror = reject;
       img.src = e.target.result;
@@ -14084,6 +14084,56 @@ async function _gbuResizeImage(file, maxDim, quality) {
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });
+}
+
+/* Eine bereits vorliegende data:url erneut über Canvas verkleinern. */
+async function _gbuShrinkDataUrl(dataUrl, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxDim || h > maxDim) {
+        const ratio = Math.min(maxDim/w, maxDim/h);
+        w = Math.round(w * ratio);
+        h = Math.round(h * ratio);
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality||0.5));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+/* Alle Bilder im Items-Tree iterativ verkleinern bis JSON unter Limit passt. */
+async function _gbuShrinkImagesUntilFits(d, maxJsonBytes) {
+  const passes = [
+    { dim: 500, q: 0.45 },
+    { dim: 400, q: 0.40 },
+    { dim: 320, q: 0.35 },
+    { dim: 240, q: 0.30 },
+  ];
+  let json = JSON.stringify(d);
+  for (const p of passes) {
+    if (json.length <= maxJsonBytes) return d;
+    let shrunkAny = false;
+    for (const itemId in d.items) {
+      const bilder = d.items[itemId].bilder;
+      if (!Array.isArray(bilder)) continue;
+      for (let i = 0; i < bilder.length; i++) {
+        try {
+          const small = await _gbuShrinkDataUrl(bilder[i], p.dim, p.q);
+          if (small.length < bilder[i].length) { bilder[i] = small; shrunkAny = true; }
+        } catch(_) {}
+      }
+    }
+    if (!shrunkAny) break;
+    json = JSON.stringify(d);
+    console.log('[GBU] Bilder verkleinert auf', p.dim+'px q'+p.q, '→ JSON:', Math.round(json.length/1024)+'KB');
+  }
+  return d;
 }
 
 function _gbuAddImage(itemId) {
@@ -14097,7 +14147,7 @@ function _gbuAddImage(itemId) {
     if (file.size > 15 * 1024 * 1024) return toast('Bild zu groß (max 15 MB).','err');
     toast('🖼 Komprimiere…','');
     try {
-      const dataUrl = await _gbuResizeImage(file, 1024, 0.72);
+      const dataUrl = await _gbuResizeImage(file, 700, 0.60);
       const modal = document.getElementById('gbu-edit-modal');
       if (!modal) return;
       _gbuCollectEditData(); // aktuelle Textfeld-Inhalte sichern bevor Re-Render
@@ -14193,9 +14243,26 @@ async function _gbuSaveEdit() {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere…'; }
   try {
     const d = _gbuCollectEditData();
+    // Speicher aufräumen: Bilder iterativ verkleinern bis JSON < 90KB
+    // Airtable Long-Text-Limit ist ~100.000 Zeichen → Sicherheitspuffer 10KB
+    const MAX_JSON = 90 * 1024;
+    let json = JSON.stringify(d);
+    if (json.length > MAX_JSON) {
+      if (btn) btn.textContent = '⏳ Bilder verkleinern…';
+      console.log('[GBU] JSON zu groß ('+Math.round(json.length/1024)+'KB) → komprimiere Bilder');
+      await _gbuShrinkImagesUntilFits(d, MAX_JSON);
+      json = JSON.stringify(d);
+      console.log('[GBU] JSON nach Shrink:', Math.round(json.length/1024)+'KB');
+      // Bilder im UI-State auch updaten
+      const modal = document.getElementById('gbu-edit-modal');
+      if (modal) modal._data = d;
+    }
+    if (json.length > 100 * 1024) {
+      throw new Error('Zu viele/zu große Bilder ('+Math.round(json.length/1024)+'KB). Bitte einige entfernen.');
+    }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const updateFields = {
-      gbu_data_json: JSON.stringify(d),
+      gbu_data_json: json,
       naechste_pruefung: d.freigabe.naechste_pruefung || '',
       erstellt_von: d.freigabe.ersteller || rec.fields.erstellt_von || '',
     };
@@ -14208,7 +14275,7 @@ async function _gbuSaveEdit() {
     if (j.error) throw new Error(j.error.message);
     // In-Cache aktualisieren
     Object.assign(rec.fields, updateFields);
-    toast('💾 GBU gespeichert','ok');
+    toast('💾 GBU gespeichert ('+Math.round(json.length/1024)+'KB)','ok');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
     _gbuRenderEdit(); // refresh stats & badges
     return d;
