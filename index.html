@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.03';
+const APP_VERSION = 'v4.04';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16495,52 +16495,101 @@ async function _setStandardAnsprechpartner(idx, btn) {
              + (k.vorname||'')+' '+(k.nachname||'')+'\n'+(k.email||'(keine E-Mail)')
              + '\n\nDamit funktioniert der Bulk-Import von Anlagen.')) return;
 
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ setze…'; }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ lade…'; }
 
-  // Mehrere Endpoint-Varianten probieren — der erste 2xx gewinnt
-  const attempts = [
-    // 1) PATCH /api/kontakte/{id} mit verschiedenen Boolean-Flags
-    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ istStandardansprechpartner: true } },
-    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ standard: true } },
-    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ isStandard: true } },
-    { method:'PATCH', path:'api/kontakte/'+kontaktId, body:{ hauptansprechpartner: true } },
-    // 2) Dedizierte Endpoints auf dem Kunden
-    { method:'PUT',  path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/standardansprechpartner', body:{ kontaktId: +kontaktId } },
-    { method:'POST', path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/standardansprechpartner', body:{ kontaktId: +kontaktId } },
-    { method:'PUT',  path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/ansprechpartner/standard', body:{ kontaktId: +kontaktId } },
-    { method:'POST', path:'api/Kunden/'+encodeURIComponent(kundenNr)+'/ansprechpartner/'+kontaktId+'/standard' },
-    // 3) PATCH auf den Kunden mit Standard-Verweis
-    { method:'PATCH', path:'api/kunden/'+encodeURIComponent(kundenNr), body:{ standardansprechpartnerId: +kontaktId } },
-    { method:'PATCH', path:'api/kunden/'+encodeURIComponent(kundenNr), body:{ ansprechpartnerId: +kontaktId } },
-  ];
+  // Erkenntnisse aus früherem Test:
+  //   - PATCH /api/kontakte/{id}  → HTTP 405 (Endpoint da, Methode falsch → PUT)
+  //   - PATCH /api/kunden/{nr}    → HTTP 405 (Endpoint da, Methode falsch → PUT)
+  //   - dedizierte Standard-Endpoints   → HTTP 404 (gibt's nicht)
+  // ⇒ Strategie: GET volles Objekt, mit Standard-Flag mergen, PUT zurück.
 
   const tried = [];
+
+  // 1) Volle Kontakt- und Kunden-Daten holen
+  let fullKontakt = null, fullKunde = null;
+  try {
+    fullKontakt = await erpFetch('/aufzug/'+firmaSlug+'/api/kontakte/'+kontaktId);
+    console.log('[Standard-Ansp] Kontakt geladen:', fullKontakt);
+    tried.push({ step:'GET kontakt', status:'OK', keys: Object.keys(fullKontakt||{}) });
+  } catch(e) {
+    tried.push({ step:'GET kontakt', status:'FAIL', error:String(e.message||e).slice(0,200) });
+  }
+  try {
+    fullKunde = await erpFetch('/aufzug/'+firmaSlug+'/api/kunden/'+encodeURIComponent(kundenNr));
+    console.log('[Standard-Ansp] Kunde geladen:', fullKunde);
+    tried.push({ step:'GET kunde', status:'OK', keys: Object.keys(fullKunde||{}) });
+  } catch(e) {
+    tried.push({ step:'GET kunde', status:'FAIL', error:String(e.message||e).slice(0,200) });
+  }
+
+  if (btn) btn.textContent = '⏳ setze…';
+
+  // 2) PUT-Versuche: pro Variante komplettes Objekt + Standard-Flag setzen
+  const attempts = [];
+  if (fullKontakt) {
+    // Kontakt mit Standard-Flag
+    for (const field of ['istStandardansprechpartner','standardansprechpartner','standard','isStandard','hauptansprechpartner','primaer']) {
+      attempts.push({
+        method:'PUT', path:'api/kontakte/'+kontaktId,
+        body: { ...fullKontakt, [field]: true },
+        _hint: 'Kontakt + Flag "'+field+'"'
+      });
+    }
+  }
+  if (fullKunde) {
+    // Kunde mit Verweis-Feld auf Kontakt
+    for (const field of ['standardansprechpartnerId','standardKontaktId','ansprechpartnerId','hauptansprechpartnerId']) {
+      attempts.push({
+        method:'PUT', path:'api/kunden/'+encodeURIComponent(kundenNr),
+        body: { ...fullKunde, [field]: +kontaktId },
+        _hint: 'Kunde + Verweis "'+field+'"'
+      });
+    }
+    // Kunde mit verschachteltem Standard-Objekt
+    if (fullKontakt) {
+      attempts.push({
+        method:'PUT', path:'api/kunden/'+encodeURIComponent(kundenNr),
+        body: { ...fullKunde, standardansprechpartner: fullKontakt },
+        _hint: 'Kunde + verschachtelter Kontakt'
+      });
+      attempts.push({
+        method:'PUT', path:'api/kunden/'+encodeURIComponent(kundenNr),
+        body: { ...fullKunde, ansprechpartner: fullKontakt },
+        _hint: 'Kunde + ansprechpartner-Objekt'
+      });
+    }
+  }
+
   let success = null;
   for (const a of attempts) {
     try {
-      console.log('[Standard-Ansp] Probiere', a.method, a.path, a.body||'');
+      console.log('[Standard-Ansp] Probiere', a.method, a.path, '('+a._hint+')');
       const res = await erpFetch('/aufzug/'+firmaSlug+'/'+a.path, {
         method: a.method,
-        body: a.body || undefined,
+        body: a.body,
       });
-      // erpFetch wirft bei !ok → wenn wir hier sind, war's erfolgreich
-      tried.push({ ...a, status:'OK', response: res });
+      // Verifizieren: war die Änderung erfolgreich?
+      const flag = a._hint.includes('Flag ') ? a._hint.match(/Flag "([^"]+)"/)?.[1] : null;
+      const verifyOk = !flag || (res && res[flag] === true);
+      tried.push({ method:a.method, path:a.path, hint:a._hint, status: verifyOk?'OK':'OK-but-not-verified', responseKey: flag, responseValue: flag ? res?.[flag] : '(kein Flag-Check)' });
       success = a;
-      console.log('[Standard-Ansp] ✓ Erfolgreich via', a.method, a.path);
+      console.log('[Standard-Ansp] ✓ Erfolgreich via', a.method, a.path, '('+a._hint+')');
       break;
     } catch(e) {
-      tried.push({ ...a, status:'FAIL', error:String(e.message||e).slice(0,200) });
-      // bei 404/405 → weitermachen; bei 400/422 = Endpoint existiert aber Payload falsch → weitermachen
-      // bei 401/403 = Auth/Permission Problem → abbrechen wäre auch valid, aber wir probieren weiter
+      const errMsg = String(e.message||e).slice(0,200);
+      tried.push({ method:a.method, path:a.path, hint:a._hint, status:'FAIL', error: errMsg });
+      // Bei 400/422 → Payload ungültig, nächste Variante. Bei 401/403 → wahrscheinlich kein Schreibrecht
+      if (/HTTP 40[13]/.test(errMsg)) {
+        console.warn('[Standard-Ansp] Auth-Problem → breche ab');
+        break;
+      }
     }
   }
 
   if (success) {
-    // Cache invalidieren + Liste neu laden
     _kontakteCache.delete(String(kundenNr));
     if (btn) { btn.textContent = '⭐ Standard'; btn.style.background='#FBBF24'; btn.style.color='#78350F'; }
-    toast('⭐ Standard-Ansprechpartner gesetzt ('+success.method+' '+success.path.split('/').pop()+')','ok');
-    // Kontakte neu laden + Liste rendern
+    toast('⭐ Standard-Ansprechpartner gesetzt ('+success._hint+')','ok');
     try {
       const fresh = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
       const list = Array.isArray(fresh) ? fresh : ((fresh && (fresh.content||fresh.items||fresh.data))||[]);
@@ -16550,7 +16599,6 @@ async function _setStandardAnsprechpartner(idx, btn) {
     return;
   }
 
-  // Kein Endpoint hat funktioniert → Debug-Modal mit allen Versuchen
   if (btn) { btn.disabled = false; btn.textContent = '☆ Als Standard'; }
   _showStandardAnsprechFailModal(tried, kundenNr, kontaktId);
 }
