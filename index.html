@@ -2455,7 +2455,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v3.91';
+const APP_VERSION = 'v3.92';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13860,17 +13860,327 @@ function _renderGbuList() {
   }).join('')+'</div>';
 }
 
-/* GBU Detail/PDF zeigen */
+/* GBU öffnen → Edit-Modal mit allen Sektionen, nicht direkt das PDF. */
 async function _openGbuDetail(recId) {
   const rec = (_gbuCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('GBU nicht gefunden.','err');
+  _openGbuEdit(rec);
+}
+
+/* Edit-Modal — komplette GBU bearbeitbar, mit gespeicherten Daten vorbefüllt. */
+function _openGbuEdit(rec) {
+  const f = rec.fields || {};
+  let d;
+  try { d = JSON.parse(f.gbu_data_json || '{}'); } catch(_) { d = {}; }
+  // Defaults sicherstellen
+  if (!d.items) d.items = {};
+  for (const cat of GBU_HAZARD_CATALOG) {
+    for (const it of cat.items) {
+      if (!d.items[it.id]) {
+        d.items[it.id] = { status:'', massnahme_bestehend: it.massnahme || '', massnahme_zusatz:'' };
+      }
+    }
+  }
+  if (!d.verantwortliche) d.verantwortliche = {};
+  if (!d.nutzung) d.nutzung = {};
+  if (!d.freigabe) d.freigabe = {};
+
+  const old = document.getElementById('gbu-edit-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'gbu-edit-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:980px;width:100%;height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#dc2626;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'+
+        '<span>⚠️ Gefährdungsbeurteilung · '+escapeHtml(f.anlage_adresse||'')+'</span>'+
+        '<button onclick="document.getElementById(\'gbu-edit-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="gbu-edit-body" style="flex:1;overflow-y:auto;padding:18px 22px"></div>'+
+      '<div id="gbu-edit-footer" style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;flex-shrink:0"></div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._rec = rec;
+  m._data = d;
+  _gbuRenderEdit();
+}
+
+function _gbuRenderEdit() {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  const rec = modal._rec;
+  const f = rec.fields || {};
+  const d = modal._data;
+  const status = String(f.status||'entwurf');
+  const hasPdf = Array.isArray(f.gbu_pdf) && f.gbu_pdf[0];
+
+  // Stats berechnen (live)
+  let ok=0, mass=0, nz=0, leer=0;
+  for (const it of Object.values(d.items||{})) {
+    if (it.status === 'ok') ok++;
+    else if (it.status === 'massnahme') mass++;
+    else if (it.status === 'nz') nz++;
+    else leer++;
+  }
+  const statCard = (icon, num, label, color) =>
+    '<div style="background:'+color+'22;border:1px solid '+color+';border-radius:8px;padding:10px;text-align:center;min-width:90px">'+
+      '<div style="font-size:22px;margin-bottom:2px">'+icon+'</div>'+
+      '<div style="font-size:24px;font-weight:700;color:'+color+';line-height:1">'+num+'</div>'+
+      '<div style="font-size:10px;color:'+color+';margin-top:2px">'+label+'</div>'+
+    '</div>';
+
+  // Stammdaten
+  const stammRow = (lbl, val) => val ? '<div style="display:flex;gap:8px;padding:3px 0;font-size:12px"><div style="min-width:140px;color:var(--txt3)">'+escapeHtml(lbl)+'</div><div style="flex:1;color:var(--txt);font-weight:500">'+escapeHtml(String(val))+'</div></div>' : '';
+
+  const body = document.getElementById('gbu-edit-body');
+  body.innerHTML =
+    // Stammdaten-Box (read-only)
+    '<div style="background:var(--bg);border-left:4px solid #dc2626;border-radius:8px;padding:12px 16px;margin-bottom:14px">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">'+
+        '<span style="background:'+(status==='aktiv'?'#10b981':status==='abgelaufen'?'#dc2626':'#6b7280')+';color:#fff;font-size:11px;padding:3px 8px;border-radius:4px;font-weight:600">'+
+          (status==='aktiv'?'🟢 AKTIV':status==='abgelaufen'?'🔴 ABGELAUFEN':'✏ ENTWURF')+
+        '</span>'+
+        (hasPdf?'<span style="background:#3730A3;color:#fff;font-size:11px;padding:3px 8px;border-radius:4px">📄 PDF vorhanden</span>':'<span style="background:#fed7aa;color:#9a3412;font-size:11px;padding:3px 8px;border-radius:4px">⚠ PDF noch nicht generiert</span>')+
+      '</div>'+
+      stammRow('Anlage', f.anlage_adresse)+
+      stammRow('Fabrik-Nr.', f.anlage_fabriknummer)+
+      stammRow('Betreiber', d.verantwortliche?.betreiber)+
+      stammRow('Verantw. § 13 BetrSichV', d.verantwortliche?.verantwortlich_betriebssicherheit)+
+      stammRow('Wartungsfirma', d.verantwortliche?.wartungsfirma)+
+      stammRow('Notrufzentrale', d.verantwortliche?.notrufzentrale)+
+      stammRow('Erstellt am', f.erstellt_am)+
+      stammRow('Nächste Prüfung', f.naechste_pruefung)+
+    '</div>'+
+    // Stats
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
+      statCard('✓', ok, 'OK', '#10b981')+
+      statCard('⚠', mass, 'Maßnahme', '#ea580c')+
+      statCard('⊘', nz, 'N.z.', '#6b7280')+
+      statCard('○', leer, 'Leer', '#9ca3af')+
+    '</div>'+
+    // Kollabierbare Verantwortliche/Nutzung-Bearbeiter (optional)
+    '<details style="margin-bottom:14px;border:1px solid var(--bdr);border-radius:8px;background:var(--surf)">'+
+      '<summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px;color:var(--navy)">👤 Verantwortliche / Nutzungskontext bearbeiten</summary>'+
+      '<div style="padding:8px 14px 14px">'+
+        _gbuEditField('gbu-e-betr','Betreiber / Arbeitgeber', d.verantwortliche?.betreiber)+
+        _gbuEditField('gbu-e-bs','Verantw. § 13 BetrSichV', d.verantwortliche?.verantwortlich_betriebssicherheit)+
+        _gbuEditField('gbu-e-wf','Wartungsfirma', d.verantwortliche?.wartungsfirma)+
+        _gbuEditField('gbu-e-nz','Notrufzentrale', d.verantwortliche?.notrufzentrale)+
+        _gbuEditField('gbu-e-hl','Hilfeleistende (TRBS 2181)', d.verantwortliche?.hilfeleistende)+
+        _gbuEditField('gbu-e-nu','Nutzerkreis', d.nutzung?.nutzerkreis)+
+        _gbuEditField('gbu-e-bz','Betriebszeiten', d.nutzung?.betriebszeiten)+
+        _gbuEditField('gbu-e-bn','Besondere Nutzer', d.nutzung?.besondere_nutzer)+
+        _gbuEditField('gbu-e-um','Umgebung', d.nutzung?.umgebung)+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">'+
+          _gbuEditField('gbu-e-er','Ersteller', d.freigabe?.ersteller)+
+          '<div><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:3px">Nächste Überprüfung</label>'+
+          '<input id="gbu-e-np" type="date" value="'+escapeHtml(d.freigabe?.naechste_pruefung||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+        '</div>'+
+      '</div>'+
+    '</details>'+
+    // Gefährdungskatalog
+    '<h3 style="margin:14px 0 8px;font-size:14px;color:var(--navy)">⚠️ Gefährdungskatalog</h3>'+
+    GBU_HAZARD_CATALOG.map(cat => {
+      const pflicht = cat.id === 'eing';
+      // Stats pro Kategorie
+      let cOk=0, cM=0, cN=0, cL=0;
+      for (const it of cat.items) {
+        const s = d.items[it.id]?.status;
+        if (s === 'ok') cOk++; else if (s === 'massnahme') cM++; else if (s === 'nz') cN++; else cL++;
+      }
+      const catBadge = (cM > 0)
+        ? '<span style="font-size:10px;background:#fed7aa;color:#9a3412;padding:2px 6px;border-radius:3px;margin-left:6px">⚠ '+cM+' Maßnahme(n)</span>'
+        : (cL === 0)
+        ? '<span style="font-size:10px;background:#dcfce7;color:#065f46;padding:2px 6px;border-radius:3px;margin-left:6px">✓ alle bewertet</span>'
+        : '<span style="font-size:10px;background:#f3f4f6;color:#6b7280;padding:2px 6px;border-radius:3px;margin-left:6px">'+cL+' offen</span>';
+      return '<details '+(pflicht||cM>0?'open':'')+' style="margin-bottom:10px;border:1px solid '+(pflicht?'#fcd34d':'var(--bdr)')+';border-radius:8px;background:'+(pflicht?'#fffbeb':'var(--surf)')+'">'+
+        '<summary style="cursor:pointer;padding:10px 14px;font-weight:600;font-size:13px;color:var(--navy);display:flex;align-items:center;flex-wrap:wrap">'+
+          escapeHtml(cat.label)+
+          (pflicht ? ' <span style="font-size:10px;background:#dc2626;color:#fff;padding:2px 6px;border-radius:4px;margin-left:6px">PFLICHT</span>' : '')+
+          catBadge+
+        '</summary>'+
+        '<div style="padding:4px 14px 12px">'+
+          cat.items.map(it => _gbuRenderEditItem(it, d.items[it.id])).join('')+
+        '</div>'+
+      '</details>';
+    }).join('');
+
+  // Footer
+  const footer = document.getElementById('gbu-edit-footer');
+  footer.innerHTML =
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button class="btn" onclick="document.getElementById(\'gbu-edit-modal\').remove()">Schließen</button>'+
+      (hasPdf ? '<button class="btn" onclick="_gbuViewPdfFromEdit()" title="Aktuelles PDF anzeigen">📄 PDF ansehen</button>' : '')+
+      '<button class="btn" style="color:#dc2626;border-color:rgba(220,38,38,.4)" onclick="_gbuDelete(\''+escapeHtml(rec.id)+'\')">🗑 Löschen</button>'+
+    '</div>'+
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+      '<button class="btn" id="gbu-edit-save" onclick="_gbuSaveEdit()">💾 Speichern</button>'+
+      '<button class="btn prim" style="background:#dc2626;border-color:#dc2626" id="gbu-edit-regen" onclick="_gbuSaveAndRegenPdf()">📄 Speichern + PDF erzeugen</button>'+
+    '</div>';
+}
+
+function _gbuEditField(id, lbl, val) {
+  return '<div style="margin-bottom:8px"><label style="font-size:11px;font-weight:600;color:var(--navy);display:block;margin-bottom:3px">'+escapeHtml(lbl)+'</label>'+
+    '<input id="'+id+'" type="text" value="'+escapeHtml(val||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>';
+}
+
+function _gbuRenderEditItem(item, data) {
+  const id = item.id;
+  const s = data?.status || '';
+  const tabBtn = (val, icon, lbl, color) =>
+    '<button type="button" onclick="_gbuSetItemStatus(\''+id+'\',\''+val+'\')" data-gbu-st="'+id+':'+val+'" style="padding:6px 12px;border-radius:6px;border:2px solid '+(s===val?color:'var(--bdr)')+';background:'+(s===val?color+'22':'var(--surf)')+';color:'+(s===val?color:'var(--txt2)')+';font-weight:600;font-size:12px;cursor:pointer;display:inline-flex;align-items:center;gap:4px">'+icon+' '+lbl+'</button>';
+  return '<div style="border-top:1px dashed var(--bdr);padding:10px 0">'+
+    '<div style="font-weight:500;font-size:13px;color:var(--navy);margin-bottom:6px">'+escapeHtml(item.label)+'</div>'+
+    '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">'+
+      tabBtn('ok','✓','OK','#10b981')+
+      tabBtn('massnahme','⚠','Maßnahme nötig','#ea580c')+
+      tabBtn('nz','⊘','Nicht zutreffend','#6b7280')+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:11px">'+
+      '<div><label style="color:var(--txt3);display:block;margin-bottom:2px">Bestehende Maßnahme</label>'+
+        '<textarea id="gbu-em-'+id+'" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;min-height:50px;font-family:inherit;line-height:1.4">'+escapeHtml(data?.massnahme_bestehend||'')+'</textarea>'+
+      '</div>'+
+      '<div><label style="color:var(--txt3);display:block;margin-bottom:2px">Zusatzmaßnahme (falls nötig)</label>'+
+        '<textarea id="gbu-ez-'+id+'" placeholder="—" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;min-height:50px;font-family:inherit;line-height:1.4">'+escapeHtml(data?.massnahme_zusatz||'')+'</textarea>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+function _gbuSetItemStatus(itemId, status) {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  if (!modal._data.items[itemId]) modal._data.items[itemId] = {};
+  modal._data.items[itemId].status = status;
+  // Nur die buttons dieses Items neu zeichnen
+  const buttons = document.querySelectorAll('[data-gbu-st^="'+itemId+':"]');
+  buttons.forEach(b => {
+    const [, val] = b.getAttribute('data-gbu-st').split(':');
+    const color = val==='ok'?'#10b981':val==='massnahme'?'#ea580c':'#6b7280';
+    const active = val === status;
+    b.style.borderColor = active ? color : 'var(--bdr)';
+    b.style.background  = active ? color+'22' : 'var(--surf)';
+    b.style.color       = active ? color : 'var(--txt2)';
+  });
+  // Stats-Zähler und Kategorie-Badges neu rechnen → komplettes Re-Render wäre teuer
+  // Stattdessen: Verlassen wir das bis User scrollt oder speichert (sparsamer)
+}
+
+function _gbuCollectEditData() {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return null;
+  const d = modal._data;
+  // Verantwortliche/Nutzung
+  if (!d.verantwortliche) d.verantwortliche = {};
+  if (!d.nutzung) d.nutzung = {};
+  if (!d.freigabe) d.freigabe = {};
+  const g = id => document.getElementById(id)?.value || '';
+  d.verantwortliche.betreiber                       = g('gbu-e-betr')||d.verantwortliche.betreiber||'';
+  d.verantwortliche.verantwortlich_betriebssicherheit = g('gbu-e-bs')||d.verantwortliche.verantwortlich_betriebssicherheit||'';
+  d.verantwortliche.wartungsfirma                   = g('gbu-e-wf')||d.verantwortliche.wartungsfirma||'';
+  d.verantwortliche.notrufzentrale                  = g('gbu-e-nz')||d.verantwortliche.notrufzentrale||'';
+  d.verantwortliche.hilfeleistende                  = g('gbu-e-hl')||d.verantwortliche.hilfeleistende||'';
+  d.nutzung.nutzerkreis      = g('gbu-e-nu')||d.nutzung.nutzerkreis||'';
+  d.nutzung.betriebszeiten   = g('gbu-e-bz')||d.nutzung.betriebszeiten||'';
+  d.nutzung.besondere_nutzer = g('gbu-e-bn')||d.nutzung.besondere_nutzer||'';
+  d.nutzung.umgebung         = g('gbu-e-um')||d.nutzung.umgebung||'';
+  d.freigabe.ersteller        = g('gbu-e-er')||d.freigabe.ersteller||'';
+  d.freigabe.naechste_pruefung= g('gbu-e-np')||d.freigabe.naechste_pruefung||'';
+  // Items (Maßnahmen-Texte)
+  for (const cat of GBU_HAZARD_CATALOG) {
+    for (const it of cat.items) {
+      if (!d.items[it.id]) d.items[it.id] = { status:'', massnahme_bestehend:'', massnahme_zusatz:'' };
+      const eb = document.getElementById('gbu-em-'+it.id);
+      const ez = document.getElementById('gbu-ez-'+it.id);
+      if (eb) d.items[it.id].massnahme_bestehend = eb.value;
+      if (ez) d.items[it.id].massnahme_zusatz   = ez.value;
+    }
+  }
+  return d;
+}
+
+async function _gbuSaveEdit() {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  const rec = modal._rec;
+  const btn = document.getElementById('gbu-edit-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere…'; }
+  try {
+    const d = _gbuCollectEditData();
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const updateFields = {
+      gbu_data_json: JSON.stringify(d),
+      naechste_pruefung: d.freigabe.naechste_pruefung || '',
+      erstellt_von: d.freigabe.ersteller || rec.fields.erstellt_von || '',
+    };
+    const res = await fetch('https://api.airtable.com/v0/'+baseId+'/GBUs/'+rec.id, {
+      method:'PATCH',
+      headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+      body: JSON.stringify({ fields: updateFields })
+    });
+    const j = await res.json();
+    if (j.error) throw new Error(j.error.message);
+    // In-Cache aktualisieren
+    Object.assign(rec.fields, updateFields);
+    toast('💾 GBU gespeichert','ok');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+    _gbuRenderEdit(); // refresh stats & badges
+    return d;
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+    return null;
+  }
+}
+
+async function _gbuSaveAndRegenPdf() {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  const rec = modal._rec;
+  const regenBtn = document.getElementById('gbu-edit-regen');
+  if (regenBtn) { regenBtn.disabled = true; regenBtn.textContent = '⏳ baue PDF…'; }
+  try {
+    const d = await _gbuSaveEdit();
+    if (!d) throw new Error('Speichern fehlgeschlagen');
+    // Anlage-Objekt aus aktuellem Cache holen (für PDF-Generator)
+    const anlageData = (_anlagenCache.items||[]).find(a => String(a.id||'') === String(rec.fields.anlage_id||'')) || {};
+    // Falls anlage nicht im Cache: bauen aus rec.fields
+    d.anlage = {
+      id: rec.fields.anlage_id,
+      fabriknummer: rec.fields.anlage_fabriknummer,
+      objektTyp: anlageData.objektTyp || '',
+      haltestellen: anlageData.haltestellen || '',
+      kunde: anlageData.kunde || {},
+      anzeigeAdresse: rec.fields.anlage_adresse,
+    };
+    const pdfBlob = await _buildGbuPdf(d);
+    const fname = 'GBU-'+(rec.fields.anlage_fabriknummer||'Anlage').toString().replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+    // Altes PDF löschen + neues hochladen
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/GBUs/'+rec.id, {
+      method:'PATCH',
+      headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+      body: JSON.stringify({ fields: { gbu_pdf: [] }})
+    });
+    await atBlobUpload(rec.id, 'gbu_pdf', pdfBlob, fname, 'application/pdf');
+    toast('📄 PDF aktualisiert','ok');
+    document.getElementById('gbu-edit-modal')?.remove();
+    await renderGbuView({ force:true });
+    _showGbuPdf(rec.id, pdfBlob, rec.fields.anlage_adresse||'GBU', rec.fields);
+  } catch(e) {
+    console.error('gbuRegenPdf:', e);
+    toast('❌ '+(e.message||'?').slice(0,250),'err');
+    if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = '📄 Speichern + PDF erzeugen'; }
+  }
+}
+
+function _gbuViewPdfFromEdit() {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  const rec = modal._rec;
   const f = rec.fields || {};
   const att = Array.isArray(f.gbu_pdf) && f.gbu_pdf[0];
-  if (att && att.url) {
-    _showGbuPdf(recId, att.url, f.anlage_adresse || '', f);
-    return;
-  }
-  toast('Diese GBU hat noch kein PDF. Erstmal die GBU im Wizard fertigstellen.', 'err');
+  if (!att || !att.url) return toast('Kein PDF gespeichert. Klick "📄 Speichern + PDF erzeugen".','err');
+  _showGbuPdf(rec.id, att.url, f.anlage_adresse||'GBU', f);
 }
 
 /* Eigener PDF-Viewer für GBUs — keine Vertrags-Buttons (Konditionen/Korrigieren/Komplett neu).
@@ -14302,57 +14612,80 @@ async function _gbuSubmit() {
 }
 
 /* ════════════════════════════════════════════════════════════
-   GBU PDF-Generator
+   GBU PDF-Generator — modernes tabellarisches Layout
    ════════════════════════════════════════════════════════════ */
 async function _buildGbuPdf(d) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
-  const ml = 18, mr = 192, cw = mr - ml, H = 297;
-  const NAVY = [26, 51, 83], RED = [220, 38, 38], GREY = [55, 65, 81], GREY_L = [156, 163, 175];
-  let y = 18;
+  const ml = 15, mr = 195, cw = mr - ml, H = 297;
+  // Farbpalette modern
+  const NAVY  = [26, 51, 83];
+  const RED   = [220, 38, 38];
+  const GREEN = [16, 185, 129];
+  const ORANGE= [234, 88, 12];
+  const GREY  = [55, 65, 81];
+  const GREY_L= [156, 163, 175];
+  const GREY_X= [229, 231, 235];
+  const BG_OK    = [220, 252, 231];
+  const BG_M     = [254, 215, 170];
+  const BG_NZ    = [243, 244, 246];
+  let y = 0;
 
-  // Logo + Kopfzeile
-  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',mr-46,12,46,7.6); } catch(_){}
-  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
-  doc.text('Aszendio Aufzugservice GmbH · service@aszendio.com', ml, 16);
-  y = 28;
+  // === DECKBLATT ===
+  // Roter Banner oben
+  doc.setFillColor(...RED); doc.rect(0, 0, 210, 28, 'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(18);
+  doc.text('GEFAEHRDUNGSBEURTEILUNG', ml, 14);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text('Aufzugsanlage  ·  nach BetrSichV §3, TRBS 1111 + 2181', ml, 22);
+  // Logo oben rechts (in weiß-Box)
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',mr-42,8,40,6.6); } catch(_){}
+  y = 36;
 
-  // Titel
-  doc.setFontSize(20); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
-  doc.text('Gefährdungsbeurteilung', ml, y);
-  y += 7;
-  doc.setFontSize(11); doc.setTextColor(...NAVY); doc.setFont('helvetica','normal');
-  doc.text('Aufzugsanlage · nach BetrSichV § 3, TRBS 1111 + 2181', ml, y);
-  y += 10;
-
-  // Stammdaten Box
-  doc.setFillColor(248, 250, 252);
+  // === STAMMDATEN-TABELLE ===
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text('Anlage & Stammdaten', ml, y); y += 1;
+  doc.setDrawColor(...RED); doc.setLineWidth(0.6); doc.line(ml, y, ml+50, y); y += 6;
+  // Tabellen-Layout 2 Spalten
   const adresse = _buildAnlageAdresse(d.anlage) || '—';
-  doc.setDrawColor(...GREY_L); doc.setLineWidth(0.2);
   const stammRows = [
     ['Anlage / Standort', adresse],
     ['Fabriknummer', d.anlage?.fabriknummer || '—'],
     ['Anlagentyp', d.anlage?.objektTyp || '—'],
-    ['Haltestellen', String(d.anlage?.haltestellen||'—')],
-    ['Betreiber', d.verantwortliche.betreiber || '—'],
-    ['Verantw. § 13 BetrSichV', d.verantwortliche.verantwortlich_betriebssicherheit || '—'],
-    ['Wartungsfirma', d.verantwortliche.wartungsfirma || '—'],
-    ['Notrufzentrale', d.verantwortliche.notrufzentrale || '—'],
-    ['Erstellt von', d.freigabe.ersteller || '—'],
-    ['Erstellt am', d.freigabe.erstellt_am || '—'],
-    ['Nächste Überprüfung', d.freigabe.naechste_pruefung || '—'],
+    ['Haltestellen', String(d.anlage?.haltestellen || '—')],
+    ['Betreiber', d.verantwortliche?.betreiber || '—'],
+    ['Verantw. §13 BetrSichV', d.verantwortliche?.verantwortlich_betriebssicherheit || '—'],
+    ['Wartungsfirma', d.verantwortliche?.wartungsfirma || '—'],
+    ['Notrufzentrale', d.verantwortliche?.notrufzentrale || '—'],
+    ['Hilfeleistende (TRBS 2181)', d.verantwortliche?.hilfeleistende || '—'],
+    ['Nutzerkreis', d.nutzung?.nutzerkreis || '—'],
+    ['Betriebszeiten', d.nutzung?.betriebszeiten || '—'],
+    ['Umgebung', d.nutzung?.umgebung || '—'],
+    ['Erstellt von', d.freigabe?.ersteller || '—'],
+    ['Erstellt am', d.freigabe?.erstellt_am || '—'],
+    ['Naechste Ueberpruefung', d.freigabe?.naechste_pruefung || '—'],
   ];
-  doc.setFontSize(9);
+  doc.setFontSize(10); doc.setLineWidth(0.2); doc.setDrawColor(...GREY_X);
   for (const [lbl, val] of stammRows) {
-    if (y > 250) { doc.addPage(); y = 20; }
-    doc.setTextColor(...GREY_L); doc.text(lbl, ml, y);
-    doc.setTextColor(...GREY); doc.text(String(val).slice(0,80), ml+50, y);
+    if (y > 270) { doc.addPage(); y = 20; }
+    // Hintergrund abwechselnd
+    doc.setFillColor(250, 250, 252); doc.rect(ml, y-4, cw, 6, 'F');
+    doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal');
+    doc.text(lbl, ml+2, y);
+    doc.setTextColor(...GREY); doc.setFont('helvetica','bold');
+    const valLines = doc.splitTextToSize(String(val), cw - 60);
+    doc.text(valLines[0]||'', ml+58, y);
+    if (valLines.length > 1) {
+      y += 4.5;
+      doc.text(valLines.slice(1).join(' '), ml+58, y);
+    }
     y += 5.5;
+    doc.line(ml, y-1, mr, y-1);
   }
-  y += 4;
+  y += 6;
 
-  // Stats
-  let ok = 0, mass = 0, nz = 0, leer = 0;
+  // === STATISTIK-CARDS ===
+  let ok=0, mass=0, nz=0, leer=0;
   for (const it of Object.values(d.items||{})) {
     if (it.status === 'ok') ok++;
     else if (it.status === 'massnahme') mass++;
@@ -14360,80 +14693,174 @@ async function _buildGbuPdf(d) {
     else leer++;
   }
   if (y > 240) { doc.addPage(); y = 20; }
-  doc.setFontSize(11); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
-  doc.text('Uebersicht Bewertung', ml, y); y += 6;
-  doc.setFontSize(9); doc.setFont('helvetica','normal');
-  doc.text('OK: '+ok+'   Massnahme noetig: '+mass+'   nicht zutreffend: '+nz+'   noch leer: '+leer, ml, y);
-  y += 8;
-
-  // Gefährdungstabelle
-  doc.addPage(); y = 18;
-  doc.setFontSize(13); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
-  doc.text('Gefährdungskatalog', ml, y); y += 7;
-  doc.setFontSize(8); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
-
-  for (const cat of GBU_HAZARD_CATALOG) {
-    if (y > 270) { doc.addPage(); y = 18; }
-    doc.setFontSize(10); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
-    doc.text(cat.label, ml, y); y += 5;
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text('Uebersicht Bewertung', ml, y); y += 1;
+  doc.setDrawColor(...RED); doc.line(ml, y, ml+50, y); y += 6;
+  // 4 Statistik-Kacheln nebeneinander
+  const cardW = (cw - 9) / 4;
+  const cardH = 18;
+  const cards = [
+    { label:'OK', num:ok, bg:BG_OK, fg:GREEN },
+    { label:'Massnahme noetig', num:mass, bg:BG_M, fg:ORANGE },
+    { label:'Nicht zutreffend', num:nz, bg:BG_NZ, fg:GREY },
+    { label:'Noch offen', num:leer, bg:[254,242,242], fg:RED },
+  ];
+  cards.forEach((c, i) => {
+    const x = ml + i * (cardW + 3);
+    doc.setFillColor(...c.bg); doc.roundedRect(x, y, cardW, cardH, 2, 2, 'F');
+    doc.setTextColor(...c.fg); doc.setFont('helvetica','bold'); doc.setFontSize(22);
+    doc.text(String(c.num), x + cardW/2, y + 10, { align:'center' });
     doc.setFontSize(8); doc.setFont('helvetica','normal');
-    for (const it of cat.items) {
-      if (y > 275) { doc.addPage(); y = 18; }
-      const data = (d.items||{})[it.id] || {};
-      const stat = data.status==='ok' ? '[OK]' : data.status==='massnahme' ? '[M!]' : data.status==='nz' ? '[NZ]' : '[ ]';
-      doc.setTextColor(...GREY);
-      doc.text(stat+' '+it.label.slice(0,80), ml+2, y); y += 4;
-      if (data.massnahme_bestehend) {
-        const lines = doc.splitTextToSize('Bestehend: '+data.massnahme_bestehend, cw-8);
-        doc.setTextColor(...GREY_L); doc.setFontSize(7);
-        for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.2; if (y > 285) { doc.addPage(); y = 18; } }
-        doc.setFontSize(8);
-      }
-      if (data.massnahme_zusatz) {
-        const lines = doc.splitTextToSize('Zusatz: '+data.massnahme_zusatz, cw-8);
-        doc.setTextColor(...RED); doc.setFontSize(7);
-        for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.2; if (y > 285) { doc.addPage(); y = 18; } }
-        doc.setFontSize(8); doc.setTextColor(...GREY);
-      }
-      y += 1.5;
-    }
-    y += 3;
+    doc.text(c.label, x + cardW/2, y + 15, { align:'center' });
+  });
+  y += cardH + 8;
+
+  // === GEFÄHRDUNGSKATALOG — TABELLARISCH ===
+  doc.addPage(); y = 18;
+  doc.setTextColor(...RED); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Gefaehrdungskatalog', ml, y); y += 2;
+  doc.setDrawColor(...RED); doc.setLineWidth(0.8); doc.line(ml, y, ml+60, y); y += 8;
+
+  // Tabellenkopf
+  const colWStatus = 18, colWLabel = 70, colWBest = (cw - colWStatus - colWLabel) / 2, colWZus = colWBest;
+  function drawTableHeader() {
+    doc.setFillColor(...NAVY); doc.rect(ml, y, cw, 7, 'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+    doc.text('Status',  ml+2,                       y+4.8);
+    doc.text('Gefaehrdung', ml+colWStatus+2,        y+4.8);
+    doc.text('Bestehende Massnahme', ml+colWStatus+colWLabel+2, y+4.8);
+    doc.text('Zusatzmassnahme', ml+colWStatus+colWLabel+colWBest+2, y+4.8);
+    y += 7;
   }
 
-  // Massnahmen-Aktionsplan
+  for (const cat of GBU_HAZARD_CATALOG) {
+    // Kategorie-Header
+    if (y > 255) { doc.addPage(); y = 18; }
+    const pflicht = cat.id === 'eing';
+    doc.setFillColor(pflicht ? 254 : 248, pflicht ? 243 : 250, pflicht ? 199 : 252);
+    doc.rect(ml, y, cw, 8, 'F');
+    doc.setTextColor(...(pflicht ? RED : NAVY)); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(cat.label, ml+2, y+5.5);
+    if (pflicht) {
+      doc.setFillColor(...RED); doc.roundedRect(mr-30, y+1.5, 28, 5, 1, 1, 'F');
+      doc.setTextColor(255,255,255); doc.setFontSize(7); doc.text('PFLICHT', mr-16, y+5, { align:'center' });
+    }
+    y += 9;
+    drawTableHeader();
+    // Items als Tabellenzeilen
+    let rowIdx = 0;
+    for (const it of cat.items) {
+      const data = (d.items||{})[it.id] || {};
+      // Zeilen-Höhe dynamisch berechnen
+      const labelLines = doc.splitTextToSize(it.label, colWLabel - 4);
+      const bestLines  = doc.splitTextToSize(data.massnahme_bestehend || '—', colWBest - 4);
+      const zusLines   = doc.splitTextToSize(data.massnahme_zusatz || '—', colWZus - 4);
+      const lh = 3.5;
+      const rowH = Math.max(8, Math.max(labelLines.length, bestLines.length, zusLines.length) * lh + 2.5);
+      if (y + rowH > 280) { doc.addPage(); y = 18; drawTableHeader(); }
+      // Hintergrund Zebra
+      if (rowIdx % 2 === 0) { doc.setFillColor(252,252,253); doc.rect(ml, y, cw, rowH, 'F'); }
+      rowIdx++;
+      // Status-Box (farbig)
+      const statColors = {
+        ok:        { bg: BG_OK,  fg: GREEN,  label:'OK' },
+        massnahme: { bg: BG_M,   fg: ORANGE, label:'M' },
+        nz:        { bg: BG_NZ,  fg: GREY,   label:'NZ' },
+      };
+      const sc = statColors[data.status] || { bg:[255,255,255], fg:GREY_L, label:'-' };
+      const boxY = y + (rowH-6)/2;
+      doc.setFillColor(...sc.bg); doc.setDrawColor(...sc.fg); doc.setLineWidth(0.3);
+      doc.roundedRect(ml+2, boxY, colWStatus-4, 6, 1.5, 1.5, 'FD');
+      doc.setTextColor(...sc.fg); doc.setFont('helvetica','bold'); doc.setFontSize(8);
+      doc.text(sc.label, ml + colWStatus/2, boxY+4, { align:'center' });
+      // Label
+      doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+      let lyy = y + 4;
+      for (const ln of labelLines) { doc.text(ln, ml+colWStatus+2, lyy); lyy += lh; }
+      // Bestehende Massnahme
+      doc.setFontSize(7.5); doc.setTextColor(...GREY);
+      let byy = y + 4;
+      for (const ln of bestLines) { doc.text(ln, ml+colWStatus+colWLabel+2, byy); byy += lh; }
+      // Zusatzmassnahme — orange wenn vorhanden
+      doc.setTextColor(...(data.massnahme_zusatz ? ORANGE : GREY_L));
+      let zyy = y + 4;
+      for (const ln of zusLines) { doc.text(ln, ml+colWStatus+colWLabel+colWBest+2, zyy); zyy += lh; }
+      // Trennlinie unten
+      doc.setDrawColor(...GREY_X); doc.setLineWidth(0.15); doc.line(ml, y+rowH-0.5, mr, y+rowH-0.5);
+      y += rowH;
+    }
+    y += 4;
+  }
+
+  // === MAßNAHMEN-AKTIONSPLAN ===
   const offene = Object.entries(d.items||{}).filter(([_,v]) => v.status === 'massnahme');
   if (offene.length) {
     doc.addPage(); y = 18;
-    doc.setFontSize(13); doc.setTextColor(...RED); doc.setFont('helvetica','bold');
-    doc.text('Massnahmen-Aktionsplan', ml, y); y += 7;
-    doc.setFontSize(9); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
-    doc.text(offene.length+' offene Massnahme(n) - abzuarbeiten bis zur naechsten GBU-Ueberpruefung', ml, y); y += 6;
+    doc.setTextColor(...ORANGE); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+    doc.text('Massnahmen-Aktionsplan', ml, y); y += 2;
+    doc.setDrawColor(...ORANGE); doc.setLineWidth(0.8); doc.line(ml, y, ml+70, y); y += 6;
+    doc.setFontSize(9.5); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+    doc.text(String(offene.length)+' offene Massnahme(n) - abzuarbeiten bis zur naechsten GBU-Ueberpruefung', ml, y); y += 8;
+    // Tabelle: Nr | Gefaehrdung | Massnahme
+    let i = 1;
     for (const [id, v] of offene) {
-      if (y > 275) { doc.addPage(); y = 18; }
-      const it = GBU_HAZARD_CATALOG.flatMap(c => c.items).find(i => i.id === id);
-      doc.setFontSize(9); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
-      doc.text('- '+(it?.label||id), ml+2, y); y += 4.5;
-      doc.setFontSize(8); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
-      if (v.massnahme_zusatz) {
-        const lines = doc.splitTextToSize('Massnahme: '+v.massnahme_zusatz, cw-8);
-        for (const ln of lines) { doc.text(ln, ml+6, y); y += 3.5; if (y > 285) { doc.addPage(); y = 18; } }
+      const it = GBU_HAZARD_CATALOG.flatMap(c => c.items).find(x => x.id === id);
+      const massLines = doc.splitTextToSize(v.massnahme_zusatz || v.massnahme_bestehend || '—', cw - 22);
+      const labelLines = doc.splitTextToSize(it?.label || id, cw - 22);
+      const rowH = (labelLines.length + massLines.length) * 4 + 6;
+      if (y + rowH > 280) { doc.addPage(); y = 18; }
+      doc.setFillColor(254, 215, 170); doc.roundedRect(ml, y, 12, 8, 1.5, 1.5, 'F');
+      doc.setTextColor(...ORANGE); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+      doc.text('#'+i, ml+6, y+5.5, { align:'center' });
+      doc.setTextColor(...NAVY); doc.setFontSize(10);
+      doc.text(labelLines[0] || '', ml+15, y+5.5);
+      let yy = y + 11;
+      if (labelLines.length > 1) {
+        doc.setFontSize(9);
+        for (const ln of labelLines.slice(1)) { doc.text(ln, ml+15, yy); yy += 4; }
       }
-      y += 2;
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+      doc.text('Massnahme:', ml+15, yy); yy += 4;
+      doc.setTextColor(...GREY);
+      for (const ln of massLines) { doc.text(ln, ml+18, yy); yy += 4; }
+      y = yy + 3;
+      doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y); y += 4;
+      i++;
     }
   }
 
-  // Unterschriftenseite
+  // === UNTERSCHRIFTEN ===
   doc.addPage(); y = 18;
-  doc.setFontSize(13); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
-  doc.text('Freigabe & Unterschriften', ml, y); y += 10;
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.text('Freigabe & Unterschriften', ml, y); y += 2;
+  doc.setDrawColor(...NAVY); doc.setLineWidth(0.8); doc.line(ml, y, ml+70, y); y += 8;
   doc.setFontSize(10); doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
-  doc.text('Die vorliegende Gefährdungsbeurteilung wurde nach BetrSichV § 3 und TRBS 1111 erstellt.', ml, y); y += 5;
-  doc.text('Erstellt am: '+(d.freigabe.erstellt_am||'—')+' · Nächste Überprüfung: '+(d.freigabe.naechste_pruefung||'—'), ml, y); y += 14;
-  // 2 Unterschriftslinien
-  doc.setDrawColor(0); doc.setLineWidth(0.3);
-  for (const sig of ['Betreiber / Arbeitgeber', 'Verantw. Person § 13 BetrSichV']) {
-    doc.line(ml, y, ml+80, y);
-    doc.setFontSize(9); doc.text(sig, ml, y+4);
+  const introLines = doc.splitTextToSize('Die vorliegende Gefaehrdungsbeurteilung wurde nach BetrSichV §3 und den Technischen Regeln fuer Betriebssicherheit (TRBS 1111, TRBS 2181) erstellt. Sie ist gueltig bis zur naechsten turnusmaessigen Ueberpruefung oder bei wesentlicher Aenderung der Anlage.', cw);
+  for (const ln of introLines) { doc.text(ln, ml, y); y += 5; }
+  y += 5;
+  doc.text('Erstellt am: '+(d.freigabe?.erstellt_am||'—'), ml, y); y += 5;
+  doc.text('Naechste Ueberpruefung: '+(d.freigabe?.naechste_pruefung||'—'), ml, y); y += 16;
+  // Zwei Unterschrifts-Felder in Spalten
+  const sigBoxes = [
+    { label:'Betreiber / Arbeitgeber', name: d.verantwortliche?.betreiber||'' },
+    { label:'Verantwortliche Person nach §13 BetrSichV', name: d.verantwortliche?.verantwortlich_betriebssicherheit||'' },
+  ];
+  for (const sig of sigBoxes) {
+    if (y > 250) { doc.addPage(); y = 20; }
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+    doc.text(sig.label, ml, y); y += 4;
+    if (sig.name) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+      doc.text(sig.name, ml, y); y += 5;
+    }
+    y += 4;
+    // Doppellinien für Ort/Datum und Unterschrift
+    doc.setDrawColor(...GREY); doc.setLineWidth(0.3);
+    doc.line(ml, y, ml+60, y);
+    doc.setTextColor(...GREY_L); doc.setFontSize(8);
+    doc.text('Ort, Datum', ml, y+3.5);
+    doc.line(ml+70, y, ml+70+85, y);
+    doc.text('Unterschrift', ml+70, y+3.5);
     y += 22;
   }
   // Footer alle Seiten
@@ -14441,8 +14868,8 @@ async function _buildGbuPdf(d) {
   for (let p = 1; p <= pages; p++) {
     doc.setPage(p);
     doc.setFontSize(7); doc.setTextColor(...GREY_L);
-    doc.text('GBU · '+(d.anlage?.fabriknummer||'-')+' · '+(d.freigabe.erstellt_am||'-'), ml, H-10);
-    doc.text('Seite '+p+' / '+pages, mr, H-10, { align:'right' });
+    doc.text('GBU '+(d.anlage?.fabriknummer||'-')+'  ·  '+(d.freigabe?.erstellt_am||'-')+'  ·  Aszendio Aufzugservice GmbH', ml, H-8);
+    doc.text('Seite '+p+' / '+pages, mr, H-8, { align:'right' });
   }
   return doc.output('blob');
 }
