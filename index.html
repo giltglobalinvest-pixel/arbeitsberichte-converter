@@ -1359,6 +1359,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-rechnungen" onclick="switchView('rechnungen')" style="display:none">💶 Rechnungen</button>
     <button class="tnav" id="tnav-gbu" onclick="switchView('gbu')" style="display:none">⚠️ Gefährdungsbeurteilung</button>
     <button class="tnav" id="tnav-da" onclick="switchView('da')" style="display:none">🔍 Datenaufnahmen</button>
+    <button class="tnav" id="tnav-dav" onclick="switchView('dav')" style="display:none">📋 DA-Vorlagen</button>
     <button class="tnav" id="tnav-liftaro" onclick="switchView('liftaro')" style="display:none">📋 Liftaro Checks</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav" id="tnav-rollen" onclick="switchView('rollen')" style="display:none">🎭 Rollen</button>
@@ -1897,6 +1898,16 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="gbu-list" style="padding:20px"></div>
+</div>
+
+<!-- DA-VORLAGEN (Templates für Datenaufnahmen — nur Admin) -->
+<div class="firma-view" id="dav-view">
+  <div class="firma-hdr">
+    <h2>📋 DA-Vorlagen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">Templates für Datenaufnahmen</span></h2>
+    <button class="btn" onclick="renderDaVorlagenView()">↻ Neu laden</button>
+    <button class="btn prim" onclick="openDaVorlageEdit(null)">+ Neue Vorlage</button>
+  </div>
+  <div class="firma-body" id="dav-list" style="padding:20px"></div>
 </div>
 
 <!-- DATENAUFNAHMEN (Inspektion vor Angebot — Techniker + Verwalter) -->
@@ -2496,7 +2507,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.15';
+const APP_VERSION = 'v4.16';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3124,6 +3135,7 @@ async function showApp() {
   if (isAdmin()) {
     document.getElementById('tnav-users').style.display = '';
     document.getElementById('tnav-rollen').style.display = '';
+    document.getElementById('tnav-dav').style.display = '';
     document.getElementById('tnav-firmen').style.display = '';
     document.getElementById('tnav-preislisten').style.display = '';
     document.getElementById('tnav-vorlagen').style.display = '';
@@ -3633,6 +3645,7 @@ function switchView(view) {
   if (view==='auftraege' && !hasPermission('tool_auftraege')) return toast('🔒 Keine Berechtigung','err');
   if (view==='anlagen' && !hasPermission('tool_anlagen')) return toast('🔒 Keine Berechtigung','err');
   if (view==='da' && !hasPermission('tool_datenaufnahmen')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='dav' && !isAdmin()) return;
 
   const dash = document.getElementById('dash-view');
   const ov   = document.getElementById('ov-view');
@@ -3653,9 +3666,10 @@ function switchView(view) {
   const info = document.getElementById('info-view');
   const rollen = document.getElementById('rollen-view');
   const da = document.getElementById('da-view');
+  const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3679,6 +3693,7 @@ function switchView(view) {
   if (info) info.classList.toggle('show', view==='info');
   if (rollen) rollen.classList.toggle('show', view==='rollen');
   if (da) da.classList.toggle('show', view==='da');
+  if (dav) dav.classList.toggle('show', view==='dav');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3698,6 +3713,7 @@ function switchView(view) {
   if (view==='info') renderInfoView();
   if (view==='rollen') renderRollenView();
   if (view==='da') renderDatenaufnahmenView();
+  if (view==='dav') renderDaVorlagenView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -5442,6 +5458,14 @@ async function ensureLegacyFirmaFields() {
     { name:'erstellt_von',           type:'singleLineText' },
     { name:'aufgenommen_am',         type:'singleLineText' },
     { name:'aufgenommen_von',        type:'singleLineText' },
+  ]);
+  // DA-Vorlagen (Templates mit vorgefertigten Checkpunkt-Listen)
+  await ensureTable('DA_Vorlagen', [
+    { name:'name',             type:'singleLineText' },
+    { name:'description',      type:'multilineText'  },
+    { name:'checkpunkte_json', type:'multilineText'  },
+    { name:'is_system',        type:'checkbox', options:{ icon:'star', color:'yellowBright' } },
+    { name:'sort_order',       type:'number',   options:{ precision:0 } },
   ]);
   // Rollen-Tabelle für Permission-Templates
   await ensureTable('Rollen', [
@@ -15695,6 +15719,290 @@ async function _gbuSubmit() {
    INFOBEREICH-VIEW (Anleitungen + Downloads für alle User)
    ─────────────────────────────────────────────────────────────────────── */
 /* ═══════════════════════════════════════════════════════════════════════
+   DA-VORLAGEN — Templates für Datenaufnahmen
+   ─────────────────────────────────────────────────────────────────────── */
+let _daVorlagenCache = { records:null, loadedAt:0 };
+let _daVorlagenTableEnsured = false;
+
+const DA_VORLAGEN_FIELDS = [
+  { name:'name',             type:'singleLineText' },
+  { name:'description',      type:'multilineText'  },
+  { name:'checkpunkte_json', type:'multilineText'  },
+  { name:'is_system',        type:'checkbox', options:{ icon:'star', color:'yellowBright' } },
+  { name:'sort_order',       type:'number',   options:{ precision:0 } },
+];
+
+const DA_VORLAGEN_DEFAULTS = [
+  { name:'Komplett-Inspektion (Modernisierung)', sort_order:1, is_system:true,
+    description:'Vollständige Bestandsaufnahme zur Modernisierungsbewertung — alle Hauptkomponenten.',
+    checkpunkte: [
+      { titel:'Steuerung (Maschinenraum)',          ist_zustand:'', massnahme:'' },
+      { titel:'Antrieb / Triebwerk',                ist_zustand:'', massnahme:'' },
+      { titel:'Hauptschütze / Sicherungen',         ist_zustand:'', massnahme:'' },
+      { titel:'Tragmittel (Seile / Riemen)',        ist_zustand:'', massnahme:'' },
+      { titel:'Geschwindigkeitsbegrenzer',          ist_zustand:'', massnahme:'' },
+      { titel:'Fangvorrichtung',                    ist_zustand:'', massnahme:'' },
+      { titel:'Kabine — Innenausstattung',          ist_zustand:'', massnahme:'' },
+      { titel:'Kabinentüre / Lichtschranke',        ist_zustand:'', massnahme:'' },
+      { titel:'Schachttüren / Verriegelungen',      ist_zustand:'', massnahme:'' },
+      { titel:'Tableau / Etagenanzeige',            ist_zustand:'', massnahme:'' },
+      { titel:'Notruf / Notbeleuchtung',            ist_zustand:'', massnahme:'' },
+      { titel:'Schacht — Verkabelung / Beleuchtung',ist_zustand:'', massnahme:'' },
+      { titel:'Schachtgrube / Endbegrenzer',        ist_zustand:'', massnahme:'' },
+    ],
+  },
+  { name:'Standard-Inspektion', sort_order:2, is_system:true,
+    description:'Schnelle Vor-Ort-Bestandsaufnahme der wichtigsten Komponenten.',
+    checkpunkte: [
+      { titel:'Steuerung',                          ist_zustand:'', massnahme:'' },
+      { titel:'Antrieb',                            ist_zustand:'', massnahme:'' },
+      { titel:'Tragmittel',                         ist_zustand:'', massnahme:'' },
+      { titel:'Kabine',                             ist_zustand:'', massnahme:'' },
+      { titel:'Türen (Kabine + Schacht)',           ist_zustand:'', massnahme:'' },
+      { titel:'Notruf',                             ist_zustand:'', massnahme:'' },
+    ],
+  },
+  { name:'Tür-Inspektion', sort_order:3, is_system:true,
+    description:'Detaillierte Aufnahme bei Türproblemen — Kabine und alle Schachttüren.',
+    checkpunkte: [
+      { titel:'Kabinentüre — Mechanik',             ist_zustand:'', massnahme:'' },
+      { titel:'Kabinentüre — Antrieb',              ist_zustand:'', massnahme:'' },
+      { titel:'Lichtschranke / Reversiereinrichtung',ist_zustand:'', massnahme:'' },
+      { titel:'Schachttür EG — Mechanik',           ist_zustand:'', massnahme:'' },
+      { titel:'Schachttür EG — Verriegelung',       ist_zustand:'', massnahme:'' },
+      { titel:'Schachttüren weitere Etagen',        ist_zustand:'', massnahme:'' },
+      { titel:'Türverkleidung / Optik',             ist_zustand:'', massnahme:'' },
+    ],
+  },
+  { name:'Antrieb & Steuerung', sort_order:4, is_system:true,
+    description:'Spezial-Inspektion bei Steuerungs- oder Antriebsproblemen.',
+    checkpunkte: [
+      { titel:'Steuerung — Typenschild / Hersteller',ist_zustand:'', massnahme:'' },
+      { titel:'Steuerung — Verkabelung / Optik',    ist_zustand:'', massnahme:'' },
+      { titel:'Frequenzumrichter / Schütze',        ist_zustand:'', massnahme:'' },
+      { titel:'Antrieb — Typenschild / Leistung',   ist_zustand:'', massnahme:'' },
+      { titel:'Antrieb — Lager / Bremse',           ist_zustand:'', massnahme:'' },
+      { titel:'Encoder / Geschwindigkeitsmessung',  ist_zustand:'', massnahme:'' },
+    ],
+  },
+];
+
+async function _ensureDaVorlagenTable() {
+  if (_daVorlagenTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+  await ensureTable('DA_Vorlagen', DA_VORLAGEN_FIELDS);
+  _daVorlagenTableEnsured = true;
+  return true;
+}
+
+async function loadDaVorlagen() {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!key) return;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/DA_Vorlagen?pageSize=100', {
+      headers:{ 'Authorization':'Bearer '+key }
+    });
+    if (!r.ok) {
+      _daVorlagenCache = { records:[], loadedAt:Date.now() };
+      return;
+    }
+    const d = await r.json();
+    _daVorlagenCache = { records: d.records || [], loadedAt: Date.now() };
+  } catch(_) {
+    _daVorlagenCache = { records:[], loadedAt:Date.now() };
+  }
+}
+
+async function bootstrapDaVorlagenDefaults() {
+  if (!isAdmin() || !APP_KEYS.airtableWriteKey) return;
+  await loadDaVorlagen();
+  const existing = new Set((_daVorlagenCache.records||[]).map(r => r.fields?.name).filter(Boolean));
+  const toCreate = DA_VORLAGEN_DEFAULTS.filter(v => !existing.has(v.name));
+  if (toCreate.length === 0) return;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  for (const v of toCreate) {
+    try {
+      await fetch('https://api.airtable.com/v0/'+baseId+'/DA_Vorlagen', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: {
+          name: v.name,
+          description: v.description,
+          checkpunkte_json: JSON.stringify(v.checkpunkte),
+          is_system: !!v.is_system,
+          sort_order: v.sort_order || 99,
+        }})
+      });
+    } catch(_) {}
+  }
+  await loadDaVorlagen();
+}
+
+async function renderDaVorlagenView() {
+  if (!isAdmin()) return;
+  const list = document.getElementById('dav-list');
+  if (!list) return;
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Vorlagen…</div>';
+  try {
+    try { await _ensureDaVorlagenTable(); } catch(e) {
+      list.innerHTML = '<div style="padding:30px;text-align:center"><div style="color:var(--err);font-size:14px;font-weight:600;margin-bottom:8px">⚠ Tabelle "DA_Vorlagen" fehlt</div><div style="color:var(--txt2);font-size:12px;max-width:520px;margin:0 auto;line-height:1.5">'+escapeHtml(e.message)+'</div></div>';
+      return;
+    }
+    await bootstrapDaVorlagenDefaults();
+    const records = (_daVorlagenCache.records||[]).slice().sort((a,b)=>(a.fields?.sort_order||99)-(b.fields?.sort_order||99));
+    if (records.length === 0) {
+      list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Keine Vorlagen vorhanden. Klick "+ Neue Vorlage" oben.</div>';
+      return;
+    }
+    list.innerHTML =
+      '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:4px;margin-bottom:16px;font-size:12px;color:#1E3A8A">'+
+        '💡 Vorlagen stehen beim Anlegen einer neuen Datenaufnahme zur Auswahl. Die Checkpunkte werden in die neue Datenaufnahme kopiert (Bilder werden vom Techniker vor Ort ergänzt).'+
+      '</div>'+
+      '<div style="display:grid;gap:12px">' + records.map(rec => {
+      const f = rec.fields || {};
+      let cps = [];
+      try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+      return (
+        '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:16px 20px">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px">'+
+            '<div style="font-size:16px;font-weight:700;color:var(--navy)">'+
+              (f.is_system?'⭐ ':'📋 ')+escapeHtml(f.name||'(ohne Name)')+
+              (f.is_system?'<span style="font-size:10px;background:#FEF3C7;color:#92400E;padding:2px 7px;border-radius:99px;margin-left:8px">System</span>':'')+
+            '</div>'+
+            '<button class="btn" onclick="openDaVorlageEdit(\''+rec.id+'\')">✏ Bearbeiten</button>'+
+          '</div>'+
+          (f.description?'<div style="font-size:12px;color:var(--txt2);margin-bottom:8px">'+escapeHtml(f.description)+'</div>':'')+
+          '<div style="font-size:11px;color:var(--txt3)"><strong>'+cps.length+' Checkpunkt'+(cps.length===1?'':'e')+':</strong> '+
+            cps.map(c => escapeHtml(c.titel||'(ohne Titel)')).join(' · ')+
+          '</div>'+
+        '</div>'
+      );
+    }).join('') + '</div>';
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function openDaVorlageEdit(recId) {
+  if (!isAdmin()) return;
+  const rec = recId ? (_daVorlagenCache.records||[]).find(r => r.id === recId) : null;
+  const f = rec ? (rec.fields||{}) : {};
+  let cps = [];
+  try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  const old = document.getElementById('dav-edit'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'dav-edit';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10600;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:720px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📋 '+(rec?'Vorlage bearbeiten':'Neue Vorlage')+'</span>'+
+        '<button onclick="document.getElementById(\'dav-edit\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="display:grid;gap:10px;margin-bottom:14px">'+
+          '<div><label style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase">Name</label>'+
+            '<input id="dav-name" type="text" value="'+escapeHtml(f.name||'')+'" '+(f.is_system?'readonly':'')+' style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:3px"></div>'+
+          '<div><label style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase">Beschreibung</label>'+
+            '<textarea id="dav-desc" rows="2" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:3px">'+escapeHtml(f.description||'')+'</textarea></div>'+
+        '</div>'+
+        '<div style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;margin-bottom:6px">Checkpunkte</div>'+
+        '<div id="dav-cps-container" style="display:grid;gap:8px"></div>'+
+        '<button class="btn" onclick="_davAddCp()" style="margin-top:10px;width:100%">+ Checkpunkt hinzufügen</button>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        (rec && !f.is_system ? '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteDaVorlage(\''+rec.id+'\')">🗑 Löschen</button>' : '')+
+        '<button class="btn" onclick="document.getElementById(\'dav-edit\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" onclick="saveDaVorlage('+(rec?'\''+rec.id+'\'':'null')+')">💾 Speichern</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._cps = cps.slice();
+  _davRenderCps();
+}
+
+function _davRenderCps() {
+  const m = document.getElementById('dav-edit');
+  if (!m) return;
+  const c = document.getElementById('dav-cps-container');
+  const cps = m._cps;
+  const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  c.innerHTML = cps.map((cp, i) =>
+    '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:10px;display:grid;grid-template-columns:24px 1fr 32px;gap:8px;align-items:center">'+
+      '<div style="background:#2152A9;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(i+1)+'</div>'+
+      '<input id="dav-cp-'+i+'" type="text" value="'+esc(cp.titel||'')+'" oninput="_davUpdateCp('+i+',this.value)" placeholder="Titel des Checkpunkts" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+      '<button onclick="_davRemoveCp('+i+')" title="Entfernen" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:5px;cursor:pointer;font-size:12px">×</button>'+
+    '</div>'
+  ).join('') || '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:12px;background:var(--bg);border-radius:6px;border:1px dashed var(--bdr)">Noch keine Checkpunkte.</div>';
+}
+
+function _davUpdateCp(i, value) {
+  const m = document.getElementById('dav-edit');
+  if (!m || !m._cps[i]) return;
+  m._cps[i].titel = value;
+}
+function _davAddCp() {
+  const m = document.getElementById('dav-edit');
+  if (!m) return;
+  m._cps.push({ titel:'', ist_zustand:'', massnahme:'' });
+  _davRenderCps();
+  // Auf den letzten fokussieren
+  setTimeout(() => document.getElementById('dav-cp-'+(m._cps.length-1))?.focus(), 30);
+}
+function _davRemoveCp(i) {
+  const m = document.getElementById('dav-edit');
+  if (!m) return;
+  m._cps.splice(i, 1);
+  _davRenderCps();
+}
+
+async function saveDaVorlage(recId) {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const m = document.getElementById('dav-edit');
+  if (!m) return;
+  const name = document.getElementById('dav-name').value.trim();
+  if (!name) return toast('Name erforderlich','err');
+  const description = document.getElementById('dav-desc').value.trim();
+  const cps = (m._cps||[]).filter(cp => (cp.titel||'').trim());
+  try {
+    if (!_daVorlagenTableEnsured) await _ensureDaVorlagenTable();
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const fields = { name, description, checkpunkte_json: JSON.stringify(cps) };
+    const url = recId
+      ? 'https://api.airtable.com/v0/'+baseId+'/DA_Vorlagen/'+recId
+      : 'https://api.airtable.com/v0/'+baseId+'/DA_Vorlagen';
+    const method = recId ? 'PATCH' : 'POST';
+    const r = await fetch(url, {
+      method,
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    toast('✅ Vorlage "'+name+'" gespeichert','ok');
+    m.remove();
+    await loadDaVorlagen();
+    renderDaVorlagenView();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function deleteDaVorlage(recId) {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  if (!confirm('Vorlage wirklich löschen?')) return;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  try {
+    await fetch('https://api.airtable.com/v0/'+baseId+'/DA_Vorlagen/'+recId, {
+      method:'DELETE', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey }
+    });
+    toast('🗑 Vorlage gelöscht','ok');
+    document.getElementById('dav-edit')?.remove();
+    await loadDaVorlagen();
+    renderDaVorlagenView();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
    DATENAUFNAHMEN — Inspektion vor Angebot
    - Liste wie Aufträge, mit Status (offen/fertig)
    - Wizard: Anlage wählen + kurze Beschreibung warum nötig
@@ -15872,17 +16180,26 @@ function _renderDaList() {
   }).join('') + '</div>';
 }
 
-/* ── Wizard: Neue Datenaufnahme anlegen (Anlage wählen + Beschreibung) ── */
+/* ── Wizard: Neue Datenaufnahme anlegen (Vorlage + Anlage + Beschreibung) ── */
 async function openDaWizard() {
   if (!hasPermission('datenaufnahmen_create')) return toast('🔒 Keine Berechtigung','err');
   const firmaSlug = getCurrentFirmaSlug();
-  // Anlagen vorladen
-  try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+  // Anlagen + Vorlagen parallel laden
+  await Promise.all([
+    _loadAnlagenForFirma(firmaSlug).catch(()=>{}),
+    loadDaVorlagen().catch(()=>{}),
+  ]);
   const anlagen = _anlagenCache.items || [];
+  const vorlagen = (_daVorlagenCache.records||[]).slice().sort((a,b)=>(a.fields?.sort_order||99)-(b.fields?.sort_order||99));
   const old = document.getElementById('da-wizard'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'da-wizard';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const vorlageOptions = vorlagen.map(v => {
+    let cps = [];
+    try { cps = JSON.parse(v.fields?.checkpunkte_json||'[]'); } catch(_){}
+    return '<option value="'+v.id+'">'+(v.fields?.is_system?'⭐ ':'')+escapeHtml(v.fields?.name||'')+' ('+cps.length+' CP)</option>';
+  }).join('');
   m.innerHTML =
     '<div style="background:var(--surf);max-width:600px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
@@ -15893,14 +16210,28 @@ async function openDaWizard() {
         '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
           '💡 Datenaufnahme = Inspektion einer Anlage vor Angebotserstellung. Der Techniker fügt vor Ort Checkpunkte mit Fotos hinzu.'+
         '</div>'+
-        '<div class="auf-field" style="position:relative">'+
-          '<label class="auf-label">Anlage wählen</label>'+
+        // VORLAGE (optional)
+        '<div class="auf-field">'+
+          '<label class="auf-label">📋 Vorlage (optional)</label>'+
+          (vorlagen.length === 0
+            ? '<select class="auf-input" disabled><option>— keine Vorlagen vorhanden —</option></select><div style="font-size:11px;color:var(--txt3);margin-top:4px">Admin kann Vorlagen unter 📋 DA-Vorlagen anlegen.</div>'
+            : '<select id="da-vorlage" class="auf-input" onchange="_daWizardOnVorlageChange()" style="cursor:pointer">'+
+                '<option value="">— ohne Vorlage (leere Datenaufnahme) —</option>'+
+                vorlageOptions+
+              '</select>'+
+              '<div id="da-vorlage-info" style="font-size:11px;color:var(--txt3);margin-top:4px"></div>'
+          )+
+        '</div>'+
+        // ANLAGE
+        '<div class="auf-field" style="position:relative;margin-top:14px">'+
+          '<label class="auf-label">🛗 Anlage wählen</label>'+
           '<input type="text" class="auf-input" id="da-anl-search" placeholder="Suche nach Fabrik-Nr., Adresse, Kunde…" autocomplete="off" oninput="_daRenderAnlagenPicker()" onfocus="_daRenderAnlagenPicker()">'+
           '<div id="da-anl-dropdown" class="anlage-dropdown" style="display:none;max-height:220px;overflow-y:auto"></div>'+
         '</div>'+
         '<div id="da-anl-selected" style="font-size:12px;color:var(--ok);margin-top:6px"></div>'+
+        // BESCHREIBUNG
         '<div class="auf-field" style="margin-top:14px">'+
-          '<label class="auf-label">Beschreibung — warum ist die Datenaufnahme nötig?</label>'+
+          '<label class="auf-label">📝 Beschreibung — warum ist die Datenaufnahme nötig?</label>'+
           '<textarea class="auf-textarea" id="da-beschreibung" rows="3" placeholder="z.B. Modernisierung gewünscht. Bestandsaufnahme der Steuerung, Antrieb, Kabine, Türen."></textarea>'+
         '</div>'+
       '</div>'+
@@ -15911,7 +16242,26 @@ async function openDaWizard() {
     '</div>';
   document.body.appendChild(m);
   m._anlagen = anlagen;
+  m._vorlagen = vorlagen;
   m._selectedAnlage = null;
+  m._selectedVorlageId = '';
+}
+
+function _daWizardOnVorlageChange() {
+  const m = document.getElementById('da-wizard');
+  if (!m) return;
+  const sel = document.getElementById('da-vorlage');
+  m._selectedVorlageId = sel.value;
+  const info = document.getElementById('da-vorlage-info');
+  if (!sel.value) { info.textContent = ''; return; }
+  const v = (m._vorlagen||[]).find(x => x.id === sel.value);
+  if (!v) { info.textContent = ''; return; }
+  let cps = [];
+  try { cps = JSON.parse(v.fields?.checkpunkte_json||'[]'); } catch(_){}
+  info.innerHTML = '✓ <strong>'+cps.length+' Checkpunkte</strong> werden vorbefüllt: '+
+    cps.map(c => escapeHtml(c.titel||'(ohne Titel)')).join(' · ').substring(0,300) +
+    (cps.length > 8 ? '…' : '');
+  info.style.color = 'var(--ok)';
 }
 
 function _daRenderAnlagenPicker() {
@@ -15979,6 +16329,24 @@ async function _daCreateRecord() {
     const firmaSlug = getCurrentFirmaSlug();
     // Nächste freie DA-Nummer ermitteln (max + 1, firmen-übergreifend)
     const nextNum = await _daGetNextNumber(baseId);
+    // Checkpunkte aus Vorlage übernehmen, falls eine gewählt wurde
+    let checkpunkte = [];
+    const vorlageId = m._selectedVorlageId;
+    if (vorlageId) {
+      const v = (m._vorlagen||[]).find(x => x.id === vorlageId);
+      if (v) {
+        try {
+          const tcps = JSON.parse(v.fields?.checkpunkte_json||'[]');
+          // Cloned: Bilder leer, Texte erst mal leer (Templates haben keine Bilder)
+          checkpunkte = tcps.map(c => ({
+            titel: c.titel || '',
+            ist_zustand: c.ist_zustand || '',
+            massnahme: c.massnahme || '',
+            bild_ist: '', bild_massnahme: '',
+          }));
+        } catch(_){}
+      }
+    }
     const fields = {
       da_num:               nextNum,
       firma:                firmaSlug,
@@ -15988,8 +16356,8 @@ async function _daCreateRecord() {
       kunde_name:           a.kunde?.firmenname || '',
       kunde_nummer:         String(a.kunde?.kundennummer || ''),
       beschreibung:         beschreibung,
-      status:               'entwurf',
-      checkpunkte_json:     '[]',
+      status:               checkpunkte.length > 0 ? 'in_aufnahme' : 'entwurf',
+      checkpunkte_json:     JSON.stringify(checkpunkte),
       erstellt_am:          new Date().toISOString().slice(0,10),
       erstellt_von:         APP_KEYS.user?.name || '',
     };
