@@ -2496,7 +2496,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.13';
+const APP_VERSION = 'v4.14';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15700,6 +15700,40 @@ async function _gbuSubmit() {
    - PDF-Generator mit Aszendio-Branding
    ─────────────────────────────────────────────────────────────────────── */
 let _daCache = { firma:null, items:null, loadedAt:0, loading:false };
+let _daTableEnsured = false;
+
+const DA_TABLE_FIELDS = [
+  { name:'da_num',                 type:'autoNumber' },
+  { name:'firma',                  type:'singleLineText' },
+  { name:'anlage_id',              type:'singleLineText' },
+  { name:'anlage_fabriknummer',    type:'singleLineText' },
+  { name:'anlage_adresse',         type:'multilineText' },
+  { name:'kunde_name',             type:'singleLineText' },
+  { name:'kunde_nummer',           type:'singleLineText' },
+  { name:'beschreibung',           type:'multilineText' },
+  { name:'status',                 type:'singleLineText' },
+  { name:'checkpunkte_json',       type:'multilineText' },
+  { name:'pdf',                    type:'multipleAttachments' },
+  { name:'erstellt_am',            type:'singleLineText' },
+  { name:'erstellt_von',           type:'singleLineText' },
+  { name:'aufgenommen_am',         type:'singleLineText' },
+  { name:'aufgenommen_von',        type:'singleLineText' },
+];
+
+async function _ensureDaTable() {
+  if (_daTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) {
+    throw new Error('Kein Write-Token vorhanden. Bitte als Admin einloggen.');
+  }
+  try {
+    await ensureTable('Datenaufnahmen', DA_TABLE_FIELDS);
+    _daTableEnsured = true;
+    return true;
+  } catch(e) {
+    throw new Error('Tabelle "Datenaufnahmen" konnte nicht angelegt werden: '+e.message
+      +' — Hinweis: Airtable-Token braucht schema:bases:read + schema:bases:write Permission, und der Token muss diese Base als Scope haben.');
+  }
+}
 
 async function renderDatenaufnahmenView(opts) {
   opts = opts || {};
@@ -15713,6 +15747,14 @@ async function renderDatenaufnahmenView(opts) {
   if (opts.force) _daCache = { firma:null, items:null, loadedAt:0, loading:false };
   if (!_daCache.items || _daCache.firma !== firmaSlug) {
     list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Datenaufnahmen…</div>';
+    // Tabelle sicherstellen — silent bei Nicht-Admin
+    if (isAdmin() && APP_KEYS.airtableWriteKey && !_daTableEnsured) {
+      try { await _ensureDaTable(); } catch(e) {
+        list.innerHTML = '<div style="padding:30px;text-align:center"><div style="color:var(--err);font-size:14px;font-weight:600;margin-bottom:8px">⚠ Tabelle "Datenaufnahmen" fehlt</div>'+
+          '<div style="color:var(--txt2);font-size:12px;max-width:520px;margin:0 auto;line-height:1.5">'+escapeHtml(e.message)+'</div></div>';
+        return;
+      }
+    }
     try {
       await _loadDatenaufnahmen(firmaSlug);
     } catch(e) {
@@ -15900,8 +15942,18 @@ async function _daCreateRecord() {
   const beschreibung = document.getElementById('da-beschreibung').value.trim();
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   const btn = document.getElementById('da-wizard-create');
-  btn.disabled = true; btn.textContent = '⏳ lege an…';
+  btn.disabled = true; btn.textContent = '⏳ Tabelle prüfen…';
   try {
+    // Tabelle sicherstellen (legt sie an falls noch nicht da)
+    if (!_daTableEnsured) {
+      try { await _ensureDaTable(); }
+      catch(schemaErr) {
+        toast('❌ '+schemaErr.message,'err');
+        btn.disabled = false; btn.textContent = '🚀 Datenaufnahme anlegen';
+        return;
+      }
+    }
+    btn.textContent = '⏳ lege an…';
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const firmaSlug = getCurrentFirmaSlug();
     const fields = {
@@ -16131,6 +16183,9 @@ async function _daSave(recId) {
   const btn = document.getElementById('da-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere…'; }
   try {
+    if (!_daTableEnsured && isAdmin()) {
+      try { await _ensureDaTable(); } catch(_){}
+    }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const status = (data.length > 0) ? 'in_aufnahme' : 'entwurf';
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
