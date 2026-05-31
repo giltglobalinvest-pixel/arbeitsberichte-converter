@@ -2586,7 +2586,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.19';
+const APP_VERSION = 'v4.20';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16668,7 +16668,8 @@ async function openDaDetail(recId) {
         '<button class="btn" onclick="document.getElementById(\'da-detail\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_daDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Datenaufnahme löschen">🗑 Löschen</button>'+
         (hasPermission('datenaufnahmen_edit') ? '<button class="btn" id="da-save-btn" onclick="_daSave(\''+recId+'\')">💾 Speichern</button>' : '')+
-        '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')">📄 PDF erzeugen</button>'+
+        (canSeePrices() ? '<button class="btn" style="background:#FB923C;border-color:#FB923C;color:#fff;font-weight:600" onclick="_daBuildAndShowAngebotPdf(\''+recId+'\')" title="Angebot mit Pauschalpreisen erzeugen">💰 Angebot-PDF</button>' : '')+
+        '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')" title="Datenaufnahme-PDF ohne Preise">📄 PDF erzeugen</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
@@ -16685,12 +16686,17 @@ function _daRenderCheckpunkte() {
   const cps = m._cps || [];
   const editable = hasPermission('datenaufnahmen_edit');
   const html = cps.map((cp, i) => _daRenderCheckpunktItem(cp, i, editable)).join('');
+  const summaryBox = canSeePrices()
+    ? '<div id="da-angebot-summary" style="margin-top:18px;padding:14px 16px;background:#FFF7ED;border:2px solid #FB923C;border-radius:10px"></div>'
+    : '';
   c.innerHTML = (
     html +
     (editable
       ? '<button class="btn prim" onclick="_daAddCheckpunkt()" style="width:100%;margin-top:10px;padding:14px;font-size:14px">+ Checkpunkt hinzufügen</button>'
       : (cps.length === 0 ? '<div style="text-align:center;padding:30px;color:var(--txt3)">Noch keine Checkpunkte.</div>' : ''))
+    + summaryBox
   );
+  if (canSeePrices()) _daRenderAngebotSummary();
 }
 
 function _daRenderCheckpunktItem(cp, i, editable) {
@@ -16704,6 +16710,18 @@ function _daRenderCheckpunktItem(cp, i, editable) {
       (editable?'<button onclick="_daRemoveImage('+i+',\'massnahme\')" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:none;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:13px">×</button>':'')+'</div>'
     : (editable?'<button onclick="_daAddImage('+i+',\'massnahme\')" style="width:140px;height:90px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">📷<span>+ Foto Maßnahme</span></button>':'<div style="width:140px;height:90px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>');
   const dis = editable ? '' : 'disabled';
+  // Pauschalpreis nur sichtbar+editierbar für User mit canSeePrices Permission
+  const showPrice = canSeePrices();
+  const priceVal = (cp.pauschalpreis != null) ? cp.pauschalpreis : '';
+  const priceHtml = showPrice
+    ? '<div style="margin-top:10px;padding:8px 12px;background:#FFF7ED;border:1px solid #FDBA74;border-radius:6px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+        '<span style="font-size:11px;font-weight:700;color:#9A3412">💰 PAUSCHALPREIS (Netto, € — fürs Angebot)</span>'+
+        '<input type="number" id="da-cp-preis-'+i+'" value="'+(priceVal===''?'':String(priceVal))+'" step="10" min="0" placeholder="0" '+dis+
+          ' oninput="_daUpdateCpPrice('+i+',this.value)"'+
+          ' style="width:130px;padding:6px 10px;border:1px solid #FB923C;border-radius:5px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#fff">'+
+        '<span style="font-size:11px;color:#9A3412">€ netto</span>'+
+      '</div>'
+    : '';
   return (
     '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:12px">'+
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
@@ -16729,8 +16747,56 @@ function _daRenderCheckpunktItem(cp, i, editable) {
             ' oninput="_daUpdateCp('+i+',\'massnahme\',this.value)" style="width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.massnahme||'')+'</textarea>'+
         '</div>'+
       '</div>'+
+      priceHtml+
     '</div>'
   );
+}
+
+/* Preis-Update mit Live-Summary, ohne komplettes Re-Render */
+function _daUpdateCpPrice(i, val) {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps[i]) return;
+  m._cps[i].pauschalpreis = val === '' ? null : +val || 0;
+  m._dirty = true;
+  _daRenderAngebotSummary();
+}
+
+function _daRenderAngebotSummary() {
+  const m = document.getElementById('da-detail');
+  const box = document.getElementById('da-angebot-summary');
+  if (!m || !box) return;
+  if (!canSeePrices()) { box.innerHTML = ''; return; }
+  const cps = m._cps || [];
+  const positions = cps
+    .map((cp, i) => ({ idx: i, titel: cp.titel || ('Checkpunkt '+(i+1)), preis: +cp.pauschalpreis || 0 }))
+    .filter(p => p.preis > 0);
+  let sum = 0;
+  for (const p of positions) sum += p.preis;
+  if (positions.length === 0) {
+    box.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:12px">'+
+      '💡 Trage Pauschalpreise pro Checkpunkt ein — die Angebots-Summe erscheint hier.'+
+    '</div>';
+    return;
+  }
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
+  box.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
+      '<span style="font-size:14px;font-weight:700;color:#9A3412">💰 Angebots-Übersicht</span>'+
+      '<span style="font-size:11px;color:#9A3412">'+positions.length+' Position'+(positions.length===1?'':'en')+'</span>'+
+    '</div>'+
+    '<div style="background:#fff;border:1px solid #FDBA74;border-radius:6px;overflow:hidden">'+
+      positions.map(p =>
+        '<div style="padding:8px 12px;border-bottom:1px solid #FED7AA;display:flex;justify-content:space-between;gap:10px;font-size:12px">'+
+          '<span style="color:var(--txt2);flex:1">'+escapeHtml(p.titel)+'</span>'+
+          '<span style="font-weight:600;color:#9A3412;white-space:nowrap">'+fmt(p.preis)+' €</span>'+
+        '</div>'
+      ).join('')+
+      '<div style="padding:10px 12px;background:#FFEDD5;display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:#7C2D12">'+
+        '<span>Summe Netto</span>'+
+        '<span>'+fmt(sum)+' €</span>'+
+      '</div>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#9A3412;margin-top:6px;text-align:right">Alle Preise netto, zzgl. gesetzl. MwSt.</div>';
 }
 
 function _daUpdateCp(i, field, value) {
@@ -16879,6 +16945,35 @@ async function _daDeleteRecord(recId) {
 }
 
 /* ── PDF-Generator: Datenaufnahme als Aszendio-PDF ── */
+/* Wrapper: Angebot-PDF (mit Pauschalpreisen) */
+async function _daBuildAndShowAngebotPdf(recId) {
+  if (!canSeePrices()) return toast('🔒 Keine Berechtigung für Preise','err');
+  const m = document.getElementById('da-detail');
+  if (m && m._dirty) await _daSave(recId);
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Record nicht gefunden','err');
+  const f = rec.fields || {};
+  let cps = [];
+  try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  if (cps.length === 0) return toast('Keine Checkpunkte vorhanden','err');
+  const positionsCount = cps.filter(cp => (+cp.pauschalpreis||0) > 0).length;
+  if (positionsCount === 0) return toast('Keine Pauschalpreise eingetragen — trage mind. eine Position ein.','err');
+  toast('💰 Angebot wird erzeugt…','');
+  try {
+    const blob = await _buildDatenaufnahmePdf(f, cps, { withPrices: true });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Angebot-DA'+(f.da_num||'')+'-'+String(f.anlage_fabriknummer||'Anlage').replace(/[^\w-]/g,'_')+'-'+new Date().toISOString().slice(0,10)+'.pdf';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('📥 Angebot-PDF heruntergeladen','ok');
+  } catch(e) {
+    console.error('DA-Angebot-PDF:', e);
+    toast('❌ '+e.message.slice(0,200),'err');
+  }
+}
+
 async function _daBuildAndShowPdf(recId) {
   const m = document.getElementById('da-detail');
   // Erst speichern falls dirty
@@ -16908,7 +17003,9 @@ async function _daBuildAndShowPdf(recId) {
   }
 }
 
-async function _buildDatenaufnahmePdf(rec, cps) {
+async function _buildDatenaufnahmePdf(rec, cps, opts) {
+  opts = opts || {};
+  const withPrices = !!opts.withPrices;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const ml = 15, mr = 195, cw = mr - ml;
@@ -16923,9 +17020,11 @@ async function _buildDatenaufnahmePdf(rec, cps) {
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
   let y = 32;
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(22);
-  doc.text('Datenaufnahme', ml, y); y += 7;
+  doc.text(withPrices ? 'Angebot' : 'Datenaufnahme', ml, y); y += 7;
   doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
-  doc.text('Bestandsaufnahme Aufzugsanlage  ·  DA-'+(rec.da_num||'?'), ml, y); y += 12;
+  doc.text(withPrices
+    ? 'Massnahmen aus der Datenaufnahme  ·  DA-'+(rec.da_num||'?')+'  ·  Pauschalpreise netto'
+    : 'Bestandsaufnahme Aufzugsanlage  ·  DA-'+(rec.da_num||'?'), ml, y); y += 12;
 
   // === STAMMDATEN ===
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(13);
@@ -16961,6 +17060,78 @@ async function _buildDatenaufnahmePdf(rec, cps) {
     const dlines = doc.splitTextToSize(rec.beschreibung, cw-8);
     dlines.slice(0,3).forEach((l, i) => doc.text(l, ml+4, y+10+i*4));
     y += 22;
+  }
+
+  // === ANGEBOTS-POSITIONEN (nur in Preis-Variante, vor den Checkpunkten) ===
+  if (withPrices) {
+    const positions = cps
+      .map((cp, i) => ({
+        nr: i+1,
+        titel: cp.titel || ('Checkpunkt '+(i+1)),
+        massnahme: (cp.massnahme||'').trim(),
+        preis: +cp.pauschalpreis || 0,
+      }))
+      .filter(p => p.preis > 0);
+    let totalSum = 0;
+    for (const p of positions) totalSum += p.preis;
+    const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
+    doc.addPage(); y = 22;
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(16);
+    doc.text('Angebots-Positionen', ml, y); y += 2;
+    doc.setDrawColor(255,128,32); doc.setLineWidth(0.8); doc.line(ml, y, ml+55, y); y += 8;
+    if (positions.length === 0) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...GREY);
+      doc.text('Keine Positionen mit Pauschalpreis erfasst.', ml, y); y += 10;
+    } else {
+      // Tabellen-Kopf
+      const colNr = 12, colPos = 110, colPreis = cw - colNr - colPos;
+      doc.setFillColor(255,237,213); doc.rect(ml, y-5, cw, 8, 'F');
+      doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(124,45,18);
+      doc.text('Nr.', ml+2, y);
+      doc.text('Position', ml+colNr+2, y);
+      doc.text('Pauschalpreis netto', ml+colNr+colPos+colPreis-2, y, { align:'right' });
+      y += 4;
+      doc.setDrawColor(253,186,116); doc.line(ml, y-1, mr, y-1); y += 2;
+      doc.setFont('helvetica','normal'); doc.setFontSize(10);
+      positions.forEach((p, idx) => {
+        const labelLines = doc.splitTextToSize(p.titel, colPos - 4);
+        const massLines = p.massnahme ? doc.splitTextToSize(p.massnahme, colPos - 4) : [];
+        const lineH = 4.5;
+        const rowH = Math.max(7, (labelLines.length + Math.min(massLines.length, 2)) * lineH + 3);
+        if (y + rowH > 270) { doc.addPage(); y = 22; }
+        if (idx % 2 === 0) { doc.setFillColor(254,243,226); doc.rect(ml, y-3, cw, rowH, 'F'); }
+        doc.setTextColor(120,53,15); doc.setFont('helvetica','bold');
+        doc.text(String(p.nr), ml+2, y+2);
+        doc.setTextColor(55,65,81); doc.setFont('helvetica','bold');
+        labelLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+2+li*lineH));
+        if (massLines.length > 0) {
+          doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(107,114,128);
+          massLines.slice(0,2).forEach((l, li) =>
+            doc.text(l, ml+colNr+2, y+2+labelLines.length*lineH+li*4));
+          doc.setFontSize(10);
+        }
+        doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(124,45,18);
+        doc.text(fmtEUR(p.preis)+' EUR', ml+colNr+colPos+colPreis-2, y+2, { align:'right' });
+        doc.setFontSize(10);
+        y += rowH;
+        doc.setDrawColor(253,186,116); doc.line(ml, y-1, mr, y-1);
+      });
+      y += 2;
+      doc.setFillColor(255,128,32); doc.rect(ml, y-3, cw, 11, 'F');
+      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+      doc.text('Summe Netto', ml+2, y+4);
+      doc.setFontSize(14);
+      doc.text(fmtEUR(totalSum)+' EUR', mr-2, y+4, { align:'right' });
+      y += 13;
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+      doc.text('Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.', ml, y); y += 5;
+      doc.text('Angebot gueltig fuer 30 Tage ab Datum der Erstellung.', ml, y); y += 6;
+    }
+    // Detail-Hinweis
+    doc.addPage(); y = 22;
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+    doc.text('Detailaufstellung (Ist-Zustand / Massnahmen)', ml, y); y += 8;
+    doc.setDrawColor(...ACCENT); doc.line(ml, y-3, ml+85, y-3);
   }
 
   // === CHECKPUNKTE ===
