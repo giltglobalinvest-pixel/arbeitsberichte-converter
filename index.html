@@ -1360,6 +1360,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-gbu" onclick="switchView('gbu')" style="display:none">⚠️ Gefährdungsbeurteilung</button>
     <button class="tnav" id="tnav-liftaro" onclick="switchView('liftaro')" style="display:none">📋 Liftaro Checks</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
+    <button class="tnav" id="tnav-rollen" onclick="switchView('rollen')" style="display:none">🎭 Rollen</button>
     <button class="tnav" id="tnav-info" onclick="switchView('info')">📚 Infobereich</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
@@ -1895,6 +1896,15 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="gbu-list" style="padding:20px"></div>
+</div>
+
+<!-- ROLLEN-VERWALTUNG (nur Admin) -->
+<div class="firma-view" id="rollen-view">
+  <div class="firma-hdr">
+    <h2>🎭 Rollen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">Permission-Templates</span></h2>
+    <button class="btn" onclick="renderRollenView()">↻ Neu laden</button>
+  </div>
+  <div class="firma-body" id="rollen-list" style="padding:20px"></div>
 </div>
 
 <!-- INFOBEREICH (Anleitungen + Downloads für alle User) -->
@@ -2465,7 +2475,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.11';
+const APP_VERSION = 'v4.12';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3086,10 +3096,13 @@ async function showApp() {
   toast('📥 Lade Einstellungen…', '');
   try { await loadSettings(); } catch(e) { console.warn('loadSettings:', e); }
   try { await loadHistory(); } catch(e) { console.warn('loadHistory:', e); }
+  // Rollen früh laden, damit hasPermission() Vererbung funktioniert
+  try { await loadRollen(); } catch(e) { console.warn('loadRollen:', e); }
   toast('✅ Willkommen, '+(APP_KEYS.user?.name||'')+'!', 'ok');
   // Admin: Schema-Migrationen still im Hintergrund laufen lassen, aber KEINE Status-Bar
   if (isAdmin()) {
     document.getElementById('tnav-users').style.display = '';
+    document.getElementById('tnav-rollen').style.display = '';
     document.getElementById('tnav-firmen').style.display = '';
     document.getElementById('tnav-preislisten').style.display = '';
     document.getElementById('tnav-vorlagen').style.display = '';
@@ -3590,6 +3603,7 @@ function switchView(view) {
   if (view==='rechnungen' && !isAdmin()) return;
   if (view==='liftaro' && !isAdmin()) return;
   if (view==='gbu' && !isAdmin()) return;
+  if (view==='rollen' && !isAdmin()) return;
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -3614,9 +3628,10 @@ function switchView(view) {
   const lif  = document.getElementById('lif-view');
   const gbu  = document.getElementById('gbu-view');
   const info = document.getElementById('info-view');
+  const rollen = document.getElementById('rollen-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3638,6 +3653,7 @@ function switchView(view) {
   if (lif)  lif.classList.toggle('show',  view==='liftaro');
   if (gbu)  gbu.classList.toggle('show',  view==='gbu');
   if (info) info.classList.toggle('show', view==='info');
+  if (rollen) rollen.classList.toggle('show', view==='rollen');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3655,6 +3671,7 @@ function switchView(view) {
   if (view==='liftaro') renderLiftaroView();
   if (view==='gbu') renderGbuView();
   if (view==='info') renderInfoView();
+  if (view==='rollen') renderRollenView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -4618,13 +4635,18 @@ function isSubunternehmer() {
 }
 
 /* Wer darf interne Preise (Stundensatz, Einsatzpauschale, Angebots-Betrag) sehen?
-   Nur Admin + Verwalter (auftraege_view_all). Techniker + Subunternehmer NICHT. */
+   Eigene Permission "auftraege_see_prices". Backward-Compat: wer "auftraege_view_all"
+   hat (Verwalter aus alter Konfiguration), darf weiterhin sehen. */
 function canSeePrices() {
   if (!APP_KEYS.user) return false;
   if (isAdmin()) return true;
   let p = {};
   try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(_) {}
-  return p.auftraege_view_all === true;
+  // Explicit gesetzt? Dann gilt das (egal ob true oder false → User-Override)
+  if ('auftraege_see_prices' in p) return !!p.auftraege_see_prices;
+  // Backward-Compat: Verwalter (auftraege_view_all) hat Preis-Sicht
+  if (p.auftraege_view_all === true) return true;
+  return false;
 }
 
 /* Reiner Techniker (Außendienst) ODER Subunternehmer: Auftrags-zentrierte Sicht.
@@ -4681,6 +4703,11 @@ const FEATURES = {
     desc:  'Verwalter-Sicht: sieht alle Aufträge der Firma. Ohne diese Berechtigung nur eigene zugewiesene.',
     default: false,
   },
+  auftraege_see_prices: {
+    label: 'Aufträge: Preise sehen',
+    desc:  'Darf interne Preise (Auftragswert, Stundensatz, Einsatzpauschale, Konditionen, Subunternehmer-Vergütung) sehen. Techniker und Subunternehmer haben das NICHT.',
+    default: false,
+  },
   auftraege_create: {
     label: 'Aufträge anlegen',
     desc:  'Darf neue Aufträge erstellen und Techniker zuweisen.',
@@ -4710,10 +4737,265 @@ function hasPermission(key) {
     if (key === 'tool_anlagen')   return true;
     if (key === 'delete_reports') return false; // dürfen keine Berichte löschen
   }
-  let p = {};
-  try { p = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(e) {}
-  if (key in p) return !!p[key];
+  // 1) User-Override (permissions_json) hat höchste Priorität
+  let userPerms = {};
+  try { userPerms = JSON.parse(APP_KEYS.user.permissions_json || '{}'); } catch(e) {}
+  if (key in userPerms) return !!userPerms[key];
+  // 2) Rolle des Users (aus Rollen-Tabelle)
+  const rolleName = APP_KEYS.user.rolle;
+  if (rolleName && _rollenCache && _rollenCache.byName) {
+    const rolle = _rollenCache.byName[rolleName];
+    if (rolle) {
+      let rp = {};
+      try { rp = JSON.parse(rolle.fields.permissions_json || '{}'); } catch(_){}
+      if (key in rp) return !!rp[key];
+    }
+  }
+  // 3) Feature-Default
   return FEATURES[key] ? !!FEATURES[key].default : true;
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ROLLEN-VERWALTUNG (Permission-Templates)
+   ────────────────────────────────────────────────────────────── */
+let _rollenCache = { records: null, byName: null, loadedAt: 0 };
+
+/* Vordefinierte System-Rollen — werden beim ersten Aufruf der Rollen-View angelegt. */
+const ROLLEN_DEFAULTS = [
+  { name:'Admin', sort_order:1, is_system:true,
+    description:'Voller Zugriff auf alle Funktionen und Daten. (User-role "admin" hat das ohnehin automatisch.)',
+    permissions: {
+      tool_arbeitsberichte:true, tool_overview:true, tool_wartung_kalk:true,
+      tool_auftraege:true, tool_anlagen:true,
+      auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
+      auftraege_see_prices:true, delete_reports:true,
+    },
+  },
+  { name:'Verwalter', sort_order:2, is_system:true,
+    description:'Innendienst / Disponent — sieht alle Aufträge inkl. Preise, kann Aufträge anlegen und editieren.',
+    permissions: {
+      tool_arbeitsberichte:true, tool_overview:true, tool_wartung_kalk:true,
+      tool_auftraege:true, tool_anlagen:true,
+      auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
+      auftraege_see_prices:true, delete_reports:true,
+    },
+  },
+  { name:'Techniker', sort_order:3, is_system:true,
+    description:'Aussendienst — sieht nur zugewiesene Aufträge, KEINE Preise.',
+    permissions: {
+      tool_arbeitsberichte:true, tool_overview:true, tool_wartung_kalk:false,
+      tool_auftraege:true, tool_anlagen:true,
+      auftraege_view_all:false, auftraege_create:false, auftraege_edit:false,
+      auftraege_see_prices:false, delete_reports:false,
+    },
+  },
+  { name:'Subunternehmer', sort_order:4, is_system:true,
+    description:'Externer Auftragnehmer — wie Techniker, aber sieht pro Auftrag die hinterlegte Vergütung statt internen Preisen.',
+    permissions: {
+      tool_arbeitsberichte:false, tool_overview:false, tool_wartung_kalk:false,
+      tool_auftraege:true, tool_anlagen:true,
+      auftraege_view_all:false, auftraege_create:false, auftraege_edit:false,
+      auftraege_see_prices:false, delete_reports:false,
+    },
+  },
+];
+
+async function loadRollen() {
+  if (!isAdmin() && APP_KEYS.user?.rolle == null) {
+    // Wenn nicht Admin und kein rolle-Feld → trotzdem versuchen für hasPermission()
+  }
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  if (!APP_KEYS.airtableReadKey && !APP_KEYS.airtableWriteKey) return;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Rollen?pageSize=100', {
+      headers:{ 'Authorization':'Bearer '+key }
+    });
+    if (!r.ok) {
+      // Tabelle existiert evtl. noch nicht — leeren Cache setzen, hasPermission fällt auf Defaults zurück
+      _rollenCache = { records: [], byName: {}, loadedAt: Date.now() };
+      return;
+    }
+    const d = await r.json();
+    const records = d.records || [];
+    const byName = {};
+    for (const rec of records) {
+      const n = (rec.fields?.name || '').trim();
+      if (n) byName[n] = rec;
+    }
+    _rollenCache = { records, byName, loadedAt: Date.now() };
+    console.log('[Rollen] '+records.length+' Rollen geladen');
+  } catch(e) {
+    console.warn('[Rollen] Load fehlgeschlagen:', e);
+    _rollenCache = { records: [], byName: {}, loadedAt: Date.now() };
+  }
+}
+
+async function bootstrapRollenDefaults() {
+  if (!isAdmin() || !APP_KEYS.airtableWriteKey) return;
+  await loadRollen();
+  const existing = new Set((_rollenCache.records||[]).map(r => r.fields?.name).filter(Boolean));
+  const toCreate = ROLLEN_DEFAULTS.filter(r => !existing.has(r.name));
+  if (toCreate.length === 0) return;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  for (const r of toCreate) {
+    try {
+      await fetch('https://api.airtable.com/v0/'+baseId+'/Rollen', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: {
+          name: r.name,
+          description: r.description,
+          permissions_json: JSON.stringify(r.permissions),
+          is_system: !!r.is_system,
+          sort_order: r.sort_order || 99,
+        }})
+      });
+      console.log('[Rollen] System-Rolle angelegt:', r.name);
+    } catch(e) {
+      console.warn('[Rollen] Konnte System-Rolle nicht anlegen:', r.name, e);
+    }
+  }
+  await loadRollen();
+}
+
+async function renderRollenView() {
+  if (!isAdmin()) return;
+  const list = document.getElementById('rollen-list');
+  if (!list) return;
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Rollen…</div>';
+  try {
+    // Schema sicherstellen, dann bootstrap
+    try { await setupTables(); } catch(_) {}
+    await bootstrapRollenDefaults();
+    const records = (_rollenCache.records || []).slice().sort((a,b) =>
+      (a.fields?.sort_order||99) - (b.fields?.sort_order||99));
+    if (records.length === 0) {
+      list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Keine Rollen vorhanden.</div>';
+      return;
+    }
+    list.innerHTML = '<div style="display:grid;gap:12px">'+records.map(rec => {
+      const f = rec.fields || {};
+      let perms = {};
+      try { perms = JSON.parse(f.permissions_json || '{}'); } catch(_){}
+      const aktiv = Object.entries(perms).filter(([k,v]) => v === true);
+      return (
+        '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:16px 20px">'+
+          '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:6px">'+
+            '<div style="font-size:16px;font-weight:700;color:var(--navy)">'+
+              (f.is_system?'⭐ ':'')+escapeHtml(f.name||'(ohne Name)')+
+              (f.is_system?'<span style="font-size:10px;background:#FEF3C7;color:#92400E;padding:2px 7px;border-radius:99px;margin-left:8px">System</span>':'')+
+            '</div>'+
+            '<button class="btn" onclick="openRolleEdit(\''+rec.id+'\')">✏ Permissions bearbeiten</button>'+
+          '</div>'+
+          (f.description?'<div style="font-size:12px;color:var(--txt2);margin-bottom:8px">'+escapeHtml(f.description)+'</div>':'')+
+          '<div style="font-size:11px;color:var(--txt3)">'+aktiv.length+' aktive Permissions: <code style="background:var(--bg);padding:1px 4px;border-radius:3px">'+aktiv.map(([k])=>k).join(', ')+'</code></div>'+
+        '</div>'
+      );
+    }).join('')+'</div>'+
+    '<div style="margin-top:14px;text-align:center"><button class="btn prim" onclick="openRolleEdit(null)">+ Neue Rolle</button></div>';
+  } catch(e) {
+    list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function openRolleEdit(recId) {
+  if (!isAdmin()) return;
+  const rec = recId ? (_rollenCache.records||[]).find(r => r.id === recId) : null;
+  const f = rec ? (rec.fields||{}) : {};
+  let perms = {};
+  try { perms = JSON.parse(f.permissions_json || '{}'); } catch(_){}
+  const old = document.getElementById('rolle-edit-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'rolle-edit-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10600;display:flex;align-items:center;justify-content:center;padding:16px';
+  const featRows = Object.entries(FEATURES).map(([k,fe]) => {
+    const checked = (k in perms) ? !!perms[k] : !!fe.default;
+    return '<label style="display:flex;align-items:flex-start;gap:10px;padding:8px 10px;border-bottom:1px solid var(--bdr);cursor:pointer">'+
+      '<input type="checkbox" data-perm="'+k+'" '+(checked?'checked':'')+' style="margin-top:3px;width:16px;height:16px">'+
+      '<div style="flex:1">'+
+        '<div style="font-size:13px;font-weight:600;color:var(--txt)">'+escapeHtml(fe.label||k)+'</div>'+
+        '<div style="font-size:11px;color:var(--txt2);line-height:1.4">'+escapeHtml(fe.desc||'')+'</div>'+
+      '</div>'+
+    '</label>';
+  }).join('');
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:640px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🎭 '+(rec?'Rolle bearbeiten':'Neue Rolle')+'</span>'+
+        '<button onclick="document.getElementById(\'rolle-edit-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="display:grid;gap:10px;margin-bottom:14px">'+
+          '<div><label style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase">Name</label>'+
+            '<input id="rolle-name" type="text" value="'+escapeHtml(f.name||'')+'" '+(f.is_system?'readonly':'')+' style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:3px"></div>'+
+          '<div><label style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase">Beschreibung</label>'+
+            '<textarea id="rolle-desc" rows="2" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:3px">'+escapeHtml(f.description||'')+'</textarea></div>'+
+        '</div>'+
+        '<div style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;margin-bottom:6px">Permissions</div>'+
+        '<div style="border:1px solid var(--bdr);border-radius:6px;background:var(--surf)">'+featRows+'</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        (rec && !f.is_system ? '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteRolle(\''+rec.id+'\')">🗑 Löschen</button>' : '')+
+        '<button class="btn" onclick="document.getElementById(\'rolle-edit-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" onclick="saveRolle('+(rec?'\''+rec.id+'\'':'null')+')">💾 Speichern</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+
+async function saveRolle(recId) {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const modal = document.getElementById('rolle-edit-modal');
+  if (!modal) return;
+  const name = document.getElementById('rolle-name').value.trim();
+  if (!name) return toast('Name erforderlich','err');
+  const description = document.getElementById('rolle-desc').value.trim();
+  const perms = {};
+  modal.querySelectorAll('input[data-perm]').forEach(cb => {
+    perms[cb.dataset.perm] = !!cb.checked;
+  });
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const fields = { name, description, permissions_json: JSON.stringify(perms) };
+  try {
+    const url = recId
+      ? 'https://api.airtable.com/v0/'+baseId+'/Rollen/'+recId
+      : 'https://api.airtable.com/v0/'+baseId+'/Rollen';
+    const method = recId ? 'PATCH' : 'POST';
+    const r = await fetch(url, {
+      method,
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    toast('✅ Rolle "'+name+'" gespeichert','ok');
+    modal.remove();
+    await loadRollen();
+    renderRollenView();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+  }
+}
+
+async function deleteRolle(recId) {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  if (!confirm('Rolle wirklich löschen? User mit dieser Rolle behalten die Rolle als Text, aber die Permissions fallen auf Defaults zurück.')) return;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Rollen/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey }
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    toast('🗑 Rolle gelöscht','ok');
+    document.getElementById('rolle-edit-modal')?.remove();
+    await loadRollen();
+    renderRollenView();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+  }
 }
 
 function genApiKey() {
@@ -4792,9 +5074,10 @@ async function renderUsers() {
         </table>
       </div>
       <div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">
-        ℹ️ <strong>Techniker</strong>: Eigener Mitarbeiter im Außendienst. Sieht Aufträge + eigene Berichte, KEINE Preise.<br>
+        ℹ️ <strong>Rolle</strong>: Permission-Template aus <a href="#" onclick="event.preventDefault();switchView('rollen')" style="color:var(--navy);font-weight:600">🎭 Rollen-Verwaltung</a>. Setzt die Defaults für alle Checkboxen unten — diese können pro User noch explizit überschrieben werden (Override hat Vorrang).<br>
+        ℹ️ <strong>Techniker</strong>: Eigener Mitarbeiter im Außendienst. Sieht Aufträge + eigene Berichte, KEINE Preise (es sei denn "Aufträge: Preise sehen" wird explizit aktiviert).<br>
         ℹ️ <strong>Subunternehmer</strong>: Externer Auftragnehmer. Wie Techniker, aber sieht pro Auftrag die individuell hinterlegte Vergütung (separates Textfeld am Auftrag).<br>
-        ℹ️ Admins + Verwalter (Berechtigung "Aufträge: Alle anzeigen") sehen alle internen Preise.<br>
+        ℹ️ <strong>"Aufträge: Preise sehen"</strong>: Steuert ob interne Preise (Auftragswert, Stundensatz, Konditionen, Subunternehmer-Vergütung) sichtbar sind — unabhängig von "Alle anzeigen".<br>
         ℹ️ Admins haben automatisch Zugriff auf alle Features (Checkboxen ausgegraut).<br>
         ℹ️ 💬 <strong>WhatsApp-Einladung</strong>: Fertige Setup-Nachricht mit Loader-URL + Login-Code wird vorbereitet. Editierbar. Mit Telefonnummer wird der Empfänger direkt vorgewählt.
       </div>
@@ -4823,10 +5106,19 @@ function userRowHtml(u, featCols) {
       <td data-label="Telefon" class="usr-col-phone"><input class="usr-inp" data-field="phone" value="${esc(f.phone)}" placeholder="+49170…" inputmode="tel"></td>
       <td data-label="Login-Code"><code>${esc(f.api_key)}</code></td>
       <td data-label="Rolle">
-        <select class="usr-inp" data-field="role" style="max-width:90px">
-          <option value="user" ${f.role!=='admin'?'selected':''}>user</option>
-          <option value="admin" ${f.role==='admin'?'selected':''}>admin</option>
-        </select>
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <select class="usr-inp" data-field="role" style="max-width:90px" title="DB-Role: admin = uneingeschränkter Zugriff">
+            <option value="user" ${f.role!=='admin'?'selected':''}>user</option>
+            <option value="admin" ${f.role==='admin'?'selected':''}>admin</option>
+          </select>
+          <select class="usr-inp" data-field="rolle" style="max-width:130px;font-size:11px" title="Permission-Template aus Rollen-Verwaltung">
+            <option value="">— keine Rolle —</option>
+            ${((_rollenCache?.records||[]).sort((a,b)=>(a.fields?.sort_order||99)-(b.fields?.sort_order||99))).map(r => {
+              const n = r.fields?.name || '';
+              return '<option value="'+esc(n)+'"'+(f.rolle===n?' selected':'')+'>'+(r.fields?.is_system?'⭐ ':'')+esc(n)+'</option>';
+            }).join('')}
+          </select>
+        </div>
       </td>
       <td data-label="Status">
         <select class="usr-inp" data-field="status" style="max-width:90px">
@@ -4852,6 +5144,7 @@ async function saveUserRow(recId) {
   const name      = row.querySelector('input[data-field="name"]').value.trim();
   const phone     = (row.querySelector('input[data-field="phone"]')?.value || '').trim();
   const role      = row.querySelector('select[data-field="role"]').value;
+  const rolle     = (row.querySelector('select[data-field="rolle"]')?.value || '').trim();
   const status    = row.querySelector('select[data-field="status"]').value;
   const techniker      = !!row.querySelector('input[data-field="techniker"]')?.checked;
   const subunternehmer = !!row.querySelector('input[data-field="subunternehmer"]')?.checked;
@@ -4864,11 +5157,12 @@ async function saveUserRow(recId) {
     // Schema sicherstellen
     try { await ensureField('User', 'subunternehmer', 'checkbox'); } catch(_){}
     try { await ensureField('User', 'phone', 'singleLineText'); } catch(_){}
+    try { await ensureField('User', 'rolle', 'singleLineText'); } catch(_){}
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/User/'+recId, {
       method:'PATCH',
       headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-      body: JSON.stringify({ fields: { name, phone, role, status, techniker, subunternehmer, permissions_json: JSON.stringify(perms) } }),
+      body: JSON.stringify({ fields: { name, phone, role, rolle, status, techniker, subunternehmer, permissions_json: JSON.stringify(perms) } }),
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message || 'Fehler');
@@ -5080,9 +5374,18 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Auftraege',    'bilder',               'multipleAttachments');
   await ensureField('Auftraege',    'subunternehmer_preis', 'multilineText');
   await ensureField('Auftraege',    'ext_last_modified',    'singleLineText');
-  // User: Techniker-Flag + Subunternehmer-Flag
+  // User: Techniker-Flag + Subunternehmer-Flag + Rolle (Name aus Rollen-Tabelle)
   await ensureField('User',         'techniker',     'checkbox');
   await ensureField('User',         'subunternehmer','checkbox');
+  await ensureField('User',         'rolle',         'singleLineText');
+  // Rollen-Tabelle für Permission-Templates
+  await ensureTable('Rollen', [
+    { name:'name',             type:'singleLineText' },
+    { name:'description',      type:'multilineText'  },
+    { name:'permissions_json', type:'multilineText'  },
+    { name:'is_system',        type:'checkbox', options:{ icon:'star', color:'yellowBright' } },
+    { name:'sort_order',       type:'number',   options:{ precision:0 } },
+  ]);
   // Mailchimp je Firma (API-Key + Audience-ID); ERP-Tenant ist schon da
   await ensureField('Firmen',       'mailchimp_api_key',     'singleLineText');
   await ensureField('Firmen',       'mailchimp_audience_id', 'singleLineText');
