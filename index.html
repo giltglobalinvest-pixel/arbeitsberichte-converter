@@ -2586,7 +2586,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.20';
+const APP_VERSION = 'v4.21';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -17045,7 +17045,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal');
     doc.text(lbl, ml+2, y);
     doc.setTextColor(...GREY); doc.setFont('helvetica','bold');
-    const vl = doc.splitTextToSize(String(val), cw - 60);
+    const vl = doc.splitTextToSize(_sanPdf(val), cw - 60);
     doc.text(vl[0]||'', ml+58, y);
     y += 5.5;
     doc.setDrawColor(...GREY_X); doc.line(ml, y-1, mr, y-1);
@@ -17057,7 +17057,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9);
     doc.text('Auftrag der Aufnahme', ml+4, y+5);
     doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
-    const dlines = doc.splitTextToSize(rec.beschreibung, cw-8);
+    const dlines = doc.splitTextToSize(_sanPdf(rec.beschreibung), cw-8);
     dlines.slice(0,3).forEach((l, i) => doc.text(l, ml+4, y+10+i*4));
     y += 22;
   }
@@ -17094,8 +17094,8 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       doc.setDrawColor(253,186,116); doc.line(ml, y-1, mr, y-1); y += 2;
       doc.setFont('helvetica','normal'); doc.setFontSize(10);
       positions.forEach((p, idx) => {
-        const labelLines = doc.splitTextToSize(p.titel, colPos - 4);
-        const massLines = p.massnahme ? doc.splitTextToSize(p.massnahme, colPos - 4) : [];
+        const labelLines = doc.splitTextToSize(_sanPdf(p.titel), colPos - 4);
+        const massLines = p.massnahme ? doc.splitTextToSize(_sanPdf(p.massnahme), colPos - 4) : [];
         const lineH = 4.5;
         const rowH = Math.max(7, (labelLines.length + Math.min(massLines.length, 2)) * lineH + 3);
         if (y + rowH > 270) { doc.addPage(); y = 22; }
@@ -17143,7 +17143,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(11);
     doc.text(String(i+1), ml+5, y+2.5, { align:'center' });
     doc.setTextColor(...NAVY); doc.setFontSize(13);
-    doc.text('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:''), ml+13, y+2);
+    doc.text(_sanPdf('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:'')), ml+13, y+2);
     y += 8;
     doc.setDrawColor(...ACCENT); doc.line(ml, y, mr, y); y += 4;
 
@@ -17158,7 +17158,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       try { doc.addImage(cp.bild_ist, 'JPEG', ml, yIst, colW, 45); yIst += 48; } catch(_) { yIst += 4; }
     }
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
-    const istLines = doc.splitTextToSize(cp.ist_zustand || '—', colW-2);
+    const istLines = doc.splitTextToSize(_sanPdf(cp.ist_zustand || '-'), colW-2);
     istLines.forEach(l => { doc.text(l, ml, yIst); yIst += 4; });
 
     // MASSNAHME
@@ -17171,7 +17171,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       try { doc.addImage(cp.bild_massnahme, 'JPEG', xMaß, yMaß, colW, 45); yMaß += 48; } catch(_) { yMaß += 4; }
     }
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
-    const mLines = doc.splitTextToSize(cp.massnahme || '—', colW-2);
+    const mLines = doc.splitTextToSize(_sanPdf(cp.massnahme || '-'), colW-2);
     mLines.forEach(l => { doc.text(l, xMaß, yMaß); yMaß += 4; });
 
     y = Math.max(yIst, yMaß) + 6;
@@ -17484,6 +17484,42 @@ function _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, num, titel, bu
   return y;
 }
 
+/* ───────────────────────────────────────────────────────────────
+   PDF-Text-Sanitize: jsPDF Helvetica kann nur Win-1252.
+   Math-Symbole, em/en-Dashes etc. werden zu ASCII konvertiert,
+   sonst gibt's "d statt ≤, weite Letter-Spaces o.Ä.
+   ─────────────────────────────────────────────────────────── */
+function _sanPdf(s) {
+  if (s == null) return '';
+  return String(s)
+    // Math + Vergleich
+    .replace(/≤/g, '<=').replace(/≥/g, '>=')
+    .replace(/≠/g, '!=').replace(/≈/g, '~')
+    .replace(/±/g, '+/-').replace(/×/g, 'x').replace(/÷/g, '/')
+    .replace(/√/g, 'sqrt').replace(/∞/g, 'inf').replace(/∅/g, '0')
+    // Pfeile
+    .replace(/→/g, '->').replace(/←/g, '<-')
+    .replace(/↑/g, '^').replace(/↓/g, 'v')
+    .replace(/↔/g, '<->').replace(/⇒/g, '=>').replace(/⇐/g, '<=')
+    // Dashes + Punkte
+    .replace(/–/g, '-').replace(/—/g, '-')   // en/em dash
+    .replace(/…/g, '...').replace(/·/g, '-')
+    .replace(/•/g, '*')
+    // Quotes
+    .replace(/„|"|"|«|»/g, '"')
+    .replace(/'|'|‚|‹|›/g, "'")
+    // Sonstige Sonderzeichen
+    .replace(/✓|✔/g, '[OK]').replace(/✗|✘/g, '[X]')
+    .replace(/⚠|⚠️/g, '[!]').replace(/⭐|★/g, '*')
+    .replace(/©/g, '(c)').replace(/®/g, '(R)').replace(/™/g, '(TM)')
+    // Unicode-Spaces aller Art → normales Space
+    .replace(/[  -‏ -  　]/g, ' ')
+    // Zero-Width-Space etc. → weg
+    .replace(/[​-‍﻿]/g, '')
+    // Zeichen ausserhalb Latin-1 (außer dt. Umlaute) → ?
+    .replace(/[^\x00-\xFF]/g, '?');
+}
+
 /* Wrapper: erzeugt das Angebot-PDF (GBU-PDF + Preise + Summary-Tabelle) */
 async function _buildGbuAngebotPdf(d) {
   return _buildGbuPdf(d, { withPrices: true });
@@ -17558,9 +17594,9 @@ async function _buildGbuPdf(d, opts) {
     // Hintergrund abwechselnd
     doc.setFillColor(250, 250, 252); doc.rect(ml, y-4, cw, 6, 'F');
     doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal');
-    doc.text(lbl, ml+2, y);
+    doc.text(_sanPdf(lbl), ml+2, y);
     doc.setTextColor(...GREY); doc.setFont('helvetica','bold');
-    const valLines = doc.splitTextToSize(String(val), cw - 60);
+    const valLines = doc.splitTextToSize(_sanPdf(val), cw - 60);
     doc.text(valLines[0]||'', ml+58, y);
     if (valLines.length > 1) {
       y += 4.5;
@@ -17660,8 +17696,8 @@ async function _buildGbuPdf(d, opts) {
       doc.setFont('helvetica','normal'); doc.setFontSize(10);
       positions.forEach((p, i) => {
         // Höhe der Zeile = label + ggf. massnahme-Text (gekürzt)
-        const labelLines = doc.splitTextToSize(p.label, colPos - 4);
-        const massLines = p.massnahme ? doc.splitTextToSize(p.massnahme, colPos - 4) : [];
+        const labelLines = doc.splitTextToSize(_sanPdf(p.label), colPos - 4);
+        const massLines = p.massnahme ? doc.splitTextToSize(_sanPdf(p.massnahme), colPos - 4) : [];
         const lineH = 4.5;
         const rowH = Math.max(7, (labelLines.length + Math.min(massLines.length, 2)) * lineH + 3);
         if (y + rowH > 270) { doc.addPage(); y = 22; }
@@ -17726,7 +17762,7 @@ async function _buildGbuPdf(d, opts) {
     doc.setFillColor(pflicht ? 254 : 248, pflicht ? 243 : 250, pflicht ? 199 : 252);
     doc.rect(ml, y, cw, 8, 'F');
     doc.setTextColor(...(pflicht ? RED : NAVY)); doc.setFont('helvetica','bold'); doc.setFontSize(11);
-    doc.text(cat.label, ml+2, y+5.5);
+    doc.text(_sanPdf(cat.label), ml+2, y+5.5);
     if (pflicht) {
       doc.setFillColor(...RED); doc.roundedRect(mr-30, y+1.5, 28, 5, 1, 1, 'F');
       doc.setTextColor(255,255,255); doc.setFontSize(7); doc.text('PFLICHT', mr-16, y+5, { align:'center' });
@@ -17739,10 +17775,10 @@ async function _buildGbuPdf(d, opts) {
       const data = (d.items||{})[it.id] || {};
       const imgIndices = itemImagesMap[it.id] || [];
       const hasImages = imgIndices.length > 0;
-      // Zeilen-Höhe dynamisch berechnen
-      const labelLines = doc.splitTextToSize(it.label, colWLabel - 4);
-      const bestLines  = doc.splitTextToSize(data.massnahme_bestehend || '—', colWBest - 4);
-      const zusLines   = doc.splitTextToSize(data.massnahme_zusatz || '—', colWZus - 4);
+      // Zeilen-Höhe dynamisch berechnen (Texte vorher PDF-sanitizen)
+      const labelLines = doc.splitTextToSize(_sanPdf(it.label), colWLabel - 4);
+      const bestLines  = doc.splitTextToSize(_sanPdf(data.massnahme_bestehend || '-'), colWBest - 4);
+      const zusLines   = doc.splitTextToSize(_sanPdf(data.massnahme_zusatz || '-'), colWZus - 4);
       const lh = 3.5;
       const textH = Math.max(labelLines.length, bestLines.length, zusLines.length) * lh + 2.5;
       const imgRowH = hasImages ? 17 : 0;  // 14mm Bild + 3mm padding
