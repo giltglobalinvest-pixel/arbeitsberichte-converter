@@ -1358,6 +1358,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-vertraege" onclick="switchView('vertraege')" style="display:none">📑 Wartungsverträge</button>
     <button class="tnav" id="tnav-rechnungen" onclick="switchView('rechnungen')" style="display:none">💶 Rechnungen</button>
     <button class="tnav" id="tnav-gbu" onclick="switchView('gbu')" style="display:none">⚠️ Gefährdungsbeurteilung</button>
+    <button class="tnav" id="tnav-da" onclick="switchView('da')" style="display:none">🔍 Datenaufnahmen</button>
     <button class="tnav" id="tnav-liftaro" onclick="switchView('liftaro')" style="display:none">📋 Liftaro Checks</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
     <button class="tnav" id="tnav-rollen" onclick="switchView('rollen')" style="display:none">🎭 Rollen</button>
@@ -1896,6 +1897,26 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="gbu-list" style="padding:20px"></div>
+</div>
+
+<!-- DATENAUFNAHMEN (Inspektion vor Angebot — Techniker + Verwalter) -->
+<div class="firma-view" id="da-view">
+  <div class="firma-hdr">
+    <h2>🔍 Datenaufnahmen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="da-count">0</span></h2>
+    <button class="btn" onclick="renderDatenaufnahmenView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" id="da-new-btn" onclick="openDaWizard()" style="display:none">+ Neue Datenaufnahme</button>
+  </div>
+  <div class="anl-search-bar">
+    <div class="anl-search-wrap">
+      <span class="anl-search-ico">🔍</span>
+      <input type="text" class="anl-search-inp" id="da-search" placeholder="Suchen nach Anlage, Fabrik-Nr., Kunde, Adresse…" oninput="_renderDaList()">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="da-flt-offen" checked onchange="_renderDaList()"> ✏ Offen</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="da-flt-fertig" checked onchange="_renderDaList()"> ✅ Fertig</label>
+    </div>
+  </div>
+  <div class="firma-body" id="da-list" style="padding:20px"></div>
 </div>
 
 <!-- ROLLEN-VERWALTUNG (nur Admin) -->
@@ -2475,7 +2496,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.12';
+const APP_VERSION = 'v4.13';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3142,6 +3163,7 @@ async function showApp() {
   document.getElementById('tnav-wartung').style.display   = (!techMode && hasPermission('tool_wartung_kalk')) ? '' : 'none';
   document.getElementById('tnav-auftraege').style.display = hasPermission('tool_auftraege') ? '' : 'none';
   document.getElementById('tnav-anlagen').style.display   = hasPermission('tool_anlagen') ? '' : 'none';
+  document.getElementById('tnav-da').style.display        = hasPermission('tool_datenaufnahmen') ? '' : 'none';
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
   trackEvent('app', 'login');
@@ -3588,8 +3610,8 @@ function goTo(n) {
 }
 
 function switchView(view) {
-  // Techniker-Only Gate: nur dashboard, auftraege, overview, anlagen + info erlaubt
-  if (isTechnikerOnly() && !['dashboard','auftraege','overview','anlagen','info'].includes(view)) {
+  // Techniker-Only Gate: nur dashboard, auftraege, overview, anlagen + info + da erlaubt
+  if (isTechnikerOnly() && !['dashboard','auftraege','overview','anlagen','info','da'].includes(view)) {
     return toast('🔒 Diese Ansicht ist im Techniker-Modus nicht verfügbar.', 'err');
   }
   // Permission-Gates
@@ -3610,6 +3632,7 @@ function switchView(view) {
   if (view==='wartung' && !hasPermission('tool_wartung_kalk')) return toast('🔒 Keine Berechtigung','err');
   if (view==='auftraege' && !hasPermission('tool_auftraege')) return toast('🔒 Keine Berechtigung','err');
   if (view==='anlagen' && !hasPermission('tool_anlagen')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='da' && !hasPermission('tool_datenaufnahmen')) return toast('🔒 Keine Berechtigung','err');
 
   const dash = document.getElementById('dash-view');
   const ov   = document.getElementById('ov-view');
@@ -3629,9 +3652,10 @@ function switchView(view) {
   const gbu  = document.getElementById('gbu-view');
   const info = document.getElementById('info-view');
   const rollen = document.getElementById('rollen-view');
+  const da = document.getElementById('da-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3654,6 +3678,7 @@ function switchView(view) {
   if (gbu)  gbu.classList.toggle('show',  view==='gbu');
   if (info) info.classList.toggle('show', view==='info');
   if (rollen) rollen.classList.toggle('show', view==='rollen');
+  if (da) da.classList.toggle('show', view==='da');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3672,6 +3697,7 @@ function switchView(view) {
   if (view==='gbu') renderGbuView();
   if (view==='info') renderInfoView();
   if (view==='rollen') renderRollenView();
+  if (view==='da') renderDatenaufnahmenView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -4708,6 +4734,21 @@ const FEATURES = {
     desc:  'Darf interne Preise (Auftragswert, Stundensatz, Einsatzpauschale, Konditionen, Subunternehmer-Vergütung) sehen. Techniker und Subunternehmer haben das NICHT.',
     default: false,
   },
+  tool_datenaufnahmen: {
+    label: 'Tool: Datenaufnahmen',
+    desc:  'Zugriff auf Datenaufnahmen (Inspektion vor Angebot). Techniker führen sie durch, Verwalter legen sie an.',
+    default: true,
+  },
+  datenaufnahmen_create: {
+    label: 'Datenaufnahmen anlegen',
+    desc:  'Darf neue Datenaufnahmen für Anlagen erstellen (typisch: Verwalter / Innendienst).',
+    default: false,
+  },
+  datenaufnahmen_edit: {
+    label: 'Datenaufnahmen bearbeiten',
+    desc:  'Darf Checkpunkte hinzufügen, Bilder hochladen, PDFs erzeugen (typisch: Techniker vor Ort).',
+    default: false,
+  },
   auftraege_create: {
     label: 'Aufträge anlegen',
     desc:  'Darf neue Aufträge erstellen und Techniker zuweisen.',
@@ -4769,6 +4810,7 @@ const ROLLEN_DEFAULTS = [
       tool_auftraege:true, tool_anlagen:true,
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
+      tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
     },
   },
   { name:'Verwalter', sort_order:2, is_system:true,
@@ -4778,15 +4820,17 @@ const ROLLEN_DEFAULTS = [
       tool_auftraege:true, tool_anlagen:true,
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
+      tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
     },
   },
   { name:'Techniker', sort_order:3, is_system:true,
-    description:'Aussendienst — sieht nur zugewiesene Aufträge, KEINE Preise.',
+    description:'Aussendienst — sieht nur zugewiesene Aufträge, KEINE Preise. Führt Datenaufnahmen vor Ort durch.',
     permissions: {
       tool_arbeitsberichte:true, tool_overview:true, tool_wartung_kalk:false,
       tool_auftraege:true, tool_anlagen:true,
       auftraege_view_all:false, auftraege_create:false, auftraege_edit:false,
       auftraege_see_prices:false, delete_reports:false,
+      tool_datenaufnahmen:true, datenaufnahmen_create:false, datenaufnahmen_edit:true,
     },
   },
   { name:'Subunternehmer', sort_order:4, is_system:true,
@@ -4796,6 +4840,7 @@ const ROLLEN_DEFAULTS = [
       tool_auftraege:true, tool_anlagen:true,
       auftraege_view_all:false, auftraege_create:false, auftraege_edit:false,
       auftraege_see_prices:false, delete_reports:false,
+      tool_datenaufnahmen:true, datenaufnahmen_create:false, datenaufnahmen_edit:true,
     },
   },
 ];
@@ -5378,6 +5423,24 @@ async function ensureLegacyFirmaFields() {
   await ensureField('User',         'techniker',     'checkbox');
   await ensureField('User',         'subunternehmer','checkbox');
   await ensureField('User',         'rolle',         'singleLineText');
+  // Datenaufnahmen (Inspektion vor Angebot)
+  await ensureTable('Datenaufnahmen', [
+    { name:'da_num',                 type:'autoNumber' },
+    { name:'firma',                  type:'singleLineText' },
+    { name:'anlage_id',              type:'singleLineText' },
+    { name:'anlage_fabriknummer',    type:'singleLineText' },
+    { name:'anlage_adresse',         type:'multilineText' },
+    { name:'kunde_name',             type:'singleLineText' },
+    { name:'kunde_nummer',           type:'singleLineText' },
+    { name:'beschreibung',           type:'multilineText' },
+    { name:'status',                 type:'singleLineText' },
+    { name:'checkpunkte_json',       type:'multilineText' },
+    { name:'pdf',                    type:'multipleAttachments' },
+    { name:'erstellt_am',            type:'singleLineText' },
+    { name:'erstellt_von',           type:'singleLineText' },
+    { name:'aufgenommen_am',         type:'singleLineText' },
+    { name:'aufgenommen_von',        type:'singleLineText' },
+  ]);
   // Rollen-Tabelle für Permission-Templates
   await ensureTable('Rollen', [
     { name:'name',             type:'singleLineText' },
@@ -15629,6 +15692,636 @@ async function _gbuSubmit() {
 /* ═══════════════════════════════════════════════════════════════════════
    INFOBEREICH-VIEW (Anleitungen + Downloads für alle User)
    ─────────────────────────────────────────────────────────────────────── */
+/* ═══════════════════════════════════════════════════════════════════════
+   DATENAUFNAHMEN — Inspektion vor Angebot
+   - Liste wie Aufträge, mit Status (offen/fertig)
+   - Wizard: Anlage wählen + kurze Beschreibung warum nötig
+   - Detail: Mobile-optimierte Checkpunkt-Erfassung mit 2 Fotos je CP
+   - PDF-Generator mit Aszendio-Branding
+   ─────────────────────────────────────────────────────────────────────── */
+let _daCache = { firma:null, items:null, loadedAt:0, loading:false };
+
+async function renderDatenaufnahmenView(opts) {
+  opts = opts || {};
+  const firmaSlug = getCurrentFirmaSlug();
+  const list = document.getElementById('da-list');
+  if (!list) return;
+  // Sichtbarkeit "Neue Datenaufnahme"-Button
+  const newBtn = document.getElementById('da-new-btn');
+  if (newBtn) newBtn.style.display = hasPermission('datenaufnahmen_create') ? '' : 'none';
+
+  if (opts.force) _daCache = { firma:null, items:null, loadedAt:0, loading:false };
+  if (!_daCache.items || _daCache.firma !== firmaSlug) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Datenaufnahmen…</div>';
+    try {
+      await _loadDatenaufnahmen(firmaSlug);
+    } catch(e) {
+      list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+escapeHtml(e.message)+'</div>';
+      return;
+    }
+  }
+  _renderDaList();
+}
+
+async function _loadDatenaufnahmen(firmaSlug) {
+  if (_daCache.loading) {
+    while (_daCache.loading) await new Promise(r => setTimeout(r, 100));
+    if (_daCache.firma === firmaSlug) return;
+  }
+  _daCache.loading = true;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    if (!key) throw new Error('Kein Airtable-Token');
+    const url = 'https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen'
+      + '?pageSize=100'
+      + '&filterByFormula=' + encodeURIComponent('{firma}="'+firmaSlug+'"')
+      + '&sort[0][field]=erstellt_am&sort[0][direction]=desc';
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) {
+      // Tabelle existiert evtl. noch nicht
+      try { await setupTables(); } catch(_){}
+      _daCache = { firma: firmaSlug, items: [], loadedAt: Date.now(), loading:false };
+      return;
+    }
+    const d = await r.json();
+    _daCache = { firma: firmaSlug, items: d.records || [], loadedAt: Date.now(), loading:false };
+  } finally {
+    _daCache.loading = false;
+  }
+}
+
+function _renderDaList() {
+  const list = document.getElementById('da-list');
+  const cnt  = document.getElementById('da-count');
+  if (!list) return;
+  const q = (document.getElementById('da-search')?.value || '').toLowerCase().trim();
+  const showOffen  = document.getElementById('da-flt-offen')?.checked !== false;
+  const showFertig = document.getElementById('da-flt-fertig')?.checked !== false;
+  const items = _daCache.items || [];
+  const filtered = items.filter(rec => {
+    const f = rec.fields || {};
+    const isFertig = f.status === 'fertig';
+    if (isFertig && !showFertig) return false;
+    if (!isFertig && !showOffen) return false;
+    if (q) {
+      const hay = [f.anlage_fabriknummer, f.anlage_adresse, f.kunde_name, f.kunde_nummer, f.beschreibung].filter(Boolean).join(' ').toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+  if (cnt) cnt.textContent = filtered.length + (q ? ' / ' + items.length : '');
+  if (filtered.length === 0) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+
+      (q ? 'Keine Treffer.' : (hasPermission('datenaufnahmen_create')
+        ? 'Noch keine Datenaufnahmen. Klick <strong>+ Neue Datenaufnahme</strong> oben.'
+        : 'Noch keine Datenaufnahmen.'))+'</div>';
+    return;
+  }
+  list.innerHTML = '<div style="display:grid;gap:8px">' + filtered.map(rec => {
+    const f = rec.fields || {};
+    let cps = [];
+    try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+    const status = f.status || 'entwurf';
+    const statusBadge = status === 'fertig'
+      ? '<span style="font-size:10px;font-weight:700;background:#D1FAE5;color:#065F46;padding:2px 8px;border-radius:99px">✅ Fertig</span>'
+      : status === 'in_aufnahme'
+      ? '<span style="font-size:10px;font-weight:700;background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:99px">📋 In Aufnahme</span>'
+      : '<span style="font-size:10px;font-weight:700;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:99px">✏ Entwurf</span>';
+    return (
+      '<div onclick="openDaDetail(\''+rec.id+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,.06)\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.boxShadow=\'none\'">'+
+        '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">🔍 DA-'+(f.da_num||'?')+'</div>'+
+          statusBadge+
+          '<div style="margin-left:auto;font-size:11px;color:var(--txt3)">'+escapeHtml(cps.length+' Checkpunkt'+(cps.length===1?'':'e'))+'</div>'+
+        '</div>'+
+        '<div style="font-size:13px;color:var(--txt);margin-bottom:3px">'+
+          (f.anlage_fabriknummer?'🛗 <strong>'+escapeHtml(f.anlage_fabriknummer)+'</strong> · ':'')+
+          escapeHtml(f.anlage_adresse||'(ohne Adresse)')+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--txt2)">'+
+          (f.kunde_name?'👥 '+escapeHtml(f.kunde_name)+' · ':'')+
+          (f.erstellt_am?'📅 '+escapeHtml(f.erstellt_am):'')+
+        '</div>'+
+        (f.beschreibung ? '<div style="font-size:11px;color:var(--txt2);margin-top:6px;padding:6px 10px;background:var(--bg);border-radius:4px;border-left:3px solid var(--accent,#2152A9)">'+escapeHtml(f.beschreibung)+'</div>' : '')+
+      '</div>'
+    );
+  }).join('') + '</div>';
+}
+
+/* ── Wizard: Neue Datenaufnahme anlegen (Anlage wählen + Beschreibung) ── */
+async function openDaWizard() {
+  if (!hasPermission('datenaufnahmen_create')) return toast('🔒 Keine Berechtigung','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  // Anlagen vorladen
+  try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+  const anlagen = _anlagenCache.items || [];
+  const old = document.getElementById('da-wizard'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'da-wizard';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:600px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🔍 Neue Datenaufnahme</span>'+
+        '<button onclick="document.getElementById(\'da-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
+          '💡 Datenaufnahme = Inspektion einer Anlage vor Angebotserstellung. Der Techniker fügt vor Ort Checkpunkte mit Fotos hinzu.'+
+        '</div>'+
+        '<div class="auf-field" style="position:relative">'+
+          '<label class="auf-label">Anlage wählen</label>'+
+          '<input type="text" class="auf-input" id="da-anl-search" placeholder="Suche nach Fabrik-Nr., Adresse, Kunde…" autocomplete="off" oninput="_daRenderAnlagenPicker()" onfocus="_daRenderAnlagenPicker()">'+
+          '<div id="da-anl-dropdown" class="anlage-dropdown" style="display:none;max-height:220px;overflow-y:auto"></div>'+
+        '</div>'+
+        '<div id="da-anl-selected" style="font-size:12px;color:var(--ok);margin-top:6px"></div>'+
+        '<div class="auf-field" style="margin-top:14px">'+
+          '<label class="auf-label">Beschreibung — warum ist die Datenaufnahme nötig?</label>'+
+          '<textarea class="auf-textarea" id="da-beschreibung" rows="3" placeholder="z.B. Modernisierung gewünscht. Bestandsaufnahme der Steuerung, Antrieb, Kabine, Türen."></textarea>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'da-wizard\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="da-wizard-create" onclick="_daCreateRecord()" disabled>🚀 Datenaufnahme anlegen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._anlagen = anlagen;
+  m._selectedAnlage = null;
+}
+
+function _daRenderAnlagenPicker() {
+  const m = document.getElementById('da-wizard');
+  if (!m) return;
+  const q = (document.getElementById('da-anl-search').value||'').toLowerCase().trim();
+  const dd = document.getElementById('da-anl-dropdown');
+  let items = m._anlagen || [];
+  if (q) items = items.filter(a => {
+    const hay = [a.fabriknummer, a.anzeigeAdresse, a.kunde?.firmenname, a.objektTyp].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  items = items.slice(0, 50);
+  if (items.length === 0) {
+    dd.innerHTML = '<div class="anlage-empty">Keine Anlagen gefunden.</div>';
+  } else {
+    items.forEach((a, idx) => { a.__daIdx = idx; });
+    m._anlMatches = items;
+    dd.innerHTML = items.map((a, i) =>
+      '<div class="anlage-item" onclick="_daSelectAnlage('+i+')">'+
+        '<div class="anlage-item-addr">'+escapeHtml(a.anzeigeAdresse||'(ohne Adresse)')+'</div>'+
+        '<div class="anlage-item-meta">'+
+          (a.fabriknummer?'🔧 '+escapeHtml(a.fabriknummer)+' · ':'')+
+          escapeHtml(a.kunde?.firmenname||'')+
+        '</div>'+
+      '</div>'
+    ).join('');
+  }
+  dd.style.display = 'block';
+}
+
+function _daSelectAnlage(idx) {
+  const m = document.getElementById('da-wizard');
+  if (!m) return;
+  const a = (m._anlMatches||[])[idx];
+  if (!a) return;
+  m._selectedAnlage = a;
+  document.getElementById('da-anl-search').value = (a.fabriknummer?a.fabriknummer+' · ':'') + (a.anzeigeAdresse||'');
+  document.getElementById('da-anl-dropdown').style.display = 'none';
+  document.getElementById('da-anl-selected').textContent = '✓ Anlage gewählt';
+  document.getElementById('da-wizard-create').disabled = false;
+}
+
+async function _daCreateRecord() {
+  const m = document.getElementById('da-wizard');
+  if (!m) return;
+  const a = m._selectedAnlage;
+  if (!a) return toast('Bitte Anlage wählen','err');
+  const beschreibung = document.getElementById('da-beschreibung').value.trim();
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const btn = document.getElementById('da-wizard-create');
+  btn.disabled = true; btn.textContent = '⏳ lege an…';
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const firmaSlug = getCurrentFirmaSlug();
+    const fields = {
+      firma:                firmaSlug,
+      anlage_id:            String(a.id||''),
+      anlage_fabriknummer:  a.fabriknummer || '',
+      anlage_adresse:       a.anzeigeAdresse || '',
+      kunde_name:           a.kunde?.firmenname || '',
+      kunde_nummer:         String(a.kunde?.kundennummer || ''),
+      beschreibung:         beschreibung,
+      status:               'entwurf',
+      checkpunkte_json:     '[]',
+      erstellt_am:          new Date().toISOString().slice(0,10),
+      erstellt_von:         APP_KEYS.user?.name || '',
+    };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    toast('✅ Datenaufnahme angelegt','ok');
+    m.remove();
+    // Cache invalidieren + neu laden + Detail öffnen
+    _daCache = { firma:null, items:null, loadedAt:0, loading:false };
+    await renderDatenaufnahmenView({ force:true });
+    openDaDetail(d.id);
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    btn.disabled = false; btn.textContent = '🚀 Datenaufnahme anlegen';
+  }
+}
+
+/* ── Detail-Modal: Checkpunkt-Erfassung Mobile-optimiert ── */
+async function openDaDetail(recId) {
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Datenaufnahme nicht gefunden','err');
+  const f = rec.fields || {};
+  let cps = [];
+  try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  const old = document.getElementById('da-detail'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'da-detail';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:8px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:820px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
+        '<span>🔍 Datenaufnahme DA-'+(f.da_num||'?')+'</span>'+
+        '<button onclick="document.getElementById(\'da-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      // Stammdaten
+      '<div style="padding:14px 20px;background:#EFF6FF;border-bottom:1px solid var(--bdr);font-size:12px">'+
+        '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
+        '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'')+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
+        (f.beschreibung ? '<div style="margin-top:6px"><strong>📝 Auftrag:</strong> '+escapeHtml(f.beschreibung)+'</div>' : '')+
+      '</div>'+
+      // Checkpunkte
+      '<div id="da-cp-container" style="padding:14px 18px;flex:1;overflow-y:auto"></div>'+
+      // Footer
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'da-detail\').remove()">Schließen</button>'+
+        '<button class="btn" onclick="_daDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Datenaufnahme löschen">🗑 Löschen</button>'+
+        (hasPermission('datenaufnahmen_edit') ? '<button class="btn" id="da-save-btn" onclick="_daSave(\''+recId+'\')">💾 Speichern</button>' : '')+
+        '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')">📄 PDF erzeugen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._recId = recId;
+  m._cps = cps;
+  m._dirty = false;
+  _daRenderCheckpunkte();
+}
+
+function _daRenderCheckpunkte() {
+  const m = document.getElementById('da-detail');
+  if (!m) return;
+  const c = document.getElementById('da-cp-container');
+  const cps = m._cps || [];
+  const editable = hasPermission('datenaufnahmen_edit');
+  const html = cps.map((cp, i) => _daRenderCheckpunktItem(cp, i, editable)).join('');
+  c.innerHTML = (
+    html +
+    (editable
+      ? '<button class="btn prim" onclick="_daAddCheckpunkt()" style="width:100%;margin-top:10px;padding:14px;font-size:14px">+ Checkpunkt hinzufügen</button>'
+      : (cps.length === 0 ? '<div style="text-align:center;padding:30px;color:var(--txt3)">Noch keine Checkpunkte.</div>' : ''))
+  );
+}
+
+function _daRenderCheckpunktItem(cp, i, editable) {
+  const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  const imgIst = cp.bild_ist
+    ? '<div style="position:relative"><img src="'+cp.bild_ist+'" onclick="_daViewImage('+i+',\'ist\')" style="width:100%;max-width:140px;height:90px;object-fit:cover;border:1px solid var(--bdr);border-radius:6px;cursor:zoom-in">'+
+      (editable?'<button onclick="_daRemoveImage('+i+',\'ist\')" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:none;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:13px">×</button>':'')+'</div>'
+    : (editable?'<button onclick="_daAddImage('+i+',\'ist\')" style="width:140px;height:90px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">📷<span>+ Foto Ist</span></button>':'<div style="width:140px;height:90px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>');
+  const imgM = cp.bild_massnahme
+    ? '<div style="position:relative"><img src="'+cp.bild_massnahme+'" onclick="_daViewImage('+i+',\'massnahme\')" style="width:100%;max-width:140px;height:90px;object-fit:cover;border:1px solid var(--bdr);border-radius:6px;cursor:zoom-in">'+
+      (editable?'<button onclick="_daRemoveImage('+i+',\'massnahme\')" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:none;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:13px">×</button>':'')+'</div>'
+    : (editable?'<button onclick="_daAddImage('+i+',\'massnahme\')" style="width:140px;height:90px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">📷<span>+ Foto Maßnahme</span></button>':'<div style="width:140px;height:90px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>');
+  const dis = editable ? '' : 'disabled';
+  return (
+    '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:12px">'+
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
+        '<div style="background:#2152A9;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+(i+1)+'</div>'+
+        '<input id="da-cp-titel-'+i+'" type="text" placeholder="Titel des Checkpunkts (z.B. Steuerung, Antrieb, Türen…)" value="'+esc(cp.titel||'')+'" '+dis+
+          ' oninput="_daUpdateCp('+i+',\'titel\',this.value)" style="flex:1;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;font-weight:600">'+
+        (editable?'<button onclick="_daRemoveCp('+i+')" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer">🗑</button>':'')+
+      '</div>'+
+      // 2 Spalten: Ist + Maßnahme
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'+
+        // IST-Spalte
+        '<div>'+
+          '<div style="font-size:11px;font-weight:700;color:#92400E;text-transform:uppercase;margin-bottom:4px">📍 Ist-Zustand</div>'+
+          imgIst+
+          '<textarea id="da-cp-ist-'+i+'" rows="3" placeholder="Beschreibung des aktuellen Zustands…" '+dis+
+            ' oninput="_daUpdateCp('+i+',\'ist_zustand\',this.value)" style="width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.ist_zustand||'')+'</textarea>'+
+        '</div>'+
+        // MASSNAHME-Spalte
+        '<div>'+
+          '<div style="font-size:11px;font-weight:700;color:#065F46;text-transform:uppercase;margin-bottom:4px">🔧 Erforderliche Maßnahme</div>'+
+          imgM+
+          '<textarea id="da-cp-m-'+i+'" rows="3" placeholder="Was muss gemacht werden?" '+dis+
+            ' oninput="_daUpdateCp('+i+',\'massnahme\',this.value)" style="width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.massnahme||'')+'</textarea>'+
+        '</div>'+
+      '</div>'+
+    '</div>'
+  );
+}
+
+function _daUpdateCp(i, field, value) {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps[i]) return;
+  m._cps[i][field] = value;
+  m._dirty = true;
+}
+
+function _daAddCheckpunkt() {
+  const m = document.getElementById('da-detail');
+  if (!m) return;
+  m._cps.push({ titel:'', ist_zustand:'', massnahme:'', bild_ist:'', bild_massnahme:'' });
+  m._dirty = true;
+  _daRenderCheckpunkte();
+  // Zum neuen Checkpunkt scrollen
+  setTimeout(() => {
+    const c = document.getElementById('da-cp-container');
+    if (c) c.scrollTop = c.scrollHeight;
+  }, 50);
+}
+
+function _daRemoveCp(i) {
+  if (!confirm('Checkpunkt wirklich löschen?')) return;
+  const m = document.getElementById('da-detail');
+  if (!m) return;
+  m._cps.splice(i, 1);
+  m._dirty = true;
+  _daRenderCheckpunkte();
+}
+
+function _daAddImage(i, which) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'image/*';
+  input.capture = 'environment';  // Mobile: direkt Kamera öffnen
+  input.onchange = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) return toast('Bitte Bilddatei wählen','err');
+    if (file.size > 15*1024*1024) return toast('Bild zu groß (max 15 MB)','err');
+    toast('🖼 Komprimiere…','');
+    try {
+      const dataUrl = await _gbuResizeImage(file, 800, 0.6);
+      const m = document.getElementById('da-detail');
+      if (!m || !m._cps[i]) return;
+      m._cps[i][which === 'ist' ? 'bild_ist' : 'bild_massnahme'] = dataUrl;
+      m._dirty = true;
+      _daRenderCheckpunkte();
+      toast('🖼 Foto hinzugefügt','ok');
+    } catch(e) { toast('❌ Bild: '+e.message,'err'); }
+  };
+  input.click();
+}
+
+function _daRemoveImage(i, which) {
+  if (!confirm('Foto entfernen?')) return;
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps[i]) return;
+  m._cps[i][which === 'ist' ? 'bild_ist' : 'bild_massnahme'] = '';
+  m._dirty = true;
+  _daRenderCheckpunkte();
+}
+
+function _daViewImage(i, which) {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps[i]) return;
+  const src = m._cps[i][which === 'ist' ? 'bild_ist' : 'bild_massnahme'];
+  if (!src) return;
+  const lb = document.createElement('div');
+  lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10900;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:20px';
+  lb.innerHTML = '<img src="'+src+'" style="max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5)">';
+  lb.onclick = () => lb.remove();
+  document.body.appendChild(lb);
+}
+
+async function _daSave(recId) {
+  const m = document.getElementById('da-detail');
+  if (!m) return;
+  // Bilder ggf. iterativ verkleinern (analog GBU) bis JSON < 90KB
+  const data = m._cps;
+  const MAX = 90 * 1024;
+  let json = JSON.stringify(data);
+  if (json.length > MAX) {
+    toast('⏳ Komprimiere Bilder…','');
+    const passes = [{dim:600,q:0.5},{dim:500,q:0.45},{dim:400,q:0.4},{dim:320,q:0.35}];
+    for (const p of passes) {
+      if (json.length <= MAX) break;
+      for (const cp of data) {
+        for (const k of ['bild_ist','bild_massnahme']) {
+          if (cp[k] && cp[k].startsWith('data:')) {
+            try { const s = await _gbuShrinkDataUrl(cp[k], p.dim, p.q); if (s.length < cp[k].length) cp[k] = s; } catch(_){}
+          }
+        }
+      }
+      json = JSON.stringify(data);
+    }
+  }
+  if (json.length > 100*1024) return toast('Zu viele/zu große Bilder. Bitte einige entfernen.','err');
+  const btn = document.getElementById('da-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const status = (data.length > 0) ? 'in_aufnahme' : 'entwurf';
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: {
+        checkpunkte_json: json,
+        status,
+        aufgenommen_am: new Date().toISOString().slice(0,10),
+        aufgenommen_von: APP_KEYS.user?.name || '',
+      }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    // Cache lokal aktualisieren
+    const idx = _daCache.items.findIndex(x => x.id === recId);
+    if (idx >= 0) _daCache.items[idx] = d;
+    m._dirty = false;
+    toast('💾 Datenaufnahme gespeichert ('+Math.round(json.length/1024)+'KB)','ok');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+    _renderDaList();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
+}
+
+async function _daDeleteRecord(recId) {
+  if (!confirm('Datenaufnahme wirklich löschen?')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    toast('🗑 Datenaufnahme gelöscht','ok');
+    document.getElementById('da-detail')?.remove();
+    _daCache = { firma:null, items:null, loadedAt:0, loading:false };
+    renderDatenaufnahmenView({ force:true });
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/* ── PDF-Generator: Datenaufnahme als Aszendio-PDF ── */
+async function _daBuildAndShowPdf(recId) {
+  const m = document.getElementById('da-detail');
+  // Erst speichern falls dirty
+  if (m && m._dirty) {
+    await _daSave(recId);
+  }
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Record nicht gefunden','err');
+  const f = rec.fields || {};
+  let cps = [];
+  try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  if (cps.length === 0) return toast('Keine Checkpunkte vorhanden','err');
+
+  toast('📄 PDF wird erzeugt…','');
+  try {
+    const blob = await _buildDatenaufnahmePdf(f, cps);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Datenaufnahme-DA'+(f.da_num||'')+'-'+(f.anlage_fabriknummer||'Anlage').replace(/[^\w-]/g,'_')+'.pdf';
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('📥 PDF heruntergeladen','ok');
+  } catch(e) {
+    console.error('DA-PDF:', e);
+    toast('❌ '+e.message.slice(0,200),'err');
+  }
+}
+
+async function _buildDatenaufnahmePdf(rec, cps) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const ml = 15, mr = 195, cw = mr - ml;
+  const NAVY = [26,51,83], ACCENT = [33,82,169];
+  const GREY = [55,65,81], GREY_L = [120,130,145], GREY_X = [229,231,235];
+  const AMBER = [180, 83, 9], GREEN = [16, 185, 129];
+
+  // === KOPFBEREICH ===
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG', mr-36, 12, 36, 6); } catch(_){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text('Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com', ml, 16);
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
+  let y = 32;
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(22);
+  doc.text('Datenaufnahme', ml, y); y += 7;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
+  doc.text('Bestandsaufnahme Aufzugsanlage  ·  DA-'+(rec.da_num||'?'), ml, y); y += 12;
+
+  // === STAMMDATEN ===
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(13);
+  doc.text('Anlage & Auftrag', ml, y); y += 1;
+  doc.setDrawColor(...ACCENT); doc.line(ml, y, ml+50, y); y += 6;
+  const rows = [
+    ['Fabriknummer', rec.anlage_fabriknummer || '—'],
+    ['Standort', rec.anlage_adresse || '—'],
+    ['Kunde', (rec.kunde_name||'—') + (rec.kunde_nummer?' (Kd-Nr. '+rec.kunde_nummer+')':'')],
+    ['Aufnahme durch', rec.aufgenommen_von || rec.erstellt_von || '—'],
+    ['Erstellt am', rec.erstellt_am || '—'],
+    ['Aufgenommen am', rec.aufgenommen_am || '—'],
+    ['Anzahl Checkpunkte', String(cps.length)],
+  ];
+  doc.setFontSize(10);
+  for (const [lbl, val] of rows) {
+    doc.setFillColor(250,250,252); doc.rect(ml, y-4, cw, 6, 'F');
+    doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal');
+    doc.text(lbl, ml+2, y);
+    doc.setTextColor(...GREY); doc.setFont('helvetica','bold');
+    const vl = doc.splitTextToSize(String(val), cw - 60);
+    doc.text(vl[0]||'', ml+58, y);
+    y += 5.5;
+    doc.setDrawColor(...GREY_X); doc.line(ml, y-1, mr, y-1);
+  }
+  y += 4;
+  if (rec.beschreibung) {
+    doc.setFillColor(239, 246, 255); doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4);
+    doc.roundedRect(ml, y, cw, 18, 2, 2, 'FD');
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+    doc.text('Auftrag der Aufnahme', ml+4, y+5);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    const dlines = doc.splitTextToSize(rec.beschreibung, cw-8);
+    dlines.slice(0,3).forEach((l, i) => doc.text(l, ml+4, y+10+i*4));
+    y += 22;
+  }
+
+  // === CHECKPUNKTE ===
+  for (let i = 0; i < cps.length; i++) {
+    const cp = cps[i];
+    if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); y = 30; }
+    // Checkpunkt-Header
+    doc.setFillColor(...ACCENT); doc.circle(ml+5, y+1, 5, 'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text(String(i+1), ml+5, y+2.5, { align:'center' });
+    doc.setTextColor(...NAVY); doc.setFontSize(13);
+    doc.text('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:''), ml+13, y+2);
+    y += 8;
+    doc.setDrawColor(...ACCENT); doc.line(ml, y, mr, y); y += 4;
+
+    // Zwei Spalten: Ist + Massnahme
+    const colW = (cw - 6) / 2;
+    const yStart = y;
+    // IST
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...AMBER);
+    doc.text('IST-ZUSTAND', ml, y+4);
+    let yIst = y + 7;
+    if (cp.bild_ist) {
+      try { doc.addImage(cp.bild_ist, 'JPEG', ml, yIst, colW, 45); yIst += 48; } catch(_) { yIst += 4; }
+    }
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+    const istLines = doc.splitTextToSize(cp.ist_zustand || '—', colW-2);
+    istLines.forEach(l => { doc.text(l, ml, yIst); yIst += 4; });
+
+    // MASSNAHME
+    let yM = y + 7 - 7;
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...GREEN);
+    doc.text('ERFORDERLICHE MASSNAHME', ml + colW + 6, y+4);
+    let yMaß = y + 7;
+    const xMaß = ml + colW + 6;
+    if (cp.bild_massnahme) {
+      try { doc.addImage(cp.bild_massnahme, 'JPEG', xMaß, yMaß, colW, 45); yMaß += 48; } catch(_) { yMaß += 4; }
+    }
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+    const mLines = doc.splitTextToSize(cp.massnahme || '—', colW-2);
+    mLines.forEach(l => { doc.text(l, xMaß, yMaß); yMaß += 4; });
+
+    y = Math.max(yIst, yMaß) + 6;
+    if (i < cps.length - 1) {
+      doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, y-2, mr, y-2);
+    }
+  }
+
+  // Footer auf jeder Seite
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...GREY_X); doc.line(ml, 285, mr, 285);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
+    doc.text('Datenaufnahme DA-'+(rec.da_num||'')+'  ·  Aszendio Aufzugservice GmbH', ml, 290);
+    doc.text('Seite '+p+' / '+total, mr, 290, { align:'right' });
+  }
+  return doc.output('blob');
+}
+
+function _daPdfHeader(doc, ml, mr, GREY_L, GREY_X) {
+  doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal'); doc.setFontSize(8);
+  doc.text('Datenaufnahme  ·  Aszendio Aufzugservice GmbH', ml, 14);
+  doc.setDrawColor(...GREY_X); doc.line(ml, 17, mr, 17);
+}
+
 const INFO_DOCS = [
   {
     id: 'techniker-anleitung',
