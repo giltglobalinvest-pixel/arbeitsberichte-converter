@@ -2586,7 +2586,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.21';
+const APP_VERSION = 'v4.22';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -17129,23 +17129,27 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     }
     // Detail-Hinweis
     doc.addPage(); y = 22;
-    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-    doc.text('Detailaufstellung (Ist-Zustand / Massnahmen)', ml, y); y += 8;
-    doc.setDrawColor(...ACCENT); doc.line(ml, y-3, ml+85, y-3);
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(14);
+    doc.text('Detailaufstellung', ml, y); y += 5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    doc.text('Ist-Zustand und Massnahmen je Position', ml, y); y += 6;
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, y-2, ml+70, y-2); y += 2;
   }
 
   // === CHECKPUNKTE ===
   for (let i = 0; i < cps.length; i++) {
     const cp = cps[i];
     if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); y = 30; }
-    // Checkpunkt-Header
-    doc.setFillColor(...ACCENT); doc.circle(ml+5, y+1, 5, 'F');
-    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(11);
-    doc.text(String(i+1), ml+5, y+2.5, { align:'center' });
-    doc.setTextColor(...NAVY); doc.setFontSize(13);
-    doc.text(_sanPdf('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:'')), ml+13, y+2);
-    y += 8;
-    doc.setDrawColor(...ACCENT); doc.line(ml, y, mr, y); y += 4;
+    // Checkpunkt-Header — Nummer-Pill + Titel, sauber zentriert
+    const pillW = 8, pillH = 6;
+    doc.setFillColor(...ACCENT);
+    doc.roundedRect(ml, y-3, pillW, pillH, 1.5, 1.5, 'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(9);
+    doc.text(String(i+1), ml + pillW/2, y+1.2, { align:'center' });
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+    doc.text(_sanPdf('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:'')), ml + pillW + 3, y+1.2);
+    y += 6;
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 5;
 
     // Zwei Spalten: Ist + Massnahme
     const colW = (cw - 6) / 2;
