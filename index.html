@@ -2496,7 +2496,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.14';
+const APP_VERSION = 'v4.15';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5424,8 +5424,10 @@ async function ensureLegacyFirmaFields() {
   await ensureField('User',         'subunternehmer','checkbox');
   await ensureField('User',         'rolle',         'singleLineText');
   // Datenaufnahmen (Inspektion vor Angebot)
+  // da_num: number (autoNumber wird von Meta-API nicht unterstützt — wir setzen
+  // beim Create selbst den nächsten freien Counter)
   await ensureTable('Datenaufnahmen', [
-    { name:'da_num',                 type:'autoNumber' },
+    { name:'da_num',                 type:'number', options:{ precision:0 } },
     { name:'firma',                  type:'singleLineText' },
     { name:'anlage_id',              type:'singleLineText' },
     { name:'anlage_fabriknummer',    type:'singleLineText' },
@@ -15703,7 +15705,7 @@ let _daCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _daTableEnsured = false;
 
 const DA_TABLE_FIELDS = [
-  { name:'da_num',                 type:'autoNumber' },
+  { name:'da_num',                 type:'number', options:{ precision:0 } },
   { name:'firma',                  type:'singleLineText' },
   { name:'anlage_id',              type:'singleLineText' },
   { name:'anlage_fabriknummer',    type:'singleLineText' },
@@ -15719,6 +15721,25 @@ const DA_TABLE_FIELDS = [
   { name:'aufgenommen_am',         type:'singleLineText' },
   { name:'aufgenommen_von',        type:'singleLineText' },
 ];
+
+/* Nächste freie DA-Nummer ermitteln — holt max(da_num) aller Records und addiert 1.
+   Firmenübergreifend einheitlich (DA-1, DA-2, …) */
+async function _daGetNextNumber(baseId) {
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  try {
+    const url = 'https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen'
+      +'?pageSize=1&fields[]=da_num&sort[0][field]=da_num&sort[0][direction]=desc';
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) return 1;
+    const d = await r.json();
+    const recs = d.records || [];
+    if (recs.length === 0) return 1;
+    const maxNum = +recs[0].fields?.da_num || 0;
+    return maxNum + 1;
+  } catch(_) {
+    return 1;
+  }
+}
 
 async function _ensureDaTable() {
   if (_daTableEnsured) return true;
@@ -15956,7 +15977,10 @@ async function _daCreateRecord() {
     btn.textContent = '⏳ lege an…';
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const firmaSlug = getCurrentFirmaSlug();
+    // Nächste freie DA-Nummer ermitteln (max + 1, firmen-übergreifend)
+    const nextNum = await _daGetNextNumber(baseId);
     const fields = {
+      da_num:               nextNum,
       firma:                firmaSlug,
       anlage_id:            String(a.id||''),
       anlage_fabriknummer:  a.fabriknummer || '',
