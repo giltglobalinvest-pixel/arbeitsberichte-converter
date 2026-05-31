@@ -2586,7 +2586,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.18';
+const APP_VERSION = 'v4.19';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15007,8 +15007,17 @@ function _gbuRenderEdit() {
       '</details>';
     }).join('');
 
+  // Angebots-Summary unten (nur wenn User Preise sehen darf)
+  if (canSeePrices()) {
+    body.innerHTML += '<div id="gbu-angebot-summary" style="margin-top:18px;padding:14px 16px;background:#FFF7ED;border:2px solid #FB923C;border-radius:10px"></div>';
+    _gbuRenderAngebotSummary();
+  }
+
   // Footer
   const footer = document.getElementById('gbu-edit-footer');
+  const angebotBtn = canSeePrices()
+    ? '<button class="btn" style="background:#FB923C;border-color:#FB923C;color:#fff;font-weight:600" id="gbu-edit-angebot" onclick="_gbuSaveAndGenerateAngebot()" title="Angebots-PDF mit Pauschalpreisen erzeugen">💰 Angebot-PDF</button>'
+    : '';
   footer.innerHTML =
     '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
       '<button class="btn" onclick="document.getElementById(\'gbu-edit-modal\').remove()">Schließen</button>'+
@@ -15017,7 +15026,8 @@ function _gbuRenderEdit() {
     '</div>'+
     '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
       '<button class="btn" id="gbu-edit-save" onclick="_gbuSaveEdit()">💾 Speichern</button>'+
-      '<button class="btn prim" style="background:#dc2626;border-color:#dc2626" id="gbu-edit-regen" onclick="_gbuSaveAndRegenPdf()">📄 Speichern + PDF erzeugen</button>'+
+      angebotBtn+
+      '<button class="btn prim" style="background:#dc2626;border-color:#dc2626" id="gbu-edit-regen" onclick="_gbuSaveAndRegenPdf()">📄 GBU-PDF (ohne Preise)</button>'+
     '</div>';
 }
 
@@ -15044,6 +15054,18 @@ function _gbuRenderEditItem(item, data) {
       '<span style="font-size:18px">📷</span><span>+ Bild</span>'+
     '</button>'+
   '</div>';
+  // Pauschalpreis-Input nur bei Status "Maßnahme nötig" + nur wenn User Preise sehen darf
+  const showPrice = (s === 'massnahme') && canSeePrices();
+  const priceVal = (data?.pauschalpreis != null) ? data.pauschalpreis : '';
+  const priceHtml = showPrice
+    ? '<div style="margin-top:8px;padding:8px 10px;background:#FFF7ED;border:1px solid #FDBA74;border-radius:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'+
+        '<span style="font-size:11px;font-weight:700;color:#9A3412">💰 PAUSCHALPREIS (Netto, € — fürs Angebot)</span>'+
+        '<input type="number" id="gbu-ep-'+id+'" value="'+(priceVal===''?'':String(priceVal))+'" step="10" min="0" placeholder="0"'+
+          ' oninput="_gbuUpdateItemPrice(\''+id+'\',this.value)"'+
+          ' style="width:120px;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#fff">'+
+        '<span style="font-size:11px;color:#9A3412">€</span>'+
+      '</div>'
+    : '';
   return '<div style="border-top:1px dashed var(--bdr);padding:10px 0">'+
     '<div style="font-weight:500;font-size:13px;color:var(--navy);margin-bottom:6px">'+escapeHtml(item.label)+'</div>'+
     '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">'+
@@ -15059,8 +15081,63 @@ function _gbuRenderEditItem(item, data) {
         '<textarea id="gbu-ez-'+id+'" placeholder="—" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;min-height:50px;font-family:inherit;line-height:1.4">'+escapeHtml(data?.massnahme_zusatz||'')+'</textarea>'+
       '</div>'+
     '</div>'+
+    priceHtml+
     bilderHtml+
   '</div>';
+}
+
+/* Live-Update bei Preis-Eingabe (Summary unten neu rechnen, ohne Re-Render) */
+function _gbuUpdateItemPrice(itemId, val) {
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal || !modal._data) return;
+  if (!modal._data.items[itemId]) modal._data.items[itemId] = {};
+  modal._data.items[itemId].pauschalpreis = val === '' ? null : +val || 0;
+  _gbuRenderAngebotSummary();
+}
+
+function _gbuRenderAngebotSummary() {
+  const modal = document.getElementById('gbu-edit-modal');
+  const box = document.getElementById('gbu-angebot-summary');
+  if (!modal || !box) return;
+  if (!canSeePrices()) { box.innerHTML = ''; return; }
+  const items = modal._data.items || {};
+  // Alle Maßnahme-Items mit Preis sammeln
+  const positions = [];
+  let sum = 0;
+  for (const cat of GBU_HAZARD_CATALOG) {
+    for (const it of cat.items) {
+      const d = items[it.id];
+      if (!d || d.status !== 'massnahme') continue;
+      const p = +d.pauschalpreis || 0;
+      positions.push({ label: it.label, kat: cat.label, preis: p });
+      sum += p;
+    }
+  }
+  if (positions.length === 0) {
+    box.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:12px">'+
+      '💡 Markiere Items als "Maßnahme nötig" und trage einen Pauschalpreis ein — die Angebots-Summe erscheint hier.'+
+    '</div>';
+    return;
+  }
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
+  box.innerHTML =
+    '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
+      '<span style="font-size:14px;font-weight:700;color:#9A3412">💰 Angebots-Übersicht</span>'+
+      '<span style="font-size:11px;color:#9A3412">'+positions.length+' Position'+(positions.length===1?'':'en')+'</span>'+
+    '</div>'+
+    '<div style="background:#fff;border:1px solid #FDBA74;border-radius:6px;overflow:hidden">'+
+      positions.map(p =>
+        '<div style="padding:8px 12px;border-bottom:1px solid #FED7AA;display:flex;justify-content:space-between;gap:10px;font-size:12px">'+
+          '<span style="color:var(--txt2);flex:1">'+escapeHtml(p.label)+'</span>'+
+          '<span style="font-weight:600;color:#9A3412;white-space:nowrap">'+fmt(p.preis)+' €</span>'+
+        '</div>'
+      ).join('')+
+      '<div style="padding:10px 12px;background:#FFEDD5;display:flex;justify-content:space-between;font-size:13px;font-weight:700;color:#7C2D12">'+
+        '<span>Summe Netto</span>'+
+        '<span>'+fmt(sum)+' €</span>'+
+      '</div>'+
+    '</div>'+
+    '<div style="font-size:10px;color:#9A3412;margin-top:6px;text-align:right">Alle Preise netto, zzgl. gesetzl. MwSt.</div>';
 }
 
 /* Bild-Datei laden, auf maxDim begrenzen, als JPEG base64 zurückgeben. */
@@ -15225,14 +15302,16 @@ function _gbuCollectEditData() {
   d.nutzung.umgebung         = g('gbu-e-um')||d.nutzung.umgebung||'';
   d.freigabe.ersteller        = g('gbu-e-er')||d.freigabe.ersteller||'';
   d.freigabe.naechste_pruefung= g('gbu-e-np')||d.freigabe.naechste_pruefung||'';
-  // Items (Maßnahmen-Texte)
+  // Items (Maßnahmen-Texte + Pauschalpreis)
   for (const cat of GBU_HAZARD_CATALOG) {
     for (const it of cat.items) {
       if (!d.items[it.id]) d.items[it.id] = { status:'', massnahme_bestehend:'', massnahme_zusatz:'' };
       const eb = document.getElementById('gbu-em-'+it.id);
       const ez = document.getElementById('gbu-ez-'+it.id);
+      const ep = document.getElementById('gbu-ep-'+it.id);
       if (eb) d.items[it.id].massnahme_bestehend = eb.value;
       if (ez) d.items[it.id].massnahme_zusatz   = ez.value;
+      if (ep) d.items[it.id].pauschalpreis      = ep.value === '' ? null : +ep.value || 0;
     }
   }
   return d;
@@ -15370,6 +15449,76 @@ async function _gbuSaveAndRegenPdf() {
     console.error('[GBU-Regen] Fehler:', e);
     toast('❌ PDF-Erzeugung: '+(e.message||'?').slice(0,300),'err');
     if (regenBtn) { regenBtn.disabled = false; regenBtn.textContent = '📄 Speichern + PDF erzeugen'; }
+  }
+}
+
+/* Angebot-PDF generieren (Speichern → bauen → Download).
+   Wird NICHT in Airtable hochgeladen (separat vom GBU-PDF im gbu_pdf Feld).
+   Stattdessen Direkt-Download für den Versand an den Kunden. */
+async function _gbuSaveAndGenerateAngebot() {
+  if (!canSeePrices()) return toast('🔒 Keine Berechtigung für Preise','err');
+  const modal = document.getElementById('gbu-edit-modal');
+  if (!modal) return;
+  const rec = modal._rec;
+  const btn = document.getElementById('gbu-edit-angebot');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere…'; }
+  try {
+    const d = await _gbuSaveEdit();
+    if (!d) throw new Error('Speichern fehlgeschlagen');
+    // Prüfen ob Positionen vorhanden sind
+    let hasPositions = false;
+    for (const cat of GBU_HAZARD_CATALOG) {
+      for (const it of cat.items) {
+        const di = (d.items||{})[it.id];
+        if (di && di.status === 'massnahme') { hasPositions = true; break; }
+      }
+      if (hasPositions) break;
+    }
+    if (!hasPositions) throw new Error('Keine Maßnahmen-Positionen — markiere mindestens ein Item als "Maßnahme nötig" mit Preis.');
+
+    // Anlage-Daten zusammenstellen (defensiv, wie in _gbuSaveAndRegenPdf)
+    if (btn) btn.textContent = '⏳ baue Angebot…';
+    let anlageData = {};
+    if (_anlagenCache && _anlagenCache.items) {
+      anlageData = _anlagenCache.items.find(a => String(a.id||'') === String(rec.fields.anlage_id||'')) || {};
+    }
+    if (!anlageData.id) {
+      const firmaSlug = rec.fields.firma || getCurrentFirmaSlug();
+      try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+      if (_anlagenCache && _anlagenCache.items) {
+        anlageData = _anlagenCache.items.find(a => String(a.id||'') === String(rec.fields.anlage_id||'')) || {};
+      }
+    }
+    d.anlage = {
+      id: rec.fields.anlage_id || anlageData.id || '',
+      fabriknummer: rec.fields.anlage_fabriknummer || anlageData.fabriknummer || '',
+      objektTyp: anlageData.objektTyp || '',
+      haltestellen: anlageData.haltestellen || '',
+      kunde: anlageData.kunde || {},
+      anzeigeAdresse: rec.fields.anlage_adresse || anlageData.anzeigeAdresse || '',
+    };
+    if (!d.verantwortliche) d.verantwortliche = {};
+    if (!d.nutzung)         d.nutzung = {};
+    if (!d.freigabe)        d.freigabe = {};
+    if (!d.freigabe.erstellt_am) d.freigabe.erstellt_am = (rec.fields.erstellt_am||new Date().toISOString().slice(0,10));
+
+    // PDF mit Preisen bauen
+    const pdfBlob = await _buildGbuAngebotPdf(d);
+    if (!pdfBlob || pdfBlob.size === 0) throw new Error('PDF ist leer');
+
+    // Direkt-Download
+    const fname = 'Angebot-GBU-'+String(rec.fields.anlage_fabriknummer||'Anlage').replace(/[^\w-]/g,'_').slice(0,40)+'-'+new Date().toISOString().slice(0,10)+'.pdf';
+    const url = URL.createObjectURL(pdfBlob);
+    const a = document.createElement('a');
+    a.href = url; a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast('💰 Angebot-PDF heruntergeladen','ok');
+    if (btn) { btn.disabled = false; btn.textContent = '💰 Angebot-PDF'; }
+  } catch(e) {
+    console.error('[GBU-Angebot]', e);
+    toast('❌ '+e.message.slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💰 Angebot-PDF'; }
   }
 }
 
@@ -17164,7 +17313,14 @@ function _drawSchritt(doc, ml, mr, y, NAVY, ACCENT, GREY, GREY_L, num, titel, bu
   return y;
 }
 
-async function _buildGbuPdf(d) {
+/* Wrapper: erzeugt das Angebot-PDF (GBU-PDF + Preise + Summary-Tabelle) */
+async function _buildGbuAngebotPdf(d) {
+  return _buildGbuPdf(d, { withPrices: true });
+}
+
+async function _buildGbuPdf(d, opts) {
+  opts = opts || {};
+  const withPrices = !!opts.withPrices;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const ml = 15, mr = 195, cw = mr - ml, H = 297;
@@ -17192,12 +17348,14 @@ async function _buildGbuPdf(d) {
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
   y = 32;
 
-  // Titel
+  // Titel — andere Variante bei Angebot
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(22);
-  doc.text('Gefaehrdungsbeurteilung', ml, y);
+  doc.text(withPrices ? 'Angebot' : 'Gefaehrdungsbeurteilung', ml, y);
   y += 7;
   doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
-  doc.text('Aufzugsanlage  ·  nach BetrSichV §3, TRBS 1111 + 2181', ml, y);
+  doc.text(withPrices
+    ? 'Massnahmen aus der Gefaehrdungsbeurteilung  ·  Pauschalpreise netto'
+    : 'Aufzugsanlage  ·  nach BetrSichV §3, TRBS 1111 + 2181', ml, y);
   y += 12;
 
   // === STAMMDATEN-TABELLE ===
@@ -17291,10 +17449,91 @@ async function _buildGbuPdf(d) {
   // miniLinkPositions: später Links setzen wenn anhangPage bekannt
   const miniLinkPositions = [];
 
+  // === ANGEBOTS-POSITIONEN (nur in Preis-Variante, VOR dem Katalog) ===
+  if (withPrices) {
+    const positions = [];
+    let totalSum = 0;
+    for (const cat of GBU_HAZARD_CATALOG) {
+      for (const it of cat.items) {
+        const di = (d.items || {})[it.id];
+        if (!di || di.status !== 'massnahme') continue;
+        const p = +di.pauschalpreis || 0;
+        positions.push({
+          label: it.label,
+          kat: cat.label,
+          preis: p,
+          massnahme: (di.massnahme_zusatz || di.massnahme_bestehend || '').trim(),
+        });
+        totalSum += p;
+      }
+    }
+    const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
+    doc.addPage(); y = 22;
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(16);
+    doc.text('Angebots-Positionen', ml, y); y += 2;
+    doc.setDrawColor(255,128,32); doc.setLineWidth(0.8); doc.line(ml, y, ml+55, y); y += 8;
+    if (positions.length === 0) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...GREY);
+      doc.text('Keine Massnahmen-Positionen erfasst.', ml, y); y += 10;
+    } else {
+      // Tabellen-Kopf
+      const colNr = 12, colPos = 110, colPreis = cw - colNr - colPos;
+      doc.setFillColor(255,237,213); doc.rect(ml, y-5, cw, 8, 'F');
+      doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(124,45,18);
+      doc.text('Nr.', ml+2, y);
+      doc.text('Position', ml+colNr+2, y);
+      doc.text('Pauschalpreis netto', ml+colNr+colPos+colPreis-2, y, { align:'right' });
+      y += 4;
+      doc.setDrawColor(253,186,116); doc.line(ml, y-1, mr, y-1); y += 2;
+      // Zeilen
+      doc.setFont('helvetica','normal'); doc.setFontSize(10);
+      positions.forEach((p, i) => {
+        // Höhe der Zeile = label + ggf. massnahme-Text (gekürzt)
+        const labelLines = doc.splitTextToSize(p.label, colPos - 4);
+        const massLines = p.massnahme ? doc.splitTextToSize(p.massnahme, colPos - 4) : [];
+        const lineH = 4.5;
+        const rowH = Math.max(7, (labelLines.length + Math.min(massLines.length, 2)) * lineH + 3);
+        if (y + rowH > 270) { doc.addPage(); y = 22; }
+        // Hintergrund abwechselnd
+        if (i % 2 === 0) { doc.setFillColor(254,243,226); doc.rect(ml, y-3, cw, rowH, 'F'); }
+        // Nr
+        doc.setTextColor(120,53,15); doc.setFont('helvetica','bold');
+        doc.text(String(i+1), ml+2, y+2);
+        // Position
+        doc.setTextColor(55,65,81); doc.setFont('helvetica','bold');
+        labelLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+2+li*lineH));
+        if (massLines.length > 0) {
+          doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(107,114,128);
+          massLines.slice(0,2).forEach((l, li) =>
+            doc.text(l, ml+colNr+2, y+2+labelLines.length*lineH+li*4));
+          doc.setFontSize(10);
+        }
+        // Preis rechts
+        doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(124,45,18);
+        doc.text(fmtEUR(p.preis)+' EUR', ml+colNr+colPos+colPreis-2, y+2, { align:'right' });
+        doc.setFontSize(10);
+        y += rowH;
+        doc.setDrawColor(253,186,116); doc.line(ml, y-1, mr, y-1);
+      });
+      // Summen-Zeile
+      y += 2;
+      doc.setFillColor(255,128,32); doc.rect(ml, y-3, cw, 11, 'F');
+      doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+      doc.text('Summe Netto', ml+2, y+4);
+      doc.setFontSize(14);
+      doc.text(fmtEUR(totalSum)+' EUR', mr-2, y+4, { align:'right' });
+      y += 13;
+      // Hinweis
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+      doc.text('Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.', ml, y); y += 5;
+      doc.text('Angebot gueltig fuer 30 Tage ab Datum der Erstellung.', ml, y); y += 8;
+    }
+  }
+
   // === GEFAHRENKATALOG — TABELLARISCH ===
   doc.addPage(); y = 18;
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.text('Gefahrenkatalog', ml, y); y += 2;
+  doc.text(withPrices ? 'Detailaufstellung (Gefahrenkatalog)' : 'Gefahrenkatalog', ml, y); y += 2;
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, ml+45, y); y += 8;
 
   // Tabellenkopf
