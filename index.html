@@ -1360,13 +1360,14 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav" id="tnav-gbu" onclick="switchView('gbu')" style="display:none">⚠️ Gefährdungsbeurteilung</button>
     <button class="tnav" id="tnav-liftaro" onclick="switchView('liftaro')" style="display:none">📋 Liftaro Checks</button>
     <button class="tnav" id="tnav-users" onclick="switchView('users')" style="display:none">👥 User-Verwaltung</button>
+    <button class="tnav" id="tnav-info" onclick="switchView('info')">📚 Infobereich</button>
     <button class="tnav tnav-mobile-only" id="tnav-firmen" onclick="switchView('firmen')" style="display:none">🏢 Firmen-Verwaltung</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
     <div class="drawer-divider"></div>
     <div class="drawer-user-info"><span style="font-size:18px">👤</span><span id="drawer-user-name" style="font-weight:600">–</span></div>
     <button type="button" class="drawer-action" onclick="toggleTheme()">🎨 Design wechseln</button>
     <button type="button" class="drawer-action" id="drawer-install-btn" onclick="triggerInstallPwa()" style="display:none">📥 Als App installieren</button>
-    <button type="button" class="drawer-action" onclick="openTechnikerAnleitung()">📘 Techniker-Anleitung (PDF)</button>
+    <button type="button" class="drawer-action" onclick="switchView('info')">📚 Infobereich</button>
     <button type="button" class="drawer-action" onclick="forceUpdate()">↻ Update prüfen</button>
     <button type="button" class="drawer-action drawer-logout" onclick="logout()">⏏ Abmelden</button>
     <div class="drawer-footer" id="drawer-version">–</div>
@@ -1378,7 +1379,6 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <button class="topbar-btn" id="btn-reset" onclick="confirmReset()" style="display:none;background:rgba(220,38,38,.25);border-color:rgba(220,38,38,.4)">↺ Reset</button>
   <span class="ver-pill" id="ver-pill" title="App-Version">–</span>
   <button class="topbar-btn tb-only-desktop" id="theme-toggle-btn" onclick="toggleTheme()" title="Design wechseln (Modern / Playful / Classic)">🎨</button>
-  <button class="topbar-btn tb-only-desktop" onclick="openTechnikerAnleitung()" title="Techniker-Anleitung als PDF herunterladen (zum Versenden)">📘 Anleitung</button>
   <button class="topbar-btn tb-only-desktop" onclick="forceUpdate()" title="Auf neueste Version prüfen und App neu laden">↻ Update</button>
   <div class="firma-pill-wrap">
     <button class="firma-pill" id="firma-pill" onclick="toggleFirmaDropdown(event)" title="Aktuelle Firma – klicken zum Wechseln">
@@ -1895,6 +1895,14 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="firma-body" id="gbu-list" style="padding:20px"></div>
+</div>
+
+<!-- INFOBEREICH (Anleitungen + Downloads für alle User) -->
+<div class="firma-view" id="info-view">
+  <div class="firma-hdr">
+    <h2>📚 Infobereich <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">Anleitungen &amp; Downloads</span></h2>
+  </div>
+  <div class="firma-body" id="info-list" style="padding:20px"></div>
 </div>
 
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
@@ -2457,7 +2465,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.10';
+const APP_VERSION = 'v4.11';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3567,8 +3575,8 @@ function goTo(n) {
 }
 
 function switchView(view) {
-  // Techniker-Only Gate: nur dashboard, auftraege, overview, anlagen erlaubt
-  if (isTechnikerOnly() && !['dashboard','auftraege','overview','anlagen'].includes(view)) {
+  // Techniker-Only Gate: nur dashboard, auftraege, overview, anlagen + info erlaubt
+  if (isTechnikerOnly() && !['dashboard','auftraege','overview','anlagen','info'].includes(view)) {
     return toast('🔒 Diese Ansicht ist im Techniker-Modus nicht verfügbar.', 'err');
   }
   // Permission-Gates
@@ -3605,9 +3613,10 @@ function switchView(view) {
   const rch  = document.getElementById('rch-view');
   const lif  = document.getElementById('lif-view');
   const gbu  = document.getElementById('gbu-view');
+  const info = document.getElementById('info-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3628,6 +3637,7 @@ function switchView(view) {
   if (rch)  rch.classList.toggle('show',  view==='rechnungen');
   if (lif)  lif.classList.toggle('show',  view==='liftaro');
   if (gbu)  gbu.classList.toggle('show',  view==='gbu');
+  if (info) info.classList.toggle('show', view==='info');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3644,6 +3654,7 @@ function switchView(view) {
   if (view==='rechnungen') renderRechnungenView();
   if (view==='liftaro') renderLiftaroView();
   if (view==='gbu') renderGbuView();
+  if (view==='info') renderInfoView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -15312,6 +15323,66 @@ async function _gbuSubmit() {
 /* ════════════════════════════════════════════════════════════
    GBU PDF-Generator — modernes Aszendio-Briefkopf-Layout
    ════════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════════════════════════
+   INFOBEREICH-VIEW (Anleitungen + Downloads für alle User)
+   ─────────────────────────────────────────────────────────────────────── */
+const INFO_DOCS = [
+  {
+    id: 'techniker-anleitung',
+    icon: '📘',
+    title: 'Techniker-Anleitung — Arbeitsberichte erstellen',
+    subtitle: 'Schritt-für-Schritt: Auftrag wählen oder neu anlegen, Arbeitsbericht ausfüllen, versenden',
+    badge: 'PDF · für Mitarbeiter',
+    badgeBg: '#DBEAFE', badgeFg: '#1E40AF',
+    audience: 'Techniker im Aussendienst',
+    languages: 'Deutsch',
+    action: 'openTechnikerAnleitung()',
+    actionLabel: '📥 PDF herunterladen',
+  },
+];
+
+function renderInfoView() {
+  const list = document.getElementById('info-list');
+  if (!list) return;
+  list.innerHTML =
+    '<div style="max-width:880px;margin:0 auto">'+
+      // Intro-Hero
+      '<div style="background:linear-gradient(135deg,#1A3353 0%,#2152A9 100%);color:#fff;border-radius:14px;padding:24px 28px;margin-bottom:24px;box-shadow:0 6px 20px rgba(33,82,169,.25)">'+
+        '<div style="font-size:13px;opacity:.85;letter-spacing:.5px;font-weight:600;margin-bottom:4px">INFOBEREICH</div>'+
+        '<div style="font-size:22px;font-weight:700;margin-bottom:8px">Anleitungen &amp; Dokumente</div>'+
+        '<div style="font-size:13px;opacity:.92;line-height:1.5;max-width:640px">'+
+          'Lade hier offizielle Aszendio-Anleitungen als PDF herunter, zum Verteilen an Mitarbeiter '+
+          'oder als Referenz für eigene Schulungen.'+
+        '</div>'+
+      '</div>'+
+      // Dokument-Karten
+      '<div style="display:grid;gap:14px">'+
+        INFO_DOCS.map(d =>
+          '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:20px 24px;display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap;box-shadow:0 1px 3px rgba(0,0,0,.04);transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 14px rgba(0,0,0,.08)\';this.style.borderColor=\'rgba(33,82,169,.25)\'" onmouseout="this.style.boxShadow=\'0 1px 3px rgba(0,0,0,.04)\';this.style.borderColor=\'var(--bdr)\'">'+
+            '<div style="font-size:36px;line-height:1;flex-shrink:0">'+d.icon+'</div>'+
+            '<div style="flex:1;min-width:240px">'+
+              '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">'+
+                '<h3 style="margin:0;font-size:16px;color:var(--navy)">'+escapeHtml(d.title)+'</h3>'+
+                '<span style="background:'+d.badgeBg+';color:'+d.badgeFg+';padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(d.badge)+'</span>'+
+              '</div>'+
+              '<div style="font-size:13px;color:var(--txt2);line-height:1.5;margin-bottom:10px">'+escapeHtml(d.subtitle)+'</div>'+
+              '<div style="display:flex;flex-wrap:wrap;gap:18px;font-size:11px;color:var(--txt3);margin-bottom:14px">'+
+                '<span>🎯 Zielgruppe: <strong style="color:var(--txt2)">'+escapeHtml(d.audience)+'</strong></span>'+
+                '<span>🌐 Sprache: <strong style="color:var(--txt2)">'+escapeHtml(d.languages)+'</strong></span>'+
+              '</div>'+
+              '<button class="btn prim" onclick="'+d.action+'" style="font-size:13px">'+escapeHtml(d.actionLabel)+'</button>'+
+            '</div>'+
+          '</div>'
+        ).join('')+
+      '</div>'+
+      // Footer-Hinweis
+      '<div style="margin-top:24px;padding:14px 18px;background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;font-size:12px;color:#065F46;line-height:1.5">'+
+        '💡 <strong>Weitere Anleitungen kommen.</strong> Sobald neue Dokumente bereitgestellt werden, erscheinen sie hier automatisch. '+
+        'Wünsche / Anregungen gerne an <a href="mailto:service@aszendio.com" style="color:#047857;font-weight:600">service@aszendio.com</a>.'+
+      '</div>'+
+    '</div>';
+}
+
 /* ═══════════════════════════════════════════════════════════════════════
    Techniker-Anleitung als PDF
    - Schritt-für-Schritt: Arbeitsbericht zu Auftrag erstellen
