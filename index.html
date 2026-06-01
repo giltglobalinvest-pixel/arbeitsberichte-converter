@@ -2586,7 +2586,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.23';
+const APP_VERSION = 'v4.24';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5587,6 +5587,12 @@ async function ensureLegacyFirmaFields() {
   // Mailchimp je Firma (API-Key + Audience-ID); ERP-Tenant ist schon da
   await ensureField('Firmen',       'mailchimp_api_key',     'singleLineText');
   await ensureField('Firmen',       'mailchimp_audience_id', 'singleLineText');
+  // Angebots-Konditionen je Firma (für GBU-/DA-Angebot-PDFs)
+  await ensureField('Firmen',       'angebot_lieferzeit',        'multilineText');
+  await ensureField('Firmen',       'angebot_gewaehrleistung',   'multilineText');
+  await ensureField('Firmen',       'angebot_zahlung',           'multilineText');
+  await ensureField('Firmen',       'angebot_geltungsdauer_tage','number');
+  await ensureField('Firmen',       'angebot_agb',               'multilineText');
 }
 
 function pickInitialFirma() {
@@ -5763,7 +5769,8 @@ function firmaRowHtml(f) {
       <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
           ? `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="createFirmaFromDefault('${fl.slug}')">💾 In DB anlegen</button>`
-          : `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveFirmaRow('${fid}')">💾 Speichern</button>`}
+          : `<button class="btn" style="padding:5px 10px;font-size:12px" onclick="openAngebotKonditionenModal('${fid}')" title="Angebots-Konditionen: AGBs, Lieferzeit, Gewährleistung, Zahlung, Geltungsdauer">📋 Angebot</button>
+             <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveFirmaRow('${fid}')">💾 Speichern</button>`}
       </td>
     </tr>
   `;
@@ -5814,6 +5821,144 @@ async function saveFirmaRow(recId) {
       loadHistory().catch(()=>{});
     }
   } catch(e) { toast('❌ '+e.message, 'err'); }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   ANGEBOTS-KONDITIONEN je Firma
+   AGBs, Lieferzeit, Gewährleistung, Zahlungsbedingungen, Geltungsdauer.
+   Werden automatisch in GBU- und DA-Angebot-PDFs eingefügt.
+   ────────────────────────────────────────────────────────────── */
+const ANGEBOT_KONDITIONEN_DEFAULTS = {
+  angebot_lieferzeit:        'Nach Auftragsbestätigung, ca. 6-8 Wochen Lieferzeit. Montage nach gesonderter Terminabsprache.',
+  angebot_gewaehrleistung:   'Auf alle ausgeführten Arbeiten und verbauten Teile gewähren wir eine Gewährleistung von 24 Monaten gemäß §634a BGB.',
+  angebot_zahlung:           '30% bei Auftragsvergabe\n60% nach Anlieferung der Komponenten\n10% nach mangelfreier Abnahme\n\nZahlungsziel: 14 Tage netto, ohne Abzug.',
+  angebot_geltungsdauer_tage: 30,
+  angebot_agb:               'Allgemeine Geschäftsbedingungen\n\n1. Geltungsbereich\nDieses Angebot gilt ausschließlich für Unternehmen i.S.d. §14 BGB. Es gelten unsere Allgemeinen Geschäftsbedingungen, die der Auftraggeber mit Auftragserteilung anerkennt.\n\n2. Angebotsumfang\nDer Angebotsumfang ist in den Angebots-Positionen abschließend beschrieben. Über den Umfang hinausgehende Leistungen werden nach Aufwand berechnet.\n\n3. Preise\nAlle Preise verstehen sich netto in Euro, zzgl. der gesetzlichen Mehrwertsteuer. Preisbindung bis zur angegebenen Geltungsdauer.\n\n4. Lieferung & Montage\nLieferung und Montage erfolgen nach gesonderter Terminabsprache. Anfahrtskosten innerhalb 50 km sind enthalten. Sonderzubehör (Kran, Gerüst) wird gesondert berechnet, falls nicht ausdrücklich enthalten.\n\n5. Gewährleistung\n24 Monate auf Material und Ausführung gemäß §634a BGB, beginnend mit der mangelfreien Abnahme.\n\n6. Eigentumsvorbehalt\nDie gelieferte Ware bleibt bis zur vollständigen Bezahlung Eigentum des Auftragnehmers.\n\n7. Haftung\nHaftung für Schäden ist auf Vorsatz und grobe Fahrlässigkeit beschränkt. Für leichte Fahrlässigkeit haften wir nur bei Verletzung wesentlicher Vertragspflichten.\n\n8. Gerichtsstand\nGerichtsstand ist der Sitz des Auftragnehmers, soweit gesetzlich zulässig.',
+};
+
+/* Liest die Angebots-Konditionen für eine Firma — fällt auf Defaults zurück, wenn leer. */
+function getAngebotKonditionen(firmaSlug) {
+  const firma = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug)?.fields || {};
+  return {
+    lieferzeit:        (firma.angebot_lieferzeit       || ANGEBOT_KONDITIONEN_DEFAULTS.angebot_lieferzeit).trim(),
+    gewaehrleistung:   (firma.angebot_gewaehrleistung  || ANGEBOT_KONDITIONEN_DEFAULTS.angebot_gewaehrleistung).trim(),
+    zahlung:           (firma.angebot_zahlung          || ANGEBOT_KONDITIONEN_DEFAULTS.angebot_zahlung).trim(),
+    geltungsdauer:     +firma.angebot_geltungsdauer_tage || ANGEBOT_KONDITIONEN_DEFAULTS.angebot_geltungsdauer_tage,
+    agb:               (firma.angebot_agb              || ANGEBOT_KONDITIONEN_DEFAULTS.angebot_agb).trim(),
+  };
+}
+
+function openAngebotKonditionenModal(firmaId) {
+  if (!isAdmin()) return;
+  const firma = (_firmenCache||[]).find(f => f.id === firmaId);
+  if (!firma) return toast('Firma nicht gefunden','err');
+  const f = firma.fields || {};
+  const D = ANGEBOT_KONDITIONEN_DEFAULTS;
+  const old = document.getElementById('akond-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'akond-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  const esc = s => String(s||'').replace(/</g,'&lt;');
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:780px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy);color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📋 Angebots-Konditionen — '+esc(f.name||f.slug||'')+'</span>'+
+        '<button onclick="document.getElementById(\'akond-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:4px;margin-bottom:16px;font-size:12px;color:#1E3A8A">'+
+          '💡 Diese Texte erscheinen in jedem Angebot-PDF (GBU + Datenaufnahme). Leer lassen = unten gezeigte Standard-Texte werden genutzt.'+
+        '</div>'+
+        '<div style="display:grid;gap:14px">'+
+          '<div>'+
+            '<label style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase">🚚 Lieferzeit</label>'+
+            '<textarea id="akond-lieferzeit" rows="2" placeholder="'+esc(D.angebot_lieferzeit)+'" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:4px;font-family:inherit;line-height:1.5">'+esc(f.angebot_lieferzeit||'')+'</textarea>'+
+          '</div>'+
+          '<div>'+
+            '<label style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase">🛡 Gewährleistung</label>'+
+            '<textarea id="akond-gewaehrleistung" rows="2" placeholder="'+esc(D.angebot_gewaehrleistung)+'" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:4px;font-family:inherit;line-height:1.5">'+esc(f.angebot_gewaehrleistung||'')+'</textarea>'+
+          '</div>'+
+          '<div>'+
+            '<label style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase">💳 Zahlungsbedingungen</label>'+
+            '<textarea id="akond-zahlung" rows="4" placeholder="'+esc(D.angebot_zahlung)+'" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:4px;font-family:inherit;line-height:1.5">'+esc(f.angebot_zahlung||'')+'</textarea>'+
+          '</div>'+
+          '<div style="display:grid;grid-template-columns:140px 1fr;gap:10px;align-items:center">'+
+            '<div>'+
+              '<label style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase">⏱ Geltungsdauer</label>'+
+              '<div style="display:flex;align-items:center;gap:6px;margin-top:4px">'+
+                '<input type="number" id="akond-geltungsdauer" value="'+(+f.angebot_geltungsdauer_tage || D.angebot_geltungsdauer_tage)+'" min="1" max="365" step="1" style="width:90px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;text-align:right">'+
+                '<span style="font-size:13px;color:var(--txt2)">Tage</span>'+
+              '</div>'+
+            '</div>'+
+            '<div style="font-size:11px;color:var(--txt3);padding-top:18px">'+
+              '"Angebot gültig für X Tage ab Datum der Erstellung." erscheint automatisch im PDF.'+
+            '</div>'+
+          '</div>'+
+          '<div>'+
+            '<label style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase">📜 AGBs (Volltext)</label>'+
+            '<textarea id="akond-agb" rows="10" placeholder="'+esc(D.angebot_agb)+'" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;margin-top:4px;font-family:inherit;line-height:1.5">'+esc(f.angebot_agb||'')+'</textarea>'+
+            '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Wird auf einer separaten Seite am Ende des Angebots gedruckt.</div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="margin-top:18px;padding:10px 12px;background:#FFFBEB;border-left:3px solid #F59E0B;border-radius:4px;font-size:11px;color:#92400E">'+
+          '⚠ <strong>Rechtshinweis:</strong> Die Standard-AGBs sind ein Muster und ersetzen keine rechtliche Beratung. Bitte vor dem Verschicken durch einen Anwalt prüfen lassen.'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="_akondFillDefaults()" title="Standard-Texte in alle leeren Felder einsetzen">↩ Defaults einfügen</button>'+
+        '<button class="btn" onclick="document.getElementById(\'akond-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" onclick="saveAngebotKonditionen(\''+firmaId+'\')">💾 Speichern</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+
+function _akondFillDefaults() {
+  const D = ANGEBOT_KONDITIONEN_DEFAULTS;
+  const lz = document.getElementById('akond-lieferzeit');
+  const gw = document.getElementById('akond-gewaehrleistung');
+  const za = document.getElementById('akond-zahlung');
+  const ag = document.getElementById('akond-agb');
+  if (lz && !lz.value.trim()) lz.value = D.angebot_lieferzeit;
+  if (gw && !gw.value.trim()) gw.value = D.angebot_gewaehrleistung;
+  if (za && !za.value.trim()) za.value = D.angebot_zahlung;
+  if (ag && !ag.value.trim()) ag.value = D.angebot_agb;
+  toast('↩ Defaults in leere Felder eingefügt','ok');
+}
+
+async function saveAngebotKonditionen(firmaId) {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const fields = {
+    angebot_lieferzeit:         document.getElementById('akond-lieferzeit').value.trim(),
+    angebot_gewaehrleistung:    document.getElementById('akond-gewaehrleistung').value.trim(),
+    angebot_zahlung:            document.getElementById('akond-zahlung').value.trim(),
+    angebot_geltungsdauer_tage: +document.getElementById('akond-geltungsdauer').value || 30,
+    angebot_agb:                document.getElementById('akond-agb').value.trim(),
+  };
+  try {
+    // Schema sicherstellen
+    try {
+      await ensureField('Firmen', 'angebot_lieferzeit',        'multilineText');
+      await ensureField('Firmen', 'angebot_gewaehrleistung',   'multilineText');
+      await ensureField('Firmen', 'angebot_zahlung',           'multilineText');
+      await ensureField('Firmen', 'angebot_geltungsdauer_tage','number');
+      await ensureField('Firmen', 'angebot_agb',               'multilineText');
+    } catch(_){}
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+firmaId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields })
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    toast('✅ Angebots-Konditionen gespeichert','ok');
+    document.getElementById('akond-modal')?.remove();
+    await loadFirmen();
+    renderFirmaView();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+  }
 }
 
 /* Lazy-Load: lädt alle Mailchimp-Audiences für eine Firma und befüllt das Select.
@@ -17125,7 +17270,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       y += 13;
       doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
       doc.text('Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.', ml, y); y += 5;
-      doc.text('Angebot gueltig fuer 30 Tage ab Datum der Erstellung.', ml, y); y += 6;
+      // Geltungsdauer kommt jetzt aus den Angebots-Konditionen (siehe Konditionen-Sektion am Ende)
     }
     // Detail-Hinweis
     doc.addPage(); y = 22;
@@ -17182,6 +17327,12 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     if (i < cps.length - 1) {
       doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, y-2, mr, y-2);
     }
+  }
+
+  // Angebots-Konditionen + AGB anhängen (nur bei Angebot-Variante)
+  if (withPrices) {
+    const firmaSlug = rec.firma || getCurrentFirmaSlug();
+    y = _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, y + 4, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
   }
 
   // Footer auf jeder Seite
@@ -17527,6 +17678,71 @@ function _sanPdf(s) {
     .replace(/[^\x00-\xFF]/g, '?');
 }
 
+/* Hängt Angebots-Konditionen-Sektion (Lieferzeit/Gewährleistung/Zahlung/Geltungsdauer)
+   + AGB-Seite an ein bestehendes PDF an. Wird von GBU- und DA-Angebot genutzt.
+   Erwartet: doc (jsPDF-Instanz), ml/mr (Margins), aktuelle y-Position als Start. */
+function _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, yStart, colors) {
+  const k = getAngebotKonditionen(firmaSlug);
+  const cw = mr - ml;
+  const NAVY   = colors.NAVY   || [26,51,83];
+  const ACCENT = colors.ACCENT || [33,82,169];
+  const GREY   = colors.GREY   || [55,65,81];
+  const GREY_L = colors.GREY_L || [120,130,145];
+  const GREY_X = colors.GREY_X || [229,231,235];
+  let y = yStart;
+
+  // ── KONDITIONEN-SEKTION ──
+  if (y > 220) { doc.addPage(); y = 22; }
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(14);
+  doc.text('Konditionen', ml, y); y += 2;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, y, ml+38, y); y += 6;
+
+  const drawKondBlock = (icon, label, text) => {
+    if (!text) return;
+    const lines = doc.splitTextToSize(_sanPdf(text), cw - 4);
+    const blockH = 6 + lines.length * 4.2 + 4;
+    if (y + blockH > 280) { doc.addPage(); y = 22; }
+    doc.setFillColor(248, 250, 252); doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2);
+    doc.rect(ml, y, cw, blockH, 'FD');
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+    doc.text(_sanPdf(icon+'  '+label), ml+3, y+5);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    let ly = y + 10;
+    lines.forEach(l => { doc.text(l, ml+3, ly); ly += 4.2; });
+    y += blockH + 3;
+  };
+
+  drawKondBlock('[#]', 'Lieferzeit',             k.lieferzeit);
+  drawKondBlock('[G]', 'Gewaehrleistung',        k.gewaehrleistung);
+  drawKondBlock('[E]', 'Zahlungsbedingungen',    k.zahlung);
+  drawKondBlock('[T]', 'Angebot gueltig fuer '+k.geltungsdauer+' Tage', 'Geltungsdauer ab Datum der Erstellung dieses Angebots. Bei Annahme nach Ablauf behalten wir uns Preisanpassungen vor.');
+
+  // ── AGB-SEITE ──
+  if (k.agb) {
+    doc.addPage(); y = 22;
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(15);
+    doc.text('Allgemeine Geschaeftsbedingungen', ml, y); y += 2;
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, ml+80, y); y += 7;
+
+    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+    const lines = doc.splitTextToSize(_sanPdf(k.agb), cw);
+    for (const line of lines) {
+      if (y > 278) { doc.addPage(); y = 22; }
+      // Erkennung von Überschrift-Zeilen (beginnt mit Ziffer + Punkt)
+      if (/^\d+\.\s/.test(line)) {
+        y += 2; // kleiner Abstand vor Punkt
+        doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY); doc.setFontSize(10);
+        doc.text(line, ml, y);
+        doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+      } else if (line.trim().length > 0) {
+        doc.text(line, ml, y);
+      }
+      y += 4.2;
+    }
+  }
+  return y;
+}
+
 /* Wrapper: erzeugt das Angebot-PDF (GBU-PDF + Preise + Summary-Tabelle) */
 async function _buildGbuAngebotPdf(d) {
   return _buildGbuPdf(d, { withPrices: true });
@@ -17740,7 +17956,7 @@ async function _buildGbuPdf(d, opts) {
       // Hinweis
       doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
       doc.text('Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.', ml, y); y += 5;
-      doc.text('Angebot gueltig fuer 30 Tage ab Datum der Erstellung.', ml, y); y += 8;
+      // Geltungsdauer kommt jetzt aus den Angebots-Konditionen (siehe Konditionen-Sektion am Ende)
     }
   }
 
@@ -17955,6 +18171,12 @@ async function _buildGbuPdf(d, opts) {
       doc.setPage(link.page);
       try { doc.link(link.x, link.y, link.w, link.h, { pageNumber: img.anhangPage }); } catch(_){}
     }
+  }
+
+  // Angebots-Konditionen + AGB anhängen (nur bei Angebot-Variante)
+  if (withPrices) {
+    const firmaSlug = getCurrentFirmaSlug();
+    _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, 30, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
   }
 
   // Footer alle Seiten
