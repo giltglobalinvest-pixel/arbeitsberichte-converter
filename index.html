@@ -2248,6 +2248,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen — Treffer werden NUR lokal ausgeblendet, ERP bleibt unverändert">🙈 Rechnungen prüfen + ausblenden</button>
     <button class="btn" id="auf-select-btn" onclick="toggleAuftragSelectMode()" style="display:none" title="Mehrere Aufträge auswählen, um sie zu löschen">☑ Auswählen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
+    <button class="btn" id="auf-erp-debug-btn" onclick="openErpAuftragDebug()" style="display:none;color:#7c2d12;border-color:rgba(180,83,9,.4)" title="ERP-Auftrag Rohdaten anzeigen — zur Identifikation des richtigen Auftragsnummern-Felds">🔍 ERP-Felder</button>
   </div>
   <!-- Bulk-Action-Bar (sticky bottom) — sichtbar nur im Select-Mode -->
   <div id="auf-bulk-bar" style="display:none;position:fixed;left:0;right:0;bottom:0;background:var(--surf,#fff);border-top:2px solid var(--err,#dc2626);padding:12px 22px;box-shadow:0 -4px 16px rgba(0,0,0,.1);z-index:100;align-items:center;gap:12px;flex-wrap:wrap">
@@ -2586,7 +2587,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.26';
+const APP_VERSION = 'v4.27';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6129,6 +6130,9 @@ async function loadAuftraegeAndRender() {
     // Select-Button: sichtbar wenn User löschen darf (auftraege_edit-Permission)
     const selBtn = document.getElementById('auf-select-btn');
     if (selBtn) selBtn.style.display = hasPermission('auftraege_edit') ? '' : 'none';
+    // ERP-Debug-Button (nur Admin)
+    const dbgBtn = document.getElementById('auf-erp-debug-btn');
+    if (dbgBtn) dbgBtn.style.display = (isAdmin() && APP_KEYS.valtownProxyUrl) ? '' : 'none';
     // ERP-Sync-Button + Bulk-Rechnungs-Check + BG-Sync: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
     const erpBtn   = document.getElementById('auf-erp-sync-btn');
     const bgBtn    = document.getElementById('auf-bg-sync-btn');
@@ -8696,6 +8700,115 @@ function _erpAuftragNumber(a) {
     if (v != null && v !== '' && v !== 0) return v;
   }
   return null;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   ERP-Auftrag DEBUG-MODAL — iPhone-tauglich, ohne DevTools
+   Zeigt alle Felder + Werte des ersten ERP-Auftrags an, damit
+   wir das richtige Auftragsnummer-Feld identifizieren können.
+   ───────────────────────────────────────────────────────────── */
+async function openErpAuftragDebug() {
+  if (!isAdmin()) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  const old = document.getElementById('erp-dbg-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'erp-dbg-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10800;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:780px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#7c2d12;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🔍 ERP-Auftrag — Rohdaten</span>'+
+        '<button onclick="document.getElementById(\'erp-dbg-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="erp-dbg-body" style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="text-align:center;padding:40px 20px"><div class="spinner" style="margin:0 auto 12px"></div>Lade ersten Auftrag aus dem ERP…</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'erp-dbg-modal\').remove()">Schließen</button>'+
+        '<button class="btn prim" id="erp-dbg-copy-btn" onclick="_erpDbgCopyAll()" style="display:none">📋 Alles kopieren</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+
+  // Ersten Auftrag holen + Felder anzeigen
+  try {
+    const list = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
+    const arr = Array.isArray(list) ? list : (list && (list.content || list.items || list.data) || []);
+    if (!arr.length) {
+      document.getElementById('erp-dbg-body').innerHTML = '<div style="padding:20px;color:var(--err)">Keine Aufträge im ERP gefunden.</div>';
+      return;
+    }
+    const a = arr[0];
+    // Optional: per GET mit ID das vollständige Objekt holen (manche List-Endpoints liefern Reduzierte Daten)
+    let full = a;
+    if (a.id) {
+      try {
+        const detail = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege/'+a.id);
+        if (detail && typeof detail === 'object') full = detail;
+      } catch(_){}
+    }
+    const m2 = document.getElementById('erp-dbg-modal');
+    if (m2) m2._fullObj = full;
+
+    // Render: Tabelle aller Top-Level-Keys + Werte
+    const rows = Object.keys(full).map(k => {
+      let v = full[k];
+      let valStr;
+      if (v == null) valStr = '<span style="color:var(--txt3);font-style:italic">null</span>';
+      else if (typeof v === 'object') valStr = '<code style="font-size:11px;color:var(--txt3)">'+escapeHtml(JSON.stringify(v).slice(0,80))+(JSON.stringify(v).length>80?'…':'')+'</code>';
+      else valStr = '<code style="font-size:12px;color:var(--navy);font-weight:600">'+escapeHtml(String(v))+'</code>';
+      // Highlight wenn Feldname auf "nummer/auftrag/beleg/referenz" deutet
+      const isHL = /nummer|nr$|auftrag|beleg|referenz|bestell/i.test(k);
+      const bg = isHL ? '#FEF3C7' : 'var(--surf)';
+      return '<tr style="background:'+bg+'"><td style="padding:6px 10px;border-bottom:1px solid var(--bdr);font-family:monospace;font-size:11px;color:var(--txt2);font-weight:'+(isHL?'700':'400')+'">'+escapeHtml(k)+'</td><td style="padding:6px 10px;border-bottom:1px solid var(--bdr)">'+valStr+'</td></tr>';
+    }).join('');
+    const gewaehlt = _erpAuftragNumber(full);
+    document.getElementById('erp-dbg-body').innerHTML =
+      '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
+        '💡 Welcher Wert entspricht der <strong>Auftragsnummer im ERP-UI</strong>? '+
+        'Gelb hervorgehoben sind Felder die nach "nummer/auftrag/beleg/referenz" aussehen.<br><br>'+
+        '<strong>Aktuell gewählt von der App:</strong> <code>'+escapeHtml(String(gewaehlt))+'</code>'+
+      '</div>'+
+      '<div style="overflow-x:auto;border:1px solid var(--bdr);border-radius:6px">'+
+        '<table style="width:100%;border-collapse:collapse;font-size:13px">'+
+          '<thead><tr style="background:#7c2d12;color:#fff">'+
+            '<th style="padding:8px 10px;text-align:left;font-weight:700">Feldname</th>'+
+            '<th style="padding:8px 10px;text-align:left;font-weight:700">Wert</th>'+
+          '</tr></thead>'+
+          '<tbody>'+rows+'</tbody>'+
+        '</table>'+
+      '</div>'+
+      '<div style="margin-top:14px;font-size:11px;color:var(--txt3);line-height:1.5">'+
+        '📌 <strong>So sagst du mir das richtige Feld:</strong> Vergleiche die Werte in der rechten Spalte mit der Auftragsnummer im Aufzugshandwerk-ERP-UI. '+
+        'Sobald du den passenden Wert findest, sag mir den Feldnamen aus der linken Spalte.'+
+      '</div>';
+    document.getElementById('erp-dbg-copy-btn').style.display = '';
+  } catch(e) {
+    document.getElementById('erp-dbg-body').innerHTML = '<div style="padding:20px;color:var(--err)">Fehler beim Laden: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function _erpDbgCopyAll() {
+  const m = document.getElementById('erp-dbg-modal');
+  if (!m || !m._fullObj) return;
+  const text = JSON.stringify(m._fullObj, null, 2);
+  // navigator.clipboard funktioniert auf iOS Safari, fallback: textarea + execCommand
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text)
+      .then(() => toast('📋 Alle ERP-Felder in die Zwischenablage kopiert','ok'))
+      .catch(() => _erpDbgFallbackCopy(text));
+  } else {
+    _erpDbgFallbackCopy(text);
+  }
+}
+
+function _erpDbgFallbackCopy(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand('copy'); toast('📋 Kopiert','ok'); } catch(_) { toast('Kopieren fehlgeschlagen','err'); }
+  setTimeout(() => ta.remove(), 100);
 }
 
 async function _getNextAuftragNum() {
