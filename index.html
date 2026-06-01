@@ -2586,7 +2586,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.24';
+const APP_VERSION = 'v4.25';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -8672,6 +8672,16 @@ function closeAuftragForm() {
   }
 }
 
+/* Auftragsnummer aus ERP-Antwort defensiv extrahieren.
+   Reihenfolge bevorzugt eine sichtbare/formatierte Nummer (auftragsnummer/nummer),
+   fällt dann auf vorgangsnummer und zuletzt auf interne id zurück. */
+function _erpAuftragNumber(a) {
+  if (!a) return null;
+  return a.auftragsnummer || a.nummer || a.auftragsNr || a.auftragNum
+      || a.vorgangsnummer || a.vorgangsNr
+      || a.id || null;
+}
+
 async function _getNextAuftragNum() {
   const allRecs = await atRead('Auftraege', null);
   const firmaSlug = getCurrentFirmaSlug();
@@ -8812,9 +8822,12 @@ async function saveAuftrag() {
       }
       if (!created) throw (firstErr || new Error('ERP-Endpoint nicht erreichbar'));
 
-      // Vorgangsnummer vom ERP übernehmen
-      const erpAuftragNum = created.vorgangsnummer || created.id;
+      // Auftragsnummer vom ERP übernehmen (defensiv über mehrere Felder)
+      const erpAuftragNum = _erpAuftragNumber(created);
       const erpId         = created.id || null;
+      console.log('[ERP-Create] Auftragsnummer-Mapping:',
+        { auftragsnummer: created.auftragsnummer, nummer: created.nummer,
+          vorgangsnummer: created.vorgangsnummer, id: created.id, gewaehlt: erpAuftragNum });
 
       // Lokal speichern mit ERP-Daten
       fields.auftrag_num         = erpAuftragNum;
@@ -22097,7 +22110,7 @@ async function runSyncForFirma(firma, userKey) {
 
       const fields = {
         firma,
-        auftrag_num: a.vorgangsnummer || a.id,
+        auftrag_num: _erpAuftragNumber(a),
         ext_id: a.id,
         ext_source: "aufzugshandwerk_v1",
         ext_vorgangsnummer: a.vorgangsnummer || null,
@@ -23749,7 +23762,13 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
   for (let i = 0; i < toProcess.length; i++) {
     _checkSyncCancelled();
     const a = toProcess[i];
-    log('['+(i+1)+'/'+toProcess.length+'] #'+a.vorgangsnummer+' '+a.status);
+    log('['+(i+1)+'/'+toProcess.length+'] #'+_erpAuftragNumber(a)+' '+a.status);
+    if (i === 0) {
+      // Beim ersten Auftrag im Sync: Alle Nummern-Felder loggen für Debug-Zwecke
+      console.log('[ERP-Sync] Erster Auftrag — Nummern-Felder:',
+        { auftragsnummer: a.auftragsnummer, nummer: a.nummer,
+          vorgangsnummer: a.vorgangsnummer, id: a.id, gewaehlt: _erpAuftragNumber(a) });
+    }
     try {
       // Angebot aus Cache holen
       let angebot = null;
@@ -23788,7 +23807,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
 
       const fields = {
         firma:                 firmaSlug,
-        auftrag_num:           a.vorgangsnummer || a.id,
+        auftrag_num:           _erpAuftragNumber(a),
         ext_id:                a.id,
         ext_source:            'aufzugshandwerk_v1',
         ext_vorgangsnummer:    a.vorgangsnummer || null,
