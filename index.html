@@ -2588,7 +2588,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.31';
+const APP_VERSION = 'v4.32';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14766,19 +14766,69 @@ async function _openLiftaroDetail(anfrageId) {
     // Defensive unwrap: könnte direkt das Objekt sein oder { ok, anfrage } / { ok, data }
     data = (res && (res.anfrage || res.data || res.check)) || res || {};
   } catch(e) { return toast('❌ '+(e.message||'?').slice(0,300),'err'); }
+  // Debug-Log alle Top-Level-Felder
+  console.log('[Liftaro-Detail] Top-Level Felder:', Object.keys(data));
+  console.log('[Liftaro-Detail] Komplett:', data);
   trackEvent('liftaro', 'check_open', { anfrage_id: anfrageId, status: data.status||'' });
+
+  // ─── PDF-URLs defensiv über mehrere mögliche Feldnamen erkennen ───
+  const bestandsPdf = data.vorliegendes_pdf_url || data.bestands_pdf_url
+                    || data.pdf_url || data.bestand_pdf || data.bestand_pdf_url
+                    || data.attachment_url || data.dokument_url
+                    || (data.pdf && (data.pdf.url || data.pdf.href))
+                    || (data.bestand && (data.bestand.pdf_url || data.bestand.url))
+                    || null;
+  const responsePdf = data.response_pdf_url || data.angebot_pdf_url
+                    || data.gesendetes_pdf_url || data.eigenes_pdf_url
+                    || (data.response && (data.response.pdf_url || data.response.pdf))
+                    || (data.angebot && data.angebot.pdf_url)
+                    || null;
+  // Eigene Antwort defensiv extrahieren (Liftaro liefert das nach Abgabe zurück)
+  const respPreis = data.response_preis_netto != null ? data.response_preis_netto
+                  : data.angebot_preis_netto != null ? data.angebot_preis_netto
+                  : (data.response && (data.response.preis_netto || data.response.preis))
+                  || (data.angebot && data.angebot.preis_netto)
+                  || null;
+  const respText = data.response_text || data.angebot_text || data.response_erlaeuterung
+                 || (data.response && (data.response.text || data.response.erlaeuterung))
+                 || (data.angebot && (data.angebot.text || data.angebot.erlaeuterung))
+                 || null;
+  const respAt = data.response_at || data.angebot_at || data.geantwortet_am || data.responded_at
+               || (data.response && (data.response.at || data.response.created_at))
+               || null;
+  const declineReason = data.decline_reason || data.ablehn_grund || data.absage_grund
+                      || (data.response && (data.response.decline_reason || data.response.reason))
+                      || null;
+
   const old = document.getElementById('lif-detail-modal'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'lif-detail-modal';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
-  const row = (label, value, mono) => value
+  const row = (label, value, mono) => (value != null && value !== '')
     ? '<div style="display:flex;gap:10px;padding:6px 0;border-bottom:1px dashed var(--bdr);font-size:12px">'+
         '<div style="min-width:130px;color:var(--txt3)">'+escapeHtml(label)+'</div>'+
         '<div style="flex:1;color:var(--txt)'+(mono?';font-family:monospace':'')+'">'+escapeHtml(String(value))+'</div>'+
       '</div>'
     : '';
+  const fmtEUR = n => (n==null?'':new Intl.NumberFormat('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2}).format(+n)+' € netto');
   const s = String(data.status||'').toLowerCase();
   const isDone = (s==='angeboten' || s==='abgelehnt' || s==='timeout');
+  // Kunde / Ansprechpartner — defensiv
+  const kunde = data.kunde || data.auftraggeber || {};
+  const kundeName = data.kunde_name || data.firma || kunde.firma || kunde.name || '';
+  const kundeAnsp = data.kunde_ansprechpartner || data.ansprechpartner_name || kunde.ansprechpartner || '';
+  const kundeTel  = data.kunde_telefon || kunde.telefon || '';
+  const kundeMail = data.kunde_email  || kunde.email   || '';
+
+  const pdfBlock = (label, url, slot) =>
+    '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">'+label+'</h4>'+
+    '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">'+
+      '<a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(url)+'" style="text-decoration:none">📄 Im neuen Tab öffnen</a>'+
+      '<button class="btn" onclick="(function(el){el.style.display = el.style.display===\'none\'?\'block\':\'none\';})(document.getElementById(\''+slot+'\'))">👁 Inline-Vorschau ein/aus</button>'+
+      '<a class="btn" href="'+escapeHtml(url)+'" download style="text-decoration:none">⬇ Download</a>'+
+    '</div>'+
+    '<div id="'+slot+'" style="background:#525252;border-radius:8px;padding:6px;margin-bottom:14px;max-height:600px;overflow-y:auto"></div>';
+
   m.innerHTML =
     '<div style="background:var(--surf,#fff);max-width:780px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
       '<div style="padding:14px 18px;background:#1A3353;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
@@ -14786,25 +14836,69 @@ async function _openLiftaroDetail(anfrageId) {
         '<button onclick="document.getElementById(\'lif-detail-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+
+        // Stammdaten
         '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Stammdaten</h4>'+
         '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
           row('Anfrage-ID', data.anfrage_id, true)+
           row('Status', data.status)+
           row('Versendet am', String(data.sent_at||'').slice(0,16).replace('T',' '))+
           row('Frist bis', String(data.deadline_at||'').slice(0,16).replace('T',' '))+
+          row('Geöffnet am', String(data.opened_at||data.geoeffnet_am||'').slice(0,16).replace('T',' '))+
+          row('Geantwortet am', String(respAt||'').slice(0,16).replace('T',' '))+
         '</div>'+
+
+        // Objekt
         '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Objekt</h4>'+
         '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
           row('Adresse', [data.objekt_strasse, data.objekt_plz, data.objekt_ort].filter(Boolean).join(', '))+
           row('Anzahl Aufzüge', data.anzahl_aufzuege)+
           row('Anlagenart', data.anlagenart)+
+          row('Baujahr', data.baujahr || data.objekt_baujahr)+
+          row('Hersteller', data.hersteller)+
+          row('Haltestellen', data.haltestellen || data.anzahl_haltestellen)+
         '</div>'+
+
+        // Kunde / Ansprechpartner (nur wenn vorhanden)
+        ((kundeName || kundeAnsp || kundeTel || kundeMail)
+          ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Kunde / Ansprechpartner</h4>'+
+            '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+              row('Firma', kundeName)+
+              row('Ansprechpartner', kundeAnsp)+
+              row('Telefon', kundeTel)+
+              row('E-Mail', kundeMail)+
+            '</div>'
+          : '')+
+
+        // Leistungsumfang
         (data.leistungsumfang_text ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Leistungsumfang (Kunden-Soll)</h4>'+
           '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;white-space:pre-wrap;line-height:1.5">'+escapeHtml(data.leistungsumfang_text)+'</div>' : '')+
-        (data.vorliegendes_pdf_url ? '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">Bestands-Angebot (PDF)</h4>'+
-          '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(data.vorliegendes_pdf_url)+'" style="text-decoration:none">📄 Im neuen Tab</a><button class="btn" onclick="document.getElementById(\'lif-pdf-inline\').style.display=document.getElementById(\'lif-pdf-inline\').style.display===\'none\'?\'block\':\'none\'">👁 Inline-Vorschau ein/aus</button></div>'+
-          '<div id="lif-pdf-inline" style="background:#525252;border-radius:8px;padding:6px;margin-bottom:14px;max-height:600px;overflow-y:auto"></div>' : '')+
-        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">🔍 Rohe Liftaro-Daten</summary><pre style="background:#0f172a;color:#cbd5e1;padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:240px;margin-top:6px">'+escapeHtml(JSON.stringify(data, null, 2))+'</pre></details>'+
+
+        // Bestands-PDF (vom Kunden mitgegeben)
+        (bestandsPdf ? pdfBlock('Bestands-Angebot vom Kunden (PDF)', bestandsPdf, 'lif-pdf-inline') : '')+
+
+        // EIGENE Antwort (wenn schon abgegeben)
+        (isDone
+          ? '<h4 style="margin:14px 0 8px;font-size:13px;color:var(--navy)">'+
+              (s==='angeboten'?'✅ Eigene Antwort (Angebot abgegeben)':
+               s==='abgelehnt'?'❌ Eigene Antwort (Abgelehnt)':
+               '⏱ Frist abgelaufen')+
+            '</h4>'+
+            '<div style="background:#F0FDF4;border:1px solid #86EFAC;border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+              row('Status', data.status)+
+              row('Antwort am', String(respAt||'').slice(0,16).replace('T',' '))+
+              row('Preis netto', respPreis != null ? fmtEUR(respPreis) : null)+
+              row('Begründung / Notiz', respText)+
+              row('Ablehngrund', declineReason)+
+              (!respPreis && !respText && !declineReason && !respAt
+                ? '<div style="font-size:11px;color:var(--txt3);padding:6px 0">Keine Antwort-Details von der Liftaro-API empfangen. (Schau in die Konsole: <code>[Liftaro-Detail]</code>)</div>'
+                : '')+
+            '</div>'+
+            (responsePdf ? pdfBlock('Eigenes Angebots-PDF (versandt)', responsePdf, 'lif-resp-pdf-inline') : '')
+          : '')+
+
+        // Rohdaten (collapsible — bleibt erhalten für Debug)
+        '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:11px;color:var(--txt3)">🔍 Rohe Liftaro-Daten ('+Object.keys(data).length+' Felder)</summary><pre style="background:#0f172a;color:#cbd5e1;padding:10px;border-radius:6px;font-size:10px;overflow:auto;max-height:280px;margin-top:6px;white-space:pre-wrap;word-break:break-all">'+escapeHtml(JSON.stringify(data, null, 2))+'</pre></details>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'lif-detail-modal\').remove()">Schließen</button>'+
@@ -14819,10 +14913,14 @@ async function _openLiftaroDetail(anfrageId) {
   document.body.appendChild(m);
   m._anfrage = data;  // für späteren Zugriff im Offer-Modal
   m.onclick = (ev) => { if (ev.target === m) m.remove(); };
-  // PDF inline rendern wenn vorhanden
-  if (data.vorliegendes_pdf_url) {
+  // PDFs inline rendern wenn vorhanden
+  if (bestandsPdf) {
     const wrap = document.getElementById('lif-pdf-inline');
-    if (wrap) _renderPdfIntoContainer(data.vorliegendes_pdf_url, wrap);
+    if (wrap) _renderPdfIntoContainer(bestandsPdf, wrap);
+  }
+  if (responsePdf) {
+    const wrap = document.getElementById('lif-resp-pdf-inline');
+    if (wrap) _renderPdfIntoContainer(responsePdf, wrap);
   }
 }
 
