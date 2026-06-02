@@ -1953,6 +1953,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-angeboten" checked onchange="_renderLiftaroList()"> ✅ Angeboten</label>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-abgelehnt" checked onchange="_renderLiftaroList()"> ❌ Abgelehnt</label>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="lif-flt-timeout" onchange="_renderLiftaroList()"> ⏱ Timeout</label>
+      <span style="border-left:1px solid var(--bdr);margin:0 4px;height:14px"></span>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Archivierte Anfragen einblenden"><input type="checkbox" id="lif-flt-archiv" onchange="_renderLiftaroList()"> 🗄 Archivierte</label>
     </div>
   </div>
   <div class="firma-body" id="lif-list" style="padding:20px"></div>
@@ -2588,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.34';
+const APP_VERSION = 'v4.35';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14625,6 +14627,8 @@ async function renderLiftaroView(opts) {
     }
   }
   const force = opts && opts.force;
+  // Archiv-Set einmalig beim ersten Aufruf laden (für Filter)
+  _liftaroRefreshArchivedSet().catch(()=>{});
   if (_liftaroCache.items.length) {
     _renderLiftaroList();
   } else {
@@ -14671,6 +14675,8 @@ async function _loadLiftaroChecks(opts) {
     });
     _liftaroCache = { items: combined, loadedAt: Date.now() };
     _erpCacheSet('liftaro', 'global', combined);
+    // Archivierte aus Airtable laden (parallel — schnell, da nur IDs)
+    _liftaroRefreshArchivedSet().catch(()=>{});
     if (!silent) toast('✅ '+combined.length+' Liftaro-Anfragen geladen','ok');
     _renderLiftaroList();
   } catch(e) {
@@ -14689,7 +14695,14 @@ function _renderLiftaroList() {
   const showAng     = document.getElementById('lif-flt-angeboten')?.checked === true;
   const showAbg     = document.getElementById('lif-flt-abgelehnt')?.checked === true;
   const showTo      = document.getElementById('lif-flt-timeout')?.checked === true;
+  const showArchiv  = document.getElementById('lif-flt-archiv')?.checked === true;
   let items = (_liftaroCache.items||[]).slice();
+  // Archiv-Filter: standardmäßig archivierte ausblenden, mit Filter einblenden
+  items = items.filter(it => {
+    const id = String(it.anfrage_id||it.id||'');
+    const isArchived = _liftaroArchivedIds.has(id);
+    return showArchiv ? isArchived : !isArchived;
+  });
   items = items.filter(it => {
     const s = String(it.status||'').toLowerCase();
     if (s === 'offen' || s === 'gesendet') return showOffen;
@@ -14753,6 +14766,12 @@ function _renderLiftaroList() {
         (it.anlagenart ? '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml(it.anlagenart)+'</div>' : '')+
       '</div>'+
       (fristTxt ? '<div style="text-align:right;font-size:11px;color:'+(fristColor||'var(--txt2)')+';font-weight:600">'+escapeHtml(fristTxt)+'</div>' : '')+
+      // Quick-Archiv-Icon: nur bei abgeschlossenen Anfragen (angeboten/abgelehnt/timeout)
+      (['angeboten','abgelehnt','timeout'].includes(s)
+        ? '<button onclick="event.stopPropagation();(_liftaroArchivedIds.has(\''+escapeHtml(String(it.anfrage_id||''))+'\')?liftaroUnarchiveAnfrage:liftaroArchiveAnfrage)(\''+escapeHtml(String(it.anfrage_id||''))+'\')" title="'+(_liftaroArchivedIds.has(String(it.anfrage_id||''))?'Aus Archiv zurück':'Archivieren')+'" style="background:transparent;border:1px solid var(--bdr);color:var(--txt3);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:12px;margin-left:6px">'+
+          (_liftaroArchivedIds.has(String(it.anfrage_id||''))?'↩':'🗄')+
+        '</button>'
+        : '')+
     '</div>';
   }).join('')+'</div>';
 }
@@ -14775,6 +14794,8 @@ const LIFTARO_TABLE_FIELDS = [
   { name:'bestands_pdf',   type:'multipleAttachments' },
   { name:'response_pdf',   type:'multipleAttachments' },
   { name:'synced_at',      type:'singleLineText' },
+  { name:'archived',       type:'checkbox', options:{ icon:'check', color:'grayBright' } },
+  { name:'archived_at',    type:'singleLineText' },
 ];
 
 async function _liftaroEnsureTable() {
@@ -14881,7 +14902,93 @@ async function _liftaroLoadFromAirtable(anfrageId) {
     recId: rec.id,
     bestandsPdfUrl: (Array.isArray(f.bestands_pdf) && f.bestands_pdf[0] && f.bestands_pdf[0].url) || null,
     responsePdfUrl: (Array.isArray(f.response_pdf) && f.response_pdf[0] && f.response_pdf[0].url) || null,
+    archived: !!f.archived,
   };
+}
+
+/* Set für lokale Archiv-Anzeige — wird beim Liftaro-Load aus Airtable befüllt.
+   Spart wiederholte Lookups je Item in der Liste. */
+let _liftaroArchivedIds = new Set();
+
+async function _liftaroRefreshArchivedSet() {
+  if (!APP_KEYS.airtableWriteKey) return;
+  if (!_liftaroTableEnsured) {
+    try { await _liftaroEnsureTable(); } catch(_){}
+  }
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!key) return;
+  try {
+    const ids = new Set();
+    let offset = null;
+    let safety = 0;
+    do {
+      let url = 'https://api.airtable.com/v0/'+baseId+'/Liftaro_Anfragen?pageSize=100&fields[]=anfrage_id&fields[]=archived&filterByFormula='+encodeURIComponent('{archived}=1');
+      if (offset) url += '&offset='+encodeURIComponent(offset);
+      const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+      if (!r.ok) break;
+      const d = await r.json();
+      for (const rec of (d.records||[])) {
+        const id = rec.fields?.anfrage_id;
+        if (id) ids.add(String(id));
+      }
+      offset = d.offset || null;
+      if (++safety > 20) break;
+    } while (offset);
+    _liftaroArchivedIds = ids;
+    console.log('[Liftaro] Archived IDs:', ids.size);
+  } catch(e) { console.warn('[Liftaro] Archived-Refresh:', e); }
+}
+
+/* Eine Anfrage archivieren oder Archivierung zurücknehmen.
+   Falls noch nicht in Airtable: erst minimal upserten, dann archivieren. */
+async function _liftaroToggleArchive(anfrageId, archive) {
+  if (!APP_KEYS.airtableWriteKey) { toast('Kein Write-Token','err'); return false; }
+  if (!_liftaroTableEnsured) {
+    const ok = await _liftaroEnsureTable();
+    if (!ok) { toast('Schema-Fehler','err'); return false; }
+  }
+  // Record finden oder anlegen
+  let rec = await _liftaroFindAirtableRecord(anfrageId);
+  if (!rec) {
+    // Item aus Cache holen für minimale Felder
+    const it = (_liftaroCache.items||[]).find(x => String(x.anfrage_id||x.id) === String(anfrageId)) || { anfrage_id: anfrageId };
+    rec = await _liftaroPersistAnfrage(it, {});
+    if (!rec) { toast('Konnte Anfrage nicht in Airtable anlegen','err'); return false; }
+  }
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Liftaro_Anfragen/'+rec.id, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: { archived: !!archive, archived_at: archive ? new Date().toISOString() : '' }}),
+    });
+    if (!r.ok) { toast('Fehler '+r.status,'err'); return false; }
+    if (archive) _liftaroArchivedIds.add(String(anfrageId));
+    else _liftaroArchivedIds.delete(String(anfrageId));
+    toast(archive ? '🗄 Anfrage archiviert' : '↩ Aus Archiv zurück','ok');
+    return true;
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    return false;
+  }
+}
+
+/* Public: Archivieren mit UI-Refresh (für Buttons im Modal/Liste) */
+async function liftaroArchiveAnfrage(anfrageId) {
+  if (!confirm('Anfrage archivieren?\n\nArchivierte Anfragen werden ausgeblendet — du kannst sie über den Filter "🗄 Archivierte zeigen" wieder einblenden.')) return;
+  const ok = await _liftaroToggleArchive(anfrageId, true);
+  if (ok) {
+    document.getElementById('lif-detail-modal')?.remove();
+    _renderLiftaroList();
+  }
+}
+async function liftaroUnarchiveAnfrage(anfrageId) {
+  const ok = await _liftaroToggleArchive(anfrageId, false);
+  if (ok) {
+    document.getElementById('lif-detail-modal')?.remove();
+    _renderLiftaroList();
+  }
 }
 
 async function _openLiftaroDetail(anfrageId) {
@@ -15091,12 +15198,15 @@ async function _openLiftaroDetail(anfrageId) {
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'lif-detail-modal\').remove()">Schließen</button>'+
-        (!isDone
-          ? '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
-              '<button class="btn" style="color:#dc2626;border-color:#fca5a5" onclick="_openLiftaroDecline(\''+escapeHtml(data.anfrage_id||'')+'\')">❌ Ablehnen</button>'+
-              '<button class="btn prim" style="background:#10b981;border-color:#10b981" onclick="_openLiftaroOffer(\''+escapeHtml(data.anfrage_id||'')+'\')">✅ Angebot abgeben</button>'+
-            '</div>'
-          : '<div style="font-size:11px;color:var(--txt3);align-self:center">Anfrage bereits abgeschlossen ('+escapeHtml(s)+')</div>')+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
+          (_liftaroArchivedIds.has(String(data.anfrage_id||''))
+            ? '<button class="btn" onclick="liftaroUnarchiveAnfrage(\''+escapeHtml(data.anfrage_id||'')+'\')" title="Aus Archiv zurückholen">↩ Aus Archiv</button>'
+            : '<button class="btn" onclick="liftaroArchiveAnfrage(\''+escapeHtml(data.anfrage_id||'')+'\')" style="color:#6b7280;border-color:#d1d5db" title="Diese Anfrage archivieren">🗄 Archivieren</button>')+
+          (!isDone
+            ? '<button class="btn" style="color:#dc2626;border-color:#fca5a5" onclick="_openLiftaroDecline(\''+escapeHtml(data.anfrage_id||'')+'\')">❌ Ablehnen</button>'+
+              '<button class="btn prim" style="background:#10b981;border-color:#10b981" onclick="_openLiftaroOffer(\''+escapeHtml(data.anfrage_id||'')+'\')">✅ Angebot abgeben</button>'
+            : '<span style="font-size:11px;color:var(--txt3);align-self:center">Anfrage abgeschlossen ('+escapeHtml(s)+')</span>')+
+        '</div>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
