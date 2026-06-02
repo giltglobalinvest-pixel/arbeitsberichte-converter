@@ -2270,7 +2270,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="auf-search-bar">
     <div class="auf-search-wrap">
       <span class="auf-search-ico">🔍</span>
-      <input type="text" class="auf-search-inp" id="auf-search" placeholder="Suchen nach Auftragsnummer, Standort, Fabriknummer, Kontakt …" oninput="renderAuftraegeList()">
+      <input type="text" class="auf-search-inp" id="auf-search" placeholder="Suchen nach Auftragsnummer, Standort, Fabrik-Nr, Kunde, Kontakt, Leistung … (Filter werden ignoriert)" oninput="renderAuftraegeList()">
     </div>
     <select id="auf-typ-filter" onchange="renderAuftraegeList()" title="Nach Angebots-Typ filtern (aus dem ERP-Angebot)" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
       <option value="">Alle Typen</option>
@@ -2588,7 +2588,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.28';
+const APP_VERSION = 'v4.29';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6212,24 +6212,29 @@ function renderAuftraegeList() {
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
 
   let filtered;
-  if (_auftragTab === 'all') {
+  // ── Bei aktiver Suche werden Tab/Typ/Hide/Wartung-Filter aufgeweicht,
+  //    damit der gesuchte Auftrag IMMER gefunden wird, egal wo er steckt. ──
+  if (search) {
+    filtered = _auftragCache.slice();  // alles, auch hidden + auch abgerechnet
+  } else if (_auftragTab === 'all') {
     // Alle außer abgerechnet
     filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
     filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
   }
-  // Angebots-Typ-Filter anwenden (leer = alle; "__none__" = Aufträge ohne Typ)
-  if (typFilter) {
-    if (typFilter === '__none__') {
-      filtered = filtered.filter(r => !r.fields.angebot_typ);
-    } else {
-      filtered = filtered.filter(r => String(r.fields.angebot_typ||'') === typFilter);
+  // Angebots-Typ-Filter + Wartung-Hide nur ohne Suche anwenden
+  if (!search) {
+    if (typFilter) {
+      if (typFilter === '__none__') {
+        filtered = filtered.filter(r => !r.fields.angebot_typ);
+      } else {
+        filtered = filtered.filter(r => String(r.fields.angebot_typ||'') === typFilter);
+      }
     }
-  }
-  // "Wartung ausblenden"-Toggle: alles mit angebot_typ matching /wartung/i raus
-  const hideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
-  if (hideWartung) {
-    filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
+    const hideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
+    if (hideWartung) {
+      filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
+    }
   }
   // Sortierung explizit anwenden (filtered erbt vom Cache, daher konsistent neu sortieren)
   const sortMode = document.getElementById('auf-sort')?.value || 'num_desc';
@@ -6245,19 +6250,35 @@ function renderAuftraegeList() {
   else                               filtered.sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));  // num_desc
 
   if (search) {
+    // Mehrere Token mit Leerzeichen getrennt → ALLE müssen matchen (AND)
+    const tokens = search.split(/\s+/).filter(Boolean);
     filtered = filtered.filter(r => {
       const f = r.fields;
       const haystack = [
+        // Nummern in allen Varianten
         String(f.auftrag_num || ''),
+        String(f.ext_vorgangsnummer || ''),
+        String(f.ext_id || ''),
+        // Adress- und Anlagedaten
         f.standort || '',
         f.fabriknummer || '',
+        // Kontakt-Felder
         f.kontakt || '',
         f.kontakt_name || '',
         f.kontakt_telefon || '',
+        // Kunde + Leistung
+        f.kunde_firmenname || '',
         f.leistungsbeschreibung || '',
+        f.erlaeuterungen || '',
+        f.notizen || '',
+        // Status, Typ, Techniker, Vorlage
+        f.status || '',
+        f.angebot_typ || '',
         f.techniker_namen || '',
+        f.tmpl || '',
+        f.priority || '',
       ].join(' ').toLowerCase();
-      return haystack.includes(search);
+      return tokens.every(t => haystack.includes(t));
     });
   }
 
@@ -6265,7 +6286,17 @@ function renderAuftraegeList() {
     list.innerHTML = '<div class="auf-empty">'+(search?'Keine Treffer für "'+search.replace(/</g,'&lt;')+'".':'Keine Aufträge in dieser Ansicht.')+'</div>';
     return;
   }
-  list.innerHTML = filtered.map(_auftragCardHtml).join('');
+  // Bei aktiver Suche: Banner zeigen dass Filter aufgeweicht wurden + Treffer-Zahl
+  if (search) {
+    const tabHint = _auftragTab === 'all' ? '' : ' (Tab "'+_auftragTab+'" wurde für die Suche ignoriert)';
+    list.innerHTML =
+      '<div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#1E3A8A">'+
+        '🔍 <strong>'+filtered.length+' Treffer</strong> für <code style="background:#fff;padding:1px 5px;border-radius:3px">'+search.replace(/</g,'&lt;')+'</code> in <strong>allen</strong> Aufträgen'+tabHint+
+      '</div>'+
+      filtered.map(_auftragCardHtml).join('');
+  } else {
+    list.innerHTML = filtered.map(_auftragCardHtml).join('');
+  }
 }
 
 function _auftragCardHtml(r) {
