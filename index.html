@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.35';
+const APP_VERSION = 'v4.36';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14803,6 +14803,16 @@ async function _liftaroEnsureTable() {
   if (!APP_KEYS.airtableWriteKey) return false;
   try {
     await ensureTable('Liftaro_Anfragen', LIFTARO_TABLE_FIELDS);
+    // Wichtig: ensureTable ergaenzt KEINE Felder bei bestehenden Tabellen.
+    // Daher fuer alle Felder einzeln ensureField — fuegt nur fehlende hinzu.
+    for (const f of LIFTARO_TABLE_FIELDS) {
+      try {
+        // ensureField akzeptiert nur den Typ-String, kein options-Objekt
+        await ensureField('Liftaro_Anfragen', f.name, f.type);
+      } catch(fe) {
+        console.warn('[Liftaro] ensureField '+f.name+':', fe.message);
+      }
+    }
     _liftaroTableEnsured = true;
     return true;
   } catch(e) {
@@ -14912,6 +14922,8 @@ let _liftaroArchivedIds = new Set();
 
 async function _liftaroRefreshArchivedSet() {
   if (!APP_KEYS.airtableWriteKey) return;
+  // Sicherstellen dass die Tabelle UND das archived-Feld existieren bevor
+  // wir mit der Formula filtern (sonst HTTP 422)
   if (!_liftaroTableEnsured) {
     try { await _liftaroEnsureTable(); } catch(_){}
   }
@@ -14926,7 +14938,14 @@ async function _liftaroRefreshArchivedSet() {
       let url = 'https://api.airtable.com/v0/'+baseId+'/Liftaro_Anfragen?pageSize=100&fields[]=anfrage_id&fields[]=archived&filterByFormula='+encodeURIComponent('{archived}=1');
       if (offset) url += '&offset='+encodeURIComponent(offset);
       const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
-      if (!r.ok) break;
+      if (!r.ok) {
+        // 422 = Tabelle/Feld noch nicht da → defensiv durchlaufen ohne Fehler
+        if (r.status === 422 || r.status === 404) {
+          console.warn('[Liftaro] Archived-Filter '+r.status+' (Tabelle/Feld evtl. noch nicht da)');
+          return;
+        }
+        break;
+      }
       const d = await r.json();
       for (const rec of (d.records||[])) {
         const id = rec.fields?.anfrage_id;
