@@ -2588,7 +2588,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.32';
+const APP_VERSION = 'v4.33';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14757,6 +14757,133 @@ function _renderLiftaroList() {
   }).join('')+'</div>';
 }
 
+/* ─────────────────────────────────────────────────────────────
+   LIFTARO ANHANG-PERSISTENZ
+   Speichert Anfragen + PDF-Anhänge in Airtable, damit sie dauerhaft
+   verfügbar sind (auch wenn Liftaro die URL bei abgeschlossenen
+   Anfragen nicht mehr ausliefert).
+   ───────────────────────────────────────────────────────────── */
+let _liftaroTableEnsured = false;
+const LIFTARO_TABLE_FIELDS = [
+  { name:'anfrage_id',     type:'singleLineText' },
+  { name:'status',         type:'singleLineText' },
+  { name:'sent_at',        type:'singleLineText' },
+  { name:'deadline_at',    type:'singleLineText' },
+  { name:'objekt_adresse', type:'multilineText'  },
+  { name:'kunde',          type:'singleLineText' },
+  { name:'data_json',      type:'multilineText'  },
+  { name:'bestands_pdf',   type:'multipleAttachments' },
+  { name:'response_pdf',   type:'multipleAttachments' },
+  { name:'synced_at',      type:'singleLineText' },
+];
+
+async function _liftaroEnsureTable() {
+  if (_liftaroTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) return false;
+  try {
+    await ensureTable('Liftaro_Anfragen', LIFTARO_TABLE_FIELDS);
+    _liftaroTableEnsured = true;
+    return true;
+  } catch(e) {
+    console.warn('[Liftaro] ensureTable fehlgeschlagen:', e.message);
+    return false;
+  }
+}
+
+/* Findet einen bestehenden Airtable-Record per anfrage_id (oder null). */
+async function _liftaroFindAirtableRecord(anfrageId) {
+  if (!anfrageId) return null;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!key) return null;
+  const url = 'https://api.airtable.com/v0/'+baseId+'/Liftaro_Anfragen'
+            + '?maxRecords=1&filterByFormula=' + encodeURIComponent('{anfrage_id}="'+String(anfrageId).replace(/"/g,'\\"')+'"');
+  try {
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) return null;
+    const d = await r.json();
+    return (d.records && d.records[0]) || null;
+  } catch(_) { return null; }
+}
+
+/* Upsert Liftaro-Anfrage in Airtable. Optional: PDF-Blob hochladen.
+   Returns: { recId, bestandsPdfAirtableUrl, responsePdfAirtableUrl } */
+async function _liftaroPersistAnfrage(data, opts) {
+  opts = opts || {};
+  if (!data || !data.anfrage_id) return null;
+  if (!APP_KEYS.airtableWriteKey) return null;
+  const ok = await _liftaroEnsureTable();
+  if (!ok) return null;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const adresse = [data.objekt_strasse, data.objekt_plz, data.objekt_ort].filter(Boolean).join(', ');
+  const kunde = data.kunde_name || data.firma || (data.kunde && (data.kunde.firma || data.kunde.name)) || '';
+  // 1) Existierenden Record finden
+  let rec = opts.recordCache || await _liftaroFindAirtableRecord(data.anfrage_id);
+  // 2) Felder zum Speichern
+  const fields = {
+    anfrage_id:     String(data.anfrage_id),
+    status:         String(data.status||''),
+    sent_at:        String(data.sent_at||''),
+    deadline_at:    String(data.deadline_at||''),
+    objekt_adresse: adresse,
+    kunde:          kunde,
+    data_json:      JSON.stringify(data).slice(0, 99000),
+    synced_at:      new Date().toISOString(),
+  };
+  if (rec) {
+    // PATCH
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Liftaro_Anfragen/'+rec.id, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      if (!r.ok) console.warn('[Liftaro] PATCH fehlgeschlagen:', r.status);
+      else { const d = await r.json(); rec = d; }
+    } catch(e) { console.warn('[Liftaro] PATCH:', e); }
+  } else {
+    // POST
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Liftaro_Anfragen', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      if (!r.ok) { console.warn('[Liftaro] POST fehlgeschlagen:', r.status); return null; }
+      const d = await r.json();
+      rec = d;
+    } catch(e) { console.warn('[Liftaro] POST:', e); return null; }
+  }
+  // 3) PDFs hochladen falls neu und Airtable noch keinen hat
+  const hasBestandsPdf = rec && rec.fields && Array.isArray(rec.fields.bestands_pdf) && rec.fields.bestands_pdf.length > 0;
+  const hasResponsePdf = rec && rec.fields && Array.isArray(rec.fields.response_pdf) && rec.fields.response_pdf.length > 0;
+  if (opts.bestandsPdfBlob && !hasBestandsPdf) {
+    try {
+      await atBlobUpload(rec.id, 'bestands_pdf', opts.bestandsPdfBlob, 'liftaro-'+data.anfrage_id+'-bestand.pdf', 'application/pdf');
+      console.log('[Liftaro] Bestands-PDF in Airtable gespeichert');
+    } catch(e) { console.warn('[Liftaro] Bestands-PDF Upload:', e.message); }
+  }
+  if (opts.responsePdfBlob && !hasResponsePdf) {
+    try {
+      await atBlobUpload(rec.id, 'response_pdf', opts.responsePdfBlob, 'liftaro-'+data.anfrage_id+'-response.pdf', 'application/pdf');
+      console.log('[Liftaro] Response-PDF in Airtable gespeichert');
+    } catch(e) { console.warn('[Liftaro] Response-PDF Upload:', e.message); }
+  }
+  return rec;
+}
+
+/* Holt eine bereits persistierte Anfrage (mit PDF-URLs) aus Airtable. */
+async function _liftaroLoadFromAirtable(anfrageId) {
+  const rec = await _liftaroFindAirtableRecord(anfrageId);
+  if (!rec) return null;
+  const f = rec.fields || {};
+  return {
+    recId: rec.id,
+    bestandsPdfUrl: (Array.isArray(f.bestands_pdf) && f.bestands_pdf[0] && f.bestands_pdf[0].url) || null,
+    responsePdfUrl: (Array.isArray(f.response_pdf) && f.response_pdf[0] && f.response_pdf[0].url) || null,
+  };
+}
+
 async function _openLiftaroDetail(anfrageId) {
   if (!anfrageId) return;
   toast('📥 Lade Anfrage…','');
@@ -14772,17 +14899,75 @@ async function _openLiftaroDetail(anfrageId) {
   trackEvent('liftaro', 'check_open', { anfrage_id: anfrageId, status: data.status||'' });
 
   // ─── PDF-URLs defensiv über mehrere mögliche Feldnamen erkennen ───
-  const bestandsPdf = data.vorliegendes_pdf_url || data.bestands_pdf_url
+  let bestandsPdf = data.vorliegendes_pdf_url || data.bestands_pdf_url
                     || data.pdf_url || data.bestand_pdf || data.bestand_pdf_url
                     || data.attachment_url || data.dokument_url
                     || (data.pdf && (data.pdf.url || data.pdf.href))
                     || (data.bestand && (data.bestand.pdf_url || data.bestand.url))
                     || null;
-  const responsePdf = data.response_pdf_url || data.angebot_pdf_url
+  let responsePdf = data.response_pdf_url || data.angebot_pdf_url
                     || data.gesendetes_pdf_url || data.eigenes_pdf_url
                     || (data.response && (data.response.pdf_url || data.response.pdf))
                     || (data.angebot && data.angebot.pdf_url)
                     || null;
+
+  // ─── Persistenz: Liftaro-URLs sind temporär. Wir holen den Anhang
+  //     und speichern ihn in Airtable, damit er dauerhaft verfügbar bleibt.
+  //     Falls Liftaro keine URL liefert, schauen wir in Airtable nach. ───
+  let liftaroAirtableRec = null;
+  let airtableBestandsUrl = null, airtableResponseUrl = null;
+  try {
+    const saved = await _liftaroLoadFromAirtable(anfrageId);
+    if (saved) {
+      liftaroAirtableRec = { id: saved.recId };
+      airtableBestandsUrl = saved.bestandsPdfUrl;
+      airtableResponseUrl = saved.responsePdfUrl;
+    }
+  } catch(_){}
+  // Airtable-URL bevorzugen wenn vorhanden (persistent), Liftaro-URL fallback
+  if (airtableBestandsUrl) bestandsPdf = airtableBestandsUrl;
+  if (airtableResponseUrl) responsePdf = airtableResponseUrl;
+  // Im Hintergrund persistieren (Lädt PDF von Liftaro und speichert in Airtable)
+  // Nur wenn Liftaro-URL vorhanden UND Airtable noch keinen Anhang hat.
+  (async () => {
+    try {
+      let bestandsBlob = null, responseBlob = null;
+      const origBestands = data.vorliegendes_pdf_url || data.bestands_pdf_url || data.pdf_url || (data.pdf && data.pdf.url);
+      const origResponse = data.response_pdf_url || data.angebot_pdf_url || (data.response && data.response.pdf_url);
+      if (origBestands && !airtableBestandsUrl) {
+        try {
+          const r = await fetch(origBestands);
+          if (r.ok) bestandsBlob = await r.blob();
+        } catch(e) { console.warn('[Liftaro] Bestands-PDF Download fehlgeschlagen:', e.message); }
+      }
+      if (origResponse && !airtableResponseUrl) {
+        try {
+          const r = await fetch(origResponse);
+          if (r.ok) responseBlob = await r.blob();
+        } catch(e) { console.warn('[Liftaro] Response-PDF Download fehlgeschlagen:', e.message); }
+      }
+      await _liftaroPersistAnfrage(data, {
+        recordCache: liftaroAirtableRec,
+        bestandsPdfBlob: bestandsBlob,
+        responsePdfBlob: responseBlob,
+      });
+      // Nach Persistierung: wenn Anhang neu gespeichert wurde, das Modal neu rendern
+      if (bestandsBlob || responseBlob) {
+        // Soft refresh ohne API call
+        const fresh = await _liftaroLoadFromAirtable(anfrageId);
+        if (fresh) {
+          if (fresh.bestandsPdfUrl) {
+            const link = document.querySelector('#lif-detail-modal a[data-pdf-role="bestands"]');
+            if (link) link.href = fresh.bestandsPdfUrl;
+          }
+          if (fresh.responsePdfUrl) {
+            const link = document.querySelector('#lif-detail-modal a[data-pdf-role="response"]');
+            if (link) link.href = fresh.responsePdfUrl;
+          }
+        }
+      }
+    } catch(e) { console.warn('[Liftaro] Persistierung:', e); }
+  })();
   // Eigene Antwort defensiv extrahieren (Liftaro liefert das nach Abgabe zurück)
   const respPreis = data.response_preis_netto != null ? data.response_preis_netto
                   : data.angebot_preis_netto != null ? data.angebot_preis_netto
@@ -14820,14 +15005,18 @@ async function _openLiftaroDetail(anfrageId) {
   const kundeTel  = data.kunde_telefon || kunde.telefon || '';
   const kundeMail = data.kunde_email  || kunde.email   || '';
 
-  const pdfBlock = (label, url, slot) =>
-    '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">'+label+'</h4>'+
-    '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">'+
-      '<a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(url)+'" style="text-decoration:none">📄 Im neuen Tab öffnen</a>'+
-      '<button class="btn" onclick="(function(el){el.style.display = el.style.display===\'none\'?\'block\':\'none\';})(document.getElementById(\''+slot+'\'))">👁 Inline-Vorschau ein/aus</button>'+
-      '<a class="btn" href="'+escapeHtml(url)+'" download style="text-decoration:none">⬇ Download</a>'+
-    '</div>'+
-    '<div id="'+slot+'" style="background:#525252;border-radius:8px;padding:6px;margin-bottom:14px;max-height:600px;overflow-y:auto"></div>';
+  const pdfBlock = (label, url, slot, role) => {
+    const persistInfo = (role === 'bestands' && airtableBestandsUrl) || (role === 'response' && airtableResponseUrl)
+      ? '<span style="font-size:10px;color:#10b981;font-weight:600;margin-left:6px">💾 in Airtable gespeichert</span>'
+      : '<span style="font-size:10px;color:var(--txt3);margin-left:6px">(wird im Hintergrund gespeichert…)</span>';
+    return '<h4 style="margin:0 0 8px;font-size:13px;color:var(--navy)">'+label+persistInfo+'</h4>'+
+      '<div style="margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap">'+
+        '<a class="btn" data-pdf-role="'+role+'" target="_blank" rel="noopener" href="'+escapeHtml(url)+'" style="text-decoration:none">📄 Im neuen Tab öffnen</a>'+
+        '<button class="btn" onclick="(function(el){el.style.display = el.style.display===\'none\'?\'block\':\'none\';})(document.getElementById(\''+slot+'\'))">👁 Inline-Vorschau ein/aus</button>'+
+        '<a class="btn" data-pdf-role="'+role+'-dl" href="'+escapeHtml(url)+'" download style="text-decoration:none">⬇ Download</a>'+
+      '</div>'+
+      '<div id="'+slot+'" style="background:#525252;border-radius:8px;padding:6px;margin-bottom:14px;max-height:600px;overflow-y:auto"></div>';
+  };
 
   m.innerHTML =
     '<div style="background:var(--surf,#fff);max-width:780px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
@@ -14875,7 +15064,7 @@ async function _openLiftaroDetail(anfrageId) {
           '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;white-space:pre-wrap;line-height:1.5">'+escapeHtml(data.leistungsumfang_text)+'</div>' : '')+
 
         // Bestands-PDF (vom Kunden mitgegeben)
-        (bestandsPdf ? pdfBlock('Bestands-Angebot vom Kunden (PDF)', bestandsPdf, 'lif-pdf-inline') : '')+
+        (bestandsPdf ? pdfBlock('Bestands-Angebot vom Kunden (PDF)', bestandsPdf, 'lif-pdf-inline', 'bestands') : '')+
 
         // EIGENE Antwort (wenn schon abgegeben)
         (isDone
@@ -14894,7 +15083,7 @@ async function _openLiftaroDetail(anfrageId) {
                 ? '<div style="font-size:11px;color:var(--txt3);padding:6px 0">Keine Antwort-Details von der Liftaro-API empfangen. (Schau in die Konsole: <code>[Liftaro-Detail]</code>)</div>'
                 : '')+
             '</div>'+
-            (responsePdf ? pdfBlock('Eigenes Angebots-PDF (versandt)', responsePdf, 'lif-resp-pdf-inline') : '')
+            (responsePdf ? pdfBlock('Eigenes Angebots-PDF (versandt)', responsePdf, 'lif-resp-pdf-inline', 'response') : '')
           : '')+
 
         // Rohdaten (collapsible — bleibt erhalten für Debug)
