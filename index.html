@@ -2249,6 +2249,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" id="auf-select-btn" onclick="toggleAuftragSelectMode()" style="display:none" title="Mehrere Aufträge auswählen, um sie zu löschen">☑ Auswählen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
     <button class="btn" id="auf-erp-debug-btn" onclick="openErpAuftragDebug()" style="display:none;color:#7c2d12;border-color:rgba(180,83,9,.4)" title="ERP-Auftrag Rohdaten anzeigen — zur Identifikation des richtigen Auftragsnummern-Felds">🔍 ERP-Felder</button>
+    <button class="btn" id="auf-dedup-btn" onclick="openAuftragDedupModal()" style="display:none;color:#9a3412;border-color:rgba(180,83,9,.4)" title="Doppelte Aufträge finden und bereinigen">🧹 Duplikate</button>
   </div>
   <!-- Bulk-Action-Bar (sticky bottom) — sichtbar nur im Select-Mode -->
   <div id="auf-bulk-bar" style="display:none;position:fixed;left:0;right:0;bottom:0;background:var(--surf,#fff);border-top:2px solid var(--err,#dc2626);padding:12px 22px;box-shadow:0 -4px 16px rgba(0,0,0,.1);z-index:100;align-items:center;gap:12px;flex-wrap:wrap">
@@ -2587,7 +2588,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.27';
+const APP_VERSION = 'v4.28';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6133,6 +6134,9 @@ async function loadAuftraegeAndRender() {
     // ERP-Debug-Button (nur Admin)
     const dbgBtn = document.getElementById('auf-erp-debug-btn');
     if (dbgBtn) dbgBtn.style.display = (isAdmin() && APP_KEYS.valtownProxyUrl) ? '' : 'none';
+    // Dedup-Button (nur Admin)
+    const ddBtn = document.getElementById('auf-dedup-btn');
+    if (ddBtn) ddBtn.style.display = isAdmin() ? '' : 'none';
     // ERP-Sync-Button + Bulk-Rechnungs-Check + BG-Sync: nur sichtbar wenn Proxy eingerichtet UND Edit-Berechtigung
     const erpBtn   = document.getElementById('auf-erp-sync-btn');
     const bgBtn    = document.getElementById('auf-bg-sync-btn');
@@ -8809,6 +8813,171 @@ function _erpDbgFallbackCopy(text) {
   ta.focus(); ta.select();
   try { document.execCommand('copy'); toast('📋 Kopiert','ok'); } catch(_) { toast('Kopieren fehlgeschlagen','err'); }
   setTimeout(() => ta.remove(), 100);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   AUFTRAGS-DUPLIKATE bereinigen
+   Scannt alle Aufträge in Airtable, gruppiert nach ext_id (ERP-ID)
+   bzw. auftrag_num. Zeigt Gruppen mit ≥2 Records und erlaubt
+   gezieltes Löschen der Duplikate (behält den jüngsten Record).
+   ───────────────────────────────────────────────────────────── */
+async function openAuftragDedupModal() {
+  if (!isAdmin()) return;
+  const old = document.getElementById('dedup-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'dedup-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10800;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:880px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#9a3412;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🧹 Auftrags-Duplikate</span>'+
+        '<button onclick="document.getElementById(\'dedup-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="dedup-body" style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="text-align:center;padding:40px 20px"><div class="spinner" style="margin:0 auto 12px"></div>Scanne alle Aufträge in Airtable…</div>'+
+      '</div>'+
+      '<div id="dedup-footer" style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'dedup-modal\').remove()">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+
+  try {
+    const recs = await atRead('Auftraege', null);
+    // Nach Firma filtern (nur aktuelle, außer All-Modus)
+    const firmaSlug = getCurrentFirmaSlug();
+    const allMode = isFirmaAll();
+    const filtered = recs.filter(r => allMode ? true : (r.fields.firma||'') === firmaSlug);
+
+    // Gruppieren — Schlüssel: ext_id wenn vorhanden, sonst "num:"+auftrag_num+"|firma:"+firma
+    const groups = new Map();
+    for (const r of filtered) {
+      const f = r.fields || {};
+      const key = f.ext_id
+        ? 'ext:'+String(f.ext_id)
+        : (f.auftrag_num ? 'num:'+String(f.auftrag_num)+'|firma:'+(f.firma||'') : null);
+      if (!key) continue;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+    // Nur Gruppen mit ≥2 Records (= Duplikate)
+    const dupes = [];
+    for (const [key, list] of groups) {
+      if (list.length >= 2) {
+        // Sortieren: jüngste zuerst (created/last_modified)
+        list.sort((a,b) => {
+          const ta = +new Date(a.fields.ext_last_modified || a.fields.created || 0);
+          const tb = +new Date(b.fields.ext_last_modified || b.fields.created || 0);
+          return tb - ta;
+        });
+        dupes.push({ key, list });
+      }
+    }
+    // Render
+    const body = document.getElementById('dedup-body');
+    if (dupes.length === 0) {
+      body.innerHTML =
+        '<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;padding:20px;text-align:center;color:#065F46">'+
+          '<div style="font-size:32px;margin-bottom:8px">✅</div>'+
+          '<div style="font-size:15px;font-weight:600">Keine Duplikate gefunden</div>'+
+          '<div style="font-size:12px;margin-top:6px;opacity:.8">Geprüft: '+filtered.length+' Aufträge'+(allMode?' (alle Firmen)':' (Firma '+firmaSlug+')')+'</div>'+
+        '</div>';
+      return;
+    }
+    const totalDupRecs = dupes.reduce((s,d) => s + d.list.length, 0);
+    const totalDeletable = dupes.reduce((s,d) => s + (d.list.length - 1), 0);
+
+    let html =
+      '<div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:12px 14px;border-radius:4px;margin-bottom:14px">'+
+        '<div style="font-weight:700;color:#92400E;margin-bottom:4px">'+dupes.length+' Duplikat-Gruppe'+(dupes.length===1?'':'n')+' gefunden</div>'+
+        '<div style="font-size:12px;color:#7C2D12">'+
+          totalDupRecs+' Datensätze betroffen · <strong>'+totalDeletable+' können entfernt werden</strong> (jeweils der jüngste bleibt erhalten)'+
+        '</div>'+
+      '</div>'+
+      '<div style="display:grid;gap:14px">';
+    dupes.forEach((g, gi) => {
+      const keepRec = g.list[0];
+      const dropRecs = g.list.slice(1);
+      const groupKey = g.key.startsWith('ext:') ? 'ERP-ID '+g.key.slice(4) : g.key.replace('num:','Auftrag #').replace('|firma:',' · Firma ');
+      html += '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px">'+
+        '<div style="font-weight:700;color:#9A3412;margin-bottom:8px;font-size:13px">'+escapeHtml(groupKey)+' <span style="font-weight:400;font-size:11px;color:var(--txt3);margin-left:6px">'+g.list.length+' Records</span></div>'+
+        g.list.map((r, idx) => {
+          const f = r.fields || {};
+          const isKeep = (idx === 0);
+          const t = f.ext_last_modified || f.created || '';
+          const tStr = t ? new Date(t).toLocaleString('de-DE') : '—';
+          return '<div style="padding:6px 10px;background:'+(isKeep?'#ECFDF5':'#FEF2F2')+';border-left:3px solid '+(isKeep?'#10B981':'#DC2626')+';border-radius:4px;margin-bottom:4px;font-size:11px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'+
+            '<div>'+
+              '<strong>'+(isKeep?'✓ BEHALTEN':'✗ LÖSCHEN')+'</strong> · '+
+              '#'+(f.auftrag_num||'?')+' · '+
+              escapeHtml((f.standort||'').slice(0,50))+' · '+
+              '<code style="font-size:10px;color:var(--txt3)">rec '+r.id.slice(-6)+'</code>'+
+            '</div>'+
+            '<div style="font-size:10px;color:var(--txt3)">'+tStr+'</div>'+
+          '</div>';
+        }).join('')+
+        (dropRecs.length > 0 ? '<button class="btn" style="margin-top:6px;color:#dc2626;border-color:rgba(220,38,38,.4);font-size:11px;padding:5px 10px" onclick="_dedupResolveGroup('+gi+')">🗑 '+dropRecs.length+' Duplikat'+(dropRecs.length===1?'':'e')+' löschen</button>' : '')+
+      '</div>';
+    });
+    html += '</div>';
+    body.innerHTML = html;
+
+    // Daten am Modal cachen für die Lösch-Aktionen
+    m._dupes = dupes;
+
+    // Footer-Buttons
+    const ft = document.getElementById('dedup-footer');
+    ft.innerHTML =
+      '<button class="btn" onclick="document.getElementById(\'dedup-modal\').remove()">Schließen</button>'+
+      '<button class="btn prim" style="background:#dc2626;border-color:#dc2626" onclick="_dedupResolveAll()">🗑 Alle '+totalDeletable+' Duplikate entfernen</button>';
+
+  } catch(e) {
+    document.getElementById('dedup-body').innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+async function _dedupResolveGroup(idx) {
+  const m = document.getElementById('dedup-modal');
+  if (!m || !m._dupes || !m._dupes[idx]) return;
+  const g = m._dupes[idx];
+  const dropRecs = g.list.slice(1);
+  if (!confirm(dropRecs.length+' Duplikat'+(dropRecs.length===1?'':'e')+' der Gruppe "'+g.key+'" wirklich löschen?\n\nDer JÜNGSTE Record bleibt erhalten.')) return;
+  await _dedupDeleteRecords(dropRecs.map(r => r.id), () => openAuftragDedupModal());
+}
+
+async function _dedupResolveAll() {
+  const m = document.getElementById('dedup-modal');
+  if (!m || !m._dupes) return;
+  const allDrops = m._dupes.flatMap(g => g.list.slice(1).map(r => r.id));
+  if (!confirm('ALLE '+allDrops.length+' Duplikate löschen?\n\nPro Gruppe bleibt jeweils der jüngste Record erhalten.\nDiese Aktion kann nicht rückgängig gemacht werden.')) return;
+  await _dedupDeleteRecords(allDrops, () => { openAuftragDedupModal(); loadAuftraegeAndRender(); });
+}
+
+async function _dedupDeleteRecords(ids, onDone) {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const body = document.getElementById('dedup-body');
+  if (body) body.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lösche '+ids.length+' Duplikate…</div>';
+  let ok = 0, fail = 0;
+  // Airtable erlaubt max 10 IDs pro DELETE-Aufruf
+  for (let i = 0; i < ids.length; i += 10) {
+    const batch = ids.slice(i, i+10);
+    const params = batch.map(id => 'records[]='+encodeURIComponent(id)).join('&');
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege?'+params, {
+        method:'DELETE',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey }
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message||'Fehler');
+      ok += (d.records||batch).length;
+    } catch(e) {
+      fail += batch.length;
+      console.warn('[Dedup] Batch fehlgeschlagen:', e);
+    }
+  }
+  toast('🧹 '+ok+' Duplikate gelöscht'+(fail>0?', '+fail+' Fehler':''), fail>0?'err':'ok');
+  if (onDone) onDone();
 }
 
 async function _getNextAuftragNum() {
