@@ -2588,7 +2588,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.33';
+const APP_VERSION = 'v4.34';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15368,28 +15368,138 @@ async function _submitLiftaroOffer(anfrageId) {
     response_entstoerung: document.getElementById('lif-off-entst').checked,
     response_kommentar: (document.getElementById('lif-off-kommentar').value || '').trim().slice(0, 4000),
   };
-  // PDF optional einlesen
+  const btn = document.getElementById('lif-off-submit');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ baue PDF…'; }
+
+  // ── PDF ermitteln: 1) angehängtes File-Input, 2) aus Vorlage generieren ──
+  let pdfBlob = null;
+  let pdfFilename = '';
   const pdfInput = document.getElementById('lif-off-pdf');
   const pdfFile = pdfInput && pdfInput.files && pdfInput.files[0];
   if (pdfFile) {
-    if (pdfFile.size > 8 * 1024 * 1024) return toast('❌ PDF zu groß (max 8 MB).','err');
-    const buf = await pdfFile.arrayBuffer();
-    const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-    payload.pdf_base64 = b64;
-    payload.pdf_filename = pdfFile.name;
+    if (pdfFile.size > 8 * 1024 * 1024) {
+      if (btn) { btn.disabled = false; btn.textContent = '🚀 Angebot senden'; }
+      return toast('❌ PDF zu groß (max 8 MB).','err');
+    }
+    pdfBlob = pdfFile;
+    pdfFilename = pdfFile.name;
+  } else {
+    // KEIN File-Input → aus Vorlage generieren falls Vorlage gewählt
+    try {
+      pdfBlob = await _liftaroBuildOfferPdfFromVorlage(anfrageId);
+      if (pdfBlob) pdfFilename = 'Liftaro-Angebot-'+anfrageId+'.pdf';
+    } catch(e) {
+      console.warn('[Liftaro] PDF aus Vorlage konnte nicht erzeugt werden:', e.message);
+    }
   }
-  const btn = document.getElementById('lif-off-submit');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ sende…'; }
+
+  // ── PDF an Liftaro-API hängen (base64) ──
+  if (pdfBlob) {
+    try {
+      if (btn) btn.textContent = '⏳ encode PDF…';
+      const buf = await pdfBlob.arrayBuffer();
+      // Chunked btoa für große Dateien
+      let bin = '';
+      const u8 = new Uint8Array(buf);
+      const CHUNK = 0x8000;
+      for (let i = 0; i < u8.length; i += CHUNK) {
+        bin += String.fromCharCode.apply(null, u8.subarray(i, i + CHUNK));
+      }
+      payload.pdf_base64 = btoa(bin);
+      payload.pdf_filename = pdfFilename;
+      console.log('[Liftaro] PDF eingebunden:', pdfFilename, '('+Math.round(pdfBlob.size/1024)+' KB)');
+    } catch(e) {
+      console.warn('[Liftaro] PDF base64 fehlgeschlagen:', e);
+    }
+  } else {
+    console.warn('[Liftaro] Kein PDF zum Anhängen — weder File-Input noch Vorlage-PDF.');
+  }
+
+  if (btn) btn.textContent = '⏳ sende…';
   try {
     const res = await liftaroSubmitOffer(anfrageId, payload);
     trackEvent('liftaro', 'offer_submit', { anfrage_id: anfrageId, preis: payload.response_preis_netto, with_pdf: !!payload.pdf_base64 });
-    toast('✅ Angebot übermittelt','ok');
-    _showLiftaroOfferSuccess(anfrageId, payload, !!pdfFile);
+    toast('✅ Angebot übermittelt'+(pdfBlob?' (PDF mitgesendet)':''),'ok');
+
+    // ── PDF in Airtable als response_pdf persistieren ──
+    if (pdfBlob) {
+      try {
+        const modal = document.getElementById('lif-offer-modal');
+        const anfrageData = (modal && modal._anfrage) || { anfrage_id: anfrageId };
+        await _liftaroPersistAnfrage(anfrageData, { responsePdfBlob: pdfBlob });
+        console.log('[Liftaro] Response-PDF in Airtable gespeichert');
+      } catch(e) { console.warn('[Liftaro] Airtable response_pdf:', e); }
+    }
+
+    _showLiftaroOfferSuccess(anfrageId, payload, !!pdfBlob);
     _loadLiftaroChecks({ silent:true }).catch(()=>{});
   } catch(e) {
     toast('❌ '+(e.message||'?').slice(0,300),'err');
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Angebot senden'; }
   }
+}
+
+/* Erzeugt das Angebots-PDF aus der gewählten Vorlage + Form-Daten.
+   Identische Logik wie _liftaroShowPreview, aber gibt den Blob zurück
+   statt nur eine Vorschau zu zeigen. Returns null bei fehlender Vorlage. */
+async function _liftaroBuildOfferPdfFromVorlage(anfrageId) {
+  const modal = document.getElementById('lif-offer-modal');
+  if (!modal) return null;
+  const vorlageId = document.getElementById('lif-off-vorlage')?.value || '';
+  if (!vorlageId) return null;
+  const vorlage = (modal._vorlagen||[]).find(v => v.id === vorlageId);
+  if (!vorlage || !vorlage.fields.vorlage_text) return null;
+  const tpl = vorlage.fields.vorlage_text;
+  // Form-Werte sammeln (parallel zu _liftaroShowPreview)
+  const preis    = (document.getElementById('lif-off-preis').value || '').trim();
+  const laufzeit = (document.getElementById('lif-off-laufzeit').value || '').trim();
+  const kuendig  = (document.getElementById('lif-off-kuendig').value || '').trim();
+  const wpa      = (document.getElementById('lif-off-wpa').value || '').trim();
+  const kommentar = (document.getElementById('lif-off-kommentar').value || '').trim();
+  const vollwartung = document.getElementById('lif-off-vollwartung').checked;
+  const notruf      = document.getElementById('lif-off-notruf').checked;
+  const tuevBegl    = document.getElementById('lif-off-tuev-begl').checked;
+  const tuevPruef   = document.getElementById('lif-off-tuev-pruef').checked;
+  const entst       = document.getElementById('lif-off-entst').checked;
+  const anfrage = modal._anfrage || {};
+  const adresse = [anfrage.objekt_strasse, anfrage.objekt_plz, anfrage.objekt_ort].filter(Boolean).join(', ');
+  const leistungen = [
+    vollwartung ? 'Vollwartung' : null,
+    notruf      ? 'Notruf-Aufschaltung' : null,
+    tuevBegl    ? 'TÜV-Begleitung' : null,
+    tuevPruef   ? 'TÜV-Prüfung' : null,
+    entst       ? 'Entstörung 24/7' : null,
+  ].filter(Boolean);
+  const fmtEur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' € netto';
+  const aufzugAnz = +(anfrage.anzahl_aufzuege||'').replace(/\D/g,'') || 1;
+  const aufzugListe = (anfrage.anzahl_aufzuege ? '1. ' : '')+(adresse||'(Objekt-Anschrift über Liftaro)')+
+    (anfrage.anlagenart ? ' · '+anfrage.anlagenart : '');
+  const vars = {
+    kunde_name:         '(Empfänger wird von Liftaro eingesetzt)',
+    kunde_nummer:       '',
+    kunde_adresse:      adresse,
+    kontakt_name:       '',
+    kontakt_email:      '',
+    kontakt_telefon:    '',
+    vertrag_titel:      'Wartungsvertrag-Angebot · '+anfrageId,
+    abrechnung_typ:     'Sammelrechnung über alle Aufzüge',
+    abrechnung_turnus:  'Jährlich',
+    wartungen_pro_jahr: wpa || '',
+    aufzug_liste:       aufzugListe + (leistungen.length ? '\n\nLeistungen: '+leistungen.join(', ') : ''),
+    aufzug_anzahl:      String(aufzugAnz),
+    jahresumsatz:       preis ? fmtEur(preis) : '',
+    turnus_betrag:      preis ? fmtEur(preis) : '',
+    stundensatz:        '',
+    gueltig_bis:        '',
+    datum_heute:        new Date().toLocaleDateString('de-DE'),
+    firma_name:         'Aszendio Aufzugservice GmbH',
+    vertragsnummer:     'Angebot · '+anfrageId,
+    start_datum:        '',
+    laufzeit_monate:    laufzeit ? String((+laufzeit)*12) : '',
+  };
+  let text = _ersetzePlatzhalter(tpl, vars);
+  if (kommentar) text += '\n\n## Anmerkungen\n\n' + kommentar;
+  return await _buildVertragPDFBlob(text, vars);
 }
 
 /* Ersetzt den Offer-Modal-Inhalt durch einen großen Erfolgs-Bildschirm
