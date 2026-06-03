@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.36';
+const APP_VERSION = 'v4.37';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22638,13 +22638,24 @@ export default async function (req) {
   //   POST /liftaro/checks/<id>/decline         → Ablehnen
   //   POST /liftaro/webhook-test                → Test-Webhook auslösen
   if (path === "liftaro" || path.startsWith("liftaro/")) {
-    const liftaroKeyRaw = Deno.env.get("LIFTARO_PARTNER_KEY") || "";
-    const liftaroKey = liftaroKeyRaw.trim();  // gegen versehentliche Whitespace/Newlines
+    // Multi-Firma: bevorzugt LIFTARO_PARTNER_KEY_<SLUG>, Fallback LIFTARO_PARTNER_KEY
+    const firmaSlugRaw = req.headers.get("X-Firma-Slug") || "";
+    const firmaSlug = firmaSlugRaw.trim().toUpperCase().replace(/[^A-Z0-9_]/g, "");
+    const envNameSpecific = firmaSlug ? ("LIFTARO_PARTNER_KEY_" + firmaSlug) : "";
+    const liftaroKeyRawSpecific = firmaSlug ? (Deno.env.get(envNameSpecific) || "") : "";
+    const liftaroKeyRawGlobal = Deno.env.get("LIFTARO_PARTNER_KEY") || "";
+    const liftaroKeyRaw = liftaroKeyRawSpecific || liftaroKeyRawGlobal;
+    const liftaroKey = liftaroKeyRaw.trim();
+    const keySource = liftaroKeyRawSpecific ? envNameSpecific : "LIFTARO_PARTNER_KEY";
     const sub = path.replace(/^liftaro\\/?/, "");
 
     // Debug-Endpoint: zeigt Key-Status OHNE den Wert zu leaken
     if (sub === "debug") {
       return json({
+        firma_slug_header: firmaSlugRaw,
+        key_source: keySource,
+        env_var_specific_set: !!liftaroKeyRawSpecific,
+        env_var_global_set: !!liftaroKeyRawGlobal,
         env_var_set: !!liftaroKeyRaw,
         raw_length: liftaroKeyRaw.length,
         trimmed_length: liftaroKey.length,
@@ -22655,8 +22666,14 @@ export default async function (req) {
     }
 
     if (!liftaroKey) return json({
-      error:"LIFTARO_PARTNER_KEY env-var nicht gesetzt (oder leer nach trim)",
-      hint:"Trage den Liftaro-Partner-Key in val.town Settings → Environment Variables ein.",
+      error: firmaSlug
+        ? ("Weder " + envNameSpecific + " noch LIFTARO_PARTNER_KEY env-var gesetzt")
+        : "LIFTARO_PARTNER_KEY env-var nicht gesetzt (oder leer nach trim)",
+      hint: firmaSlug
+        ? ("Trage den Liftaro-Key für Firma '"+firmaSlugRaw+"' als " + envNameSpecific + " in val.town ein, oder global als LIFTARO_PARTNER_KEY.")
+        : "Trage den Liftaro-Partner-Key in val.town Settings → Environment Variables ein.",
+      key_source_attempted: keySource,
+      firma_slug: firmaSlugRaw,
       raw_set: !!liftaroKeyRaw,
       raw_length: liftaroKeyRaw.length
     }, 500);
@@ -24221,6 +24238,12 @@ function _liftaroEnabled() { return !!APP_KEYS.valtownProxyUrl; }
 async function liftaroFetch(subpath, options) {
   if (!_liftaroEnabled()) throw new Error('Proxy nicht eingerichtet');
   options = options || {};
+  // Aktuellen Firma-Slug als Header mitschicken — der Proxy wählt damit
+  // LIFTARO_PARTNER_KEY_<SLUG> (Multi-Firma-Support, Fallback auf globalen Key).
+  const firmaSlug = getCurrentFirmaSlug();
+  if (firmaSlug && !isFirmaAll()) {
+    options.headers = Object.assign({}, options.headers || {}, { 'X-Firma-Slug': firmaSlug });
+  }
   return await erpFetch('/liftaro/' + subpath, options);
 }
 
@@ -24374,7 +24397,21 @@ function _openLiftaroSetupWizard() {
         '<button onclick="document.getElementById(\'lif-setup-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:18px 22px;font-size:13px;line-height:1.6">'+
-        '<p style="margin:0 0 14px;color:var(--txt2)">Trag den Liftaro-<strong>Partner-Key</strong> ein. Er wird sicher in val.town als Environment-Variable <code>LIFTARO_PARTNER_KEY</code> gespeichert — niemals im Browser sichtbar.</p>'+
+        (() => {
+          const slug = getCurrentFirmaSlug();
+          const allMode = isFirmaAll();
+          if (allMode) {
+            return '<div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#92400E">'+
+              '⚠ Bitte oben rechts <strong>eine konkrete Firma</strong> auswählen — Liftaro-Keys werden pro Firma gespeichert (Multi-Mandanten-Setup).'+
+            '</div>';
+          }
+          const envName = 'LIFTARO_PARTNER_KEY_' + slug.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+          return '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
+            '🏢 Aktive Firma: <strong>'+escapeHtml(slug)+'</strong><br>'+
+            'Key wird in val.town als <code>'+envName+'</code> gespeichert — andere Firmen-Keys bleiben unverändert.'+
+          '</div>';
+        })()+
+        '<p style="margin:0 0 14px;color:var(--txt2)">Trag den Liftaro-<strong>Partner-Key</strong> für diese Firma ein. Er wird sicher in val.town als Environment-Variable gespeichert — niemals im Browser sichtbar.</p>'+
         '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Partner-Key</label>'+
         '<input id="lif-setup-key" type="password" placeholder="z.B. lp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="new-password" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.05em">'+
         '<div style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--txt3)"><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" id="lif-setup-show" onchange="document.getElementById(\'lif-setup-key\').type=this.checked?\'text\':\'password\'"> sichtbar anzeigen</label></div>'+
@@ -24409,10 +24446,17 @@ async function _runLiftaroSetup() {
   const btn = document.getElementById('lif-setup-go');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ läuft…'; }
   try {
-    // Schritt 1: Key als Env-Var in val.town setzen
-    _lifSetupLog('▶ Schritt 1/3 — speichere LIFTARO_PARTNER_KEY in val.town…', 'info');
-    await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'LIFTARO_PARTNER_KEY', key, 'Liftaro Partner-Key (Vergleichsplattform Wartungsverträge)');
-    _lifSetupLog('  ✓ Env-Var gesetzt', 'ok');
+    // Pro Firma eigene env-var, damit Multi-Mandanten funktioniert
+    const firmaSlug = getCurrentFirmaSlug();
+    if (!firmaSlug || isFirmaAll()) {
+      _lifSetupLog('  ❌ Bitte zuerst eine konkrete Firma wählen (oben rechts).', 'err');
+      if (btn) { btn.disabled = false; btn.textContent = '🔑 Schlüssel einrichten'; }
+      return;
+    }
+    const envName = 'LIFTARO_PARTNER_KEY_' + firmaSlug.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+    _lifSetupLog('▶ Schritt 1/3 — speichere '+envName+' in val.town für Firma "'+firmaSlug+'"…', 'info');
+    await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, envName, key, 'Liftaro Partner-Key für Firma '+firmaSlug);
+    _lifSetupLog('  ✓ Env-Var '+envName+' gesetzt', 'ok');
 
     // Schritt 2: Proxy-Code aktualisieren (damit /liftaro/-Routen aktiv sind)
     _lifSetupLog('▶ Schritt 2/3 — pushe aktuellen Proxy-Code…', 'info');
