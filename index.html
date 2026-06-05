@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.40';
+const APP_VERSION = 'v4.41';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3269,6 +3269,54 @@ async function showApp() {
 
   // Dashboard als Startbildschirm
   switchView('dashboard');
+
+  // Deep-Link-Handler: bei #da/<recId> direkt in die Datenaufnahme springen.
+  // Wird z.B. aus Freshdesk-Tickets aufgerufen.
+  try { await handleDaDeepLink(); } catch(e) { console.warn('Deep-Link-Handler:', e); }
+}
+
+/**
+ * Wertet location.hash aus und springt bei #da/<recId> direkt in die Datenaufnahme.
+ * Voraussetzung: tool_datenaufnahmen-Permission. Andernfalls Toast + Dashboard.
+ */
+async function handleDaDeepLink() {
+  const hash = String(location.hash || '');
+  const m = hash.match(/^#da\/([A-Za-z0-9_-]+)/);
+  if (!m) return;
+  const recId = decodeURIComponent(m[1]);
+  if (!hasPermission('tool_datenaufnahmen')) {
+    toast('🔒 Keine Berechtigung für Datenaufnahmen','err');
+    return;
+  }
+  // In die DA-View wechseln + Liste laden, danach Detail öffnen
+  switchView('da');
+  try {
+    await renderDatenaufnahmenView();
+    // Falls Record noch nicht im Cache (z.B. Firma-Filter blendet ihn aus): trotzdem öffnen
+    // openDaDetail() sucht im Cache; nicht gefunden → Toast. Daher Fallback: direkt aus
+    // Airtable nachladen, wenn nicht im Cache.
+    let rec = (_daCache.items||[]).find(r => r.id === recId);
+    if (!rec) {
+      try {
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+        const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+          headers:{ 'Authorization':'Bearer '+key },
+        });
+        if (r.ok) {
+          rec = await r.json();
+          if (!_daCache.items) _daCache.items = [];
+          _daCache.items.push(rec);
+        }
+      } catch(e) { console.warn('Deep-Link Record-Fallback:', e.message); }
+    }
+    if (rec) openDaDetail(recId);
+    else toast('Datenaufnahme nicht gefunden','err');
+  } catch(e) {
+    console.warn('handleDaDeepLink:', e);
+  }
+  // Hash entfernen (history) damit Reload nicht erneut springt
+  try { history.replaceState(null, '', location.pathname + location.search); } catch(_){}
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -17308,6 +17356,9 @@ const DA_TABLE_FIELDS = [
   { name:'erstellt_von',           type:'singleLineText' },
   { name:'aufgenommen_am',         type:'singleLineText' },
   { name:'aufgenommen_von',        type:'singleLineText' },
+  // Freshdesk-Verknüpfung
+  { name:'fd_ticket_id',           type:'number', options:{ precision:0 } },
+  { name:'fd_ticket_url',          type:'singleLineText' },
 ];
 
 /* Nächste freie DA-Nummer ermitteln — holt max(da_num) aller Records und addiert 1.
@@ -17329,6 +17380,137 @@ async function _daGetNextNumber(baseId) {
   }
 }
 
+/**
+ * Deep-Link in die App, der direkt auf einen DA-Record springt.
+ * Format: <App-URL>#da/<recId>
+ * Wird beim Boot in handleDaDeepLink() ausgewertet.
+ */
+function _daAppDeepLink(recId) {
+  const base = location.origin + location.pathname; // ohne hash/query
+  return base + '#da/' + encodeURIComponent(recId);
+}
+
+/**
+ * Erzeugt ein Freshdesk-Ticket für eine Datenaufnahme.
+ * Strukturierter Titel: "Datenaufnahme DA-<num> · <Fabriknummer> · <Kunde>"
+ * Body: Anlage/Kunde/Auftrag-Beschreibung + Deep-Link zur App (DA öffnen) +
+ *       Direktlink zur Live-App + (optional) PDF im Anhang.
+ *
+ * @param {Object} daRec Airtable-Record { id, fields }
+ * @param {Object} opts  { pdfBlob, pdfUrl }
+ */
+async function freshdeskCreateTicketForDA(daRec, opts) {
+  opts = opts || {};
+  const f = daRec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) {
+    return { skipped:true, reason:'Freshdesk für Firma "'+firmaSlug+'" nicht konfiguriert.' };
+  }
+  // Strukturierter Titel
+  const daNum   = f.da_num ? ('DA-'+f.da_num) : 'DA-?';
+  const fab     = (f.anlage_fabriknummer||'').trim();
+  const kunde   = (f.kunde_name||'').trim();
+  const titleParts = ['Datenaufnahme '+daNum];
+  if (fab)   titleParts.push('Fabrik-Nr. '+fab);
+  if (kunde) titleParts.push(kunde.slice(0,60));
+  const subject = titleParts.join('  ·  ');
+
+  // Deep-Link zurück in die App (DA-Detail direkt öffnen)
+  const appDeepLink = _daAppDeepLink(daRec.id);
+
+  // Intro: was zu tun ist + Link
+  const introLines = [];
+  introLines.push('<p><strong>Neue Datenaufnahme erstellt — bitte Pauschalpreise eintragen und Angebot finalisieren.</strong></p>');
+  introLines.push('<p>🔗 <strong>Direkter Link zur Bearbeitung in der App:</strong><br>'+
+    '<a href="'+escapeHtml(appDeepLink)+'">'+escapeHtml(appDeepLink)+'</a></p>');
+  if (opts.pdfUrl) {
+    introLines.push('<p>📄 <strong>Aktuelle Datenaufnahme als PDF:</strong> '+
+      '<a href="'+escapeHtml(opts.pdfUrl)+'">PDF öffnen</a></p>');
+  }
+
+  // Detail-Block
+  const fmtList = [];
+  if (f.da_num)             fmtList.push('<li><strong>DA-Nummer:</strong> DA-'+f.da_num+'</li>');
+  if (f.anlage_fabriknummer)fmtList.push('<li><strong>Fabrik-Nr.:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</li>');
+  if (f.anlage_adresse)     fmtList.push('<li><strong>Standort:</strong> '+escapeHtml(f.anlage_adresse)+'</li>');
+  if (f.kunde_name)         fmtList.push('<li><strong>Kunde:</strong> '+escapeHtml(f.kunde_name)+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</li>');
+  if (f.beschreibung)       fmtList.push('<li><strong>Auftrag/Beschreibung:</strong> '+escapeHtml(f.beschreibung)+'</li>');
+  if (f.erstellt_von)       fmtList.push('<li><strong>Erstellt von:</strong> '+escapeHtml(f.erstellt_von)+'</li>');
+  if (f.erstellt_am)        fmtList.push('<li><strong>Erstellt am:</strong> '+escapeHtml(f.erstellt_am)+'</li>');
+  if (f.aufgenommen_von)    fmtList.push('<li><strong>Aufgenommen von:</strong> '+escapeHtml(f.aufgenommen_von)+'</li>');
+  if (f.aufgenommen_am)     fmtList.push('<li><strong>Aufgenommen am:</strong> '+escapeHtml(f.aufgenommen_am)+'</li>');
+  fmtList.push('<li><strong>Status:</strong> '+escapeHtml(f.status||'entwurf')+'</li>');
+
+  const description = [
+    introLines.join(''),
+    '<hr>',
+    '<p>📋 <strong>Datenaufnahme-Details:</strong></p>',
+    '<ul>',
+    fmtList.join(''),
+    '</ul>',
+    '<p style="font-size:11px;color:#888">Dieses Ticket wurde automatisch von der Elevator Servicebox erstellt.</p>',
+  ].join('');
+
+  const fd = new FormData();
+  fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
+  fd.append('subject', subject);
+  fd.append('description', description);
+  fd.append('priority', '1');     // 1=low
+  fd.append('status', '2');       // 2=open
+  fd.append('source', '2');       // 2=portal
+  if (opts.pdfBlob) {
+    const filename = 'Datenaufnahme-'+daNum+'.pdf';
+    fd.append('attachments[]', opts.pdfBlob, filename);
+  }
+  await erpEnsureSession();
+  const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+  console.log('[Freshdesk-DA-Ticket] POST', url, { subject, hasPdf:!!opts.pdfBlob, deepLink:appDeepLink });
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
+    body: fd,
+  });
+  const text = await res.text();
+  let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
+  if (!res.ok) {
+    let msg = 'HTTP '+res.status;
+    if (data && Array.isArray(data.errors) && data.errors.length) {
+      msg = data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; ');
+    } else if (data && (data.description || data.message || data.error)) {
+      msg = data.description || data.message || data.error;
+    } else if (text) {
+      msg += ' – ' + text.slice(0,300);
+    }
+    console.error('[Freshdesk-DA-Ticket] ERROR', msg, data || text);
+    const err = new Error('Freshdesk: '+msg); err.status = res.status; err.body = data;
+    throw err;
+  }
+  const ticketId = data && data.id;
+  const ticketUrl = ticketId ? ('https://'+APP_KEYS.freshdeskDomains[firmaSlug]+'.freshdesk.com/a/tickets/'+ticketId) : null;
+  return { ticketId, ticketUrl, raw: data };
+}
+
+/**
+ * Speichert fd_ticket_id + fd_ticket_url zurück in den DA-Record und aktualisiert den lokalen Cache.
+ */
+async function _daPersistFdTicketLink(recId, ticketId, ticketUrl) {
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ fd_ticket_id: ticketId, fd_ticket_url: ticketUrl||'' }}),
+    });
+    // Cache lokal aktualisieren
+    const idx = (_daCache.items||[]).findIndex(x => x.id === recId);
+    if (idx >= 0) {
+      _daCache.items[idx].fields = _daCache.items[idx].fields || {};
+      _daCache.items[idx].fields.fd_ticket_id  = ticketId;
+      _daCache.items[idx].fields.fd_ticket_url = ticketUrl||'';
+    }
+  } catch(e) { console.warn('[Freshdesk-DA-Ticket] Persist fehlgeschlagen:', e.message); }
+}
+
 async function _ensureDaTable() {
   if (_daTableEnsured) return true;
   if (!APP_KEYS.airtableWriteKey) {
@@ -17336,6 +17518,11 @@ async function _ensureDaTable() {
   }
   try {
     await ensureTable('Datenaufnahmen', DA_TABLE_FIELDS);
+    // ensureTable legt neue Tabellen nur an, fügt aber KEINE Felder zu bestehenden hinzu.
+    // Für DA-Tabellen, die vor Einführung von fd_ticket_* erzeugt wurden, ensureField pro Feld.
+    for (const f of DA_TABLE_FIELDS) {
+      try { await ensureField('Datenaufnahmen', f.name, f.type); } catch(_){}
+    }
     _daTableEnsured = true;
     return true;
   } catch(e) {
@@ -17655,6 +17842,25 @@ async function _daCreateRecord() {
     _daCache = { firma:null, items:null, loadedAt:0, loading:false };
     await renderDatenaufnahmenView({ force:true });
     openDaDetail(d.id);
+    // Freshdesk-Auto-Ticket nach Datenaufnahme-Anlage (fire-and-forget — blockiert UI nicht).
+    // Beim Anlegen sind noch keine Checkpunkte mit Daten — kein PDF im Anhang.
+    // Das Ticket dient als ToDo "bitte Pauschalpreise eintragen", mit Deep-Link in die App.
+    if (freshdeskIsConfigured(firmaSlug)) {
+      (async () => {
+        try {
+          const fdRes = await freshdeskCreateTicketForDA(d, {});
+          if (fdRes.skipped) {
+            toast('ℹ Freshdesk-Ticket übersprungen: '+fdRes.reason, '');
+          } else if (fdRes.ticketId) {
+            await _daPersistFdTicketLink(d.id, fdRes.ticketId, fdRes.ticketUrl);
+            toast('🎫 Freshdesk-Ticket #'+fdRes.ticketId+' erstellt', 'ok');
+          }
+        } catch(fde) {
+          console.error('Freshdesk-DA-Auto-Ticket:', fde);
+          toast('⚠ Datenaufnahme angelegt, ABER Freshdesk-Ticket fehlgeschlagen: '+(fde.message||fde).slice(0,180), 'warn');
+        }
+      })();
+    }
   } catch(e) {
     toast('❌ '+e.message,'err');
     btn.disabled = false; btn.textContent = '🚀 Datenaufnahme anlegen';
@@ -17707,6 +17913,14 @@ async function openDaDetail(recId) {
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
         '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'')+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
         (f.beschreibung ? '<div style="margin-top:6px"><strong>📝 Auftrag:</strong> '+escapeHtml(f.beschreibung)+'</div>' : '')+
+        // Freshdesk-Ticket-Status (falls bereits Ticket vorhanden)
+        (f.fd_ticket_id
+          ? '<div style="margin-top:6px"><strong>🎫 Freshdesk:</strong> '+
+              (f.fd_ticket_url
+                ? '<a href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Ticket #'+escapeHtml(String(f.fd_ticket_id))+' öffnen ↗</a>'
+                : 'Ticket #'+escapeHtml(String(f.fd_ticket_id)))+
+            '</div>'
+          : '')+
       '</div>'+
       // Checkpunkte
       '<div id="da-cp-container" style="padding:14px 18px;flex:1;overflow-y:auto"></div>'+
@@ -17714,6 +17928,10 @@ async function openDaDetail(recId) {
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+
         '<button class="btn" onclick="document.getElementById(\'da-detail\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_daDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Datenaufnahme löschen">🗑 Löschen</button>'+
+        // Freshdesk: manuelles (Re-)Erstellen — sichtbar wenn FD für diese Firma konfiguriert ist
+        (freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
+          ? '<button class="btn" id="da-fd-btn" onclick="_daCreateFdTicketManual(\''+recId+'\', this)" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="'+(f.fd_ticket_id?'Erneut Ticket erstellen (z.B. mit aktuellem PDF)':'Freshdesk-Ticket jetzt erstellen')+'">🎫 '+(f.fd_ticket_id?'Ticket erneut erstellen':'Ticket erstellen')+'</button>'
+          : '')+
         (hasPermission('datenaufnahmen_edit') ? '<button class="btn" id="da-save-btn" onclick="_daSave(\''+recId+'\')">💾 Speichern</button>' : '')+
         (canSeePrices() ? '<button class="btn" style="background:#FB923C;border-color:#FB923C;color:#fff;font-weight:600" onclick="_daBuildAndShowAngebotPdf(\''+recId+'\')" title="Angebot mit Pauschalpreisen erzeugen">💰 Angebot-PDF</button>' : '')+
         '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')" title="Datenaufnahme-PDF ohne Preise">📄 PDF erzeugen</button>'+
@@ -17994,6 +18212,50 @@ async function _daSave(recId) {
   } catch(e) {
     toast('❌ '+e.message,'err');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
+}
+
+/**
+ * Manuell ein Freshdesk-Ticket für diese Datenaufnahme erstellen.
+ * Vor dem Senden wird (falls editierbar) gespeichert, das aktuelle PDF erzeugt und mitgesendet.
+ */
+async function _daCreateFdTicketManual(recId, btn) {
+  const m = document.getElementById('da-detail');
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Record nicht gefunden','err');
+  const firmaSlug = rec.fields?.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert.','err');
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ erzeuge…'; }
+  try {
+    // 1) Falls dirty → erst speichern
+    if (m && m._dirty) await _daSave(recId);
+    // 2) PDF (ohne Preise) — wenn Checkpunkte vorhanden, sonst überspringen
+    let pdfBlob = null;
+    try {
+      const fields = rec.fields || {};
+      let cps = [];
+      try { cps = JSON.parse(fields.checkpunkte_json||'[]'); } catch(_){}
+      if (cps.length > 0) {
+        pdfBlob = await _buildDatenaufnahmePdf(fields, cps, { withPrices:false });
+      }
+    } catch(pdfErr) { console.warn('[DA-FD] PDF-Build übersprungen:', pdfErr.message); }
+    // 3) Ticket erzeugen
+    const fdRes = await freshdeskCreateTicketForDA(rec, { pdfBlob });
+    if (fdRes.skipped) {
+      toast('ℹ '+fdRes.reason, '');
+    } else if (fdRes.ticketId) {
+      await _daPersistFdTicketLink(recId, fdRes.ticketId, fdRes.ticketUrl);
+      toast('🎫 Freshdesk-Ticket #'+fdRes.ticketId+' erstellt', 'ok');
+      // Detail neu öffnen, damit Status-Anzeige aktualisiert wird
+      const old = document.getElementById('da-detail'); if (old) old.remove();
+      openDaDetail(recId);
+    }
+  } catch(e) {
+    console.error('[DA-FD-Manual]', e);
+    toast('❌ Freshdesk: '+(e.message||e).slice(0,200), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel || '🎫 Ticket erstellen'; }
   }
 }
 
