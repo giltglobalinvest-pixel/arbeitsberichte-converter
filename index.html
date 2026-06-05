@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.39';
+const APP_VERSION = 'v4.40';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -17886,7 +17886,8 @@ function _daAddImage(i) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
-  input.capture = 'environment';  // Mobile: direkt Kamera öffnen
+  // KEIN capture-Attribut: iOS/Android zeigen Auswahl-Sheet
+  // (Kamera ODER Foto-Mediathek ODER Datei). Sonst wäre nur Kamera möglich.
   input.multiple = true;          // Mehrere Bilder gleichzeitig hochladen
   input.onchange = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -18070,20 +18071,53 @@ async function _daBuildAndShowPdf(recId) {
   }
 }
 
+/**
+ * Branding-Profil für DA-PDFs je nach Firma.
+ * Logo, Farben, Footer-Text werden hieraus geholt — kein Hardcoding mehr im PDF-Body.
+ */
+function _daFirmaBranding(firmaSlug) {
+  const slug = String(firmaSlug || '').trim().toLowerCase();
+  if (slug === 'aufzug' || slug === 'aufzugshandwerk') {
+    return {
+      slug: 'aufzug',
+      logoB64: AUFZUG_LOGO_B64,
+      logoW: 36, logoH: 7.4,                  // selbes Verhältnis wie 48x9.8
+      company: 'Aufzugshandwerk',
+      headerLine: 'Aufzugshandwerk',
+      footerLine: 'Aufzugshandwerk',
+      navy: [40, 40, 40],
+      accent: [40, 40, 40],
+    };
+  }
+  // Default: Aszendio
+  return {
+    slug: 'aszendio',
+    logoB64: LOGO_B64,
+    logoW: 36, logoH: 6,
+    company: 'Aszendio Aufzugservice GmbH',
+    headerLine: 'Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com',
+    footerLine: 'Aszendio Aufzugservice GmbH',
+    navy: [26, 51, 83],
+    accent: [33, 82, 169],
+  };
+}
+
 async function _buildDatenaufnahmePdf(rec, cps, opts) {
   opts = opts || {};
   const withPrices = !!opts.withPrices;
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const ml = 15, mr = 195, cw = mr - ml;
-  const NAVY = [26,51,83], ACCENT = [33,82,169];
+  const firmaSlugForBranding = rec.firma || getCurrentFirmaSlug();
+  const BR = _daFirmaBranding(firmaSlugForBranding);
+  const NAVY = BR.navy, ACCENT = BR.accent;
   const GREY = [55,65,81], GREY_L = [120,130,145], GREY_X = [229,231,235];
   const AMBER = [180, 83, 9], GREEN = [16, 185, 129];
 
-  // === KOPFBEREICH ===
-  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG', mr-36, 12, 36, 6); } catch(_){}
+  // === KOPFBEREICH (Firma-spezifisch) ===
+  try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW, 12, BR.logoW, BR.logoH); } catch(_){}
   doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
-  doc.text('Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com', ml, 16);
+  doc.text(_sanPdf(BR.headerLine), ml, 16);
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
   let y = 32;
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(22);
@@ -18208,7 +18242,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     const cp = cps[i];
     // Migration für ältere Records, die das PDF direkt nach dem Laden bauen
     _daNormalizeCp(cp);
-    if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); y = 30; }
+    if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); y = 30; }
     // Checkpunkt-Header — Nummer-Pill + Titel, sauber zentriert
     const pillW = 8, pillH = 6;
     doc.setFillColor(...ACCENT);
@@ -18237,7 +18271,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       for (let bi = 0; bi < bilder.length; bi++) {
         // Seitenumbruch falls Bilder + Text nicht mehr passen
         if (yIst + imgH > 275) {
-          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); yIst = 30;
+          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30;
         }
         const xImg = ml + col * (imgW + gap);
         try { doc.addImage(bilder[bi], 'JPEG', xImg, yIst, imgW, imgH); } catch(_){}
@@ -18251,7 +18285,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
     const istLines = doc.splitTextToSize(_sanPdf(cp.ist_zustand || '-'), colW-2);
     istLines.forEach(l => {
-      if (yIst > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); yIst = 30; }
+      if (yIst > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30; }
       doc.text(l, ml, yIst); yIst += 4;
     });
 
@@ -18263,7 +18297,7 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
     const mLines = doc.splitTextToSize(_sanPdf(cp.massnahme || '-'), colW-2);
     mLines.forEach(l => {
-      if (yMaß > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); yMaß = 30; }
+      if (yMaß > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yMaß = 30; }
       doc.text(l, xMaß, yMaß); yMaß += 4;
     });
 
@@ -18275,25 +18309,25 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
 
   // Angebots-Konditionen + AGB anhängen (nur bei Angebot-Variante)
   if (withPrices) {
-    const firmaSlug = rec.firma || getCurrentFirmaSlug();
-    y = _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, y + 4, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
+    y = _appendAngebotsKonditionen(doc, firmaSlugForBranding, ml, mr, y + 4, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
   }
 
-  // Footer auf jeder Seite
+  // Footer auf jeder Seite (firma-spezifisch)
   const total = doc.getNumberOfPages();
   for (let p = 1; p <= total; p++) {
     doc.setPage(p);
     doc.setDrawColor(...GREY_X); doc.line(ml, 285, mr, 285);
     doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
-    doc.text('Datenaufnahme DA-'+(rec.da_num||'')+'  ·  Aszendio Aufzugservice GmbH', ml, 290);
+    doc.text(_sanPdf('Datenaufnahme DA-'+(rec.da_num||'')+'  ·  '+BR.footerLine), ml, 290);
     doc.text('Seite '+p+' / '+total, mr, 290, { align:'right' });
   }
   return doc.output('blob');
 }
 
-function _daPdfHeader(doc, ml, mr, GREY_L, GREY_X) {
+function _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR) {
+  const company = (BR && BR.company) ? BR.company : 'Aszendio Aufzugservice GmbH';
   doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal'); doc.setFontSize(8);
-  doc.text('Datenaufnahme  ·  Aszendio Aufzugservice GmbH', ml, 14);
+  doc.text(_sanPdf('Datenaufnahme  ·  '+company), ml, 14);
   doc.setDrawColor(...GREY_X); doc.line(ml, 17, mr, 17);
 }
 
