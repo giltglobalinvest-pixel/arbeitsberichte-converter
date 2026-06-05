@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.42';
+const APP_VERSION = 'v4.43';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18129,7 +18129,9 @@ function _daAddImage(i) {
       if (!file.type.startsWith('image/')) { errs++; continue; }
       if (file.size > 15*1024*1024) { errs++; continue; }
       try {
-        const dataUrl = await _gbuResizeImage(file, 800, 0.6);
+        // 1100px / Q75: deutlich schärfer als das alte 800/0.6.
+        // Größenkontrolle erfolgt bei Bedarf später durch die _daSave-Shrink-Schleife.
+        const dataUrl = await _gbuResizeImage(file, 1100, 0.75);
         m._cps[i].bilder_ist.push(dataUrl);
         added++;
       } catch(_) { errs++; }
@@ -18172,7 +18174,10 @@ async function _daSave(recId) {
   let json = JSON.stringify(data);
   if (json.length > MAX) {
     toast('⏳ Komprimiere Bilder…','');
-    const passes = [{dim:600,q:0.5},{dim:500,q:0.45},{dim:400,q:0.4},{dim:320,q:0.35}];
+    // Sanftere Shrink-Stufen — wir starten höher und gehen nicht unter 500px/Q40,
+    // damit Bilder im PDF noch scharf bleiben. Wenn auch das nicht reicht,
+    // sieht der User den 100KB-Fehler unten und kann ein Bild entfernen.
+    const passes = [{dim:900,q:0.65},{dim:800,q:0.6},{dim:700,q:0.55},{dim:600,q:0.5},{dim:500,q:0.4}];
     for (const p of passes) {
       if (json.length <= MAX) break;
       for (const cp of data) {
@@ -18700,24 +18705,51 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     let yIst = y + 7;
     const bilder = Array.isArray(cp.bilder_ist) ? cp.bilder_ist.filter(b => typeof b === 'string' && b) : [];
     if (bilder.length > 0) {
-      // 2-Spalten-Grid innerhalb der IST-Spalte
+      // Layout: 1 Bild = volle Breite, mehrere = 2 Spalten.
+      // Wichtig: Aspect-Ratio wird beibehalten (kein Stretching mehr).
+      // jsPDF.getImageProperties() liefert native width/height des Bilds.
       const gridCols = bilder.length === 1 ? 1 : 2;
       const gap = 2;
-      const imgW = (colW - (gridCols - 1) * gap) / gridCols;
-      const imgH = bilder.length === 1 ? 45 : 32;
-      let row = 0, col = 0;
+      const cellW = (colW - (gridCols - 1) * gap) / gridCols;
+      // Maximale Höhe pro Bild — damit ein Hochformat-Foto nicht die halbe Seite frisst
+      const maxCellH = bilder.length === 1 ? 90 : 55;
+      let col = 0, rowMaxH = 0;
       for (let bi = 0; bi < bilder.length; bi++) {
-        // Seitenumbruch falls Bilder + Text nicht mehr passen
-        if (yIst + imgH > 275) {
-          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30;
+        const src = bilder[bi];
+        // Aspect aus Bild-Properties
+        let aspect = 0.75;  // Default: 4:3 Querformat
+        try {
+          const props = doc.getImageProperties(src);
+          if (props && props.width > 0 && props.height > 0) {
+            aspect = props.height / props.width;
+          }
+        } catch(_){}
+        // In die Zelle einpassen, Aspect bewahren, Höhen-Cap respektieren
+        let drawW = cellW;
+        let drawH = cellW * aspect;
+        if (drawH > maxCellH) {
+          drawH = maxCellH;
+          drawW = maxCellH / aspect;
         }
-        const xImg = ml + col * (imgW + gap);
-        try { doc.addImage(bilder[bi], 'JPEG', xImg, yIst, imgW, imgH); } catch(_){}
+        // Seitenumbruch wenn nötig
+        if (yIst + drawH > 275) {
+          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30;
+          col = 0; rowMaxH = 0;
+        }
+        const xCell = ml + col * (cellW + gap);
+        // Horizontal in der Zelle zentrieren (für Hochformat-Bilder)
+        const xImg = xCell + (cellW - drawW) / 2;
+        try { doc.addImage(src, 'JPEG', xImg, yIst, drawW, drawH); } catch(_){}
+        if (drawH > rowMaxH) rowMaxH = drawH;
         col++;
-        if (col >= gridCols) { col = 0; row++; yIst += imgH + gap; }
+        if (col >= gridCols) {
+          col = 0;
+          yIst += rowMaxH + gap;
+          rowMaxH = 0;
+        }
       }
       // wenn letzte Zeile angefangen aber nicht voll, trotzdem yIst weiterrücken
-      if (col > 0) yIst += imgH + gap;
+      if (col > 0) yIst += rowMaxH + gap;
       yIst += 2;
     }
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
