@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.38';
+const APP_VERSION = 'v4.39';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -17618,11 +17618,12 @@ async function _daCreateRecord() {
         try {
           const tcps = JSON.parse(v.fields?.checkpunkte_json||'[]');
           // Cloned: Bilder leer, Texte erst mal leer (Templates haben keine Bilder)
+          // Neues Schema: bilder_ist[] (mehrere Bilder pro Checkpunkt, Maßnahme bekommt keine)
           checkpunkte = tcps.map(c => ({
             titel: c.titel || '',
             ist_zustand: c.ist_zustand || '',
             massnahme: c.massnahme || '',
-            bild_ist: '', bild_massnahme: '',
+            bilder_ist: [],
           }));
         } catch(_){}
       }
@@ -17661,12 +17662,36 @@ async function _daCreateRecord() {
 }
 
 /* ── Detail-Modal: Checkpunkt-Erfassung Mobile-optimiert ── */
+/**
+ * Migriert einen Checkpunkt auf das neue Schema:
+ *   - bilder_ist: [string]   (mehrere IST-Bilder)
+ *   - keine Bilder bei Maßnahme
+ * Alt:
+ *   - bild_ist: string       (1 Bild)
+ *   - bild_massnahme: string (1 Bild) — wird nach bilder_ist[] gemerged, damit nichts verloren geht
+ */
+function _daNormalizeCp(cp) {
+  if (!cp || typeof cp !== 'object') return { titel:'', ist_zustand:'', massnahme:'', bilder_ist:[] };
+  // bilder_ist initialisieren
+  let bilder = Array.isArray(cp.bilder_ist) ? cp.bilder_ist.slice() : [];
+  if (typeof cp.bild_ist === 'string' && cp.bild_ist && !bilder.includes(cp.bild_ist)) bilder.push(cp.bild_ist);
+  if (typeof cp.bild_massnahme === 'string' && cp.bild_massnahme && !bilder.includes(cp.bild_massnahme)) bilder.push(cp.bild_massnahme);
+  cp.bilder_ist = bilder;
+  delete cp.bild_ist;
+  delete cp.bild_massnahme;
+  if (typeof cp.titel !== 'string') cp.titel = '';
+  if (typeof cp.ist_zustand !== 'string') cp.ist_zustand = '';
+  if (typeof cp.massnahme !== 'string') cp.massnahme = '';
+  return cp;
+}
+
 async function openDaDetail(recId) {
   const rec = (_daCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Datenaufnahme nicht gefunden','err');
   const f = rec.fields || {};
   let cps = [];
   try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  cps = cps.map(_daNormalizeCp);
   const old = document.getElementById('da-detail'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'da-detail';
@@ -17723,14 +17748,20 @@ function _daRenderCheckpunkte() {
 
 function _daRenderCheckpunktItem(cp, i, editable) {
   const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
-  const imgIst = cp.bild_ist
-    ? '<div style="position:relative"><img src="'+cp.bild_ist+'" onclick="_daViewImage('+i+',\'ist\')" style="width:100%;max-width:140px;height:90px;object-fit:cover;border:1px solid var(--bdr);border-radius:6px;cursor:zoom-in">'+
-      (editable?'<button onclick="_daRemoveImage('+i+',\'ist\')" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:none;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:13px">×</button>':'')+'</div>'
-    : (editable?'<button onclick="_daAddImage('+i+',\'ist\')" style="width:140px;height:90px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">📷<span>+ Foto Ist</span></button>':'<div style="width:140px;height:90px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>');
-  const imgM = cp.bild_massnahme
-    ? '<div style="position:relative"><img src="'+cp.bild_massnahme+'" onclick="_daViewImage('+i+',\'massnahme\')" style="width:100%;max-width:140px;height:90px;object-fit:cover;border:1px solid var(--bdr);border-radius:6px;cursor:zoom-in">'+
-      (editable?'<button onclick="_daRemoveImage('+i+',\'massnahme\')" style="position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;border:none;width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:13px">×</button>':'')+'</div>'
-    : (editable?'<button onclick="_daAddImage('+i+',\'massnahme\')" style="width:140px;height:90px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">📷<span>+ Foto Maßnahme</span></button>':'<div style="width:140px;height:90px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>');
+  const bilder = Array.isArray(cp.bilder_ist) ? cp.bilder_ist : [];
+  // IST-Galerie: alle Bilder als Thumbnails + Add-Button am Ende
+  const thumbsHtml = bilder.map((src, idx) =>
+    '<div style="position:relative;width:96px;height:72px;border:1px solid var(--bdr);border-radius:6px;overflow:hidden;background:#f9fafb;flex-shrink:0">'+
+      '<img src="'+src+'" onclick="_daViewImage('+i+','+idx+')" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in">'+
+      (editable
+        ? '<button onclick="_daRemoveImage('+i+','+idx+')" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.92);color:#fff;border:none;width:20px;height:20px;border-radius:50%;font-size:12px;cursor:pointer;line-height:1" title="Foto entfernen">×</button>'
+        : '')+
+    '</div>'
+  ).join('');
+  const addBtn = editable
+    ? '<button onclick="_daAddImage('+i+')" style="width:96px;height:72px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;flex-shrink:0" title="Foto hinzufügen"><span style="font-size:20px">📷</span><span>+ Foto</span></button>'
+    : (bilder.length === 0 ? '<div style="width:96px;height:72px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>' : '');
+  const galleryHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+thumbsHtml+addBtn+'</div>';
   const dis = editable ? '' : 'disabled';
   // Pauschalpreis nur sichtbar+editierbar für User mit canSeePrices Permission
   const showPrice = canSeePrices();
@@ -17752,22 +17783,18 @@ function _daRenderCheckpunktItem(cp, i, editable) {
           ' oninput="_daUpdateCp('+i+',\'titel\',this.value)" style="flex:1;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;font-weight:600">'+
         (editable?'<button onclick="_daRemoveCp('+i+')" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer">🗑</button>':'')+
       '</div>'+
-      // 2 Spalten: Ist + Maßnahme
-      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">'+
-        // IST-Spalte
-        '<div>'+
-          '<div style="font-size:11px;font-weight:700;color:#92400E;text-transform:uppercase;margin-bottom:4px">📍 Ist-Zustand</div>'+
-          imgIst+
-          '<textarea id="da-cp-ist-'+i+'" rows="3" placeholder="Beschreibung des aktuellen Zustands…" '+dis+
-            ' oninput="_daUpdateCp('+i+',\'ist_zustand\',this.value)" style="width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.ist_zustand||'')+'</textarea>'+
-        '</div>'+
-        // MASSNAHME-Spalte
-        '<div>'+
-          '<div style="font-size:11px;font-weight:700;color:#065F46;text-transform:uppercase;margin-bottom:4px">🔧 Erforderliche Maßnahme</div>'+
-          imgM+
-          '<textarea id="da-cp-m-'+i+'" rows="3" placeholder="Was muss gemacht werden?" '+dis+
-            ' oninput="_daUpdateCp('+i+',\'massnahme\',this.value)" style="width:100%;margin-top:6px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.massnahme||'')+'</textarea>'+
-        '</div>'+
+      // IST-Zustand: Titel + Galerie (mehrere Bilder) + Textarea
+      '<div style="margin-bottom:12px">'+
+        '<div style="font-size:11px;font-weight:700;color:#92400E;text-transform:uppercase;margin-bottom:6px">📍 Ist-Zustand · Fotos &amp; Beschreibung</div>'+
+        galleryHtml+
+        '<textarea id="da-cp-ist-'+i+'" rows="3" placeholder="Beschreibung des aktuellen Zustands…" '+dis+
+          ' oninput="_daUpdateCp('+i+',\'ist_zustand\',this.value)" style="width:100%;margin-top:8px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.ist_zustand||'')+'</textarea>'+
+      '</div>'+
+      // MASSNAHME: nur Text — keine Bilder
+      '<div>'+
+        '<div style="font-size:11px;font-weight:700;color:#065F46;text-transform:uppercase;margin-bottom:6px">🔧 Erforderliche Maßnahme</div>'+
+        '<textarea id="da-cp-m-'+i+'" rows="3" placeholder="Was muss gemacht werden?" '+dis+
+          ' oninput="_daUpdateCp('+i+',\'massnahme\',this.value)" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.massnahme||'')+'</textarea>'+
       '</div>'+
       priceHtml+
     '</div>'
@@ -17831,7 +17858,7 @@ function _daUpdateCp(i, field, value) {
 function _daAddCheckpunkt() {
   const m = document.getElementById('da-detail');
   if (!m) return;
-  m._cps.push({ titel:'', ist_zustand:'', massnahme:'', bild_ist:'', bild_massnahme:'' });
+  m._cps.push({ titel:'', ist_zustand:'', massnahme:'', bilder_ist:[] });
   m._dirty = true;
   _daRenderCheckpunkte();
   // Zum neuen Checkpunkt scrollen
@@ -17850,43 +17877,55 @@ function _daRemoveCp(i) {
   _daRenderCheckpunkte();
 }
 
-function _daAddImage(i, which) {
+/**
+ * Bild zum IST-Zustand des Checkpunkts i hinzufügen.
+ * Mehrere Bilder pro Checkpunkt möglich (bilder_ist[]).
+ * Maßnahme bekommt keine Bilder.
+ */
+function _daAddImage(i) {
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = 'image/*';
   input.capture = 'environment';  // Mobile: direkt Kamera öffnen
+  input.multiple = true;          // Mehrere Bilder gleichzeitig hochladen
   input.onchange = async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) return toast('Bitte Bilddatei wählen','err');
-    if (file.size > 15*1024*1024) return toast('Bild zu groß (max 15 MB)','err');
-    toast('🖼 Komprimiere…','');
-    try {
-      const dataUrl = await _gbuResizeImage(file, 800, 0.6);
-      const m = document.getElementById('da-detail');
-      if (!m || !m._cps[i]) return;
-      m._cps[i][which === 'ist' ? 'bild_ist' : 'bild_massnahme'] = dataUrl;
-      m._dirty = true;
-      _daRenderCheckpunkte();
-      toast('🖼 Foto hinzugefügt','ok');
-    } catch(e) { toast('❌ Bild: '+e.message,'err'); }
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const m = document.getElementById('da-detail');
+    if (!m || !m._cps[i]) return;
+    if (!Array.isArray(m._cps[i].bilder_ist)) m._cps[i].bilder_ist = [];
+    let added = 0, errs = 0;
+    toast('🖼 Komprimiere '+files.length+' Foto'+(files.length===1?'':'s')+'…','');
+    for (const file of files) {
+      if (!file.type.startsWith('image/')) { errs++; continue; }
+      if (file.size > 15*1024*1024) { errs++; continue; }
+      try {
+        const dataUrl = await _gbuResizeImage(file, 800, 0.6);
+        m._cps[i].bilder_ist.push(dataUrl);
+        added++;
+      } catch(_) { errs++; }
+    }
+    if (added) { m._dirty = true; _daRenderCheckpunkte(); }
+    if (added && !errs) toast('🖼 '+added+' Foto'+(added===1?'':'s')+' hinzugefügt','ok');
+    else if (added && errs) toast('🖼 '+added+' OK · '+errs+' Fehler','');
+    else toast('❌ Keine Bilder hinzugefügt','err');
   };
   input.click();
 }
 
-function _daRemoveImage(i, which) {
+function _daRemoveImage(i, idx) {
   if (!confirm('Foto entfernen?')) return;
   const m = document.getElementById('da-detail');
-  if (!m || !m._cps[i]) return;
-  m._cps[i][which === 'ist' ? 'bild_ist' : 'bild_massnahme'] = '';
+  if (!m || !m._cps[i] || !Array.isArray(m._cps[i].bilder_ist)) return;
+  m._cps[i].bilder_ist.splice(idx, 1);
   m._dirty = true;
   _daRenderCheckpunkte();
 }
 
-function _daViewImage(i, which) {
+function _daViewImage(i, idx) {
   const m = document.getElementById('da-detail');
-  if (!m || !m._cps[i]) return;
-  const src = m._cps[i][which === 'ist' ? 'bild_ist' : 'bild_massnahme'];
+  if (!m || !m._cps[i] || !Array.isArray(m._cps[i].bilder_ist)) return;
+  const src = m._cps[i].bilder_ist[idx];
   if (!src) return;
   const lb = document.createElement('div');
   lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:10900;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:20px';
@@ -17908,9 +17947,15 @@ async function _daSave(recId) {
     for (const p of passes) {
       if (json.length <= MAX) break;
       for (const cp of data) {
-        for (const k of ['bild_ist','bild_massnahme']) {
-          if (cp[k] && cp[k].startsWith('data:')) {
-            try { const s = await _gbuShrinkDataUrl(cp[k], p.dim, p.q); if (s.length < cp[k].length) cp[k] = s; } catch(_){}
+        if (Array.isArray(cp.bilder_ist)) {
+          for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
+            const src = cp.bilder_ist[bi];
+            if (typeof src === 'string' && src.startsWith('data:')) {
+              try {
+                const s = await _gbuShrinkDataUrl(src, p.dim, p.q);
+                if (s.length < src.length) cp.bilder_ist[bi] = s;
+              } catch(_){}
+            }
           }
         }
       }
@@ -18161,6 +18206,8 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
   // === CHECKPUNKTE ===
   for (let i = 0; i < cps.length; i++) {
     const cp = cps[i];
+    // Migration für ältere Records, die das PDF direkt nach dem Laden bauen
+    _daNormalizeCp(cp);
     if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); y = 30; }
     // Checkpunkt-Header — Nummer-Pill + Titel, sauber zentriert
     const pillW = 8, pillH = 6;
@@ -18173,32 +18220,52 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     y += 6;
     doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 5;
 
-    // Zwei Spalten: Ist + Massnahme
+    // Zwei Spalten: Ist (mit Bilder-Galerie) + Massnahme (ohne Bilder)
     const colW = (cw - 6) / 2;
-    const yStart = y;
-    // IST
+    // IST-Spalte
     doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...AMBER);
     doc.text('IST-ZUSTAND', ml, y+4);
     let yIst = y + 7;
-    if (cp.bild_ist) {
-      try { doc.addImage(cp.bild_ist, 'JPEG', ml, yIst, colW, 45); yIst += 48; } catch(_) { yIst += 4; }
+    const bilder = Array.isArray(cp.bilder_ist) ? cp.bilder_ist.filter(b => typeof b === 'string' && b) : [];
+    if (bilder.length > 0) {
+      // 2-Spalten-Grid innerhalb der IST-Spalte
+      const gridCols = bilder.length === 1 ? 1 : 2;
+      const gap = 2;
+      const imgW = (colW - (gridCols - 1) * gap) / gridCols;
+      const imgH = bilder.length === 1 ? 45 : 32;
+      let row = 0, col = 0;
+      for (let bi = 0; bi < bilder.length; bi++) {
+        // Seitenumbruch falls Bilder + Text nicht mehr passen
+        if (yIst + imgH > 275) {
+          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); yIst = 30;
+        }
+        const xImg = ml + col * (imgW + gap);
+        try { doc.addImage(bilder[bi], 'JPEG', xImg, yIst, imgW, imgH); } catch(_){}
+        col++;
+        if (col >= gridCols) { col = 0; row++; yIst += imgH + gap; }
+      }
+      // wenn letzte Zeile angefangen aber nicht voll, trotzdem yIst weiterrücken
+      if (col > 0) yIst += imgH + gap;
+      yIst += 2;
     }
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
     const istLines = doc.splitTextToSize(_sanPdf(cp.ist_zustand || '-'), colW-2);
-    istLines.forEach(l => { doc.text(l, ml, yIst); yIst += 4; });
+    istLines.forEach(l => {
+      if (yIst > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); yIst = 30; }
+      doc.text(l, ml, yIst); yIst += 4;
+    });
 
-    // MASSNAHME
-    let yM = y + 7 - 7;
+    // MASSNAHME-Spalte — KEINE Bilder mehr (Wunsch User)
     doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...GREEN);
     doc.text('ERFORDERLICHE MASSNAHME', ml + colW + 6, y+4);
     let yMaß = y + 7;
     const xMaß = ml + colW + 6;
-    if (cp.bild_massnahme) {
-      try { doc.addImage(cp.bild_massnahme, 'JPEG', xMaß, yMaß, colW, 45); yMaß += 48; } catch(_) { yMaß += 4; }
-    }
     doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
     const mLines = doc.splitTextToSize(_sanPdf(cp.massnahme || '-'), colW-2);
-    mLines.forEach(l => { doc.text(l, xMaß, yMaß); yMaß += 4; });
+    mLines.forEach(l => {
+      if (yMaß > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X); yMaß = 30; }
+      doc.text(l, xMaß, yMaß); yMaß += 4;
+    });
 
     y = Math.max(yIst, yMaß) + 6;
     if (i < cps.length - 1) {
