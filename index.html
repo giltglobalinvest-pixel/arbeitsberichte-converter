@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.41';
+const APP_VERSION = 'v4.42';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -17842,25 +17842,9 @@ async function _daCreateRecord() {
     _daCache = { firma:null, items:null, loadedAt:0, loading:false };
     await renderDatenaufnahmenView({ force:true });
     openDaDetail(d.id);
-    // Freshdesk-Auto-Ticket nach Datenaufnahme-Anlage (fire-and-forget — blockiert UI nicht).
-    // Beim Anlegen sind noch keine Checkpunkte mit Daten — kein PDF im Anhang.
-    // Das Ticket dient als ToDo "bitte Pauschalpreise eintragen", mit Deep-Link in die App.
-    if (freshdeskIsConfigured(firmaSlug)) {
-      (async () => {
-        try {
-          const fdRes = await freshdeskCreateTicketForDA(d, {});
-          if (fdRes.skipped) {
-            toast('ℹ Freshdesk-Ticket übersprungen: '+fdRes.reason, '');
-          } else if (fdRes.ticketId) {
-            await _daPersistFdTicketLink(d.id, fdRes.ticketId, fdRes.ticketUrl);
-            toast('🎫 Freshdesk-Ticket #'+fdRes.ticketId+' erstellt', 'ok');
-          }
-        } catch(fde) {
-          console.error('Freshdesk-DA-Auto-Ticket:', fde);
-          toast('⚠ Datenaufnahme angelegt, ABER Freshdesk-Ticket fehlgeschlagen: '+(fde.message||fde).slice(0,180), 'warn');
-        }
-      })();
-    }
+    // HINWEIS: Freshdesk-Ticket wird NICHT mehr automatisch bei Anlage erstellt.
+    // Stattdessen erst beim Abschließen der Datenaufnahme — siehe Button "✅ Datenaufnahme abschließen"
+    // im Detail-Modal (löst _daComplete() aus).
   } catch(e) {
     toast('❌ '+e.message,'err');
     btn.disabled = false; btn.textContent = '🚀 Datenaufnahme anlegen';
@@ -17909,32 +17893,58 @@ async function openDaDetail(recId) {
         '<button onclick="document.getElementById(\'da-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       // Stammdaten
-      '<div style="padding:14px 20px;background:#EFF6FF;border-bottom:1px solid var(--bdr);font-size:12px">'+
-        '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
-        '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'')+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
-        (f.beschreibung ? '<div style="margin-top:6px"><strong>📝 Auftrag:</strong> '+escapeHtml(f.beschreibung)+'</div>' : '')+
-        // Freshdesk-Ticket-Status (falls bereits Ticket vorhanden)
-        (f.fd_ticket_id
-          ? '<div style="margin-top:6px"><strong>🎫 Freshdesk:</strong> '+
-              (f.fd_ticket_url
-                ? '<a href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Ticket #'+escapeHtml(String(f.fd_ticket_id))+' öffnen ↗</a>'
-                : 'Ticket #'+escapeHtml(String(f.fd_ticket_id)))+
-            '</div>'
-          : '')+
-      '</div>'+
+      (() => {
+        const isDone = f.status === 'abgeschlossen';
+        const fdConfigured = freshdeskIsConfigured(f.firma || getCurrentFirmaSlug());
+        return '<div style="padding:14px 20px;background:'+(isDone?'#ECFDF5':'#EFF6FF')+';border-bottom:1px solid var(--bdr);font-size:12px">'+
+          '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
+          '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'')+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
+          (f.beschreibung ? '<div style="margin-top:6px"><strong>📝 Auftrag:</strong> '+escapeHtml(f.beschreibung)+'</div>' : '')+
+          // Status-Badge: abgeschlossen / in_aufnahme / entwurf
+          '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
+            '<strong>Status:</strong> '+
+            (isDone
+              ? '<span style="background:#10b981;color:#fff;font-weight:600;padding:3px 10px;border-radius:99px;font-size:11px">✅ Abgeschlossen</span>'
+              : (f.status === 'in_aufnahme'
+                  ? '<span style="background:#FB923C;color:#fff;font-weight:600;padding:3px 10px;border-radius:99px;font-size:11px">🔧 In Aufnahme</span>'
+                  : '<span style="background:#6b7280;color:#fff;font-weight:600;padding:3px 10px;border-radius:99px;font-size:11px">📝 Entwurf</span>'))+
+            (isDone && f.aufgenommen_am ? '<span style="color:var(--txt3);font-size:11px">am '+escapeHtml(f.aufgenommen_am)+(f.aufgenommen_von?' von '+escapeHtml(f.aufgenommen_von):'')+'</span>' : '')+
+          '</div>'+
+          // Freshdesk-Ticket: groß und sichtbar wenn vorhanden
+          (f.fd_ticket_id
+            ? '<div style="margin-top:10px;padding:10px 12px;background:#fff;border:2px solid #10b981;border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+                '<span style="font-size:18px">🎫</span>'+
+                '<div style="flex:1;min-width:180px">'+
+                  '<div style="font-weight:700;color:#065F46;font-size:12px">Freshdesk-Ticket erstellt</div>'+
+                  (f.fd_ticket_url
+                    ? '<a href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600;font-size:11px;word-break:break-all">Ticket #'+escapeHtml(String(f.fd_ticket_id))+' in Freshdesk öffnen ↗</a>'
+                    : '<span style="color:var(--txt2);font-size:11px">Ticket #'+escapeHtml(String(f.fd_ticket_id))+'</span>')+
+                '</div>'+
+              '</div>'
+            : (isDone && !fdConfigured
+                ? '<div style="margin-top:10px;padding:8px 12px;background:#FEF3C7;border-left:3px solid #F59E0B;border-radius:4px;font-size:11px;color:#92400E">'+
+                    '⚠ Freshdesk für diese Firma nicht konfiguriert — Ticket konnte beim Abschließen nicht erstellt werden.'+
+                  '</div>'
+                : ''))+
+        '</div>';
+      })()+
       // Checkpunkte
       '<div id="da-cp-container" style="padding:14px 18px;flex:1;overflow-y:auto"></div>'+
       // Footer
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">'+
         '<button class="btn" onclick="document.getElementById(\'da-detail\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_daDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Datenaufnahme löschen">🗑 Löschen</button>'+
-        // Freshdesk: manuelles (Re-)Erstellen — sichtbar wenn FD für diese Firma konfiguriert ist
-        (freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
-          ? '<button class="btn" id="da-fd-btn" onclick="_daCreateFdTicketManual(\''+recId+'\', this)" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="'+(f.fd_ticket_id?'Erneut Ticket erstellen (z.B. mit aktuellem PDF)':'Freshdesk-Ticket jetzt erstellen')+'">🎫 '+(f.fd_ticket_id?'Ticket erneut erstellen':'Ticket erstellen')+'</button>'
-          : '')+
         (hasPermission('datenaufnahmen_edit') ? '<button class="btn" id="da-save-btn" onclick="_daSave(\''+recId+'\')">💾 Speichern</button>' : '')+
         (canSeePrices() ? '<button class="btn" style="background:#FB923C;border-color:#FB923C;color:#fff;font-weight:600" onclick="_daBuildAndShowAngebotPdf(\''+recId+'\')" title="Angebot mit Pauschalpreisen erzeugen">💰 Angebot-PDF</button>' : '')+
         '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')" title="Datenaufnahme-PDF ohne Preise">📄 PDF erzeugen</button>'+
+        // Abschließen: nur wenn noch NICHT abgeschlossen und User darf editieren
+        (hasPermission('datenaufnahmen_edit') && f.status !== 'abgeschlossen'
+          ? '<button class="btn" id="da-complete-btn" onclick="_daComplete(\''+recId+'\', this)" style="background:#10b981;border-color:#10b981;color:#fff;font-weight:700" title="Datenaufnahme abschließen — erstellt automatisch ein Freshdesk-Ticket">✅ Abschließen</button>'
+          : '')+
+        // Bei bereits abgeschlossener DA, aber noch keinem Ticket: manueller Re-Try
+        (f.status === 'abgeschlossen' && !f.fd_ticket_id && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
+          ? '<button class="btn" id="da-fd-btn" onclick="_daCreateFdTicketManual(\''+recId+'\', this)" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="Freshdesk-Ticket nachträglich erstellen">🎫 Ticket erstellen</button>'
+          : '')+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
@@ -18189,7 +18199,13 @@ async function _daSave(recId) {
       try { await _ensureDaTable(); } catch(_){}
     }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-    const status = (data.length > 0) ? 'in_aufnahme' : 'entwurf';
+    // Status NICHT überschreiben, wenn DA bereits abgeschlossen ist —
+    // sonst würde "Speichern" eine abgeschlossene DA wieder auf in_aufnahme zurücksetzen.
+    const rec = (_daCache.items||[]).find(x => x.id === recId);
+    const currentStatus = rec?.fields?.status || '';
+    const status = currentStatus === 'abgeschlossen'
+      ? 'abgeschlossen'
+      : ((data.length > 0) ? 'in_aufnahme' : 'entwurf');
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
@@ -18213,6 +18229,166 @@ async function _daSave(recId) {
     toast('❌ '+e.message,'err');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
   }
+}
+
+/**
+ * Schließt eine Datenaufnahme ab:
+ *  1) speichert lokale Änderungen
+ *  2) baut PDF (ohne Preise)
+ *  3) lädt PDF in den DA-Record als Attachment (Feld 'pdf')
+ *  4) setzt status='abgeschlossen' + aufgenommen_am/von
+ *  5) erstellt ein Freshdesk-Ticket (mit PDF im Anhang)
+ *  6) zeigt prominenten Erfolgs-Dialog im Detail-Modal
+ */
+async function _daComplete(recId, btn) {
+  const m = document.getElementById('da-detail');
+  if (!m) return;
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Record nicht gefunden','err');
+  const fields = rec.fields || {};
+  const firmaSlug = fields.firma || getCurrentFirmaSlug();
+  // Voraussetzung: es müssen Checkpunkte erfasst sein
+  const cps = Array.isArray(m._cps) ? m._cps.filter(cp => cp && (cp.titel||'').trim()) : [];
+  if (cps.length === 0) return toast('Bitte mindestens einen Checkpunkt erfassen, bevor du die Datenaufnahme abschließt.','err');
+  if (!confirm('Datenaufnahme jetzt abschließen?\n\nDanach wird automatisch ein Freshdesk-Ticket mit Deep-Link zur App erstellt — Innendienst kann Pauschalpreise eintragen und Angebot finalisieren.')) return;
+
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ schließe ab…'; }
+  try {
+    // 1) Save falls dirty
+    if (m._dirty) await _daSave(recId);
+
+    // 2) PDF bauen
+    if (btn) btn.textContent = '⏳ PDF erzeuge…';
+    const recAfterSave = (_daCache.items||[]).find(r => r.id === recId) || rec;
+    const fieldsAfterSave = recAfterSave.fields || fields;
+    let cpsForPdf = [];
+    try { cpsForPdf = JSON.parse(fieldsAfterSave.checkpunkte_json||'[]'); } catch(_){}
+    if (cpsForPdf.length === 0) cpsForPdf = m._cps || [];
+    const pdfBlob = await _buildDatenaufnahmePdf(fieldsAfterSave, cpsForPdf, { withPrices:false });
+
+    // 3) PDF in DA-Record als Attachment hochladen (für persistenten Link)
+    let pdfUrlForTicket = '';
+    if (btn) btn.textContent = '⏳ PDF speichere…';
+    try {
+      const fname = 'Datenaufnahme-DA'+(fieldsAfterSave.da_num||'')+'.pdf';
+      await atBlobUpload(recId, 'pdf', pdfBlob, fname, 'application/pdf');
+      // URL nachladen für FD-Body
+      try {
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        const rRead = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+          headers:{ 'Authorization':'Bearer '+(APP_KEYS.airtableReadKey||APP_KEYS.airtableWriteKey) }
+        });
+        const dRead = await rRead.json();
+        const url = dRead?.fields?.pdf?.[0]?.url;
+        if (url) pdfUrlForTicket = url;
+      } catch(_){}
+    } catch(upErr) {
+      console.warn('[DA-Complete] PDF-Upload fehlgeschlagen — fahre fort:', upErr.message);
+    }
+
+    // 4) Status setzen
+    if (btn) btn.textContent = '⏳ Status setzen…';
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const today = new Date().toISOString().slice(0,10);
+    const userName = APP_KEYS.user?.name || '';
+    await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: {
+        status: 'abgeschlossen',
+        aufgenommen_am: fieldsAfterSave.aufgenommen_am || today,
+        aufgenommen_von: fieldsAfterSave.aufgenommen_von || userName,
+      }}),
+    });
+    // Cache aktualisieren
+    const idx = (_daCache.items||[]).findIndex(x => x.id === recId);
+    if (idx >= 0) {
+      _daCache.items[idx].fields = _daCache.items[idx].fields || {};
+      _daCache.items[idx].fields.status = 'abgeschlossen';
+      _daCache.items[idx].fields.aufgenommen_am = _daCache.items[idx].fields.aufgenommen_am || today;
+      _daCache.items[idx].fields.aufgenommen_von = _daCache.items[idx].fields.aufgenommen_von || userName;
+    }
+
+    // 5) Freshdesk-Ticket — nur wenn konfiguriert
+    let fdResult = null;
+    let fdError = null;
+    if (freshdeskIsConfigured(firmaSlug)) {
+      if (btn) btn.textContent = '⏳ Freshdesk-Ticket…';
+      try {
+        const recForFd = (_daCache.items||[]).find(r => r.id === recId) || recAfterSave;
+        fdResult = await freshdeskCreateTicketForDA(recForFd, { pdfBlob, pdfUrl: pdfUrlForTicket });
+        if (fdResult?.ticketId) {
+          await _daPersistFdTicketLink(recId, fdResult.ticketId, fdResult.ticketUrl);
+        }
+      } catch(fde) {
+        fdError = fde;
+        console.error('[DA-Complete] Freshdesk-Ticket:', fde);
+      }
+    }
+
+    // 6) Erfolgs-Dialog im Modal anzeigen + Liste neu rendern
+    _daShowCompletionSuccess(recId, { fdResult, fdError, fdConfigured: freshdeskIsConfigured(firmaSlug) });
+    try { _renderDaList(); } catch(_){}
+  } catch(e) {
+    console.error('[DA-Complete]', e);
+    toast('❌ Abschließen fehlgeschlagen: '+(e.message||e).slice(0,200), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = origLabel || '✅ Abschließen'; }
+  }
+}
+
+/**
+ * Zeigt einen prominenten Erfolgs-Dialog im DA-Detail-Modal, damit der User
+ * SOFORT sieht: Abschluss erfolgt + Ticket erstellt. Toast allein reicht nicht.
+ */
+function _daShowCompletionSuccess(recId, info) {
+  info = info || {};
+  const modal = document.getElementById('da-detail');
+  if (!modal) return;
+  const overlay = document.createElement('div');
+  overlay.id = 'da-complete-success';
+  overlay.style.cssText = 'position:absolute;inset:0;background:rgba(10,40,30,.78);z-index:5;display:flex;align-items:center;justify-content:center;padding:20px;animation:daSuccessFadeIn .25s ease-out;backdrop-filter:blur(2px)';
+  // Animations-Keyframe injizieren falls nicht da
+  if (!document.getElementById('da-success-keyframes')) {
+    const st = document.createElement('style');
+    st.id = 'da-success-keyframes';
+    st.textContent = '@keyframes daSuccessFadeIn{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:scale(1)}}';
+    document.head.appendChild(st);
+  }
+
+  const ticketHtml = info.fdResult?.ticketId
+    ? '<div style="background:#fff;border:2px solid #10b981;border-radius:10px;padding:14px 16px;margin:14px 0;text-align:left">'+
+        '<div style="font-size:12px;font-weight:700;color:#065F46;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">🎫 Freshdesk-Ticket erstellt</div>'+
+        '<div style="font-size:14px;color:var(--navy);font-weight:600;margin-bottom:8px">Ticket #'+escapeHtml(String(info.fdResult.ticketId))+'</div>'+
+        (info.fdResult.ticketUrl
+          ? '<a href="'+escapeHtml(info.fdResult.ticketUrl)+'" target="_blank" rel="noopener" class="btn prim" style="display:inline-block;font-size:13px;text-decoration:none">🔗 Ticket in Freshdesk öffnen ↗</a>'
+          : '')+
+      '</div>'
+    : info.fdError
+      ? '<div style="background:#FEF2F2;border:2px solid #DC2626;border-radius:10px;padding:14px 16px;margin:14px 0;text-align:left">'+
+          '<div style="font-size:12px;font-weight:700;color:#991B1B;text-transform:uppercase;margin-bottom:4px">⚠ Freshdesk-Ticket fehlgeschlagen</div>'+
+          '<div style="font-size:11px;color:#991B1B;line-height:1.5;word-break:break-word">'+escapeHtml((info.fdError.message||info.fdError||'').slice(0,300))+'</div>'+
+          '<button class="btn" onclick="document.getElementById(\'da-complete-success\').remove();_daCreateFdTicketManual(\''+recId+'\', this)" style="margin-top:8px;font-size:12px">🔁 Erneut versuchen</button>'+
+        '</div>'
+      : !info.fdConfigured
+        ? '<div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px 14px;border-radius:6px;font-size:12px;color:#92400E;margin:14px 0;text-align:left">'+
+            '⚠ Freshdesk für diese Firma <strong>nicht konfiguriert</strong> — kein Ticket erstellt. Konfigurieren unter <em>Integrationen → Freshdesk</em>.'+
+          '</div>'
+        : '';
+
+  overlay.innerHTML =
+    '<div style="background:#fff;max-width:520px;width:100%;border-radius:16px;padding:28px 24px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,.4)">'+
+      '<div style="font-size:64px;line-height:1;margin-bottom:6px">✅</div>'+
+      '<div style="font-size:22px;font-weight:700;color:#065F46;margin-bottom:4px">Datenaufnahme abgeschlossen</div>'+
+      '<div style="font-size:13px;color:var(--txt2);margin-bottom:6px">Status auf <strong>„Abgeschlossen"</strong> gesetzt.</div>'+
+      ticketHtml+
+      '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:14px">'+
+        '<button class="btn" onclick="document.getElementById(\'da-complete-success\').remove();const o=document.getElementById(\'da-detail\');if(o)o.remove();openDaDetail(\''+recId+'\')">📋 Datenaufnahme öffnen</button>'+
+        '<button class="btn prim" onclick="document.getElementById(\'da-complete-success\').remove();const o=document.getElementById(\'da-detail\');if(o)o.remove();">Fertig</button>'+
+      '</div>'+
+    '</div>';
+  modal.style.position = 'fixed';
+  modal.appendChild(overlay);
 }
 
 /**
