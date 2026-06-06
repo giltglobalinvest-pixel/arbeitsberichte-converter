@@ -2590,7 +2590,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.43';
+const APP_VERSION = 'v4.44';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -17941,9 +17941,10 @@ async function openDaDetail(recId) {
         (hasPermission('datenaufnahmen_edit') && f.status !== 'abgeschlossen'
           ? '<button class="btn" id="da-complete-btn" onclick="_daComplete(\''+recId+'\', this)" style="background:#10b981;border-color:#10b981;color:#fff;font-weight:700" title="Datenaufnahme abschließen — erstellt automatisch ein Freshdesk-Ticket">✅ Abschließen</button>'
           : '')+
-        // Bei bereits abgeschlossener DA, aber noch keinem Ticket: manueller Re-Try
-        (f.status === 'abgeschlossen' && !f.fd_ticket_id && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
-          ? '<button class="btn" id="da-fd-btn" onclick="_daCreateFdTicketManual(\''+recId+'\', this)" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="Freshdesk-Ticket nachträglich erstellen">🎫 Ticket erstellen</button>'
+        // Freshdesk-Ticket manuell (neu) erstellen — auch wenn bereits eines existiert.
+        // Sichtbar wenn FD konfiguriert ist und User Edit-Recht hat. Label passt sich an.
+        (hasPermission('datenaufnahmen_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
+          ? '<button class="btn" id="da-fd-btn" onclick="_daCreateFdTicketManual(\''+recId+'\', this)" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="'+(f.fd_ticket_id ? 'Neues Freshdesk-Ticket erzeugen (altes bleibt in Freshdesk bestehen)' : 'Freshdesk-Ticket nachträglich erstellen')+'">🎫 '+(f.fd_ticket_id ? 'Ticket erneut erzeugen' : 'Ticket erstellen')+'</button>'
           : '')+
       '</div>'+
     '</div>';
@@ -18406,6 +18407,17 @@ async function _daCreateFdTicketManual(recId, btn) {
   if (!rec) return toast('Record nicht gefunden','err');
   const firmaSlug = rec.fields?.firma || getCurrentFirmaSlug();
   if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert.','err');
+  // Wenn bereits ein Ticket existiert: bestätigen, da das alte in Freshdesk bestehen bleibt
+  const existingId = rec.fields?.fd_ticket_id;
+  if (existingId) {
+    const ok = confirm(
+      'Diese Datenaufnahme hat bereits Freshdesk-Ticket #'+existingId+'.\n\n'+
+      'Soll ein NEUES Ticket erzeugt werden?\n'+
+      '- Das alte Ticket #'+existingId+' bleibt in Freshdesk bestehen (manuell schließen wenn nicht mehr benötigt).\n'+
+      '- In der App wird ab sofort das neue Ticket verlinkt.'
+    );
+    if (!ok) return;
+  }
   const origLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ erzeuge…'; }
   try {
@@ -18414,23 +18426,33 @@ async function _daCreateFdTicketManual(recId, btn) {
     // 2) PDF (ohne Preise) — wenn Checkpunkte vorhanden, sonst überspringen
     let pdfBlob = null;
     try {
-      const fields = rec.fields || {};
+      const recAfter = (_daCache.items||[]).find(r => r.id === recId) || rec;
+      const fields = recAfter.fields || {};
       let cps = [];
       try { cps = JSON.parse(fields.checkpunkte_json||'[]'); } catch(_){}
       if (cps.length > 0) {
         pdfBlob = await _buildDatenaufnahmePdf(fields, cps, { withPrices:false });
       }
     } catch(pdfErr) { console.warn('[DA-FD] PDF-Build übersprungen:', pdfErr.message); }
-    // 3) Ticket erzeugen
-    const fdRes = await freshdeskCreateTicketForDA(rec, { pdfBlob });
+    // 3) PDF-URL aus Airtable-Attachment für Body holen (falls vorhanden)
+    let pdfUrl = '';
+    try {
+      const recAfter = (_daCache.items||[]).find(r => r.id === recId) || rec;
+      const url = recAfter?.fields?.pdf?.[0]?.url;
+      if (url) pdfUrl = url;
+    } catch(_){}
+    // 4) Ticket erzeugen
+    const recForFd = (_daCache.items||[]).find(r => r.id === recId) || rec;
+    const fdRes = await freshdeskCreateTicketForDA(recForFd, { pdfBlob, pdfUrl });
     if (fdRes.skipped) {
       toast('ℹ '+fdRes.reason, '');
     } else if (fdRes.ticketId) {
       await _daPersistFdTicketLink(recId, fdRes.ticketId, fdRes.ticketUrl);
-      toast('🎫 Freshdesk-Ticket #'+fdRes.ticketId+' erstellt', 'ok');
       // Detail neu öffnen, damit Status-Anzeige aktualisiert wird
       const old = document.getElementById('da-detail'); if (old) old.remove();
       openDaDetail(recId);
+      // Großer Erfolgs-Dialog (gleiche UX wie bei Abschließen)
+      _daShowCompletionSuccess(recId, { fdResult: fdRes, fdConfigured: true });
     }
   } catch(e) {
     console.error('[DA-FD-Manual]', e);
