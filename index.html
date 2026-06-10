@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.55';
+const APP_VERSION = 'v4.56';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5627,6 +5627,7 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Statistiken',  'firma', 'singleLineText');
   await ensureField('Firmen',       'start_num',         'number');
   await ensureField('Firmen',       'auftrag_start_num', 'number');
+  await ensureField('Firmen',       'angebot_start_num', 'number');
   // Berichte ↔ Auftrag-Verknüpfung + Bilder
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
@@ -5821,7 +5822,7 @@ async function renderFirmaView() {
     list.innerHTML = `
       <table class="firma-tbl">
         <thead><tr>
-          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th>ERP-Tenant</th><th title="URL-Prefix zum Auftrag im ERP — Auftragsnummer wird automatisch angehängt">ERP-Auftrag-URL</th><th title="Mailchimp API-Key, endet mit -us12 o.ä.">📧 Mailchimp-Key</th><th title="Mailchimp Audience-/List-ID">📧 Audience-ID</th><th>Aktiv</th><th></th>
+          <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th title="Start-Nummer des Angebote-Konverters (ANG-X)">Angebot-Start</th><th>ERP-Tenant</th><th title="URL-Prefix zum Auftrag im ERP — Auftragsnummer wird automatisch angehängt">ERP-Auftrag-URL</th><th title="Mailchimp API-Key, endet mit -us12 o.ä.">📧 Mailchimp-Key</th><th title="Mailchimp Audience-/List-ID">📧 Audience-ID</th><th>Aktiv</th><th></th>
         </tr></thead>
         <tbody>${rows || '<tr><td colspan="12" style="padding:40px;text-align:center;color:var(--txt3)">Noch keine Firmen vorhanden.</td></tr>'}</tbody>
       </table>
@@ -5858,6 +5859,7 @@ function firmaRowHtml(f) {
       </td>
       <td data-label="Bericht-Start"><input type="number" class="firma-inp" data-field="start_num" value="${+fl.start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
       <td data-label="Auftrag-Start"><input type="number" class="firma-inp" data-field="auftrag_start_num" value="${+fl.auftrag_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace"></td>
+      <td data-label="Angebot-Start"><input type="number" class="firma-inp" data-field="angebot_start_num" value="${+fl.angebot_start_num || 1}" min="1" step="1" style="max-width:90px;font-family:monospace" title="Mindest-Startwert für ANG-Nummern, z.B. 2350"></td>
       <td data-label="ERP-Tenant"><input class="firma-inp" data-field="erp_tenant" value="${esc(fl.erp_tenant)}" placeholder="z.B. 1 oder 4" style="max-width:80px;font-family:monospace;text-align:center" title="Mandanten-ID im Aufzugshandwerk-ERP"></td>
       <td data-label="ERP-Auftrag-URL"><input class="firma-inp" data-field="erp_auftrag_url" value="${esc(fl.erp_auftrag_url)}" placeholder="https://verwaltung.aufzugshandwerk.de/auftraege" style="min-width:280px;font-family:monospace;font-size:11px" title="URL-Prefix — Auftragsnummer wird angehängt"></td>
       <td data-label="Mailchimp-Key"><input class="firma-inp" data-field="mailchimp_api_key" value="${esc(fl.mailchimp_api_key)}" type="password" placeholder="…-us12" style="min-width:160px;font-family:monospace;font-size:11px" title="Mailchimp API-Key (endet mit Server-Suffix wie -us12)" autocomplete="new-password"></td>
@@ -19047,21 +19049,23 @@ async function _ensureAngeboteTable() {
   }
 }
 
-/* Nächste Angebot-Nummer für die aktuelle Firma (max + 1). */
+/* Nächste Angebot-Nummer für die aktuelle Firma — max(maxDB+1, firma.angebot_start_num).
+   So kann jede Firma einen eigenen Mindest-Startwert konfigurieren (z.B. 2350),
+   damit die Nummern z.B. ab einer bestimmten Zahl beginnen. */
 async function _angebotGetNextNumber(baseId, firmaSlug) {
   const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  const firmaStart = +((getCurrentFirma()?.angebot_start_num) || 1);
   try {
     const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote'
       +'?pageSize=100&fields[]=app_angebot_num&fields[]=firma'
       +'&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'");
     const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
-    if (!r.ok) return 1;
+    if (!r.ok) return firmaStart;
     const d = await r.json();
     const recs = d.records || [];
-    if (recs.length === 0) return 1;
-    const max = recs.reduce((m,r) => Math.max(m, +r.fields?.app_angebot_num || 0), 0);
-    return max + 1;
-  } catch(_) { return 1; }
+    const maxDb = recs.reduce((m,r) => Math.max(m, +r.fields?.app_angebot_num || 0), 0);
+    return Math.max(maxDb + 1, firmaStart);
+  } catch(_) { return firmaStart; }
 }
 
 async function renderAngeboteView(opts) {
@@ -19369,10 +19373,68 @@ async function _extractKoneAngebot(file) {
   const data = await resp.json();
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
+  // KONE→Firma-Name Replace: das KONE-Original spricht von "KONE GmbH", "Ihr KONE Team",
+  // "Wir/unser" etc. Für Aszendio-Angebote ersetzen wir den Anbieter-Namen konsistent
+  // in allen Freitexten. Aszendio (Default-Firma) bzw. Aufzugshandwerk.
+  _angRewriteAnbieterTexte(block.input);
   return block.input;
 }
 
+/**
+ * Ersetzt im KI-extrahierten Texte den ursprünglichen Anbieter-Namen (z.B. KONE)
+ * durch den eigenen Firmennamen. Setzt zusätzlich firma-spezifische Defaults
+ * (z.B. Zahlungsbedingung bei Reparaturen).
+ *
+ * Mutating — direkt aufs Input-Objekt.
+ */
+function _angRewriteAnbieterTexte(extracted) {
+  const firmaSlug = getCurrentFirmaSlug();
+  const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio Aufzugservice GmbH' };
+  const companyShort = (firmaSlug === 'aufzug' || firmaSlug === 'aufzugshandwerk') ? 'Aufzugshandwerk' : 'Aszendio';
+  const companyLong  = BR.company || 'Aszendio Aufzugservice GmbH';
+  const fields = ['anschreiben','kond_lieferzeit','kond_preisbasis','kond_zahlung','kond_hinweise'];
+  for (const f of fields) {
+    if (typeof extracted[f] !== 'string') continue;
+    let t = extracted[f];
+    // Konkrete Phrasen zuerst (sonst frisst KONE→Aszendio sie auseinander)
+    t = t.replace(/Ihr KONE Team/gi, 'Ihr '+companyShort+' Team');
+    t = t.replace(/KONE GmbH/g, companyLong);
+    t = t.replace(/KONE-Mitarbeiter/g, companyShort+'-Mitarbeiter');
+    t = t.replace(/KONE-Team/g, companyShort+'-Team');
+    // Generische KONE-Erwähnungen
+    t = t.replace(/\bKONE\b/g, companyShort);
+    extracted[f] = t;
+  }
+}
+
+/**
+ * Liefert Firma-spezifische Defaults für Konditionen je Angebotstyp.
+ * Werden im Editor verwendet wenn die KI nichts Sinnvolles extrahiert hat.
+ */
+function _angTypDefaults(typ, firmaSlug) {
+  const D = {
+    reparatur: {
+      kond_zahlung: 'Zahlungsziel: 14 Tage netto nach Rechnungsstellung.',
+    },
+    instandhaltung: {
+      kond_zahlung: 'Zahlungsziel: 14 Tage netto nach Rechnungsstellung.',
+    },
+    modernisierung: {
+      kond_zahlung: '30 % bei Auftragsvergabe\n60 % nach Anlieferung der Komponenten\n10 % nach mangelfreier Abnahme\n\nZahlungsziel: 14 Tage netto.',
+    },
+    sonstiges: {
+      kond_zahlung: 'Zahlungsziel: 14 Tage netto nach Rechnungsstellung.',
+    },
+  };
+  return D[typ] || D.sonstiges;
+}
+
 /* ── EDITOR — Positionen + VP-Eingabe + Live-Summe + Konditionen ────── */
+/**
+ * ctx-Modi:
+ *  - Neu-Anlage: ctx = { extracted, typ, koneFile, matchedAnlage? }
+ *  - Edit:       ctx = { editMode:true, recId }  — lädt State aus Airtable-Record
+ */
 async function openAngebotEditor(ctx) {
   const old = document.getElementById('ang-editor'); if (old) old.remove();
   // Sicherstellen, dass Anlagen geladen sind — Editor braucht sie für den Picker
@@ -19385,31 +19447,86 @@ async function openAngebotEditor(ctx) {
     console.warn('[Angebote] Anlagen-Load:', e);
     toast('⚠ Anlagen konnten nicht geladen werden: '+(e.message||'').slice(0,160),'warn');
   }
+  // Edit-Mode: bestehenden Record laden + ctx aus dessen Feldern rekonstruieren
+  if (ctx && ctx.editMode && ctx.recId) {
+    const rec = (_angeboteCache.items||[]).find(r => r.id === ctx.recId);
+    if (!rec) return toast('Angebot nicht gefunden','err');
+    const f = rec.fields || {};
+    let pos = [];
+    try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    ctx = {
+      editMode: true,
+      recId: ctx.recId,
+      extracted: {
+        kone_angebot_num:   f.kone_angebot_num   || '',
+        kone_angebot_datum: f.kone_angebot_datum || '',
+        positionen:         pos.map(p => ({
+          nr: p.nr, titel: p.titel, leistungsbeschreibung: p.leistungsbeschreibung,
+          menge: p.menge, einzelpreis_netto: p.ep_kone,
+        })),
+        ust_prozent:        f.ust_prozent || 19,
+        anschreiben:        f.anschreiben || '',
+        kond_lieferzeit:    f.kond_lieferzeit || '',
+        kond_preisbasis:    f.kond_preisbasis || '',
+        kond_zahlung:       f.kond_zahlung || '',
+        kond_hinweise:      f.kond_hinweise || '',
+        equipmentnummer:    f.equipmentnummer || '',
+        seriennummer:       f.seriennummer || '',
+        anlage_adresse:     f.anlage_adresse || '',
+      },
+      typ: f.angebot_typ || 'sonstiges',
+      koneFile: null,  // Im Edit-Modus wird das KONE-PDF nicht neu hochgeladen
+      // Anlage rekonstruieren — wenn anlage_id vorhanden, in Cache nachschlagen
+      matchedAnlage: f.anlage_id
+        ? ((_anlagenCache.items||[]).find(a => String(a.id) === String(f.anlage_id)) || null)
+        : null,
+      _bearbeiter: f.bearbeiter || '',
+      _kunde_name: f.kunde_name || '',
+      _kunde_nummer: f.kunde_nummer || '',
+      _kunde_adresse: f.kunde_adresse || '',
+    };
+  }
   // State
+  const typDefaults = _angTypDefaults(ctx.typ, getCurrentFirmaSlug());
+  // Im Edit-Modus aus Record-State, sonst Defaults
+  const fromEditKunde = ctx.editMode ? {
+    kunde_name:    ctx._kunde_name || '',
+    kunde_nummer:  ctx._kunde_nummer || '',
+    kunde_adresse: ctx._kunde_adresse || '',
+  } : null;
   const E = {
+    editMode: !!ctx.editMode,
+    recId: ctx.recId || null,
     extracted: ctx.extracted,
     typ: ctx.typ,
     koneFile: ctx.koneFile,
     matchedAnlage: ctx.matchedAnlage || null,
-    bearbeiter: APP_KEYS.user?.name || '',
+    bearbeiter: ctx._bearbeiter || APP_KEYS.user?.name || '',
     positionen: (ctx.extracted.positionen||[]).map(p => ({
       nr: p.nr || 0,
       titel: p.titel || '',
       leistungsbeschreibung: Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [],
       menge: +p.menge || 1,
       ep_kone: +p.einzelpreis_netto || 0,
-      vp: Math.round((+p.einzelpreis_netto || 0) * ANGEBOT_VP_DEFAULT_MARGE * 100) / 100,
+      // Im Edit-Modus stand der VP schon in positionen_json — wir hatten dort .vp gespeichert,
+      // die KI-Extract liefert nur einzelpreis_netto. Wenn vp im Pos-Objekt drin ist (editmode),
+      // verwende den; sonst Default-Marge.
+      vp: (typeof p.vp === 'number') ? p.vp : Math.round((+p.einzelpreis_netto || 0) * ANGEBOT_VP_DEFAULT_MARGE * 100) / 100,
     })),
     ust_prozent: +ctx.extracted.ust_prozent || 19,
     anschreiben: ctx.extracted.anschreiben || '',
     kond_lieferzeit:  ctx.extracted.kond_lieferzeit  || '',
     kond_preisbasis:  ctx.extracted.kond_preisbasis  || '',
-    kond_zahlung:     ctx.extracted.kond_zahlung     || '',
+    // Bei NEU: KONE-Zahlung wird durch firma-typ-Default überschrieben (Kundenwunsch — Reparatur=14 Tage netto).
+    // Bei EDIT: was im Record steht bleibt erhalten.
+    kond_zahlung:     ctx.editMode
+                        ? (ctx.extracted.kond_zahlung || '')
+                        : (typDefaults.kond_zahlung || ctx.extracted.kond_zahlung || ''),
     kond_hinweise:    ctx.extracted.kond_hinweise    || '',
-    // Wenn Anlage gematcht: Kunde übernehmen
-    kunde_name: ctx.matchedAnlage?.kunde?.firmenname || ctx.matchedAnlage?.kunde?.name || '',
-    kunde_nummer: String(ctx.matchedAnlage?.kunde?.kundennummer || ctx.matchedAnlage?.kunde?.id || ''),
-    kunde_adresse: _angBuildKundeAdresse(ctx.matchedAnlage?.kunde) || '',
+    // Anlage übernehmen (entweder gematcht oder im Edit aus Record)
+    kunde_name:    fromEditKunde?.kunde_name    || ctx.matchedAnlage?.kunde?.firmenname || ctx.matchedAnlage?.kunde?.name || '',
+    kunde_nummer:  fromEditKunde?.kunde_nummer  || String(ctx.matchedAnlage?.kunde?.kundennummer || ctx.matchedAnlage?.kunde?.id || ''),
+    kunde_adresse: fromEditKunde?.kunde_adresse || _angBuildKundeAdresse(ctx.matchedAnlage?.kunde) || '',
     anlage_id: String(ctx.matchedAnlage?.id || ''),
     anlage_adresse: ctx.matchedAnlage?.anzeigeAdresse || ctx.extracted.anlage_adresse || '',
     equipmentnummer: ctx.extracted.equipmentnummer || '',
@@ -19421,13 +19538,13 @@ async function openAngebotEditor(ctx) {
   m.innerHTML =
     '<div style="background:var(--surf);max-width:920px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
-        '<span>✏️ Angebot bearbeiten — VP eintragen</span>'+
+        '<span>'+ (ctx.editMode ? '✏️ Angebot bearbeiten — ANG-Nr. bleibt' : '✏️ Angebot bearbeiten — VP eintragen') +'</span>'+
         '<button onclick="if(confirm(\'Wirklich abbrechen? Eingaben gehen verloren.\'))document.getElementById(\'ang-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div id="ang-ed-body" style="padding:16px 20px;flex:1;overflow-y:auto"></div>'+
       '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'ang-editor\').remove()">Abbrechen</button>'+
-        '<button class="btn prim" id="ang-ed-save" onclick="_angEditorSave()">💾 Angebot anlegen + PDF generieren</button>'+
+        '<button class="btn prim" id="ang-ed-save" onclick="_angEditorSave()">'+ (ctx.editMode ? '💾 Speichern + PDF neu generieren' : '💾 Angebot anlegen + PDF generieren') +'</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
@@ -19694,7 +19811,14 @@ async function _angEditorSave() {
     }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const firmaSlug = getCurrentFirmaSlug();
-    const nextNum = await _angebotGetNextNumber(baseId, firmaSlug);
+    // Im Edit-Modus die bestehende Nummer behalten
+    let angebotNum;
+    if (E.editMode && E.recId) {
+      const existing = (_angeboteCache.items||[]).find(r => r.id === E.recId);
+      angebotNum = +existing?.fields?.app_angebot_num || await _angebotGetNextNumber(baseId, firmaSlug);
+    } else {
+      angebotNum = await _angebotGetNextNumber(baseId, firmaSlug);
+    }
     // Summen finalisieren
     let sumKone = 0, sumVp = 0;
     for (const p of E.positionen) {
@@ -19704,12 +19828,9 @@ async function _angEditorSave() {
     const ust = +E.ust_prozent || 19;
     const sumBrutto = sumVp * (1 + ust/100);
     const fields = {
-      app_angebot_num: nextNum,
+      app_angebot_num: angebotNum,
       firma: firmaSlug,
-      erstellt_am: new Date().toISOString().slice(0,10),
-      erstellt_von: APP_KEYS.user?.name || '',
       bearbeiter: E.bearbeiter || '',
-      status: 'fertig',
       angebot_typ: E.typ || 'sonstiges',
       kone_angebot_num: E.extracted.kone_angebot_num || '',
       kone_angebot_datum: E.extracted.kone_angebot_datum || '',
@@ -19731,39 +19852,62 @@ async function _angEditorSave() {
       kond_zahlung: E.kond_zahlung || '',
       kond_hinweise: E.kond_hinweise || '',
     };
-    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
-      method:'POST',
-      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-      body: JSON.stringify({ fields }),
-    });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
-    if (btn) btn.textContent = '⏳ Lade KONE-PDF…';
-    // KONE-PDF als Anhang hochladen
-    try {
-      await atBlobUpload(d.id, 'kone_pdf', E.koneFile, E.koneFile.name || ('kone-'+(E.extracted.kone_angebot_num||'angebot')+'.pdf'), 'application/pdf');
-    } catch(upErr) {
-      console.warn('[Angebote] KONE-PDF Upload:', upErr.message);
+    // Bei Neu-Anlage: erstellt_am/erstellt_von + status setzen
+    if (!E.editMode) {
+      fields.erstellt_am  = new Date().toISOString().slice(0,10);
+      fields.erstellt_von = APP_KEYS.user?.name || '';
+      fields.status       = 'fertig';
     }
-    // Aszendio-PDF generieren + hochladen
+    let recId;
+    if (E.editMode && E.recId) {
+      // PATCH
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+E.recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+      recId = E.recId;
+    } else {
+      // POST
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+      recId = d.id;
+    }
+    // KONE-PDF hochladen nur bei Neu-Anlage (im Edit-Modus haben wir die Originaldatei nicht)
+    if (!E.editMode && E.koneFile) {
+      if (btn) btn.textContent = '⏳ Lade KONE-PDF…';
+      try {
+        await atBlobUpload(recId, 'kone_pdf', E.koneFile, E.koneFile.name || ('kone-'+(E.extracted.kone_angebot_num||'angebot')+'.pdf'), 'application/pdf');
+      } catch(upErr) { console.warn('[Angebote] KONE-PDF Upload:', upErr.message); }
+    }
+    // Aszendio-PDF (neu) generieren + hochladen
     if (btn) btn.textContent = '⏳ Erzeuge Aszendio-PDF…';
     try {
-      const appBlob = await _buildAngebotPdf(Object.assign({}, fields, { id: d.id }));
-      const fname = 'Aszendio-Angebot-ANG'+nextNum+'.pdf';
-      await atBlobUpload(d.id, 'app_pdf', appBlob, fname, 'application/pdf');
+      const appBlob = await _buildAngebotPdf(Object.assign({}, fields, { id: recId, erstellt_am: fields.erstellt_am }));
+      const fname = 'Aszendio-Angebot-ANG'+angebotNum+'.pdf';
+      await atBlobUpload(recId, 'app_pdf', appBlob, fname, 'application/pdf');
     } catch(pdfErr) {
       console.warn('[Angebote] App-PDF:', pdfErr);
       toast('⚠ Angebot gespeichert, App-PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
     }
-    toast('✅ Angebot ANG-'+nextNum+' angelegt','ok');
+    toast(E.editMode ? '✅ ANG-'+angebotNum+' aktualisiert' : '✅ Angebot ANG-'+angebotNum+' angelegt','ok');
     m.remove();
     _angeboteCache.firma = null; _angeboteCache.items = null;
     await renderAngeboteView({force:true});
-    openAngebotDetail(d.id);
+    // Bestehendes Detail-Modal schließen, dann frisch öffnen
+    document.getElementById('ang-detail')?.remove();
+    openAngebotDetail(recId);
   } catch(e) {
     console.error('[Angebote] Save:', e);
     toast('❌ '+(e.message||e).slice(0,200),'err');
-    if (btn) { btn.disabled = false; btn.textContent = '💾 Angebot anlegen + PDF generieren'; }
+    if (btn) { btn.disabled = false; btn.textContent = E.editMode ? '💾 Speichern + PDF neu generieren' : '💾 Angebot anlegen + PDF generieren'; }
   }
 }
 
@@ -20005,6 +20149,7 @@ function openAngebotDetail(recId) {
       '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'ang-detail\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_angDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)">🗑 Löschen</button>'+
+        '<button class="btn prim" onclick="openAngebotEditor({editMode:true,recId:\''+recId+'\'})" title="Angebot ändern + PDF neu generieren">✏️ Bearbeiten</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
