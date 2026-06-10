@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.54';
+const APP_VERSION = 'v4.55';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19373,8 +19373,18 @@ async function _extractKoneAngebot(file) {
 }
 
 /* ── EDITOR — Positionen + VP-Eingabe + Live-Summe + Konditionen ────── */
-function openAngebotEditor(ctx) {
+async function openAngebotEditor(ctx) {
   const old = document.getElementById('ang-editor'); if (old) old.remove();
+  // Sicherstellen, dass Anlagen geladen sind — Editor braucht sie für den Picker
+  try {
+    if (!_anlagenCache.items || _anlagenCache.firma !== getCurrentFirmaSlug()) {
+      toast('⏳ Lade Anlagen aus dem ERP…','');
+      await _loadAnlagenForFirma(getCurrentFirmaSlug());
+    }
+  } catch(e) {
+    console.warn('[Angebote] Anlagen-Load:', e);
+    toast('⚠ Anlagen konnten nicht geladen werden: '+(e.message||'').slice(0,160),'warn');
+  }
   // State
   const E = {
     extracted: ctx.extracted,
@@ -19452,29 +19462,16 @@ function _angEditorRender() {
   const brutto = sumVp * (1 + ust/100);
   const margeAbs = sumVp - sumKone;
   const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
-  // Anlage-Match-Status
-  const matched = !!E.matchedAnlage;
-  const anlBox = matched
-    ? '<div style="background:#ECFDF5;border:1px solid #10b981;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px"><strong style="color:#065F46">✅ Anlage gematcht:</strong> Fabrik-Nr. '+escapeHtml(E.seriennummer)+' → '+escapeHtml(E.anlage_adresse)+' · Kunde: '+escapeHtml(E.kunde_name||'?')+'</div>'
-    : '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px"><strong style="color:#92400E">⚠ Keine Anlage im ERP gematcht</strong> für Seriennummer "'+escapeHtml(E.seriennummer||'?')+'". Felder unten bitte manuell ausfüllen.</div>';
+  // Anlage-Sektion: gewählt → Card mit allen Daten, sonst → Picker mit Suche
+  const anlageBlock = E.anlage_id ? _angRenderAnlageCard(E) : _angRenderAnlagePicker(E);
   body.innerHTML =
-    anlBox+
-    // Stammdaten Grid
+    anlageBlock+
+    // Nur Bearbeiter ist hier editierbar — alles andere kommt aus der Anlage
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Bearbeiter (VP)</label>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Bearbeiter (VP) *</label>'+
         '<input id="ang-fld-bearbeiter" value="'+escapeHtml(E.bearbeiter)+'" oninput="_angEditorSet(\'bearbeiter\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Seriennummer / Fabrik-Nr.</label>'+
-        '<input id="ang-fld-seriennummer" value="'+escapeHtml(E.seriennummer)+'" oninput="_angEditorSet(\'seriennummer\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Endkunde Name</label>'+
-        '<input id="ang-fld-kunde_name" value="'+escapeHtml(E.kunde_name)+'" oninput="_angEditorSet(\'kunde_name\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Kunde-Nr.</label>'+
-        '<input id="ang-fld-kunde_nummer" value="'+escapeHtml(E.kunde_nummer)+'" oninput="_angEditorSet(\'kunde_nummer\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
-    '</div>'+
-    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anlage-Adresse</label>'+
-        '<textarea id="ang-fld-anlage_adresse" rows="3" oninput="_angEditorSet(\'anlage_adresse\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.anlage_adresse)+'</textarea></div>'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Kunden-Adresse (Empfänger)</label>'+
-        '<textarea id="ang-fld-kunde_adresse" rows="3" oninput="_angEditorSet(\'kunde_adresse\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kunde_adresse)+'</textarea></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--txt3);display:block;margin-bottom:4px">KONE-Equipmentnummer</label>'+
+        '<input value="'+escapeHtml(E.equipmentnummer||'')+'" oninput="_angEditorSet(\'equipmentnummer\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff"></div>'+
     '</div>'+
     // Anschreiben
     '<div style="margin-bottom:14px"><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anschreiben</label>'+
@@ -19509,6 +19506,142 @@ function _angEditorRender() {
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Hinweise</label>'+
         '<textarea id="ang-fld-kond_hinweise" rows="2" oninput="_angEditorSet(\'kond_hinweise\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_hinweise)+'</textarea></div>'+
     '</div>';
+  // Wenn der Picker gerendert wurde, dessen Trefferliste initial befüllen
+  if (!E.anlage_id) _angRenderAnlagePickerList();
+}
+
+/**
+ * Gewählte Anlage als Karte zeigen — alle abgeleiteten Felder sind read-only sichtbar.
+ * "Andere wählen" setzt anlage_id zurück → Picker erscheint wieder.
+ */
+function _angRenderAnlageCard(E) {
+  return '<div style="background:#ECFDF5;border:2px solid #10b981;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+      '<div style="font-size:12px;font-weight:700;color:#065F46;text-transform:uppercase;letter-spacing:.4px">✅ Anlage aus ERP gewählt</div>'+
+      '<button onclick="_angClearAnlage()" class="btn" style="font-size:11px;padding:4px 10px">↺ Andere Anlage wählen</button>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:12px;color:var(--txt2)">'+
+      '<div><span style="color:var(--txt3);font-size:11px">Fabrik-Nr.</span><div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(E.seriennummer||'?')+'</div></div>'+
+      '<div><span style="color:var(--txt3);font-size:11px">Standort</span><div style="font-weight:600">'+escapeHtml(E.anlage_adresse||'')+'</div></div>'+
+      '<div><span style="color:var(--txt3);font-size:11px">Endkunde</span><div style="font-weight:700;color:var(--navy)">'+escapeHtml(E.kunde_name||'?')+(E.kunde_nummer?' (Nr. '+escapeHtml(E.kunde_nummer)+')':'')+'</div></div>'+
+      '<div><span style="color:var(--txt3);font-size:11px">Kunden-Adresse (Empfänger)</span><div style="white-space:pre-line;font-weight:600">'+escapeHtml(E.kunde_adresse||'?')+'</div></div>'+
+    '</div>'+
+  '</div>';
+}
+
+/**
+ * Picker-UI wenn keine Anlage gewählt ist: Suchfeld + Live-Liste +
+ * "Neue Anlage anlegen"-Button. Quelle: _anlagenCache (vorher geladen).
+ */
+function _angRenderAnlagePicker(E) {
+  const hintFromKi = E.seriennummer
+    ? '<div style="font-size:11px;color:#92400E;margin-bottom:8px">🤖 KI hat aus dem PDF die Seriennummer <strong>'+escapeHtml(E.seriennummer)+'</strong> gelesen. Klick darauf, um direkt nach der passenden Anlage zu suchen.</div>'
+    : '';
+  const defaultQ = E.seriennummer || '';
+  return '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
+    '<div style="font-size:12px;font-weight:700;color:#92400E;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">⚠ Anlage wählen</div>'+
+    '<div style="font-size:12px;color:#92400E;margin-bottom:10px">Alle abgeleiteten Felder (Adresse, Kunde) kommen aus der Anlage. Anlage muss zuerst gewählt werden.</div>'+
+    hintFromKi+
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'+
+      '<input id="ang-anlage-search" placeholder="Suche: Fabrik-Nr, Adresse, Kunde, Stadt…" value="'+escapeHtml(defaultQ)+'" oninput="_angRenderAnlagePickerList()" style="flex:1;min-width:240px;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff">'+
+      '<button class="btn" onclick="_angOpenCreateAnlage()" title="Neue Anlage im ERP anlegen" style="white-space:nowrap;background:#10B981;color:#fff;border-color:#10B981">+ Neue Anlage</button>'+
+      '<button class="btn" onclick="_angReloadAnlagen(this)" title="Anlagen-Cache aus dem ERP frisch laden" style="white-space:nowrap;font-size:11px">↻</button>'+
+    '</div>'+
+    '<div id="ang-anlage-results" style="max-height:280px;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px;background:#fff"></div>'+
+  '</div>';
+}
+
+/**
+ * Live-Liste — wird bei jedem Tippen neu gerendert.
+ */
+function _angRenderAnlagePickerList() {
+  const out = document.getElementById('ang-anlage-results');
+  if (!out) return;
+  const q = (document.getElementById('ang-anlage-search')?.value || '').toLowerCase().trim();
+  const items = (_anlagenCache.items || []).filter(a => !a.archived);
+  let filtered;
+  if (q) {
+    filtered = items.filter(a => {
+      const hay = [a.anzeigeAdresse, a.fabriknummer, a.name, a.kennung, a.objektTyp, a.kunde?.firmenname, a.kunde?.name, a.kunde?.ort, a.kunde?.kundennummer]
+        .filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    }).slice(0, 20);
+  } else {
+    filtered = items.slice(0, 12);
+  }
+  if (items.length === 0) {
+    out.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3);font-size:12px">Keine Anlagen im Cache. Klick ↻ um aus dem ERP nachzuladen, oder + Neue Anlage anzulegen.</div>';
+    return;
+  }
+  if (filtered.length === 0) {
+    out.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3);font-size:12px">Keine Treffer für „'+escapeHtml(q)+'". '+items.length+' Anlagen im Cache.</div>';
+    return;
+  }
+  out.innerHTML = filtered.map((a, idx) =>
+    '<div data-ang-aid="'+escapeHtml(String(a.id))+'" onclick="_angSelectAnlage(\''+escapeHtml(String(a.id))+'\')" style="padding:9px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#EFF6FF\'" onmouseout="this.style.background=\'#fff\'">'+
+      '<div style="display:flex;align-items:center;gap:8px;justify-content:space-between">'+
+        '<div style="font-weight:700;color:var(--navy)">Fabrik-Nr. '+escapeHtml(a.fabriknummer||'?')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt3)">'+(a.kunde?.kundennummer ? 'Kd '+escapeHtml(String(a.kunde.kundennummer)) : '')+'</div>'+
+      '</div>'+
+      '<div style="color:var(--txt2);margin-top:2px">'+escapeHtml(a.anzeigeAdresse || a.name || '')+'</div>'+
+      (a.kunde ? '<div style="color:var(--txt3);font-size:11px;margin-top:2px">'+escapeHtml(a.kunde.firmenname || a.kunde.name || '')+'</div>' : '')+
+    '</div>'
+  ).join('');
+}
+
+/**
+ * Anlage auswählen → State befüllen → Editor neu rendern (Anlage-Card erscheint).
+ */
+function _angSelectAnlage(anlageId) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const a = (_anlagenCache.items || []).find(x => String(x.id) === String(anlageId));
+  if (!a) return toast('Anlage nicht gefunden','err');
+  const k = a.kunde || {};
+  m._state.anlage_id = String(a.id);
+  m._state.anlage_adresse = a.anzeigeAdresse || a.name || '';
+  m._state.seriennummer = a.fabriknummer || '';
+  m._state.kunde_name = k.firmenname || k.name || '';
+  m._state.kunde_nummer = String(k.kundennummer || k.id || '');
+  m._state.kunde_adresse = _angBuildKundeAdresse(k);
+  _angEditorRender();
+}
+
+function _angClearAnlage() {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  m._state.anlage_id = '';
+  m._state.anlage_adresse = '';
+  m._state.kunde_name = '';
+  m._state.kunde_nummer = '';
+  m._state.kunde_adresse = '';
+  _angEditorRender();
+}
+
+/**
+ * Anlagen frisch aus dem ERP nachladen — z.B. nachdem User eine neue angelegt hat.
+ */
+async function _angReloadAnlagen(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+    await _loadAnlagenForFirma(getCurrentFirmaSlug());
+    toast('✅ '+(_anlagenCache.items?.length||0)+' Anlagen geladen','ok');
+    _angRenderAnlagePickerList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = '↻'; } }
+}
+
+/**
+ * Öffnet den existierenden Standalone-Anlage-Dialog. User legt Anlage an, schließt das Modal.
+ * Danach lädt der User mit ↻ den Cache neu und wählt die neue Anlage selbst aus.
+ * (Hint-Toast erinnert daran.)
+ */
+function _angOpenCreateAnlage() {
+  if (typeof openCreateAnlageStandalone !== 'function') return toast('Anlage-Dialog nicht verfügbar','err');
+  openCreateAnlageStandalone();
+  // Sanfter Hinweis — der Anlage-Dialog hat keinen Callback-Hook, deshalb der manuelle Refresh-Schritt
+  setTimeout(() => toast('💡 Nach Anlegen: ↻ klicken um die neue Anlage zu finden','', ), 1200);
 }
 
 function _angRenderPositionRow(p, i) {
@@ -19550,7 +19683,8 @@ async function _angEditorSave() {
   const m = document.getElementById('ang-editor');
   if (!m || !m._state) return;
   const E = m._state;
-  if (!E.kunde_name) return toast('Endkunde-Name fehlt','err');
+  if (!E.anlage_id) return toast('Bitte zuerst eine Anlage wählen','err');
+  if (!E.kunde_name) return toast('Endkunde fehlt — bitte Anlage neu wählen','err');
   if (!E.positionen.length) return toast('Keine Positionen vorhanden','err');
   const btn = document.getElementById('ang-ed-save');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
