@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.64';
+const APP_VERSION = 'v4.65';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20332,6 +20332,57 @@ async function _angPushToErp(recId, btn) {
     erlaeuterung.push('→ Vollständiges Angebot inkl. AGB im Aszendio-PDF (siehe Servicebox App).');
     const erlaeuterungText = erlaeuterung.join('\n');
 
+    // === SCHRITT 1: Erst eine Anfrage anlegen ===
+    // Das ERP verknüpft Angebote immer mit einer Anfrage (Workflow: Kunde→Anfrage→Angebot→Auftrag).
+    // Da wir extern starten (KONE-PDF), legen wir die Anfrage selbst an.
+    if (btn) btn.textContent = '⏳ erstelle Anfrage…';
+    const anfragePayload = {
+      anlageid:      +f.anlage_id,
+      empfaengerid:  +f.kunde_nummer,
+      kundeid:       +f.kunde_nummer,
+      titel:         bezeichnung,
+      bezeichnung:   bezeichnung,
+      beschreibung:  'Externes Angebot: '+(f.anbieter||'Anbieter')+' '+(f.kone_angebot_num||''),
+      description:   'Externes Angebot: '+(f.anbieter||'Anbieter')+' '+(f.kone_angebot_num||''),
+      datumEingang:  today,
+      status:        'In Bearbeitung',
+      kategorie:     (f.angebot_typ||'sonstiges').toUpperCase(),
+      bestellform:   'PAUSCHAL',
+      kundeMail:     false,
+      titelemail:    '-',
+      inhaltemail:   '-',
+    };
+    console.log('[ERP-Anfrage] Payload:', JSON.stringify(anfragePayload, null, 2));
+    let anfrageid = null;
+    try {
+      const anfrageCandidates = ['api/anfragen','anfragen'];
+      let anfrage = null, anfrageErr = null;
+      for (const p of anfrageCandidates) {
+        try {
+          anfrage = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: anfragePayload });
+          console.log('[ERP-Anfrage] OK via '+p, anfrage);
+          break;
+        } catch(e) {
+          console.warn('[ERP-Anfrage] '+p+' →', e.status, e.message);
+          if (!anfrageErr) anfrageErr = e;
+          if (e.status !== 404) throw e;
+        }
+      }
+      if (!anfrage) throw (anfrageErr || new Error('Kein /api/anfragen-Endpoint'));
+      anfrageid = anfrage.id || anfrage.anfrageid || anfrage.anfrageId;
+      if (!anfrageid) throw new Error('Anfrage erstellt, aber keine ID zurückbekommen');
+      console.log('[ERP-Anfrage] ID:', anfrageid);
+    } catch(anfErr) {
+      console.error('[ERP-Anfrage] Fehler — wir versuchen Angebot dennoch ohne anfrageid:', anfErr.message);
+      // Wir machen weiter ohne anfrageid und hoffen dass das Angebot auch ohne Anfrage geht
+      // (manche ERPs lassen das zu, manche nicht — beim 500 wissen wir's)
+    }
+
+    // === SCHRITT 2: Pauschal-Angebot mit anfrageid ===
+    if (btn) btn.textContent = '⏳ pushe Angebot…';
+    // Im inneren angebot-Objekt + im äußeren Payload jeweils anfrageid setzen (defensive)
+    if (anfrageid) innerAngebot.anfrageid = +anfrageid;
+
     // Payload — Aufzugshandwerk ERP erwartet bei /api/angebote/pauschal ein NESTED-Schema:
     //   { workPrice: <Double>, materialPrice?, angebot: { ... AngebotSETDTO } }
     // Wir füllen das innere angebot-Objekt mit allen plausiblen Felder-Varianten,
@@ -20399,6 +20450,7 @@ async function _angPushToErp(recId, btn) {
       paymentTerms:            'Zahlungsziel: 14 Tage netto nach Rechnungsstellung.',
       vatRate:                 +f.ust_prozent || 19,
       warrantyMonths:          24,
+      anfrageid:               anfrageid ? +anfrageid : undefined,  // im äußeren auch
       angebot:                 innerAngebot,
     };
     console.log('[ERP-Angebot-Push] Payload:', JSON.stringify(payload, null, 2));
