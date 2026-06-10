@@ -2599,7 +2599,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.48';
+const APP_VERSION = 'v4.49';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12770,15 +12770,18 @@ function _ersetzePlatzhalter(text, vars) {
   return String(text).replace(/\{\{(\w+)\}\}/g, (m, key) => (vars[key] != null ? String(vars[key]) : m));
 }
 
-async function _callClaudeText(prompt) {
+async function _callClaudeText(prompt, opts) {
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-Key');
+  const maxTokens = (opts && opts.maxTokens) || 4000;
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
-    body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:4000, messages:[{ role:'user', content: prompt }] }),
+    body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: maxTokens, messages:[{ role:'user', content: prompt }] }),
   });
   if (!resp.ok) { const e = await resp.json().catch(()=>({})); throw new Error(e.error?.message||'API-Fehler '+resp.status); }
-  return (await resp.json()).content[0].text;
+  const data = await resp.json();
+  // Stop-Reason mitgeben, damit Caller Truncation erkennen kann
+  return { text: data.content[0].text, stopReason: data.stop_reason || null };
 }
 
 async function _buildVertragPDFBlob(text, vars) {
@@ -19314,26 +19317,53 @@ async function _extractRun() {
       '- Wenn die Frage nichts mit Tabellen-Output zu tun hat, gib trotzdem das Schema zurück, mit einer Zeile in rows die die Antwort enthält.\n'+
       '- Bei leerer Ergebnismenge: rows: [] und summary erklärt warum.';
 
-    const raw = await _callClaudeText(fullPrompt);
+    // 16K Tokens — bricht Antwort bei ~200 Zeilen nicht ab
+    const callRes = await _callClaudeText(fullPrompt, { maxTokens: 16000 });
+    const raw = callRes.text;
+    const stopReason = callRes.stopReason;
     const t1 = performance.now();
 
-    // Antwort parsen — robust gegen ```json-Fences
-    let parsed;
+    // Antwort parsen — robust gegen ```json-Fences und Truncation
+    let parsed = null;
+    let parseTruncated = false;
+    let parseError = null;
     try {
       let txt = raw.trim();
       if (txt.startsWith('```')) txt = txt.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'');
       parsed = JSON.parse(txt);
     } catch(parseErr) {
-      // Fallback: Antwort als reinen Text anzeigen
+      parseError = parseErr;
+      // JSON-Repair: vermutlich Antwort gekürzt → versuche letzte vollständige Row zu retten
+      try {
+        let txt = raw.trim();
+        if (txt.startsWith('```')) txt = txt.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'');
+        const repaired = _extractRepairJson(txt);
+        if (repaired) {
+          parsed = repaired;
+          parseTruncated = true;
+        }
+      } catch(_){}
+    }
+
+    if (!parsed) {
+      // Wirklich nichts zu retten → Roh-Antwort + Hinweis
+      const isTrunc = stopReason === 'max_tokens';
       resultEl.innerHTML = '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:16px;color:#92400E;font-size:12px">'+
-        '<strong>⚠ Antwort konnte nicht als JSON geparst werden.</strong><br>'+
+        '<strong>⚠ Antwort konnte nicht als JSON geparst werden'+(isTrunc?' (Antwort wurde von der KI gekürzt — bitte Anfrage präzisieren, z.B. Zeitraum eingrenzen oder nur Anzahl/Summe statt Liste)':'')+'.</strong><br>'+
+        '<div style="font-size:11px;margin-top:6px">'+escapeHtml((parseError && parseError.message || '').slice(0,200))+'</div>'+
         '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;background:#fff;border:1px solid #F59E0B;border-radius:4px;padding:10px;margin-top:8px;max-height:400px;overflow:auto">'+escapeHtml(raw)+'</pre>'+
       '</div>';
       if (status) status.textContent = 'Antwort konnte nicht geparst werden';
       return;
     }
 
-    _extractRenderResult(parsed, { ms: Math.round(t1-t0), sizeKb, truncated: collected.truncated });
+    _extractRenderResult(parsed, {
+      ms: Math.round(t1-t0),
+      sizeKb,
+      truncated: collected.truncated,
+      parseTruncated,
+      stopMax: stopReason === 'max_tokens',
+    });
     _extractAddHistory({ prompt, ranAt: new Date().toISOString(), title: parsed.title || '' });
     renderDataExtractView();  // Verlauf neu rendern
     // Nach Re-Render Prompt wieder einsetzen + Ergebnis bewahren
@@ -19346,6 +19376,46 @@ async function _extractRun() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Anfrage senden'; }
   }
+}
+
+/**
+ * Versucht ein abgeschnittenes JSON zu reparieren — Best-Effort.
+ * Strategie: Finde die letzte vollständige `}` in `"rows": [...]`,
+ * verwerfe alles danach und schließe Array + Objekt korrekt.
+ * Wirft bei Misserfolg.
+ */
+function _extractRepairJson(txt) {
+  // 1) Versuch: per Char balancieren wir Klammern bis zum Cut und schließen rest auf
+  // Robuster Ansatz: Finde letztes „},\n    {" oder „},{" Pattern in rows-Array,
+  // schneide nach „}" ab, schließe „]" und „}".
+  // Wir gehen davon aus, dass die Struktur "rows": [ ... ] erwartet ist.
+  const rowsIdx = txt.indexOf('"rows"');
+  if (rowsIdx < 0) return null;
+  const arrStart = txt.indexOf('[', rowsIdx);
+  if (arrStart < 0) return null;
+  // Finde letztes „}" das auf top-Level innerhalb des Arrays steht
+  let depth = 0, inStr = false, escNext = false, lastGoodRowEnd = -1;
+  for (let i = arrStart + 1; i < txt.length; i++) {
+    const c = txt[i];
+    if (escNext) { escNext = false; continue; }
+    if (c === '\\') { escNext = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) lastGoodRowEnd = i;  // Ende einer kompletten Row
+    } else if (c === ']' && depth === 0) {
+      // Array bereits korrekt geschlossen — try parsing rest as-is später
+      break;
+    }
+  }
+  if (lastGoodRowEnd < 0) return null;
+  // Schneide nach letztem "}", schließe Array + Outer
+  const truncated = txt.slice(0, lastGoodRowEnd + 1) + ']}';
+  try { return JSON.parse(truncated); } catch(_){}
+  // Vielleicht fehlt das outer „}" weil andere Felder offen waren — anderer Versuch
+  return null;
 }
 
 function _extractRenderResult(p, meta) {
@@ -19371,6 +19441,11 @@ function _extractRenderResult(p, meta) {
         (meta ? '<div style="font-size:11px;color:var(--txt3);margin-top:8px">'+
           (meta.sizeKb||0)+' KB Daten · '+(meta.ms||0)+' ms · '+rows.length+' Zeile(n)'+
           (meta.truncated ? ' · ⚠ Daten gekürzt (zu viele Records — Ergebnis ggf. unvollständig)' : '')+
+        '</div>' : '')+
+        // Banner falls KI-Antwort gekürzt wurde
+        ((meta && (meta.parseTruncated || meta.stopMax)) ? '<div style="margin-top:10px;padding:8px 12px;background:#FEF3C7;border-left:3px solid #F59E0B;border-radius:4px;font-size:11px;color:#92400E;line-height:1.5">'+
+          '⚠ <strong>Antwort wurde gekürzt</strong> — die KI konnte nicht alle Treffer in einer Antwort liefern. '+
+          'Bitte präzisiere die Frage (z.B. Zeitraum kürzer, nur Anzahl/Summe statt Liste, oder nur eine bestimmte Spalte).'+
         '</div>' : '')+
       '</div>';
 
