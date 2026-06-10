@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.53';
+const APP_VERSION = 'v4.54';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19278,12 +19278,28 @@ async function _angWizardGo() {
 /* ── KI-Extraktion: KONE-PDF → strukturiertes Objekt via Tool-Use ────── */
 async function _extractKoneAngebot(file) {
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
-  const b64 = await new Promise((res,rej) => {
-    const r = new FileReader();
-    r.onload = () => res(r.result.split(',')[1]);
-    r.onerror = rej;
-    r.readAsDataURL(file);
-  });
+  // PDF als ArrayBuffer lesen, BOM/Müll vor "%PDF-" entfernen, dann Base64 codieren.
+  // Manche PDFs (z.B. KONE) tragen einen UTF-8 BOM (EF BB BF) am Anfang —
+  // Anthropic's PDF-Parser lehnt das als invalid ab.
+  const buf = await file.arrayBuffer();
+  const bytes = new Uint8Array(buf);
+  let startOffset = 0;
+  // Suche "%PDF-" (0x25 50 44 46 2D) in den ersten 1024 Bytes
+  for (let i = 0; i < Math.min(bytes.length - 4, 1024); i++) {
+    if (bytes[i]===0x25 && bytes[i+1]===0x50 && bytes[i+2]===0x44 && bytes[i+3]===0x46 && bytes[i+4]===0x2D) {
+      startOffset = i;
+      break;
+    }
+  }
+  const clean = startOffset > 0 ? bytes.slice(startOffset) : bytes;
+  if (startOffset > 0) console.log('[Angebote] PDF-Header lag '+startOffset+' Byte versetzt — BOM/Müll abgeschnitten');
+  // Bytes → Base64 (chunkweise wegen String.fromCharCode-Stack-Limit)
+  let bin = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < clean.length; i += chunk) {
+    bin += String.fromCharCode.apply(null, clean.subarray(i, Math.min(i+chunk, clean.length)));
+  }
+  const b64 = btoa(bin);
   const tool = {
     name: 'extract_angebot_data',
     description: 'Extrahiert strukturierte Daten aus einem PDF-Angebot (typisch KONE, Schindler, OTIS, TK).',
