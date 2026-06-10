@@ -1391,12 +1391,13 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav active" id="tnav-dashboard" onclick="switchView('dashboard')">🏠 Dashboard</button>
 
     <!-- GRUPPE: Operativ (immer sichtbar) -->
-    <div class="tnav-group" id="tnav-grp-operativ" data-group-views="conv,overview,auftraege,anlagen,wartung">
+    <div class="tnav-group" id="tnav-grp-operativ" data-group-views="conv,overview,auftraege,anlagen,wartung,angebote">
       <button class="tnav tnav-trigger" onclick="_toggleTnavGroup('tnav-grp-operativ', event)">🛠 Operativ</button>
       <div class="tnav-menu">
         <button class="tnav-menu-item" id="tnav-conv" onclick="switchView('conv')">🔧 Arbeitsberichte-Konverter</button>
         <button class="tnav-menu-item" id="tnav-overview" onclick="switchView('overview')">📋 Berichts-Übersicht</button>
         <button class="tnav-menu-item" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
+        <button class="tnav-menu-item" id="tnav-angebote" onclick="switchView('angebote')">📄 Angebote</button>
         <button class="tnav-menu-item" id="tnav-anlagen" onclick="switchView('anlagen')">🏢 Anlagen</button>
         <button class="tnav-menu-item" id="tnav-wartung" onclick="switchView('wartung')">🧮 Wartungspreis-Kalkulator</button>
       </div>
@@ -2021,6 +2022,16 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-body" id="rollen-list" style="padding:20px"></div>
 </div>
 
+<!-- ANGEBOTE (KONE→Aszendio-Konverter mit eigenem Nummernkreis, App-intern) -->
+<div class="firma-view" id="angebote-view">
+  <div class="firma-hdr">
+    <h2>📄 Angebote <span id="angebote-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
+    <button class="btn" onclick="renderAngeboteView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" id="angebote-new-btn" onclick="openAngebotWizard()">+ Neues Angebot</button>
+  </div>
+  <div class="firma-body" id="angebote-list" style="padding:20px"></div>
+</div>
+
 <!-- INFOBEREICH (Anleitungen + Downloads für alle User) -->
 <div class="firma-view" id="info-view">
   <div class="firma-hdr">
@@ -2599,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.52';
+const APP_VERSION = 'v4.53';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3274,6 +3285,8 @@ async function showApp() {
   document.getElementById('tnav-da').style.display        = hasPermission('tool_datenaufnahmen') ? '' : 'none';
   const tnavExtract = document.getElementById('tnav-extract');
   if (tnavExtract) tnavExtract.style.display              = hasPermission('tool_data_extract') ? '' : 'none';
+  const tnavAngebote = document.getElementById('tnav-angebote');
+  if (tnavAngebote) tnavAngebote.style.display            = hasPermission('tool_angebote') ? '' : 'none';
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
   trackEvent('app', 'login');
@@ -3815,6 +3828,7 @@ function switchView(view) {
   if (view==='anlagen' && !hasPermission('tool_anlagen')) return toast('🔒 Keine Berechtigung','err');
   if (view==='da' && !hasPermission('tool_datenaufnahmen')) return toast('🔒 Keine Berechtigung','err');
   if (view==='extract' && !hasPermission('tool_data_extract')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='angebote' && !hasPermission('tool_angebote')) return toast('🔒 Keine Berechtigung','err');
   if (view==='dav' && !isAdmin()) return;
 
   const dash = document.getElementById('dash-view');
@@ -3839,7 +3853,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract','angebote'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3869,6 +3883,8 @@ function switchView(view) {
   if (dav) dav.classList.toggle('show', view==='dav');
   const extract = document.getElementById('extract-view');
   if (extract) extract.classList.toggle('show', view==='extract');
+  const angeboteEl = document.getElementById('angebote-view');
+  if (angeboteEl) angeboteEl.classList.toggle('show', view==='angebote');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3890,6 +3906,7 @@ function switchView(view) {
   if (view==='da') renderDatenaufnahmenView();
   if (view==='dav') renderDaVorlagenView();
   if (view==='extract') renderDataExtractView();
+  if (view==='angebote') renderAngeboteView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -4921,6 +4938,11 @@ const FEATURES = {
     desc:  'Natürlichsprachige Abfragen über Aufträge, Berichte, Rechnungen, Verträge, Datenaufnahmen, GBUs, Liftaro, Kunden, Anlagen — beantwortet via Claude. Greift auf alle Daten zu, daher typischerweise nur für Verwalter/Admins.',
     default: false,
   },
+  tool_angebote: {
+    label: 'Tool: Angebote-Konverter',
+    desc:  'KONE-/Drittanbieter-PDF-Angebote in Aszendio-eigene Angebote umwandeln (KI-Extraktion, eigener Nummernkreis, eigenes Briefpapier). Sieht Preise (interner Tooltyp).',
+    default: false,
+  },
   auftraege_view_all: {
     label: 'Aufträge: Alle anzeigen',
     desc:  'Verwalter-Sicht: sieht alle Aufträge der Firma. Ohne diese Berechtigung nur eigene zugewiesene.',
@@ -5008,7 +5030,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
-      tool_data_extract:true,
+      tool_data_extract:true, tool_angebote:true,
     },
   },
   { name:'Verwalter', sort_order:2, is_system:true,
@@ -5019,7 +5041,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
-      tool_data_extract:true,
+      tool_data_extract:true, tool_angebote:true,
     },
   },
   { name:'Techniker', sort_order:3, is_system:true,
@@ -5650,6 +5672,13 @@ async function ensureLegacyFirmaFields() {
     { name:'is_system',        type:'checkbox', options:{ icon:'star', color:'yellowBright' } },
     { name:'sort_order',       type:'number',   options:{ precision:0 } },
   ]);
+  // App_Angebote — KONE→Aszendio-Konverter (eigener Nummernkreis pro Firma)
+  if (typeof ANGEBOTE_TABLE_FIELDS !== 'undefined') {
+    await ensureTable('App_Angebote', ANGEBOTE_TABLE_FIELDS);
+    for (const fld of ANGEBOTE_TABLE_FIELDS) {
+      try { await ensureField('App_Angebote', fld.name, fld.type); } catch(_){}
+    }
+  }
   // Rollen-Tabelle für Permission-Templates
   await ensureTable('Rollen', [
     { name:'name',             type:'singleLineText' },
@@ -18936,6 +18965,952 @@ function renderInfoView() {
         'Wünsche / Anregungen gerne an <a href="mailto:service@aszendio.com" style="color:#047857;font-weight:600">service@aszendio.com</a>.'+
       '</div>'+
     '</div>';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ANGEBOTE — KONE→Aszendio-Konverter
+   - PDF hochladen → KI extrahiert Positionen/Texte/Konditionen
+   - Bearbeiter trägt eigene Verkaufspreise ein (Default: KONE-EK × 1.20)
+   - Aszendio-PDF mit eigenem Briefpapier, eigener Angebotsnummer (ANG-1, ANG-2, …)
+   - In Airtable App_Angebote gespeichert, App-intern (kein ERP-Push in Etappe 1)
+   ─────────────────────────────────────────────────────────────────────── */
+
+const ANGEBOTE_TABLE_FIELDS = [
+  { name:'app_angebot_num',         type:'number',       options:{ precision:0 } },
+  { name:'firma',                   type:'singleLineText' },
+  { name:'erstellt_am',             type:'singleLineText' },
+  { name:'erstellt_von',            type:'singleLineText' },
+  { name:'bearbeiter',              type:'singleLineText' },  // Standard: User-Name (VP-Eintrag)
+  { name:'status',                  type:'singleLineText' },  // entwurf | fertig | gesendet | angenommen | abgelehnt
+  { name:'angebot_typ',             type:'singleLineText' },  // reparatur | instandhaltung | modernisierung | sonstiges
+  // KONE-Quelle
+  { name:'kone_angebot_num',        type:'singleLineText' },
+  { name:'kone_angebot_datum',      type:'singleLineText' },
+  { name:'kone_pdf',                type:'multipleAttachments' },
+  // Anlage (gemappt aus ERP via Fabriknummer)
+  { name:'equipmentnummer',         type:'singleLineText' },
+  { name:'seriennummer',            type:'singleLineText' },
+  { name:'anlage_id',               type:'singleLineText' },
+  { name:'anlage_adresse',          type:'multilineText'  },
+  // Endkunde
+  { name:'kunde_name',              type:'singleLineText' },
+  { name:'kunde_nummer',            type:'singleLineText' },
+  { name:'kunde_adresse',           type:'multilineText'  },
+  // Inhalt
+  { name:'anschreiben',             type:'multilineText'  },
+  { name:'positionen_json',         type:'multilineText'  },  // [{nr, titel, leistung[], ep_kone, vp, menge}]
+  { name:'ust_prozent',             type:'number',       options:{ precision:0 } },
+  { name:'summe_netto_kone',        type:'number',       options:{ precision:2 } },
+  { name:'summe_netto_vp',          type:'number',       options:{ precision:2 } },
+  { name:'summe_brutto_vp',         type:'number',       options:{ precision:2 } },
+  // Konditionen
+  { name:'kond_lieferzeit',         type:'multilineText'  },
+  { name:'kond_preisbasis',         type:'multilineText'  },
+  { name:'kond_zahlung',            type:'multilineText'  },
+  { name:'kond_hinweise',           type:'multilineText'  },
+  // Output
+  { name:'app_pdf',                 type:'multipleAttachments' },
+  { name:'notizen',                 type:'multilineText'  },
+];
+
+let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
+let _angeboteTableEnsured = false;
+
+const ANGEBOT_VP_DEFAULT_MARGE = 1.20;  // KONE-EK × 1.20 → VP-Vorschlag
+
+const ANGEBOT_TYP_OPTIONS = [
+  { value:'reparatur',      label:'🔧 Reparatur',      color:'#DC2626' },
+  { value:'instandhaltung', label:'🛠 Instandhaltung', color:'#F59E0B' },
+  { value:'modernisierung', label:'⚙ Modernisierung',  color:'#2152A9' },
+  { value:'sonstiges',      label:'📝 Sonstiges',      color:'#6B7280' },
+];
+const ANGEBOT_STATUS_OPTIONS = [
+  { value:'entwurf',     label:'Entwurf',     color:'#6B7280' },
+  { value:'fertig',      label:'Fertig',      color:'#10b981' },
+  { value:'gesendet',    label:'Gesendet',    color:'#2152A9' },
+  { value:'angenommen',  label:'Angenommen',  color:'#059669' },
+  { value:'abgelehnt',   label:'Abgelehnt',   color:'#DC2626' },
+];
+
+async function _ensureAngeboteTable() {
+  if (_angeboteTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token. Bitte als Admin einloggen.');
+  try {
+    await ensureTable('App_Angebote', ANGEBOTE_TABLE_FIELDS);
+    for (const f of ANGEBOTE_TABLE_FIELDS) {
+      try { await ensureField('App_Angebote', f.name, f.type); } catch(_){}
+    }
+    _angeboteTableEnsured = true;
+    return true;
+  } catch(e) {
+    throw new Error('Tabelle "App_Angebote" konnte nicht angelegt werden: '+e.message);
+  }
+}
+
+/* Nächste Angebot-Nummer für die aktuelle Firma (max + 1). */
+async function _angebotGetNextNumber(baseId, firmaSlug) {
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  try {
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote'
+      +'?pageSize=100&fields[]=app_angebot_num&fields[]=firma'
+      +'&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'");
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) return 1;
+    const d = await r.json();
+    const recs = d.records || [];
+    if (recs.length === 0) return 1;
+    const max = recs.reduce((m,r) => Math.max(m, +r.fields?.app_angebot_num || 0), 0);
+    return max + 1;
+  } catch(_) { return 1; }
+}
+
+async function renderAngeboteView(opts) {
+  opts = opts || {};
+  if (!hasPermission('tool_angebote')) return;
+  const list = document.getElementById('angebote-list');
+  if (!list) return;
+  const newBtn = document.getElementById('angebote-new-btn');
+  if (newBtn) newBtn.style.display = hasPermission('tool_angebote') ? '' : 'none';
+  const firmaSlug = getCurrentFirmaSlug();
+  const fresh = !opts.force && _angeboteCache.firma === firmaSlug && _angeboteCache.items && (Date.now() - _angeboteCache.loadedAt) < 60_000;
+  if (!fresh) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Angebote…</div>';
+    try {
+      await _loadAngebote(firmaSlug);
+    } catch(e) {
+      list.innerHTML = '<div style="padding:30px;text-align:center"><div style="color:var(--err);font-size:14px;font-weight:600;margin-bottom:8px">⚠ '+escapeHtml(e.message||'')+'</div>'+
+        (isAdmin() ? '<button class="btn" onclick="(async()=>{try{await _ensureAngeboteTable();renderAngeboteView({force:true});toast(\'✅ Tabelle angelegt\',\'ok\')}catch(e){toast(\'❌ \'+e.message,\'err\')}})()">🛠 Tabelle anlegen</button>' : '')+
+      '</div>';
+      return;
+    }
+  }
+  _renderAngeboteList();
+}
+
+async function _loadAngebote(firmaSlug) {
+  if (_angeboteCache.loading) return;
+  _angeboteCache.loading = true;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote'
+      +'?pageSize=100&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'")
+      +'&sort[0][field]=app_angebot_num&sort[0][direction]=desc';
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) {
+      if (r.status === 404 || r.status === 422) throw new Error('Tabelle App_Angebote fehlt. Admin: bitte Tabelle anlegen.');
+      throw new Error('HTTP '+r.status);
+    }
+    const d = await r.json();
+    _angeboteCache = { firma:firmaSlug, items:d.records||[], loadedAt:Date.now(), loading:false };
+  } finally {
+    _angeboteCache.loading = false;
+  }
+}
+
+function _renderAngeboteList() {
+  const list = document.getElementById('angebote-list');
+  const cnt = document.getElementById('angebote-count');
+  if (!list) return;
+  const items = _angeboteCache.items || [];
+  if (cnt) cnt.textContent = items.length+' Stück';
+  // Filter-UI + Such-UI
+  const filtBar =
+    '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;align-items:center">'+
+      '<input id="ang-search" type="text" placeholder="🔎 Suche (Nr, Kunde, Adresse, Fabrik-Nr…)" oninput="_renderAngeboteList()" '+
+        'value="'+escapeHtml(document.getElementById('ang-search')?.value || '')+'" '+
+        'class="auf-search-inp" style="flex:1;min-width:220px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '<select id="ang-typ" onchange="_renderAngeboteList()" style="padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
+        '<option value="">Alle Typen</option>'+
+        ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'"'+(document.getElementById('ang-typ')?.value===t.value?' selected':'')+'>'+t.label+'</option>').join('')+
+      '</select>'+
+      '<select id="ang-status" onchange="_renderAngeboteList()" style="padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
+        '<option value="">Alle Status</option>'+
+        ANGEBOT_STATUS_OPTIONS.map(s => '<option value="'+s.value+'"'+(document.getElementById('ang-status')?.value===s.value?' selected':'')+'>'+s.label+'</option>').join('')+
+      '</select>'+
+    '</div>';
+  // Filtern
+  const q = (document.getElementById('ang-search')?.value || '').toLowerCase().trim();
+  const filterTyp = document.getElementById('ang-typ')?.value || '';
+  const filterStatus = document.getElementById('ang-status')?.value || '';
+  const filtered = items.filter(rec => {
+    const f = rec.fields || {};
+    if (filterTyp && f.angebot_typ !== filterTyp) return false;
+    if (filterStatus && f.status !== filterStatus) return false;
+    if (q) {
+      const haystack = [f.app_angebot_num, f.kone_angebot_num, f.kunde_name, f.anlage_adresse, f.seriennummer, f.equipmentnummer]
+        .filter(Boolean).join(' ').toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+  // Liste
+  if (filtered.length === 0) {
+    list.innerHTML = filtBar +
+      '<div style="text-align:center;padding:40px 20px;color:var(--txt3);font-size:13px">'+
+        (items.length === 0
+          ? 'Noch keine Angebote angelegt. Klick <strong>+ Neues Angebot</strong> oben.'
+          : 'Keine Treffer für Filter/Suche.')+
+      '</div>';
+    return;
+  }
+  const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const html = filtered.map(rec => {
+    const f = rec.fields || {};
+    const typ = ANGEBOT_TYP_OPTIONS.find(t => t.value === f.angebot_typ) || ANGEBOT_TYP_OPTIONS[3];
+    const stat = ANGEBOT_STATUS_OPTIONS.find(s => s.value === f.status) || ANGEBOT_STATUS_OPTIONS[0];
+    return '<div onclick="openAngebotDetail(\''+rec.id+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,.06)\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.boxShadow=\'none\'">'+
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">'+
+          '<div style="flex:1;min-width:200px">'+
+            '<div style="font-weight:700;color:var(--navy);font-size:14px">ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
+            '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+'</div>'+
+          '</div>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+            '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'+
+            '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'+
+            (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')+
+          '</div>'+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:6px">'+
+          (f.kone_angebot_num ? '🔗 KONE '+escapeHtml(f.kone_angebot_num)+' · ' : '')+
+          (f.erstellt_am ? '📅 '+escapeHtml(f.erstellt_am) : '')+
+          (f.bearbeiter ? ' · 👤 '+escapeHtml(f.bearbeiter) : '')+
+        '</div>'+
+      '</div>';
+  }).join('');
+  list.innerHTML = filtBar + html;
+}
+
+/* ── WIZARD: Neues Angebot ───────────────────────────────────────────── */
+async function openAngebotWizard() {
+  if (!hasPermission('tool_angebote')) return toast('🔒 Keine Berechtigung','err');
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen','err');
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert','err');
+  const old = document.getElementById('ang-wizard'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-wizard';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:640px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
+        '<span>📄 Neues Angebot — KONE-PDF hochladen</span>'+
+        '<button onclick="document.getElementById(\'ang-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px;line-height:1.6">'+
+        '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
+          '💡 Lade das Original-KONE-Angebot als PDF hoch. Die KI extrahiert Anschreiben, Positionen mit Leistungsbeschreibung, Einzelpreise und Konditionen. Danach öffnet sich der Editor wo du deinen Verkaufspreis pro Position einträgst.'+
+        '</div>'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Angebotstyp</label>'+
+        '<select id="ang-w-typ" class="auf-input" style="margin-bottom:14px;cursor:pointer;width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+          ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'">'+t.label+'</option>').join('')+
+        '</select>'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">KONE-Angebots-PDF</label>'+
+        '<div id="ang-w-drop" onclick="document.getElementById(\'ang-w-file\').click()" style="border:2px dashed var(--bdr);border-radius:10px;padding:30px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .15s" onmouseover="this.style.borderColor=\'#2152A9\';this.style.background=\'#EFF6FF\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.background=\'#fafafa\'">'+
+          '<div style="font-size:36px;margin-bottom:8px">📄</div>'+
+          '<div id="ang-w-droplbl" style="font-size:13px;color:var(--txt2)">Klick hier oder ziehe PDF hierher</div>'+
+        '</div>'+
+        '<input type="file" id="ang-w-file" accept="application/pdf" style="display:none" onchange="_angWizardOnFile(event)">'+
+        '<div id="ang-w-info" style="margin-top:10px;font-size:11px;color:var(--txt3)"></div>'+
+      '</div>'+
+      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'ang-wizard\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="ang-w-go" disabled onclick="_angWizardGo()" style="opacity:.5">🚀 PDF analysieren</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._file = null;
+  // Drag&Drop
+  const drop = document.getElementById('ang-w-drop');
+  ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.background='#EFF6FF'; drop.style.borderColor='#2152A9'; }));
+  ['dragleave','drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.background='#fafafa'; drop.style.borderColor='var(--bdr)'; }));
+  drop.addEventListener('drop', e => {
+    const f = e.dataTransfer.files?.[0];
+    if (f) _angWizardSetFile(f);
+  });
+}
+
+function _angWizardOnFile(ev) {
+  const f = ev.target.files?.[0];
+  if (f) _angWizardSetFile(f);
+}
+function _angWizardSetFile(file) {
+  if (!file.type.includes('pdf')) return toast('Bitte PDF-Datei wählen','err');
+  if (file.size > 30*1024*1024) return toast('PDF zu groß (max 30 MB)','err');
+  const m = document.getElementById('ang-wizard');
+  if (!m) return;
+  m._file = file;
+  document.getElementById('ang-w-droplbl').innerHTML = '✅ <strong>'+escapeHtml(file.name)+'</strong> · '+Math.round(file.size/1024)+' KB';
+  document.getElementById('ang-w-info').textContent = 'Klick "🚀 PDF analysieren" um die KI-Extraktion zu starten';
+  const go = document.getElementById('ang-w-go');
+  if (go) { go.disabled = false; go.style.opacity = '1'; }
+}
+
+async function _angWizardGo() {
+  const m = document.getElementById('ang-wizard');
+  if (!m || !m._file) return;
+  const typ = document.getElementById('ang-w-typ').value;
+  const go = document.getElementById('ang-w-go');
+  go.disabled = true; go.textContent = '⏳ KI extrahiert…';
+  const info = document.getElementById('ang-w-info');
+  if (info) info.textContent = '🤖 sende PDF an Claude, kann 30–60 s dauern…';
+  try {
+    const extracted = await _extractKoneAngebot(m._file);
+    console.log('[Angebote] extrahiert:', extracted);
+    // Anlage-Match versuchen über Seriennummer ↔ Fabriknummer im ERP
+    let matchedAnlage = null;
+    if (extracted.seriennummer && Array.isArray(_anlagenCache?.items)) {
+      const sn = String(extracted.seriennummer).trim();
+      matchedAnlage = _anlagenCache.items.find(a =>
+        String(a.fabriknummer||'').trim() === sn ||
+        String(a.fabriknummer||'').trim().includes(sn) ||
+        sn.includes(String(a.fabriknummer||'').trim())
+      ) || null;
+    }
+    m.remove();
+    openAngebotEditor({ extracted, typ, koneFile: m._file, matchedAnlage });
+  } catch(e) {
+    console.error('[Angebote] KI-Extract:', e);
+    toast('❌ KI-Extract: '+(e.message||e).slice(0,200),'err');
+    go.disabled = false; go.textContent = '🚀 PDF analysieren';
+  }
+}
+
+/* ── KI-Extraktion: KONE-PDF → strukturiertes Objekt via Tool-Use ────── */
+async function _extractKoneAngebot(file) {
+  if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
+  const b64 = await new Promise((res,rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(',')[1]);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+  const tool = {
+    name: 'extract_angebot_data',
+    description: 'Extrahiert strukturierte Daten aus einem PDF-Angebot (typisch KONE, Schindler, OTIS, TK).',
+    input_schema: {
+      type: 'object',
+      required: ['positionen','summe_netto','ust_prozent','summe_brutto'],
+      properties: {
+        kone_angebot_num:    { type:'string', description:'Original-Angebotsnummer aus dem PDF (z.B. T-0009784050)' },
+        kone_angebot_datum:  { type:'string', description:'Datum des Original-Angebots, ISO YYYY-MM-DD' },
+        equipmentnummer:     { type:'string', description:'Equipment-/Anlagennummer beim Anbieter' },
+        seriennummer:        { type:'string', description:'Seriennummer der Anlage (= Fabriknummer im ERP)' },
+        anlage_adresse:      { type:'string', description:'Standort-Adresse der Anlage' },
+        anschreiben:         { type:'string', description:'Anrede + Einleitungstext bis zur Positionsübersicht. Original-Wortlaut beibehalten.' },
+        positionen: {
+          type: 'array',
+          description: 'Alle Angebotspositionen.',
+          items: {
+            type: 'object',
+            required: ['nr','titel','einzelpreis_netto'],
+            properties: {
+              nr:                    { type:'integer' },
+              titel:                 { type:'string', description:'Hauptbezeichnung der Position' },
+              leistungsbeschreibung: { type:'array', items:{ type:'string' }, description:'Bullet-Liste der Teilleistungen' },
+              menge:                 { type:'number', description:'Default 1' },
+              einzelpreis_netto:     { type:'number', description:'Einzelpreis netto in EUR ohne Tausendertrennzeichen' },
+            },
+          },
+        },
+        ust_prozent:         { type:'number', description:'Default 19' },
+        summe_netto:         { type:'number' },
+        summe_brutto:        { type:'number' },
+        kond_lieferzeit:     { type:'string', description:'Lieferzeit-Text aus dem Angebot' },
+        kond_preisbasis:     { type:'string', description:'Preisbasis (Festpreis, Gültigkeit etc.)' },
+        kond_zahlung:        { type:'string', description:'Zahlungsbedingungen' },
+        kond_hinweise:       { type:'string', description:'Hinweise (Mehrkosten, bauseits, etc.) — wie im Original' },
+      },
+    },
+  };
+  const prompt = 'Extrahiere die Daten dieses Angebots-PDFs vollständig und originalgetreu. '+
+    'Positionen exakt wie im Original (auch die Leistungsbeschreibungs-Bullets). '+
+    'Preise immer netto als Zahl ohne Währungssymbol, Punkt als Dezimaltrenner. '+
+    'Bei mehreren Adressen zähle die der ANLAGE, nicht die des Empfängers.';
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': APP_KEYS.anthropicKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-beta':'pdfs-2024-09-25',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens: 8000,
+      tools:[tool],
+      tool_choice:{ type:'tool', name:'extract_angebot_data' },
+      messages:[{ role:'user', content:[
+        { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64 } },
+        { type:'text', text:prompt },
+      ]}],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
+  }
+  const data = await resp.json();
+  const block = (data.content||[]).find(b => b.type === 'tool_use');
+  if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
+  return block.input;
+}
+
+/* ── EDITOR — Positionen + VP-Eingabe + Live-Summe + Konditionen ────── */
+function openAngebotEditor(ctx) {
+  const old = document.getElementById('ang-editor'); if (old) old.remove();
+  // State
+  const E = {
+    extracted: ctx.extracted,
+    typ: ctx.typ,
+    koneFile: ctx.koneFile,
+    matchedAnlage: ctx.matchedAnlage || null,
+    bearbeiter: APP_KEYS.user?.name || '',
+    positionen: (ctx.extracted.positionen||[]).map(p => ({
+      nr: p.nr || 0,
+      titel: p.titel || '',
+      leistungsbeschreibung: Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [],
+      menge: +p.menge || 1,
+      ep_kone: +p.einzelpreis_netto || 0,
+      vp: Math.round((+p.einzelpreis_netto || 0) * ANGEBOT_VP_DEFAULT_MARGE * 100) / 100,
+    })),
+    ust_prozent: +ctx.extracted.ust_prozent || 19,
+    anschreiben: ctx.extracted.anschreiben || '',
+    kond_lieferzeit:  ctx.extracted.kond_lieferzeit  || '',
+    kond_preisbasis:  ctx.extracted.kond_preisbasis  || '',
+    kond_zahlung:     ctx.extracted.kond_zahlung     || '',
+    kond_hinweise:    ctx.extracted.kond_hinweise    || '',
+    // Wenn Anlage gematcht: Kunde übernehmen
+    kunde_name: ctx.matchedAnlage?.kunde?.firmenname || ctx.matchedAnlage?.kunde?.name || '',
+    kunde_nummer: String(ctx.matchedAnlage?.kunde?.kundennummer || ctx.matchedAnlage?.kunde?.id || ''),
+    kunde_adresse: _angBuildKundeAdresse(ctx.matchedAnlage?.kunde) || '',
+    anlage_id: String(ctx.matchedAnlage?.id || ''),
+    anlage_adresse: ctx.matchedAnlage?.anzeigeAdresse || ctx.extracted.anlage_adresse || '',
+    equipmentnummer: ctx.extracted.equipmentnummer || '',
+    seriennummer: ctx.extracted.seriennummer || ctx.matchedAnlage?.fabriknummer || '',
+  };
+  const m = document.createElement('div');
+  m.id = 'ang-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:8px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:920px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
+        '<span>✏️ Angebot bearbeiten — VP eintragen</span>'+
+        '<button onclick="if(confirm(\'Wirklich abbrechen? Eingaben gehen verloren.\'))document.getElementById(\'ang-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="ang-ed-body" style="padding:16px 20px;flex:1;overflow-y:auto"></div>'+
+      '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'ang-editor\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="ang-ed-save" onclick="_angEditorSave()">💾 Angebot anlegen + PDF generieren</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._state = E;
+  _angEditorRender();
+}
+
+function _angBuildKundeAdresse(k) {
+  if (!k) return '';
+  const lines = [];
+  if (k.firmenname || k.name) lines.push(k.firmenname || k.name);
+  const street = k.strasse || k.adresse || '';
+  if (street) lines.push(street);
+  const cityLine = [k.plz, k.ort].filter(Boolean).join(' ');
+  if (cityLine) lines.push(cityLine);
+  return lines.join('\n');
+}
+
+function _angEditorRender() {
+  const m = document.getElementById('ang-editor');
+  if (!m) return;
+  const E = m._state;
+  const body = document.getElementById('ang-ed-body');
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  // Summen
+  let sumKone = 0, sumVp = 0;
+  for (const p of E.positionen) {
+    sumKone += (+p.ep_kone||0) * (+p.menge||1);
+    sumVp   += (+p.vp||0)      * (+p.menge||1);
+  }
+  const ust = +E.ust_prozent || 19;
+  const brutto = sumVp * (1 + ust/100);
+  const margeAbs = sumVp - sumKone;
+  const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
+  // Anlage-Match-Status
+  const matched = !!E.matchedAnlage;
+  const anlBox = matched
+    ? '<div style="background:#ECFDF5;border:1px solid #10b981;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px"><strong style="color:#065F46">✅ Anlage gematcht:</strong> Fabrik-Nr. '+escapeHtml(E.seriennummer)+' → '+escapeHtml(E.anlage_adresse)+' · Kunde: '+escapeHtml(E.kunde_name||'?')+'</div>'
+    : '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:12px"><strong style="color:#92400E">⚠ Keine Anlage im ERP gematcht</strong> für Seriennummer "'+escapeHtml(E.seriennummer||'?')+'". Felder unten bitte manuell ausfüllen.</div>';
+  body.innerHTML =
+    anlBox+
+    // Stammdaten Grid
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Bearbeiter (VP)</label>'+
+        '<input id="ang-fld-bearbeiter" value="'+escapeHtml(E.bearbeiter)+'" oninput="_angEditorSet(\'bearbeiter\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Seriennummer / Fabrik-Nr.</label>'+
+        '<input id="ang-fld-seriennummer" value="'+escapeHtml(E.seriennummer)+'" oninput="_angEditorSet(\'seriennummer\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Endkunde Name</label>'+
+        '<input id="ang-fld-kunde_name" value="'+escapeHtml(E.kunde_name)+'" oninput="_angEditorSet(\'kunde_name\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Kunde-Nr.</label>'+
+        '<input id="ang-fld-kunde_nummer" value="'+escapeHtml(E.kunde_nummer)+'" oninput="_angEditorSet(\'kunde_nummer\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anlage-Adresse</label>'+
+        '<textarea id="ang-fld-anlage_adresse" rows="3" oninput="_angEditorSet(\'anlage_adresse\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.anlage_adresse)+'</textarea></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Kunden-Adresse (Empfänger)</label>'+
+        '<textarea id="ang-fld-kunde_adresse" rows="3" oninput="_angEditorSet(\'kunde_adresse\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kunde_adresse)+'</textarea></div>'+
+    '</div>'+
+    // Anschreiben
+    '<div style="margin-bottom:14px"><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anschreiben</label>'+
+      '<textarea id="ang-fld-anschreiben" rows="4" oninput="_angEditorSet(\'anschreiben\',this.value)" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.anschreiben)+'</textarea>'+
+    '</div>'+
+    // Positionen
+    '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
+      '<span style="font-size:11px;color:var(--txt3)">Trage rechts deinen Verkaufspreis (VP) ein — Default = KONE-EK × 1.20</span>'+
+    '</div>'+
+    '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px">'+
+      E.positionen.map((p, i) => _angRenderPositionRow(p, i)).join('')+
+    '</div>'+
+    // Summary
+    '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
+      '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#7C2D12">'+
+        '<div><span style="color:var(--txt3);font-size:11px">Summe KONE (EK)</span><div style="font-weight:600">'+fmt(sumKone)+' € netto</div></div>'+
+        '<div><span style="color:var(--txt3);font-size:11px">Summe VP</span><div style="font-weight:700;font-size:15px;color:#9A3412">'+fmt(sumVp)+' € netto</div></div>'+
+        '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
+        '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(sumVp*ust/100)+' €</div></div>'+
+        '<div><span style="color:var(--txt3);font-size:11px">Summe VP Brutto</span><div style="font-weight:700;font-size:15px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
+      '</div>'+
+    '</div>'+
+    // Konditionen
+    '<h3 style="margin:0 0 8px;font-size:14px;color:var(--navy)">📜 Konditionen</h3>'+
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Lieferzeit</label>'+
+        '<textarea id="ang-fld-kond_lieferzeit" rows="2" oninput="_angEditorSet(\'kond_lieferzeit\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_lieferzeit)+'</textarea></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Preisbasis / Gültigkeit</label>'+
+        '<textarea id="ang-fld-kond_preisbasis" rows="2" oninput="_angEditorSet(\'kond_preisbasis\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_preisbasis)+'</textarea></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Zahlung</label>'+
+        '<textarea id="ang-fld-kond_zahlung" rows="2" oninput="_angEditorSet(\'kond_zahlung\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_zahlung)+'</textarea></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Hinweise</label>'+
+        '<textarea id="ang-fld-kond_hinweise" rows="2" oninput="_angEditorSet(\'kond_hinweise\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_hinweise)+'</textarea></div>'+
+    '</div>';
+}
+
+function _angRenderPositionRow(p, i) {
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const gesamt = (+p.vp||0) * (+p.menge||1);
+  const leistungHtml = (p.leistungsbeschreibung||[]).map(l => '<div>• '+escapeHtml(l)+'</div>').join('');
+  return '<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);background:'+(i%2?'#FAFBFD':'#fff')+'">'+
+    '<div style="display:grid;grid-template-columns:30px 1fr 90px 130px 100px;gap:10px;align-items:start">'+
+      '<div style="background:#2152A9;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
+      '<div>'+
+        '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px">'+
+        (leistungHtml ? '<div style="font-size:11px;color:var(--txt2);line-height:1.5">'+leistungHtml+'</div>' : '')+
+      '</div>'+
+      '<div><label style="font-size:10px;color:var(--txt3);display:block">EK (KONE)</label>'+
+        '<div style="font-size:12px;color:var(--txt2);padding:5px 0">'+fmt(p.ep_kone)+' €</div></div>'+
+      '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">VP (deins) *</label>'+
+        '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>'+
+      '<div><label style="font-size:10px;color:var(--txt3);display:block">Gesamt VP</label>'+
+        '<div id="ang-pos-sum-'+i+'" style="font-size:13px;font-weight:700;color:#7C2D12;padding:5px 0;text-align:right">'+fmt(gesamt)+' €</div></div>'+
+    '</div>'+
+  '</div>';
+}
+
+function _angEditorSet(field, value) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  m._state[field] = value;
+}
+function _angSetPos(i, field, value) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state || !m._state.positionen[i]) return;
+  const v = (field === 'vp' || field === 'menge' || field === 'ep_kone') ? (+value||0) : value;
+  m._state.positionen[i][field] = v;
+  // Live-Re-Render der Summen-Box (kompletter Editor neu, um Margenberechnung zu refreshen)
+  _angEditorRender();
+}
+
+async function _angEditorSave() {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const E = m._state;
+  if (!E.kunde_name) return toast('Endkunde-Name fehlt','err');
+  if (!E.positionen.length) return toast('Keine Positionen vorhanden','err');
+  const btn = document.getElementById('ang-ed-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    if (!_angeboteTableEnsured && isAdmin()) {
+      try { await _ensureAngeboteTable(); } catch(_){}
+    }
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const firmaSlug = getCurrentFirmaSlug();
+    const nextNum = await _angebotGetNextNumber(baseId, firmaSlug);
+    // Summen finalisieren
+    let sumKone = 0, sumVp = 0;
+    for (const p of E.positionen) {
+      sumKone += (+p.ep_kone||0) * (+p.menge||1);
+      sumVp   += (+p.vp||0)      * (+p.menge||1);
+    }
+    const ust = +E.ust_prozent || 19;
+    const sumBrutto = sumVp * (1 + ust/100);
+    const fields = {
+      app_angebot_num: nextNum,
+      firma: firmaSlug,
+      erstellt_am: new Date().toISOString().slice(0,10),
+      erstellt_von: APP_KEYS.user?.name || '',
+      bearbeiter: E.bearbeiter || '',
+      status: 'fertig',
+      angebot_typ: E.typ || 'sonstiges',
+      kone_angebot_num: E.extracted.kone_angebot_num || '',
+      kone_angebot_datum: E.extracted.kone_angebot_datum || '',
+      equipmentnummer: E.equipmentnummer || '',
+      seriennummer: E.seriennummer || '',
+      anlage_id: E.anlage_id || '',
+      anlage_adresse: E.anlage_adresse || '',
+      kunde_name: E.kunde_name || '',
+      kunde_nummer: E.kunde_nummer || '',
+      kunde_adresse: E.kunde_adresse || '',
+      anschreiben: E.anschreiben || '',
+      positionen_json: JSON.stringify(E.positionen),
+      ust_prozent: ust,
+      summe_netto_kone: Math.round(sumKone*100)/100,
+      summe_netto_vp: Math.round(sumVp*100)/100,
+      summe_brutto_vp: Math.round(sumBrutto*100)/100,
+      kond_lieferzeit: E.kond_lieferzeit || '',
+      kond_preisbasis: E.kond_preisbasis || '',
+      kond_zahlung: E.kond_zahlung || '',
+      kond_hinweise: E.kond_hinweise || '',
+    };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    if (btn) btn.textContent = '⏳ Lade KONE-PDF…';
+    // KONE-PDF als Anhang hochladen
+    try {
+      await atBlobUpload(d.id, 'kone_pdf', E.koneFile, E.koneFile.name || ('kone-'+(E.extracted.kone_angebot_num||'angebot')+'.pdf'), 'application/pdf');
+    } catch(upErr) {
+      console.warn('[Angebote] KONE-PDF Upload:', upErr.message);
+    }
+    // Aszendio-PDF generieren + hochladen
+    if (btn) btn.textContent = '⏳ Erzeuge Aszendio-PDF…';
+    try {
+      const appBlob = await _buildAngebotPdf(Object.assign({}, fields, { id: d.id }));
+      const fname = 'Aszendio-Angebot-ANG'+nextNum+'.pdf';
+      await atBlobUpload(d.id, 'app_pdf', appBlob, fname, 'application/pdf');
+    } catch(pdfErr) {
+      console.warn('[Angebote] App-PDF:', pdfErr);
+      toast('⚠ Angebot gespeichert, App-PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
+    }
+    toast('✅ Angebot ANG-'+nextNum+' angelegt','ok');
+    m.remove();
+    _angeboteCache.firma = null; _angeboteCache.items = null;
+    await renderAngeboteView({force:true});
+    openAngebotDetail(d.id);
+  } catch(e) {
+    console.error('[Angebote] Save:', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Angebot anlegen + PDF generieren'; }
+  }
+}
+
+/* ── PDF-GENERATOR: Aszendio-Angebot (firma-aware) ─────────────────── */
+async function _buildAngebotPdf(rec) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const ml = 18, mr = 192, cw = mr - ml, H = 297;
+  const firmaSlug = rec.firma || getCurrentFirmaSlug();
+  const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { logoB64:LOGO_B64, logoW:36, logoH:6, company:'Aszendio Aufzugservice GmbH', headerLine:'Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com', footerLine:'Aszendio Aufzugservice GmbH', navy:[26,51,83], accent:[33,82,169] };
+  const NAVY = BR.navy, ACCENT = BR.accent;
+  const GREY = [55,65,81], GREY_L = [120,130,145], GREY_X = [229,231,235];
+  const ORANGE = [234,88,12];
+  const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  // KOPF
+  try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW, 12, BR.logoW, BR.logoH); } catch(_){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf(BR.headerLine), ml, 16);
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
+  // EMPFÄNGER-BLOCK
+  let y = 32;
+  doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text('EMPFÄNGER', ml, y); y += 4;
+  doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...NAVY);
+  const kundeName = rec.kunde_name || '';
+  if (kundeName) { doc.text(_sanPdf(kundeName), ml, y); y += 5; }
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+  for (const ln of String(rec.kunde_adresse||'').split('\n')) {
+    if (ln.trim()) { doc.text(_sanPdf(ln), ml, y); y += 4.5; }
+  }
+  // RECHTS: Datum + Angebot-Nr.
+  doc.setFontSize(9); doc.setTextColor(...GREY_L);
+  const today = rec.erstellt_am || new Date().toISOString().slice(0,10);
+  const angNr = 'ANG-' + (rec.app_angebot_num||'?');
+  doc.text('Datum:', mr-50, 32);
+  doc.setTextColor(...GREY);
+  doc.text(_sanPdf(today), mr-2, 32, { align:'right' });
+  doc.setTextColor(...GREY_L);
+  doc.text('Angebot-Nr.:', mr-50, 37);
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.text(angNr, mr-2, 37, { align:'right' });
+  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+  if (rec.bearbeiter) {
+    doc.text('Bearbeiter:', mr-50, 42);
+    doc.setTextColor(...GREY);
+    doc.text(_sanPdf(rec.bearbeiter), mr-2, 42, { align:'right' });
+  }
+  y = Math.max(y, 50);
+  // BETREFF
+  y += 6;
+  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...NAVY);
+  doc.text('Angebot', ml, y); y += 6;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+  if (rec.anlage_adresse) {
+    const lines = doc.splitTextToSize(_sanPdf('Anlage / Standort: '+rec.anlage_adresse), cw);
+    lines.forEach(l => { doc.text(l, ml, y); y += 5; });
+  }
+  if (rec.seriennummer) {
+    doc.text(_sanPdf('Fabriknummer: '+rec.seriennummer), ml, y); y += 5;
+  }
+  y += 4;
+  // ANSCHREIBEN
+  if (rec.anschreiben) {
+    doc.setFontSize(10); doc.setTextColor(...GREY);
+    const lines = doc.splitTextToSize(_sanPdf(rec.anschreiben), cw);
+    lines.forEach(l => {
+      if (y > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+      doc.text(l, ml, y); y += 5;
+    });
+    y += 4;
+  }
+  // POSITIONS-TABELLE
+  if (y > 230) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+  doc.setFillColor(...NAVY); doc.rect(ml, y, cw, 8, 'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  const colNr = 8, colTitel = cw - 8 - 22 - 28 - 28, colMenge = 22, colEP = 28, colGes = 28;
+  doc.text('Nr.', ml+2, y+5.5);
+  doc.text('Technische Spezifikation', ml+colNr+2, y+5.5);
+  doc.text('Menge', ml+colNr+colTitel+2, y+5.5);
+  doc.text('Einzelpreis', ml+colNr+colTitel+colMenge+colEP-2, y+5.5, { align:'right' });
+  doc.text('Gesamt', mr-2, y+5.5, { align:'right' });
+  y += 8;
+  let positionen = [];
+  try { positionen = JSON.parse(rec.positionen_json||'[]'); } catch(_){}
+  let sumNetto = 0;
+  positionen.forEach((p, idx) => {
+    const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
+    const leistung = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [];
+    const leistungLines = [];
+    for (const l of leistung) {
+      const ls = doc.splitTextToSize(_sanPdf('• '+l), colTitel-4);
+      for (const x of ls) leistungLines.push(x);
+    }
+    const rowH = Math.max(8, titelLines.length*5 + leistungLines.length*4 + 4);
+    if (y + rowH > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    if (idx%2 === 0) { doc.setFillColor(248,250,252); doc.rect(ml, y, cw, rowH, 'F'); }
+    doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    doc.text(String(p.nr||(idx+1)), ml+2, y+5);
+    doc.setFont('helvetica','bold');
+    titelLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+li*5));
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+    leistungLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
+    doc.setFontSize(10); doc.setTextColor(...GREY);
+    doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
+    doc.text(fmtEUR(p.vp), ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
+    const ges = (+p.vp||0) * (+p.menge||1);
+    sumNetto += ges;
+    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+    doc.text(fmtEUR(ges)+' EUR', mr-2, y+5, { align:'right' });
+    doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+    y += rowH;
+    doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
+  });
+  // SUMMEN
+  y += 2;
+  const ust = +rec.ust_prozent || 19;
+  const ustBetrag = sumNetto * ust/100;
+  const brutto = sumNetto + ustBetrag;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...NAVY);
+  doc.text('Gesamtnettopreis', ml+2, y+5);
+  doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+5, { align:'right' });
+  y += 6;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+  doc.text('Zuzüglich gesetzl. USt. '+ust+'%', ml+2, y+4);
+  doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
+  y += 5;
+  doc.setFillColor(...ORANGE); doc.rect(ml, y, cw, 9, 'F');
+  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text('Gesamtbruttopreis', ml+2, y+6);
+  doc.text(fmtEUR(brutto)+' EUR', mr-2, y+6, { align:'right' });
+  y += 14;
+  // KONDITIONEN-BLOCK
+  const kondSections = [
+    ['Lieferzeit', rec.kond_lieferzeit],
+    ['Preisbasis', rec.kond_preisbasis],
+    ['Zahlung', rec.kond_zahlung],
+    ['Hinweise', rec.kond_hinweise],
+  ].filter(([_,v]) => (v||'').trim());
+  for (const [label, txt] of kondSections) {
+    if (y > 265) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...NAVY);
+    doc.text(label+':', ml, y); y += 5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    const lines = doc.splitTextToSize(_sanPdf(String(txt)), cw);
+    lines.forEach(l => {
+      if (y > 280) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+      doc.text(l, ml, y); y += 4.5;
+    });
+    y += 4;
+  }
+  // AGB aus Firmen-Defaults
+  if (typeof _appendAngebotsKonditionen === 'function') {
+    try {
+      y = _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, y + 2, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
+    } catch(e) { console.warn('[Angebot-PDF] Konditionen:', e); }
+  }
+  // FOOTER auf jeder Seite
+  const total = doc.getNumberOfPages();
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...GREY_X); doc.line(ml, 285, mr, 285);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf('Angebot '+angNr+'  ·  '+BR.footerLine), ml, 290);
+    doc.text('Seite '+p+' / '+total, mr, 290, { align:'right' });
+  }
+  return doc.output('blob');
+}
+
+function _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X) {
+  doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal'); doc.setFontSize(8);
+  doc.text(_sanPdf('Angebot · '+BR.company), ml, 14);
+  doc.setDrawColor(...GREY_X); doc.line(ml, 17, mr, 17);
+}
+
+/* ── DETAIL-MODAL ──────────────────────────────────────────────────── */
+function openAngebotDetail(recId) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Angebot nicht gefunden','err');
+  const f = rec.fields || {};
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const typ = ANGEBOT_TYP_OPTIONS.find(t => t.value === f.angebot_typ) || ANGEBOT_TYP_OPTIONS[3];
+  const stat = ANGEBOT_STATUS_OPTIONS.find(s => s.value === f.status) || ANGEBOT_STATUS_OPTIONS[0];
+  const appPdf = f.app_pdf?.[0];
+  const konePdf = f.kone_pdf?.[0];
+  const old = document.getElementById('ang-detail'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-detail';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:8px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:880px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
+        '<span>📄 ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+'</span>'+
+        '<button onclick="document.getElementById(\'ang-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:14px 20px;background:#EFF6FF;border-bottom:1px solid var(--bdr);font-size:12px">'+
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">'+
+          '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'+
+          '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'+
+          (f.bearbeiter ? '<span style="color:var(--txt3);font-size:11px">👤 '+escapeHtml(f.bearbeiter)+'</span>' : '')+
+          (f.erstellt_am ? '<span style="color:var(--txt3);font-size:11px">📅 '+escapeHtml(f.erstellt_am)+'</span>' : '')+
+        '</div>'+
+        '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+(f.kunde_nummer?' (Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
+        '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
+        (f.kone_angebot_num ? '<div><strong>🔗 KONE:</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
+      '</div>'+
+      '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
+        (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
+          '<div><div style="font-size:11px;color:var(--txt3)">Netto KONE (EK)</div><div style="font-weight:600">'+fmt(f.summe_netto_kone)+' €</div></div>'+
+          '<div><div style="font-size:11px;color:var(--txt3)">Netto VP</div><div style="font-weight:700;font-size:15px">'+fmt(f.summe_netto_vp)+' €</div></div>'+
+          '<div><div style="font-size:11px;color:var(--txt3)">Marge</div><div style="font-weight:600">'+fmt((f.summe_netto_vp||0)-(f.summe_netto_kone||0))+' €</div></div>'+
+          '<div style="margin-left:auto"><div style="font-size:11px;color:var(--txt3)">Brutto VP</div><div style="font-weight:700;font-size:16px">'+fmt(f.summe_brutto_vp)+' €</div></div>'+
+        '</div>' : '')+
+        // PDF-Buttons
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+
+          (appPdf ? '<a href="'+escapeHtml(appPdf.url)+'" target="_blank" rel="noopener" class="btn prim" style="text-decoration:none">📄 Aszendio-PDF öffnen</a>' : '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)">📄 Aszendio-PDF erzeugen</button>')+
+          (konePdf ? '<a href="'+escapeHtml(konePdf.url)+'" target="_blank" rel="noopener" class="btn" style="text-decoration:none">📎 Original-KONE-PDF</a>' : '')+
+          '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)" title="PDF neu generieren mit aktuellen Daten">🔄 Neu generieren</button>'+
+        '</div>'+
+        // Status-Wechsel
+        '<div style="font-size:12px;margin-bottom:14px"><strong>Status:</strong> '+
+          ANGEBOT_STATUS_OPTIONS.map(s =>
+            '<button onclick="_angSetStatus(\''+recId+'\',\''+s.value+'\')" style="background:'+(f.status===s.value?s.color:'#fff')+';color:'+(f.status===s.value?'#fff':s.color)+';border:1px solid '+s.color+';padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;margin-right:4px">'+escapeHtml(s.label)+'</button>'
+          ).join('')+
+        '</div>'+
+        // Positionen
+        '<h3 style="margin:14px 0 8px;font-size:13px;color:var(--navy)">📋 Positionen</h3>'+
+        (() => {
+          let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+          return positionen.map(p =>
+            '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:12px">'+
+              '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(p.titel||'')+'</div>'+
+              (Array.isArray(p.leistungsbeschreibung) && p.leistungsbeschreibung.length ?
+                '<div style="color:var(--txt2);margin:4px 0 6px;line-height:1.5">'+p.leistungsbeschreibung.map(l => '• '+escapeHtml(l)).join('<br>')+'</div>' : '')+
+              (canSeePrices() ? '<div style="display:flex;gap:14px;font-size:11px;color:var(--txt3)"><span>EK '+fmt(p.ep_kone)+' €</span><span>VP <strong style="color:#9A3412">'+fmt(p.vp)+' €</strong></span><span>Menge '+(p.menge||1)+'</span><span style="margin-left:auto"><strong>Gesamt '+fmt((+p.vp||0)*(+p.menge||1))+' €</strong></span></div>' : '')+
+            '</div>'
+          ).join('');
+        })()+
+      '</div>'+
+      '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'ang-detail\').remove()">Schließen</button>'+
+        '<button class="btn" onclick="_angDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)">🗑 Löschen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+
+async function _angSetStatus(recId, newStatus) {
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ status: newStatus }}),
+    });
+    const idx = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
+    if (idx >= 0) _angeboteCache.items[idx].fields.status = newStatus;
+    toast('Status: '+newStatus,'ok');
+    document.getElementById('ang-detail')?.remove();
+    openAngebotDetail(recId);
+    _renderAngeboteList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function _angRegeneratePdf(recId, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Erzeuge…'; }
+  try {
+    const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+    if (!rec) throw new Error('Record nicht gefunden');
+    const blob = await _buildAngebotPdf(Object.assign({}, rec.fields, { id: recId }));
+    const fname = 'Aszendio-Angebot-ANG'+(rec.fields.app_angebot_num||'')+'.pdf';
+    await atBlobUpload(recId, 'app_pdf', blob, fname, 'application/pdf');
+    toast('📄 PDF aktualisiert','ok');
+    _angeboteCache.firma = null;
+    await renderAngeboteView({force:true});
+    document.getElementById('ang-detail')?.remove();
+    openAngebotDetail(recId);
+  } catch(e) {
+    console.error('[Angebote] regen:', e);
+    toast('❌ '+e.message,'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📄 Aszendio-PDF erzeugen'; }
+  }
+}
+
+async function _angDeleteRecord(recId) {
+  if (!confirm('Angebot wirklich löschen?')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    toast('🗑 Gelöscht','ok');
+    document.getElementById('ang-detail')?.remove();
+    _angeboteCache.firma = null;
+    renderAngeboteView({force:true});
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
