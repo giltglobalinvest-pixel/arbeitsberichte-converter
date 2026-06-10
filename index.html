@@ -2599,7 +2599,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.47';
+const APP_VERSION = 'v4.48';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18992,20 +18992,27 @@ function _deBericht(rec) {
     firma: f.firma || '',
   };
 }
+/* Rechnungen kommen direkt aus dem ERP und sind FLACHE Objekte (kein .fields-Wrapper).
+   Siehe _normalizeRechnung() — Felder: id, nummer, datum, faellig, bezahltAm, netto,
+   brutto, kunde_name, kunde_nummer, auftrag_nummer, anlage_adresse, fabriknummer, status, ... */
 function _deRechnung(rec) {
-  const f = rec.fields || {};
+  // Falls trotzdem mal ein Airtable-Wrapper drinsteckt (Legacy), auflösen
+  const r = rec && rec.fields ? rec.fields : (rec || {});
   const see = canSeePrices();
   return {
-    id: rec.id,
-    rechnung_num: f.rechnung_num || f.nummer || '',
-    datum: f.datum || '',
-    kunde_name: f.kunde_name || '',
-    standort: f.standort || '',
-    netto: see ? (+f.netto || null) : null,
-    brutto: see ? (+f.brutto || null) : null,
-    status: f.status || '',
-    auftrag_num: f.auftrag_num || null,
-    firma: f.firma || '',
+    id: String(r.id || ''),
+    rechnung_num: r.nummer || r.rechnung_num || '',
+    datum: r.datum || '',
+    faellig: r.faellig || '',
+    bezahlt_am: r.bezahltAm || r.bezahlt_am || '',
+    kunde_name: r.kunde_name || '',
+    kunde_nummer: r.kunde_nummer || '',
+    standort: r.anlage_adresse || r.standort || '',
+    fabriknummer: r.fabriknummer || '',
+    netto: see ? (+r.netto || null) : null,
+    brutto: see ? (+r.brutto || null) : null,
+    status: r.status || '',
+    auftrag_num: r.auftrag_nummer || r.auftrag_num || null,
   };
 }
 function _deVertrag(rec) {
@@ -19125,6 +19132,30 @@ function renderDataExtractView() {
   if (!hasPermission('tool_data_extract')) return;
   const body = document.getElementById('extract-body');
   if (!body) return;
+  // Silent-Load der ERP-Daten beim ersten Öffnen, falls Caches leer sind.
+  // Aufträge: Cache wird hier nicht angetastet — die Aufträge-View kümmert sich beim Laden.
+  // Rechnungen: silent vom ERP nachholen, damit Daten beim Erstaufruf verfügbar sind.
+  try {
+    if (!isFirmaAll()
+        && typeof _loadRechnungenFromERP === 'function'
+        && (!_rechnungenCache?.items || _rechnungenCache.items.length === 0)
+        && !window._extractRechnungenLoading) {
+      window._extractRechnungenLoading = true;
+      _loadRechnungenFromERP({ silent: true })
+        .catch(() => {})
+        .finally(() => {
+          window._extractRechnungenLoading = false;
+          // Counts neu zeichnen falls View noch offen
+          const v = document.getElementById('extract-view');
+          if (v && v.classList.contains('show')) {
+            const before = document.getElementById('extract-prompt')?.value || '';
+            renderDataExtractView();
+            const t = document.getElementById('extract-prompt');
+            if (t && before) t.value = before;
+          }
+        });
+    }
+  } catch(_){}
   const datasetKeys = Object.keys(_DE_DATASETS);
   const counts = {};
   for (const k of datasetKeys) {
@@ -19165,9 +19196,10 @@ function renderDataExtractView() {
             '💡 Tipp: Vor dem Abfragen ggf. die jeweiligen Listen einmal öffnen (zum Laden in den Cache).'+
           '</div>'+
         '</div>'+
-        // Run-Button
+        // Run-Button + ERP-Refresh
         '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
           '<button class="btn prim" id="extract-run-btn" onclick="_extractRun()" style="font-size:14px;padding:10px 20px">🚀 Anfrage senden</button>'+
+          '<button class="btn" id="extract-refresh-btn" onclick="_extractRefreshErp()" title="Rechnungen + Aufträge frisch aus dem ERP holen, bevor du fragst" style="font-size:12px">↻ ERP-Daten frisch laden</button>'+
           '<button class="btn" onclick="document.getElementById(\'extract-prompt\').value=\'\'" style="font-size:12px">Leeren</button>'+
           '<span id="extract-status" style="font-size:12px;color:var(--txt3)"></span>'+
         '</div>'+
@@ -19190,6 +19222,44 @@ function renderDataExtractView() {
       '<div id="extract-result" style="margin-top:8px"></div>'+
     '</div>'
   );
+}
+
+/**
+ * Lädt die ERP-basierten Datensätze (Rechnungen + Aufträge) frisch vom ERP nach.
+ * Andere Caches (Berichte, DAs, GBUs, ...) sind Airtable-basiert und werden von ihren
+ * jeweiligen Views geladen — nicht hier triggern.
+ */
+async function _extractRefreshErp() {
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen','err');
+  const btn = document.getElementById('extract-refresh-btn');
+  const status = document.getElementById('extract-status');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ lade ERP…'; }
+  if (status) status.textContent = 'lade Aufträge + Rechnungen aus dem ERP…';
+  let okCount = 0, errs = [];
+  // Aufträge — alle Pages
+  try {
+    if (typeof loadAuftraegeAndRender === 'function') {
+      await loadAuftraegeAndRender();
+      okCount++;
+    }
+  } catch(e) { errs.push('Aufträge: '+e.message); }
+  // Rechnungen — silent=false damit User Toast bekommt
+  try {
+    if (typeof _loadRechnungenFromERP === 'function') {
+      await _loadRechnungenFromERP({ silent: true });
+      okCount++;
+    }
+  } catch(e) { errs.push('Rechnungen: '+e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = '↻ ERP-Daten frisch laden'; }
+  if (status) status.textContent = '';
+  if (okCount > 0 && !errs.length) toast('✅ ERP-Daten aktualisiert','ok');
+  else if (okCount > 0) toast('⚠ Teilweise geladen — '+errs.join(' · ').slice(0,200),'warn');
+  else toast('❌ Laden fehlgeschlagen: '+errs.join(' · ').slice(0,200),'err');
+  // Aktuellen Prompt vor Re-Render sichern, danach wieder einsetzen
+  const before = document.getElementById('extract-prompt')?.value || '';
+  renderDataExtractView();
+  const t = document.getElementById('extract-prompt');
+  if (t && before) t.value = before;
 }
 
 function _extractLoadFromHistory(idx) {
