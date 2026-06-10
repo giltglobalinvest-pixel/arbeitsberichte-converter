@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.59';
+const APP_VERSION = 'v4.60';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19014,6 +19014,11 @@ const ANGEBOTE_TABLE_FIELDS = [
   // Output
   { name:'app_pdf',                 type:'multipleAttachments' },
   { name:'notizen',                 type:'multilineText'  },
+  // ERP-Verknüpfung (nach Push)
+  { name:'erp_angebot_id',          type:'singleLineText' },
+  { name:'erp_angebot_nummer',      type:'singleLineText' },
+  { name:'erp_angebot_url',         type:'singleLineText' },
+  { name:'erp_pushed_at',           type:'singleLineText' },
 ];
 
 let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
@@ -20224,6 +20229,7 @@ function openAngebotDetail(recId) {
         '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+(f.kunde_nummer?' (Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
         (f.kone_angebot_num ? '<div><strong>🔗 '+escapeHtml(f.anbieter||'Original')+':</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
+        (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 Im ERP:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
         (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
@@ -20261,10 +20267,159 @@ function openAngebotDetail(recId) {
       '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'ang-detail\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_angDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)">🗑 Löschen</button>'+
+        '<button class="btn" onclick="_angPushToErp(\''+recId+'\', this)" style="background:#10B981;color:#fff;border-color:#10B981" title="'+(f.erp_angebot_id ? 'Erneut ins ERP pushen' : 'Als Pauschal-Angebot ins ERP pushen')+'">📤 '+(f.erp_angebot_id ? 'Erneut ins ERP' : 'Ins ERP pushen')+'</button>'+
         '<button class="btn prim" onclick="openAngebotEditor({editMode:true,recId:\''+recId+'\'})" title="Angebot ändern + PDF neu generieren">✏️ Bearbeiten</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+}
+
+/**
+ * Pusht ein App-Angebot ins ERP als Pauschal-Angebot. Strategie:
+ *  - Eine Position, Summe-Netto-VP als Pauschalpreis
+ *  - Erläuterung enthält "EXTERNES ANGEBOT — siehe Servicebox App (ANG-X)"
+ *  - so wird das Angebot im ERP sichtbar und kann später in einen Auftrag umgewandelt werden
+ *
+ * Mehrere Endpoint-Kandidaten + extensives Logging — wir wissen das genaue
+ * ERP-Schema für POST /api/angebote nicht, also defensiv und transparent.
+ */
+async function _angPushToErp(recId, btn) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Angebot nicht gefunden','err');
+  const f = rec.fields || {};
+  if (!f.anlage_id) return toast('Keine Anlage verknüpft','err');
+  if (!f.kunde_nummer) return toast('Kein Kunde verknüpft','err');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (firmaSlug !== getCurrentFirmaSlug()) return toast('Bitte oben rechts die richtige Firma ('+firmaSlug+') wählen','err');
+  if (f.erp_angebot_id && !confirm('Dieses Angebot wurde bereits ins ERP gepusht (ID '+f.erp_angebot_id+').\n\nNochmal pushen? Das erzeugt ein zweites ERP-Angebot.')) return;
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ pushe ins ERP…'; }
+  try {
+    const today = new Date().toISOString().slice(0,10);
+    const inDays = (n) => { const d = new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+    const sumNetto = +f.summe_netto_vp || 0;
+    if (sumNetto <= 0) throw new Error('Summe VP netto ist 0 — kein sinnvoller ERP-Push möglich.');
+    // Positionen für Kurztitel
+    let positionen = [];
+    try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    const kurzTitel = positionen[0]?.titel || 'Reparatur / externes Angebot';
+    const bezeichnung = '['+(f.angebot_typ||'sonstiges').toUpperCase()+'] '+kurzTitel.slice(0,80);
+    // Erläuterung — der entscheidende Hinweis für ERP-User
+    const erlaeuterung = [
+      '═══════════════════════════════════════════',
+      'EXTERNES ANGEBOT — Details in der Servicebox App',
+      '═══════════════════════════════════════════',
+      '',
+      'App-Angebot:    ANG-'+(f.app_angebot_num||'?'),
+      'Anbieter:       '+(f.anbieter||'Original'),
+      'Anbieter-Nr.:   '+(f.kone_angebot_num||'?'),
+      'Bearbeiter:     '+(f.bearbeiter||'?'),
+      'Erstellt am:    '+(f.erstellt_am||today),
+      '',
+      'Pauschalpreis netto:  '+sumNetto.toFixed(2).replace('.',',')+' EUR',
+      'USt:                  '+(+f.ust_prozent||19)+' %',
+      'Brutto:               '+(+f.summe_brutto_vp||0).toFixed(2).replace('.',',')+' EUR',
+      '',
+      'Positionen (Übersicht):',
+    ];
+    for (let i = 0; i < positionen.length; i++) {
+      const p = positionen[i];
+      const ges = (+p.vp||0) * (+p.menge||1);
+      erlaeuterung.push(' '+(i+1)+'. '+(p.titel||'').slice(0,100));
+      erlaeuterung.push('    Gesamt: '+ges.toFixed(2).replace('.',',')+' EUR netto');
+    }
+    erlaeuterung.push('');
+    erlaeuterung.push('→ Vollständiges Angebot inkl. AGB im Aszendio-PDF (siehe Servicebox App).');
+    const erlaeuterungText = erlaeuterung.join('\n');
+
+    // Payload — defensive Variante mit redundanten Feldnamen, da ERP-Schema unbekannt
+    const payload = {
+      anlageid:               +f.anlage_id,
+      kundeid:                +f.kunde_nummer || undefined,
+      empfaengerid:           +f.kunde_nummer || undefined,
+      angebotsdatum:          today,
+      datumAngebotserstellung: today,
+      gueltigBis:             inDays(30),
+      bezeichnung:            bezeichnung,
+      titel:                  bezeichnung,
+      leistungsumfang:        kurzTitel,
+      leistungsbeschreibung:  kurzTitel,
+      erlaeuterungen:         erlaeuterungText,
+      erlaeuterung:           erlaeuterungText,
+      bestellform:            'PAUSCHAL',
+      kalkulationsart:        'PAUSCHAL',
+      angebotstyp:            'PAUSCHAL',
+      nettosumme:             sumNetto,
+      gesamtnettobetrag:      sumNetto,
+      preis_netto:            sumNetto,
+      preisNetto:             sumNetto,
+      ust_prozent:            +f.ust_prozent || 19,
+      umsatzsteuer:           +f.ust_prozent || 19,
+      kundeMail:              false,
+      titelemail:             '-',
+      inhaltemail:            '-',
+      status:                 'In Bearbeitung',
+      auftraggeber:           f.kunde_name || '',
+    };
+    console.log('[ERP-Angebot-Push] Payload:', JSON.stringify(payload, null, 2));
+
+    const candidates = ['api/angebote/pauschal','api/angebote/reparatur','api/angebote','angebote'];
+    let created = null, lastErr = null;
+    for (const p of candidates) {
+      try {
+        created = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: payload });
+        console.log('[ERP-Angebot-Push] OK via:', p, created);
+        break;
+      } catch(e) {
+        console.warn('[ERP-Angebot-Push] '+p+' →', e.status, e.message);
+        if (!lastErr) lastErr = e;
+        if (e.status === 404) continue;
+        throw e;  // Bei 4xx/5xx echten Fehler weiterwerfen
+      }
+    }
+    if (!created) throw (lastErr || new Error('Kein /api/angebote-Endpunkt gefunden'));
+
+    // ERP-Angebot-Daten extrahieren
+    const erpId  = String(created.id || created.angebotid || created.angebotId || '');
+    const erpNr  = String(created.angebotsnummer || created.nummer || created.belegnummer || '');
+    // URL bauen — siehe Firmen-Konfig
+    const fm = (_firmenCache||[]).find(x => x.fields.slug === firmaSlug);
+    const baseUrl = fm?.fields?.erp_auftrag_url || '';
+    const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
+    const erpUrl = erpHost && erpId ? (erpHost + '/angebote/' + erpId) : '';
+
+    // Im App-Record persistieren
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: {
+        erp_angebot_id: erpId,
+        erp_angebot_nummer: erpNr,
+        erp_angebot_url: erpUrl,
+        erp_pushed_at: new Date().toISOString(),
+      }}),
+    });
+    const idx = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
+    if (idx >= 0) {
+      _angeboteCache.items[idx].fields.erp_angebot_id     = erpId;
+      _angeboteCache.items[idx].fields.erp_angebot_nummer = erpNr;
+      _angeboteCache.items[idx].fields.erp_angebot_url    = erpUrl;
+      _angeboteCache.items[idx].fields.erp_pushed_at      = new Date().toISOString();
+    }
+    toast('✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+')','ok');
+    document.getElementById('ang-detail')?.remove();
+    openAngebotDetail(recId);
+  } catch(e) {
+    console.error('[ERP-Angebot-Push] Fehler:', e);
+    // Wenn ERP-Body mit Trace vorhanden: ausführliches Diagnose-Modal
+    if (typeof _showErpErrorDetails === 'function' && e && e.body && (e.body.upstream_body_excerpt || e.body.trace)) {
+      _showErpErrorDetails(e);
+    } else {
+      toast('❌ ERP-Push: '+(e.message||e).slice(0,200),'err');
+    }
+    if (btn) { btn.disabled = false; btn.textContent = origLabel || '📤 Ins ERP pushen'; }
+  }
 }
 
 async function _angSetStatus(recId, newStatus) {
