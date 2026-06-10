@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.60';
+const APP_VERSION = 'v4.61';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20332,14 +20332,20 @@ async function _angPushToErp(recId, btn) {
     erlaeuterung.push('→ Vollständiges Angebot inkl. AGB im Aszendio-PDF (siehe Servicebox App).');
     const erlaeuterungText = erlaeuterung.join('\n');
 
-    // Payload — defensive Variante mit redundanten Feldnamen, da ERP-Schema unbekannt
-    const payload = {
+    // Payload — Aufzugshandwerk ERP erwartet bei /api/angebote/pauschal ein NESTED-Schema:
+    //   { workPrice: <Double>, materialPrice?, angebot: { ... AngebotSETDTO } }
+    // Wir füllen das innere angebot-Objekt mit allen plausiblen Felder-Varianten,
+    // damit keine NotNull-Validation greift. Welche Felder das ERP wirklich liest,
+    // sehen wir nach dem ersten erfolgreichen Push im GET-Response.
+    const innerAngebot = {
       anlageid:               +f.anlage_id,
-      kundeid:                +f.kunde_nummer || undefined,
-      empfaengerid:           +f.kunde_nummer || undefined,
+      empfaengerid:           +f.kunde_nummer,
+      kundeid:                +f.kunde_nummer,
       angebotsdatum:          today,
       datumAngebotserstellung: today,
+      datumAngebot:           today,
       gueltigBis:             inDays(30),
+      gueltigkeitsdatum:      inDays(30),
       bezeichnung:            bezeichnung,
       titel:                  bezeichnung,
       leistungsumfang:        kurzTitel,
@@ -20348,11 +20354,6 @@ async function _angPushToErp(recId, btn) {
       erlaeuterung:           erlaeuterungText,
       bestellform:            'PAUSCHAL',
       kalkulationsart:        'PAUSCHAL',
-      angebotstyp:            'PAUSCHAL',
-      nettosumme:             sumNetto,
-      gesamtnettobetrag:      sumNetto,
-      preis_netto:            sumNetto,
-      preisNetto:             sumNetto,
       ust_prozent:            +f.ust_prozent || 19,
       umsatzsteuer:           +f.ust_prozent || 19,
       kundeMail:              false,
@@ -20360,10 +20361,19 @@ async function _angPushToErp(recId, btn) {
       inhaltemail:            '-',
       status:                 'In Bearbeitung',
       auftraggeber:           f.kunde_name || '',
+      notizen:                '',
+    };
+    const payload = {
+      workPrice:     sumNetto,
+      materialPrice: 0,
+      workshopPrice: 0,
+      travelPrice:   0,
+      angebot:       innerAngebot,
     };
     console.log('[ERP-Angebot-Push] Payload:', JSON.stringify(payload, null, 2));
 
-    const candidates = ['api/angebote/pauschal','api/angebote/reparatur','api/angebote','angebote'];
+    // Nur noch der bekannte Pauschal-Endpoint — den anderen brauchen wir nicht durchprobieren
+    const candidates = ['api/angebote/pauschal'];
     let created = null, lastErr = null;
     for (const p of candidates) {
       try {
