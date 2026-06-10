@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.58';
+const APP_VERSION = 'v4.59';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19624,6 +19624,16 @@ function _angEditorRender() {
   if (!m) return;
   const E = m._state;
   const body = document.getElementById('ang-ed-body');
+  // Focus + Cursor-Position vor dem Re-Render sichern, damit Tippen im Feld nicht
+  // bei jedem Keystroke aus dem Eingabefeld rausspringt.
+  const focusEl = document.activeElement;
+  const focusId = focusEl && focusEl.id;
+  let focusSelStart = null, focusSelEnd = null, focusScroll = null;
+  if (focusEl && (focusEl.tagName === 'INPUT' || focusEl.tagName === 'TEXTAREA')) {
+    try { focusSelStart = focusEl.selectionStart; focusSelEnd = focusEl.selectionEnd; } catch(_){}
+    focusScroll = focusEl.scrollTop;
+  }
+  const bodyScroll = body ? body.scrollTop : 0;
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   // Summen
   let sumKone = 0, sumVp = 0;
@@ -19657,15 +19667,9 @@ function _angEditorRender() {
     '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px">'+
       E.positionen.map((p, i) => _angRenderPositionRow(p, i)).join('')+
     '</div>'+
-    // Summary
-    '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
-      '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#7C2D12">'+
-        '<div><span style="color:var(--txt3);font-size:11px">Summe KONE (EK)</span><div style="font-weight:600">'+fmt(sumKone)+' € netto</div></div>'+
-        '<div><span style="color:var(--txt3);font-size:11px">Summe VP</span><div style="font-weight:700;font-size:15px;color:#9A3412">'+fmt(sumVp)+' € netto</div></div>'+
-        '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
-        '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(sumVp*ust/100)+' €</div></div>'+
-        '<div><span style="color:var(--txt3);font-size:11px">Summe VP Brutto</span><div style="font-weight:700;font-size:15px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
-      '</div>'+
+    // Summary — eigener Container, damit wir ihn bei VP-Tippen live aktualisieren können
+    '<div id="ang-summary-box" style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
+      _angRenderSummaryBoxHtml(E)+
     '</div>'+
     // Konditionen
     '<h3 style="margin:0 0 8px;font-size:14px;color:var(--navy)">📜 Konditionen</h3>'+
@@ -19681,6 +19685,20 @@ function _angEditorRender() {
     '</div>';
   // Wenn der Picker gerendert wurde, dessen Trefferliste initial befüllen
   if (!E.anlage_id) _angRenderAnlagePickerList();
+  // Focus/Cursor wiederherstellen — Re-Render würde sonst aus dem aktiven Feld rauswerfen
+  if (body && typeof bodyScroll === 'number') body.scrollTop = bodyScroll;
+  if (focusId) {
+    const newEl = document.getElementById(focusId);
+    if (newEl && (newEl.tagName === 'INPUT' || newEl.tagName === 'TEXTAREA' || newEl.tagName === 'SELECT')) {
+      try {
+        newEl.focus({ preventScroll:true });
+        if (focusSelStart !== null && typeof newEl.setSelectionRange === 'function') {
+          newEl.setSelectionRange(focusSelStart, focusSelEnd);
+        }
+        if (focusScroll !== null) newEl.scrollTop = focusScroll;
+      } catch(_){}
+    }
+  }
 }
 
 /**
@@ -19817,6 +19835,30 @@ function _angOpenCreateAnlage() {
   setTimeout(() => toast('💡 Nach Anlegen: ↻ klicken um die neue Anlage zu finden','', ), 1200);
 }
 
+/**
+ * Reines HTML-Snippet für die Summen-Box. Wird beim VP-/Mengen-Tippen
+ * direkt in den Container geschrieben (kein voller Re-Render).
+ */
+function _angRenderSummaryBoxHtml(E) {
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  let sumKone = 0, sumVp = 0;
+  for (const p of E.positionen) {
+    sumKone += (+p.ep_kone||0) * (+p.menge||1);
+    sumVp   += (+p.vp||0)      * (+p.menge||1);
+  }
+  const ust = +E.ust_prozent || 19;
+  const brutto = sumVp * (1 + ust/100);
+  const margeAbs = sumVp - sumKone;
+  const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
+  return '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#7C2D12">'+
+    '<div><span style="color:var(--txt3);font-size:11px">Summe EK (Anbieter)</span><div style="font-weight:600">'+fmt(sumKone)+' € netto</div></div>'+
+    '<div><span style="color:var(--txt3);font-size:11px">Summe VP</span><div style="font-weight:700;font-size:15px;color:#9A3412">'+fmt(sumVp)+' € netto</div></div>'+
+    '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
+    '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(sumVp*ust/100)+' €</div></div>'+
+    '<div><span style="color:var(--txt3);font-size:11px">Summe VP Brutto</span><div style="font-weight:700;font-size:15px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
+  '</div>';
+}
+
 function _angRenderPositionRow(p, i) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   const gesamt = (+p.vp||0) * (+p.menge||1);
@@ -19848,8 +19890,21 @@ function _angSetPos(i, field, value) {
   if (!m || !m._state || !m._state.positionen[i]) return;
   const v = (field === 'vp' || field === 'menge' || field === 'ep_kone') ? (+value||0) : value;
   m._state.positionen[i][field] = v;
-  // Live-Re-Render der Summen-Box (kompletter Editor neu, um Margenberechnung zu refreshen)
-  _angEditorRender();
+  // Titel-Änderung: kein Re-Render nötig (kein Wert auf Summen).
+  // VP/Menge: nur betroffene "Gesamt"-Zelle + Summary-Box neu berechnen — KEIN voller Re-Render
+  // (das würde den Cursor aus dem Input werfen).
+  if (field === 'vp' || field === 'menge') {
+    const p = m._state.positionen[i];
+    const ges = (+p.vp||0) * (+p.menge||1);
+    const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+    const sumCell = document.getElementById('ang-pos-sum-'+i);
+    if (sumCell) sumCell.textContent = fmt(ges)+' €';
+    // Summary-Box (am Ende der Positionsliste) live refreshen
+    const sumBox = document.getElementById('ang-summary-box');
+    if (sumBox && typeof _angRenderSummaryBoxHtml === 'function') {
+      sumBox.innerHTML = _angRenderSummaryBoxHtml(m._state);
+    }
+  }
 }
 
 async function _angEditorSave() {
