@@ -1443,6 +1443,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       </div>
     </div>
 
+    <button class="tnav" id="tnav-extract" onclick="switchView('extract')" style="display:none">🔎 Daten-Extraktor</button>
     <button class="tnav" id="tnav-info" onclick="switchView('info')">📚 Infobereich</button>
     <!-- Mobile-only Drawer-Erweiterung (auf Desktop ausgeblendet) -->
     <div class="drawer-divider"></div>
@@ -2028,6 +2029,14 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-body" id="info-list" style="padding:20px"></div>
 </div>
 
+<!-- DATEN-EXTRAKTOR (natürlichsprachige Abfragen über alle Datenquellen, via Claude) -->
+<div class="firma-view" id="extract-view">
+  <div class="firma-hdr">
+    <h2>🔎 Daten-Extraktor <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">Stell der KI eine Frage zu deinen Daten</span></h2>
+  </div>
+  <div class="firma-body" id="extract-body" style="padding:20px"></div>
+</div>
+
 <!-- PREISLISTEN (Kundenpreislisten-Übersicht, nur Admin) -->
 <div class="firma-view" id="pl-view">
   <div class="firma-hdr">
@@ -2590,7 +2599,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.46';
+const APP_VERSION = 'v4.47';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3263,6 +3272,8 @@ async function showApp() {
   document.getElementById('tnav-auftraege').style.display = hasPermission('tool_auftraege') ? '' : 'none';
   document.getElementById('tnav-anlagen').style.display   = hasPermission('tool_anlagen') ? '' : 'none';
   document.getElementById('tnav-da').style.display        = hasPermission('tool_datenaufnahmen') ? '' : 'none';
+  const tnavExtract = document.getElementById('tnav-extract');
+  if (tnavExtract) tnavExtract.style.display              = hasPermission('tool_data_extract') ? '' : 'none';
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
   trackEvent('app', 'login');
@@ -3803,6 +3814,7 @@ function switchView(view) {
   if (view==='auftraege' && !hasPermission('tool_auftraege')) return toast('🔒 Keine Berechtigung','err');
   if (view==='anlagen' && !hasPermission('tool_anlagen')) return toast('🔒 Keine Berechtigung','err');
   if (view==='da' && !hasPermission('tool_datenaufnahmen')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='extract' && !hasPermission('tool_data_extract')) return toast('🔒 Keine Berechtigung','err');
   if (view==='dav' && !isAdmin()) return;
 
   const dash = document.getElementById('dash-view');
@@ -3827,7 +3839,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -3855,6 +3867,8 @@ function switchView(view) {
   if (rollen) rollen.classList.toggle('show', view==='rollen');
   if (da) da.classList.toggle('show', view==='da');
   if (dav) dav.classList.toggle('show', view==='dav');
+  const extract = document.getElementById('extract-view');
+  if (extract) extract.classList.toggle('show', view==='extract');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3875,6 +3889,7 @@ function switchView(view) {
   if (view==='rollen') renderRollenView();
   if (view==='da') renderDatenaufnahmenView();
   if (view==='dav') renderDaVorlagenView();
+  if (view==='extract') renderDataExtractView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -4901,6 +4916,11 @@ const FEATURES = {
     desc:  'Zugriff auf die ERP-Anlagenliste (Übersicht aller Anlagen mit Adresse, Kunde, Fabriknummer).',
     default: true,
   },
+  tool_data_extract: {
+    label: 'Tool: Daten-Extraktor (KI)',
+    desc:  'Natürlichsprachige Abfragen über Aufträge, Berichte, Rechnungen, Verträge, Datenaufnahmen, GBUs, Liftaro, Kunden, Anlagen — beantwortet via Claude. Greift auf alle Daten zu, daher typischerweise nur für Verwalter/Admins.',
+    default: false,
+  },
   auftraege_view_all: {
     label: 'Aufträge: Alle anzeigen',
     desc:  'Verwalter-Sicht: sieht alle Aufträge der Firma. Ohne diese Berechtigung nur eigene zugewiesene.',
@@ -4988,6 +5008,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
+      tool_data_extract:true,
     },
   },
   { name:'Verwalter', sort_order:2, is_system:true,
@@ -4998,6 +5019,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
+      tool_data_extract:true,
     },
   },
   { name:'Techniker', sort_order:3, is_system:true,
@@ -18911,6 +18933,451 @@ function renderInfoView() {
         'Wünsche / Anregungen gerne an <a href="mailto:service@aszendio.com" style="color:#047857;font-weight:600">service@aszendio.com</a>.'+
       '</div>'+
     '</div>';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DATEN-EXTRAKTOR
+   - Textfeld für natürlichsprachige Frage
+   - Datensatz-Filter (Aufträge, Berichte, Rechnungen, Verträge, DAs, GBUs,
+     Liftaro, Kunden, Anlagen)
+   - Sendet Frage + kompakte Datenrepräsentation an Claude (sonnet-4-6)
+   - Claude liefert JSON: { title, columns, rows, summary }
+   - App rendert Tabelle + CSV-Export + Verlauf
+   ─────────────────────────────────────────────────────────────────────── */
+
+const _DE_DATASETS = {
+  auftraege:      { label:'Aufträge',         icon:'🛠',  cache:() => _auftragCache,             pick: _deAuftrag },
+  berichte:       { label:'Berichte',         icon:'📋', cache:() => S.history || [],            pick: _deBericht },
+  rechnungen:     { label:'Rechnungen',       icon:'💶', cache:() => _rechnungenCache?.items||[],pick: _deRechnung },
+  vertraege:      { label:'Wartungsverträge', icon:'📑', cache:() => _wartungsvertraegeCache?.items||[], pick: _deVertrag },
+  datenaufnahmen: { label:'Datenaufnahmen',   icon:'🔍', cache:() => _daCache?.items || [],      pick: _deDatenaufnahme },
+  gbus:           { label:'GBUs',             icon:'⚠️', cache:() => _gbuCache?.items || [],     pick: _deGbu },
+  liftaro:        { label:'Liftaro-Anfragen', icon:'🛗', cache:() => _liftaroCache?.items || [], pick: _deLiftaro },
+  kunden:         { label:'Kunden',           icon:'👥', cache:() => _kundenCache?.items || [],  pick: _deKunde },
+  anlagen:        { label:'Anlagen',          icon:'🏢', cache:() => _anlagenCache?.items || [], pick: _deAnlage },
+};
+
+/* Compact-Picker pro Datasource. Nur essenzielle Felder mit klaren Namen. */
+function _deAuftrag(rec) {
+  const f = rec.fields || {};
+  const see = canSeePrices();
+  return {
+    id: rec.id,
+    auftrag_num: f.auftrag_num || null,
+    datum: f.datum || f.created_at || f.fertigstellung || null,
+    standort: f.standort || f.adresse || '',
+    fabriknummer: f.fabriknummer || '',
+    kunde_name: f.kunde_name || '',
+    kunde_id: f.kunde_id || '',
+    angebot_typ: f.angebot_typ || '',
+    status: f.status || '',
+    preis: see ? (+f.preis || +f.auftragswert || null) : null,
+    techniker: f.techniker_namen || f.techniker || '',
+    has_bericht: !!f.bericht_id,
+    firma: f.firma || '',
+  };
+}
+function _deBericht(rec) {
+  const f = rec.fields || {};
+  return {
+    id: rec.id,
+    bericht_num: f.bericht_num || null,
+    datum: f.datum || '',
+    standort: f.standort || '',
+    fabriknummer: f.fabriknummer || '',
+    kunde_name: f.kunde_name || '',
+    techniker: f.techniker || '',
+    tmpl: f.tmpl || '',
+    auftrag_num: f.auftrag_num || null,
+    firma: f.firma || '',
+  };
+}
+function _deRechnung(rec) {
+  const f = rec.fields || {};
+  const see = canSeePrices();
+  return {
+    id: rec.id,
+    rechnung_num: f.rechnung_num || f.nummer || '',
+    datum: f.datum || '',
+    kunde_name: f.kunde_name || '',
+    standort: f.standort || '',
+    netto: see ? (+f.netto || null) : null,
+    brutto: see ? (+f.brutto || null) : null,
+    status: f.status || '',
+    auftrag_num: f.auftrag_num || null,
+    firma: f.firma || '',
+  };
+}
+function _deVertrag(rec) {
+  const f = rec.fields || {};
+  const see = canSeePrices();
+  return {
+    id: rec.id,
+    vertrag_num: f.vertrag_num || '',
+    datum: f.datum || f.start_datum || '',
+    kunde_name: f.kunde_name || '',
+    fabriknummer: f.fabriknummer || '',
+    status: f.status || '',
+    preis: see ? (+f.preis || null) : null,
+    firma: f.firma || '',
+  };
+}
+function _deDatenaufnahme(rec) {
+  const f = rec.fields || {};
+  let cpCount = 0;
+  try { cpCount = JSON.parse(f.checkpunkte_json||'[]').length; } catch(_){}
+  return {
+    id: rec.id,
+    da_num: f.da_num || null,
+    erstellt_am: f.erstellt_am || '',
+    aufgenommen_am: f.aufgenommen_am || '',
+    fabriknummer: f.anlage_fabriknummer || '',
+    standort: f.anlage_adresse || '',
+    kunde_name: f.kunde_name || '',
+    status: f.status || '',
+    checkpunkte: cpCount,
+    fd_ticket_id: f.fd_ticket_id || null,
+    firma: f.firma || '',
+  };
+}
+function _deGbu(rec) {
+  const f = rec.fields || {};
+  return {
+    id: rec.id,
+    gbu_num: f.gbu_num || '',
+    datum: f.datum || f.erstellt_am || '',
+    fabriknummer: f.anlage_fabriknummer || f.fabriknummer || '',
+    kunde_name: f.kunde_name || '',
+    status: f.status || '',
+    firma: f.firma || '',
+  };
+}
+function _deLiftaro(rec) {
+  const f = rec.fields || {};
+  return {
+    id: rec.id,
+    anfrage_id: f.anfrage_id || '',
+    status: f.status || '',
+    sent_at: f.sent_at || '',
+    deadline_at: f.deadline_at || '',
+    objekt_adresse: f.objekt_adresse || '',
+    kunde: f.kunde || '',
+    archived: !!f.archived,
+    firma: f.firma || '',
+  };
+}
+function _deKunde(rec) {
+  const f = rec.fields || {};
+  return {
+    id: rec.id,
+    kundennummer: f.kundennummer || '',
+    firmenname: f.firmenname || '',
+    plz: f.plz || '',
+    ort: f.ort || '',
+    firma: f.firma || '',
+  };
+}
+function _deAnlage(rec) {
+  const f = rec.fields || {};
+  return {
+    id: rec.id,
+    fabriknummer: f.fabriknummer || '',
+    standort: f.anzeigeAdresse || f.adresse || '',
+    kunde_name: f.kunde_name || '',
+    objekttyp: f.objekttyp || '',
+    firma: f.firma || '',
+  };
+}
+
+/* Sammelt alle aktivierten Datensätze in kompakter Form.
+   Pro Set Cap auf MAX_ROWS_PER_SET, damit der Prompt nicht zu groß wird. */
+const _DE_MAX_ROWS_PER_SET = 800;
+function _extractCollectDatasets(enabled) {
+  const out = {};
+  let truncated = false;
+  for (const key of Object.keys(_DE_DATASETS)) {
+    if (!enabled[key]) continue;
+    const def = _DE_DATASETS[key];
+    let rows = [];
+    try { rows = (def.cache() || []).map(def.pick); } catch(e) { console.warn('[DE] collect '+key, e); }
+    if (rows.length > _DE_MAX_ROWS_PER_SET) {
+      rows = rows.slice(0, _DE_MAX_ROWS_PER_SET);
+      truncated = true;
+    }
+    out[key] = { label: def.label, count: rows.length, items: rows };
+  }
+  return { datasets: out, truncated };
+}
+
+/* localStorage-Verlauf (letzte 10 Anfragen). */
+const _DE_HISTORY_KEY = 'data_extract_history_v1';
+function _extractGetHistory() {
+  try { return JSON.parse(localStorage.getItem(_DE_HISTORY_KEY)||'[]'); } catch(_) { return []; }
+}
+function _extractAddHistory(item) {
+  const h = _extractGetHistory();
+  h.unshift(item);
+  while (h.length > 10) h.pop();
+  try { localStorage.setItem(_DE_HISTORY_KEY, JSON.stringify(h)); } catch(_){}
+}
+
+function renderDataExtractView() {
+  if (!hasPermission('tool_data_extract')) return;
+  const body = document.getElementById('extract-body');
+  if (!body) return;
+  const datasetKeys = Object.keys(_DE_DATASETS);
+  const counts = {};
+  for (const k of datasetKeys) {
+    try { counts[k] = (_DE_DATASETS[k].cache() || []).length; } catch(_) { counts[k] = 0; }
+  }
+  const lastPrompt = _extractGetHistory()[0]?.prompt || '';
+  body.innerHTML = (
+    '<div style="max-width:900px;margin:0 auto">'+
+      '<div style="background:linear-gradient(135deg,#1A3353 0%,#2152A9 100%);color:#fff;border-radius:14px;padding:20px 24px;margin-bottom:18px;box-shadow:0 4px 16px rgba(33,82,169,.2)">'+
+        '<div style="font-size:12px;opacity:.85;letter-spacing:.5px;font-weight:600;margin-bottom:4px">DATEN-EXTRAKTOR · KI</div>'+
+        '<div style="font-size:20px;font-weight:700;margin-bottom:6px">Stell der KI eine Frage zu deinen Daten</div>'+
+        '<div style="font-size:13px;opacity:.92;line-height:1.5">'+
+          'Beispiel: <em>„Mach mir eine Liste aller Aufträge, die nach Aufwand in diesem Jahr mit dem Kunden Digital Spine abgerechnet wurden."</em><br>'+
+          'Tipp: Wähle unten welche Datensätze einbezogen werden. Je weniger, desto schneller und präziser.'+
+        '</div>'+
+      '</div>'+
+      // Prompt-Eingabe
+      '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:18px;margin-bottom:14px">'+
+        '<label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Deine Frage</label>'+
+        '<textarea id="extract-prompt" rows="4" placeholder="z.B. Wie viele Aufträge wurden 2026 für Digital Spine nach Aufwand abgerechnet?"'+
+          ' style="width:100%;padding:12px 14px;border:2px solid var(--bdr);border-radius:8px;font-size:14px;font-family:inherit;line-height:1.5;resize:vertical;color:#222;-webkit-text-fill-color:#222;background:#fff">'+escapeHtml(lastPrompt)+'</textarea>'+
+        // Dataset-Auswahl
+        '<div style="margin-top:14px">'+
+          '<label style="font-size:12px;font-weight:700;color:var(--navy);display:block;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">Datensätze einbeziehen</label>'+
+          '<div id="extract-datasets" style="display:flex;flex-wrap:wrap;gap:8px">'+
+            datasetKeys.map(k => {
+              const c = counts[k];
+              const isEmpty = !c;
+              const defChecked = !isEmpty;
+              return '<label style="display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border:1px solid var(--bdr);border-radius:99px;cursor:'+(isEmpty?'not-allowed':'pointer')+';background:'+(isEmpty?'#f5f5f5':'#fff')+';font-size:12px;opacity:'+(isEmpty?'.5':'1')+'">'+
+                '<input type="checkbox" data-de-key="'+k+'" '+(defChecked?'checked':'')+' '+(isEmpty?'disabled':'')+' style="margin:0">'+
+                '<span>'+_DE_DATASETS[k].icon+' '+_DE_DATASETS[k].label+'</span>'+
+                '<span style="color:var(--txt3);font-weight:600">'+c+'</span>'+
+              '</label>';
+            }).join('')+
+          '</div>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:6px">'+
+            '💡 Tipp: Vor dem Abfragen ggf. die jeweiligen Listen einmal öffnen (zum Laden in den Cache).'+
+          '</div>'+
+        '</div>'+
+        // Run-Button
+        '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
+          '<button class="btn prim" id="extract-run-btn" onclick="_extractRun()" style="font-size:14px;padding:10px 20px">🚀 Anfrage senden</button>'+
+          '<button class="btn" onclick="document.getElementById(\'extract-prompt\').value=\'\'" style="font-size:12px">Leeren</button>'+
+          '<span id="extract-status" style="font-size:12px;color:var(--txt3)"></span>'+
+        '</div>'+
+      '</div>'+
+      // Verlauf (Last 5)
+      (() => {
+        const h = _extractGetHistory().slice(0,5);
+        if (!h.length) return '';
+        return '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
+          '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">Letzte Anfragen</div>'+
+          h.map((it, i) =>
+            '<div style="padding:6px 8px;border-top:'+(i===0?'none':'1px solid var(--bdr)')+';display:flex;gap:10px;align-items:center;justify-content:space-between;font-size:12px">'+
+              '<span style="flex:1;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(it.prompt.slice(0,120))+'</span>'+
+              '<button class="btn" onclick="_extractLoadFromHistory('+i+')" style="font-size:11px;padding:3px 8px">↺ Erneut</button>'+
+            '</div>'
+          ).join('')+
+        '</div>';
+      })()+
+      // Ergebnis-Container
+      '<div id="extract-result" style="margin-top:8px"></div>'+
+    '</div>'
+  );
+}
+
+function _extractLoadFromHistory(idx) {
+  const h = _extractGetHistory();
+  const item = h[idx]; if (!item) return;
+  const t = document.getElementById('extract-prompt');
+  if (t) { t.value = item.prompt; t.focus(); t.scrollIntoView({behavior:'smooth',block:'center'}); }
+}
+
+async function _extractRun() {
+  const promptEl = document.getElementById('extract-prompt');
+  const prompt = (promptEl?.value || '').trim();
+  if (!prompt) return toast('Bitte eine Frage eingeben','err');
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert','err');
+  // Aktivierte Datensätze einsammeln
+  const checks = document.querySelectorAll('#extract-datasets input[type=checkbox]');
+  const enabled = {};
+  checks.forEach(c => { if (c.checked) enabled[c.dataset.deKey] = true; });
+  if (Object.keys(enabled).length === 0) return toast('Bitte mindestens einen Datensatz auswählen','err');
+
+  const btn = document.getElementById('extract-run-btn');
+  const status = document.getElementById('extract-status');
+  const resultEl = document.getElementById('extract-result');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Frage Claude…'; }
+  if (status) status.textContent = '';
+  if (resultEl) resultEl.innerHTML = '<div style="padding:30px;text-align:center"><div class="spinner" style="margin:0 auto 12px"></div>Sammle Daten + frage die KI…</div>';
+
+  try {
+    const t0 = performance.now();
+    const collected = _extractCollectDatasets(enabled);
+    const dataStr = JSON.stringify(collected.datasets);
+    const sizeKb = Math.round(dataStr.length / 1024);
+    if (status) status.textContent = sizeKb + ' KB Daten · sende an Claude…';
+
+    // System-Prompt: Claude soll JSON zurückgeben
+    const fullPrompt =
+      'Du bist ein Daten-Analyst für eine Aufzugservice-App. Beantworte die FRAGE des Users '+
+      'ausschließlich anhand der bereitgestellten DATEN (JSON unten). Wenn etwas nicht in den Daten steht, sag das ehrlich.\n\n'+
+      'Heutiges Datum: '+new Date().toISOString().slice(0,10)+'\n\n'+
+      'DATEN (kompakte Sicht auf die Caches in der App):\n```json\n'+dataStr+'\n```\n\n'+
+      'FRAGE:\n'+prompt+'\n\n'+
+      'ANTWORTE AUSSCHLIESSLICH MIT VALID JSON in diesem Schema (keine Markdown-Code-Fences, keine Erklärung außerhalb des JSON):\n'+
+      '{\n'+
+      '  "title": "<kurzer Titel der Auswertung, deutsch>",\n'+
+      '  "summary": "<1-3 Sätze, deutsch, was du gemacht hast und das wichtigste Ergebnis>",\n'+
+      '  "columns": [{"key":"spaltenkey","label":"Anzeige-Name"}, ...],\n'+
+      '  "rows": [ {"spaltenkey":"wert", ...}, ... ]\n'+
+      '}\n\n'+
+      'Regeln:\n'+
+      '- columns enthält die Spalten der Ergebnistabelle (max. 8). Beträge in EUR formatieren (z.B. "1.234,56 EUR"), Datum YYYY-MM-DD.\n'+
+      '- rows enthält die gefilterten/aggregierten Datensätze. Wenn der User Aggregation will (Anzahl, Summe), gib aggregierte Zeilen aus.\n'+
+      '- Wenn die Frage nichts mit Tabellen-Output zu tun hat, gib trotzdem das Schema zurück, mit einer Zeile in rows die die Antwort enthält.\n'+
+      '- Bei leerer Ergebnismenge: rows: [] und summary erklärt warum.';
+
+    const raw = await _callClaudeText(fullPrompt);
+    const t1 = performance.now();
+
+    // Antwort parsen — robust gegen ```json-Fences
+    let parsed;
+    try {
+      let txt = raw.trim();
+      if (txt.startsWith('```')) txt = txt.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'');
+      parsed = JSON.parse(txt);
+    } catch(parseErr) {
+      // Fallback: Antwort als reinen Text anzeigen
+      resultEl.innerHTML = '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:16px;color:#92400E;font-size:12px">'+
+        '<strong>⚠ Antwort konnte nicht als JSON geparst werden.</strong><br>'+
+        '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;background:#fff;border:1px solid #F59E0B;border-radius:4px;padding:10px;margin-top:8px;max-height:400px;overflow:auto">'+escapeHtml(raw)+'</pre>'+
+      '</div>';
+      if (status) status.textContent = 'Antwort konnte nicht geparst werden';
+      return;
+    }
+
+    _extractRenderResult(parsed, { ms: Math.round(t1-t0), sizeKb, truncated: collected.truncated });
+    _extractAddHistory({ prompt, ranAt: new Date().toISOString(), title: parsed.title || '' });
+    renderDataExtractView();  // Verlauf neu rendern
+    // Nach Re-Render Prompt wieder einsetzen + Ergebnis bewahren
+    const t2 = document.getElementById('extract-prompt'); if (t2) t2.value = prompt;
+    if (status) status.textContent = '';
+  } catch(e) {
+    console.error('[DataExtract]', e);
+    resultEl.innerHTML = '<div style="background:#FEF2F2;border:1px solid #DC2626;border-radius:8px;padding:14px;color:#991B1B;font-size:12px"><strong>❌ Fehler:</strong> '+escapeHtml((e.message||e).toString().slice(0,400))+'</div>';
+    if (status) status.textContent = '';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Anfrage senden'; }
+  }
+}
+
+function _extractRenderResult(p, meta) {
+  const el = document.getElementById('extract-result');
+  if (!el) return;
+  const cols = Array.isArray(p.columns) ? p.columns : [];
+  const rows = Array.isArray(p.rows) ? p.rows : [];
+  // Header + Summary
+  const head =
+    '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;overflow:hidden">'+
+      '<div style="padding:16px 18px;background:#ECFDF5;border-bottom:1px solid var(--bdr)">'+
+        '<div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap;justify-content:space-between">'+
+          '<div style="flex:1;min-width:200px">'+
+            '<div style="font-size:11px;font-weight:700;color:#065F46;text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">ERGEBNIS</div>'+
+            '<div style="font-size:18px;font-weight:700;color:var(--navy);margin-bottom:6px">'+escapeHtml(p.title||'Auswertung')+'</div>'+
+            (p.summary ? '<div style="font-size:13px;color:var(--txt2);line-height:1.5">'+escapeHtml(p.summary)+'</div>' : '')+
+          '</div>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+            (rows.length ? '<button class="btn" onclick="_extractDownloadCsv()" style="font-size:12px">📥 CSV</button>' : '')+
+            (rows.length ? '<button class="btn" onclick="_extractCopyTsv()" style="font-size:12px">📋 Kopieren</button>' : '')+
+          '</div>'+
+        '</div>'+
+        (meta ? '<div style="font-size:11px;color:var(--txt3);margin-top:8px">'+
+          (meta.sizeKb||0)+' KB Daten · '+(meta.ms||0)+' ms · '+rows.length+' Zeile(n)'+
+          (meta.truncated ? ' · ⚠ Daten gekürzt (zu viele Records — Ergebnis ggf. unvollständig)' : '')+
+        '</div>' : '')+
+      '</div>';
+
+  let table = '';
+  if (rows.length === 0) {
+    table = '<div style="padding:30px;text-align:center;color:var(--txt3);font-size:13px">— Keine Treffer —</div>';
+  } else if (cols.length === 0) {
+    // Fallback: alle Keys der ersten Zeile als Spalten
+    const keys = Object.keys(rows[0] || {});
+    table = _extractRenderTable(keys.map(k => ({key:k,label:k})), rows);
+  } else {
+    table = _extractRenderTable(cols, rows);
+  }
+
+  el.innerHTML = head + table + '</div>';
+  // Daten in der View parken für CSV-Export
+  el._extractedCols = cols.length ? cols : (rows[0] ? Object.keys(rows[0]).map(k => ({key:k,label:k})) : []);
+  el._extractedRows = rows;
+  el._extractedTitle = p.title || 'Auswertung';
+}
+
+function _extractRenderTable(cols, rows) {
+  const fmt = v => {
+    if (v == null) return '<span style="color:var(--txt3)">—</span>';
+    if (typeof v === 'boolean') return v ? '✓' : '–';
+    if (typeof v === 'object') return escapeHtml(JSON.stringify(v));
+    return escapeHtml(String(v));
+  };
+  return '<div style="overflow-x:auto">'+
+    '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
+      '<thead><tr style="background:#F9FAFB;border-bottom:2px solid var(--bdr)">'+
+        cols.map(c => '<th style="padding:8px 10px;text-align:left;font-weight:700;color:var(--navy);white-space:nowrap">'+escapeHtml(c.label||c.key)+'</th>').join('')+
+      '</tr></thead>'+
+      '<tbody>'+
+        rows.map((r, i) =>
+          '<tr style="background:'+(i%2?'#fff':'#FAFBFD')+';border-bottom:1px solid var(--bdr)">'+
+            cols.map(c => '<td style="padding:8px 10px;vertical-align:top">'+fmt(r[c.key])+'</td>').join('')+
+          '</tr>'
+        ).join('')+
+      '</tbody>'+
+    '</table>'+
+  '</div>';
+}
+
+function _extractDownloadCsv() {
+  const el = document.getElementById('extract-result');
+  if (!el || !el._extractedRows) return;
+  const cols = el._extractedCols, rows = el._extractedRows;
+  const esc = v => {
+    if (v == null) return '';
+    const s = String(v);
+    if (s.includes(',') || s.includes('"') || s.includes('\n')) return '"'+s.replace(/"/g,'""')+'"';
+    return s;
+  };
+  const csv = '﻿'+
+    cols.map(c => esc(c.label||c.key)).join(',')+'\n'+
+    rows.map(r => cols.map(c => esc(r[c.key])).join(',')).join('\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (el._extractedTitle||'Auswertung').replace(/[^\w-]+/g,'_').slice(0,60)+'.csv';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  toast('📥 CSV heruntergeladen','ok');
+}
+
+function _extractCopyTsv() {
+  const el = document.getElementById('extract-result');
+  if (!el || !el._extractedRows) return;
+  const cols = el._extractedCols, rows = el._extractedRows;
+  const tsv = cols.map(c => c.label||c.key).join('\t')+'\n'+
+    rows.map(r => cols.map(c => (r[c.key]==null?'':String(r[c.key]).replace(/\t/g,' '))).join('\t')).join('\n');
+  navigator.clipboard.writeText(tsv).then(
+    () => toast('📋 In Zwischenablage kopiert (TSV)','ok'),
+    () => toast('❌ Kopieren fehlgeschlagen','err')
+  );
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
