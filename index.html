@@ -2599,7 +2599,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.49';
+const APP_VERSION = 'v4.50';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19297,65 +19297,96 @@ async function _extractRun() {
     const sizeKb = Math.round(dataStr.length / 1024);
     if (status) status.textContent = sizeKb + ' KB Daten · sende an Claude…';
 
-    // System-Prompt: Claude soll JSON zurückgeben
+    // Frage-Prompt (Daten + Aufgabe). Strukturierte Antwort kommt per Tool-Use, nicht via JSON-Text.
     const fullPrompt =
       'Du bist ein Daten-Analyst für eine Aufzugservice-App. Beantworte die FRAGE des Users '+
-      'ausschließlich anhand der bereitgestellten DATEN (JSON unten). Wenn etwas nicht in den Daten steht, sag das ehrlich.\n\n'+
+      'ausschließlich anhand der bereitgestellten DATEN. Wenn etwas nicht in den Daten steht, sag das ehrlich.\n\n'+
       'Heutiges Datum: '+new Date().toISOString().slice(0,10)+'\n\n'+
       'DATEN (kompakte Sicht auf die Caches in der App):\n```json\n'+dataStr+'\n```\n\n'+
       'FRAGE:\n'+prompt+'\n\n'+
-      'ANTWORTE AUSSCHLIESSLICH MIT VALID JSON in diesem Schema (keine Markdown-Code-Fences, keine Erklärung außerhalb des JSON):\n'+
-      '{\n'+
-      '  "title": "<kurzer Titel der Auswertung, deutsch>",\n'+
-      '  "summary": "<1-3 Sätze, deutsch, was du gemacht hast und das wichtigste Ergebnis>",\n'+
-      '  "columns": [{"key":"spaltenkey","label":"Anzeige-Name"}, ...],\n'+
-      '  "rows": [ {"spaltenkey":"wert", ...}, ... ]\n'+
-      '}\n\n'+
+      'Benutze das Tool "present_data_extraction_result" für deine Antwort.\n'+
       'Regeln:\n'+
-      '- columns enthält die Spalten der Ergebnistabelle (max. 8). Beträge in EUR formatieren (z.B. "1.234,56 EUR"), Datum YYYY-MM-DD.\n'+
-      '- rows enthält die gefilterten/aggregierten Datensätze. Wenn der User Aggregation will (Anzahl, Summe), gib aggregierte Zeilen aus.\n'+
-      '- Wenn die Frage nichts mit Tabellen-Output zu tun hat, gib trotzdem das Schema zurück, mit einer Zeile in rows die die Antwort enthält.\n'+
+      '- columns max. 8 Spalten. Beträge in EUR formatieren (z.B. "1.234,56 EUR"), Datum YYYY-MM-DD.\n'+
+      '- rows: gefilterte/aggregierte Datensätze. Wenn der User Aggregation will (Anzahl, Summe), aggregierte Zeilen.\n'+
       '- Bei leerer Ergebnismenge: rows: [] und summary erklärt warum.';
 
-    // 16K Tokens — bricht Antwort bei ~200 Zeilen nicht ab
-    const callRes = await _callClaudeText(fullPrompt, { maxTokens: 16000 });
-    const raw = callRes.text;
-    const stopReason = callRes.stopReason;
+    // Tool-Use ist die strukturierte Variante: Claude liefert ein typsicheres Objekt,
+    // nicht freien JSON-Text. Eliminiert Escape-Bugs (z.B. ASCII " in deutschen Titeln).
+    const tool = {
+      name: 'present_data_extraction_result',
+      description: 'Present the result of a data query as a structured table for the user.',
+      input_schema: {
+        type: 'object',
+        required: ['title', 'summary', 'columns', 'rows'],
+        properties: {
+          title:   { type: 'string', description: 'Kurzer Titel der Auswertung (deutsch).' },
+          summary: { type: 'string', description: '1-3 Sätze (deutsch): was du gemacht hast und das wichtigste Ergebnis.' },
+          columns: {
+            type: 'array',
+            description: 'Spalten der Ergebnistabelle (max. 8).',
+            items: {
+              type: 'object',
+              required: ['key', 'label'],
+              properties: {
+                key:   { type: 'string' },
+                label: { type: 'string' },
+              },
+            },
+          },
+          rows: {
+            type: 'array',
+            description: 'Zeilen der Ergebnistabelle. Jede Zeile ist ein Objekt mit den Spaltenkeys als Properties.',
+            items: { type: 'object' },
+          },
+        },
+      },
+    };
+
+    const apiResp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type':'application/json',
+        'x-api-key': APP_KEYS.anthropicKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16000,
+        tools: [tool],
+        tool_choice: { type: 'tool', name: 'present_data_extraction_result' },
+        messages: [{ role: 'user', content: fullPrompt }],
+      }),
+    });
+    if (!apiResp.ok) {
+      const errBody = await apiResp.json().catch(() => ({}));
+      throw new Error(errBody.error?.message || ('API-Fehler '+apiResp.status));
+    }
+    const apiData = await apiResp.json();
+    const stopReason = apiData.stop_reason || null;
     const t1 = performance.now();
 
-    // Antwort parsen — robust gegen ```json-Fences und Truncation
+    // Tool-Use Resultat extrahieren — apiData.content[] enthält ein {type:'tool_use', input:{...}} Element
     let parsed = null;
-    let parseTruncated = false;
-    let parseError = null;
-    try {
-      let txt = raw.trim();
-      if (txt.startsWith('```')) txt = txt.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'');
-      parsed = JSON.parse(txt);
-    } catch(parseErr) {
-      parseError = parseErr;
-      // JSON-Repair: vermutlich Antwort gekürzt → versuche letzte vollständige Row zu retten
-      try {
-        let txt = raw.trim();
-        if (txt.startsWith('```')) txt = txt.replace(/^```[a-z]*\n?/,'').replace(/\n?```$/,'');
-        const repaired = _extractRepairJson(txt);
-        if (repaired) {
-          parsed = repaired;
-          parseTruncated = true;
-        }
-      } catch(_){}
+    if (Array.isArray(apiData.content)) {
+      for (const block of apiData.content) {
+        if (block.type === 'tool_use' && block.input) { parsed = block.input; break; }
+      }
     }
 
     if (!parsed) {
-      // Wirklich nichts zu retten → Roh-Antwort + Hinweis
+      // Sollte praktisch nie passieren, weil tool_choice erzwungen ist. Fallback: Roh-Antwort.
+      const txtBlock = (apiData.content||[]).find(b => b.type === 'text');
+      const raw = txtBlock?.text || JSON.stringify(apiData);
       const isTrunc = stopReason === 'max_tokens';
       resultEl.innerHTML = '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:16px;color:#92400E;font-size:12px">'+
-        '<strong>⚠ Antwort konnte nicht als JSON geparst werden'+(isTrunc?' (Antwort wurde von der KI gekürzt — bitte Anfrage präzisieren, z.B. Zeitraum eingrenzen oder nur Anzahl/Summe statt Liste)':'')+'.</strong><br>'+
-        '<div style="font-size:11px;margin-top:6px">'+escapeHtml((parseError && parseError.message || '').slice(0,200))+'</div>'+
-        '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;background:#fff;border:1px solid #F59E0B;border-radius:4px;padding:10px;margin-top:8px;max-height:400px;overflow:auto">'+escapeHtml(raw)+'</pre>'+
+        '<strong>⚠ Kein strukturiertes Tool-Resultat von der KI'+(isTrunc?' (Antwort wurde gekürzt — bitte präzisieren)':'')+'.</strong>'+
+        '<pre style="white-space:pre-wrap;word-break:break-word;font-size:11px;background:#fff;border:1px solid #F59E0B;border-radius:4px;padding:10px;margin-top:8px;max-height:400px;overflow:auto">'+escapeHtml(raw.slice(0,4000))+'</pre>'+
       '</div>';
-      if (status) status.textContent = 'Antwort konnte nicht geparst werden';
+      if (status) status.textContent = 'Kein Tool-Resultat';
       return;
     }
+    const parseTruncated = false;  // bei Tool-Use kommt entweder ganzes Objekt oder gar keins
 
     _extractRenderResult(parsed, {
       ms: Math.round(t1-t0),
