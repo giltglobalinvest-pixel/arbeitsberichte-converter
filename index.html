@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.61';
+const APP_VERSION = 'v4.62';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20363,12 +20363,30 @@ async function _angPushToErp(recId, btn) {
       auftraggeber:           f.kunde_name || '',
       notizen:                '',
     };
+    // Pauschal-DTO erwartet englische camelCase-Felder + zusätzliche required-Felder
+    // wie offerExplanation, plannedInstallationDate. Wir füllen alle plausiblen
+    // englischen Varianten, damit kein NotNull/NotEmpty mehr greift.
+    const angNum = String(f.app_angebot_num || '?');
     const payload = {
-      workPrice:     sumNetto,
-      materialPrice: 0,
-      workshopPrice: 0,
-      travelPrice:   0,
-      angebot:       innerAngebot,
+      workPrice:               sumNetto,
+      materialPrice:           0,
+      workshopPrice:           0,
+      travelPrice:             0,
+      offerExplanation:        erlaeuterungText,
+      plannedInstallationDate: inDays(14),                  // ISO Datum, geplante Ausführung in 2 Wochen
+      offerNumber:             'EXT-ANG-'+angNum,           // Falls erwartet
+      offerDate:               today,
+      offerValidUntil:         inDays(30),
+      offerTitle:              bezeichnung,
+      offerDescription:        kurzTitel,
+      title:                   bezeichnung,
+      description:             kurzTitel,
+      workDescription:         kurzTitel,
+      paymentTerms:            'Zahlungsziel: 14 Tage netto nach Rechnungsstellung.',
+      deliveryTime:            '4-12 Wochen nach schriftlicher Auftragserteilung',
+      vatRate:                 +f.ust_prozent || 19,
+      warrantyMonths:          24,
+      angebot:                 innerAngebot,
     };
     console.log('[ERP-Angebot-Push] Payload:', JSON.stringify(payload, null, 2));
 
