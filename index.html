@@ -2599,7 +2599,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.50';
+const APP_VERSION = 'v4.51';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19288,14 +19288,37 @@ async function _extractRun() {
   const resultEl = document.getElementById('extract-result');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Frage Claude…'; }
   if (status) status.textContent = '';
-  if (resultEl) resultEl.innerHTML = '<div style="padding:30px;text-align:center"><div class="spinner" style="margin:0 auto 12px"></div>Sammle Daten + frage die KI…</div>';
+  if (resultEl) resultEl.innerHTML = '<div id="extract-progress" style="padding:30px;text-align:center">'+
+    '<div class="spinner" style="margin:0 auto 12px"></div>'+
+    '<div id="extract-progress-text" style="font-size:13px;color:var(--txt2)">Sammle Daten + frage die KI…</div>'+
+    '<div style="margin-top:14px"><button class="btn" id="extract-cancel-btn" style="font-size:12px">⏹ Abbrechen</button></div>'+
+  '</div>';
+
+  // AbortController + Live-Timer + Cancel-Button
+  const abortCtrl = new AbortController();
+  let elapsedTimer = null;
+  const startMs = performance.now();
+  const updateProgress = () => {
+    const sec = Math.round((performance.now() - startMs) / 1000);
+    const txt = document.getElementById('extract-progress-text');
+    if (txt && txt._extractStage) txt.textContent = txt._extractStage + ' · '+sec+' s';
+  };
+  elapsedTimer = setInterval(updateProgress, 500);
+  const setStage = (s) => {
+    const txt = document.getElementById('extract-progress-text');
+    if (txt) { txt._extractStage = s; txt.textContent = s; updateProgress(); }
+  };
+  const cancelBtn = document.getElementById('extract-cancel-btn');
+  if (cancelBtn) cancelBtn.onclick = () => abortCtrl.abort('user-cancel');
 
   try {
     const t0 = performance.now();
     const collected = _extractCollectDatasets(enabled);
     const dataStr = JSON.stringify(collected.datasets);
     const sizeKb = Math.round(dataStr.length / 1024);
+    setStage('🤖 sende '+sizeKb+' KB an Claude — bei großen Datenmengen kann das 30–90 s dauern');
     if (status) status.textContent = sizeKb + ' KB Daten · sende an Claude…';
+    console.log('[DataExtract] sending', sizeKb, 'KB, datasets:', Object.fromEntries(Object.entries(collected.datasets).map(([k,v]) => [k, v.count])));
 
     // Frage-Prompt (Daten + Aufgabe). Strukturierte Antwort kommt per Tool-Use, nicht via JSON-Text.
     const fullPrompt =
@@ -19342,29 +19365,40 @@ async function _extractRun() {
       },
     };
 
-    const apiResp = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':'application/json',
-        'x-api-key': APP_KEYS.anthropicKey,
-        'anthropic-version':'2023-06-01',
-        'anthropic-dangerous-direct-browser-access':'true',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 16000,
-        tools: [tool],
-        tool_choice: { type: 'tool', name: 'present_data_extraction_result' },
-        messages: [{ role: 'user', content: fullPrompt }],
-      }),
-    });
+    // 5-Min-Timeout zusätzlich zur User-Cancel-Option
+    const timeoutId = setTimeout(() => abortCtrl.abort('timeout'), 5*60*1000);
+    let apiResp;
+    try {
+      apiResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type':'application/json',
+          'x-api-key': APP_KEYS.anthropicKey,
+          'anthropic-version':'2023-06-01',
+          'anthropic-dangerous-direct-browser-access':'true',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 16000,
+          tools: [tool],
+          tool_choice: { type: 'tool', name: 'present_data_extraction_result' },
+          messages: [{ role: 'user', content: fullPrompt }],
+        }),
+        signal: abortCtrl.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     if (!apiResp.ok) {
       const errBody = await apiResp.json().catch(() => ({}));
+      console.error('[DataExtract] API error', apiResp.status, errBody);
       throw new Error(errBody.error?.message || ('API-Fehler '+apiResp.status));
     }
+    setStage('📥 verarbeite Antwort');
     const apiData = await apiResp.json();
     const stopReason = apiData.stop_reason || null;
     const t1 = performance.now();
+    console.log('[DataExtract] response ok', { stopReason, ms: Math.round(t1-t0), usage: apiData.usage });
 
     // Tool-Use Resultat extrahieren — apiData.content[] enthält ein {type:'tool_use', input:{...}} Element
     let parsed = null;
@@ -19402,9 +19436,16 @@ async function _extractRun() {
     if (status) status.textContent = '';
   } catch(e) {
     console.error('[DataExtract]', e);
-    resultEl.innerHTML = '<div style="background:#FEF2F2;border:1px solid #DC2626;border-radius:8px;padding:14px;color:#991B1B;font-size:12px"><strong>❌ Fehler:</strong> '+escapeHtml((e.message||e).toString().slice(0,400))+'</div>';
+    const isAbort = e && (e.name === 'AbortError' || abortCtrl.signal.aborted);
+    const reason = isAbort
+      ? (abortCtrl.signal.reason === 'timeout'
+          ? 'Timeout nach 5 Minuten — die Anfrage hat zu lange gedauert. Bitte präzisieren (weniger Datensätze, kürzerer Zeitraum, nur Aggregation).'
+          : 'Abgebrochen.')
+      : (e.message || e).toString().slice(0,400);
+    resultEl.innerHTML = '<div style="background:'+(isAbort?'#FEF3C7':'#FEF2F2')+';border:1px solid '+(isAbort?'#F59E0B':'#DC2626')+';border-radius:8px;padding:14px;color:'+(isAbort?'#92400E':'#991B1B')+';font-size:12px"><strong>'+(isAbort?'⏹':'❌')+' '+escapeHtml(reason)+'</strong></div>';
     if (status) status.textContent = '';
   } finally {
+    if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Anfrage senden'; }
   }
 }
