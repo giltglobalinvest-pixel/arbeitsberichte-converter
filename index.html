@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.62';
+const APP_VERSION = 'v4.63';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20367,14 +20367,26 @@ async function _angPushToErp(recId, btn) {
     // wie offerExplanation, plannedInstallationDate. Wir füllen alle plausiblen
     // englischen Varianten, damit kein NotNull/NotEmpty mehr greift.
     const angNum = String(f.app_angebot_num || '?');
+    const deliveryTimeText = '4-12 Wochen nach schriftlicher Auftragserteilung';
     const payload = {
+      // Preise: Pauschal-Aufteilung. workPrice trägt alles, da's ein externes Angebot ist
+      // bei dem wir keine echte Komponententrennung haben. Plus netPrice = Summe als Pflicht-Feld.
       workPrice:               sumNetto,
       materialPrice:           0,
       workshopPrice:           0,
       travelPrice:             0,
+      netPrice:                sumNetto,
+      grossPrice:              +f.summe_brutto_vp || (sumNetto * 1.19),
+      // Lieferzeiten je Kategorie — ERP erwartet sie alle einzeln
+      workDeliveryTime:        deliveryTimeText,
+      materialDeliveryTime:    deliveryTimeText,
+      workshopDeliveryTime:    deliveryTimeText,
+      travelDeliveryTime:      deliveryTimeText,
+      deliveryTime:            deliveryTimeText,
+      // Texte
       offerExplanation:        erlaeuterungText,
-      plannedInstallationDate: inDays(14),                  // ISO Datum, geplante Ausführung in 2 Wochen
-      offerNumber:             'EXT-ANG-'+angNum,           // Falls erwartet
+      plannedInstallationDate: inDays(14),
+      offerNumber:             'EXT-ANG-'+angNum,
       offerDate:               today,
       offerValidUntil:         inDays(30),
       offerTitle:              bezeichnung,
@@ -20383,7 +20395,6 @@ async function _angPushToErp(recId, btn) {
       description:             kurzTitel,
       workDescription:         kurzTitel,
       paymentTerms:            'Zahlungsziel: 14 Tage netto nach Rechnungsstellung.',
-      deliveryTime:            '4-12 Wochen nach schriftlicher Auftragserteilung',
       vatRate:                 +f.ust_prozent || 19,
       warrantyMonths:          24,
       angebot:                 innerAngebot,
