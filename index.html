@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.57';
+const APP_VERSION = 'v4.58';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18984,11 +18984,12 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'erstellt_von',            type:'singleLineText' },
   { name:'bearbeiter',              type:'singleLineText' },  // Standard: User-Name (VP-Eintrag)
   { name:'status',                  type:'singleLineText' },  // entwurf | fertig | gesendet | angenommen | abgelehnt
-  { name:'angebot_typ',             type:'singleLineText' },  // reparatur | instandhaltung | modernisierung | sonstiges
-  // KONE-Quelle
-  { name:'kone_angebot_num',        type:'singleLineText' },
-  { name:'kone_angebot_datum',      type:'singleLineText' },
-  { name:'kone_pdf',                type:'multipleAttachments' },
+  { name:'angebot_typ',             type:'singleLineText' },  // reparatur | modernisierung | sonstiges
+  // Anbieter-Quelle (z.B. KONE, Schindler, OTIS)
+  { name:'anbieter',                type:'singleLineText' },
+  { name:'kone_angebot_num',        type:'singleLineText' },  // Legacy-Name, eigentlich Anbieter-Angebotsnummer
+  { name:'kone_angebot_datum',      type:'singleLineText' },  // Legacy-Name, eigentlich Anbieter-Angebotsdatum
+  { name:'kone_pdf',                type:'multipleAttachments' },  // Legacy-Name, eigentlich Anbieter-PDF
   // Anlage (gemappt aus ERP via Fabriknummer)
   { name:'equipmentnummer',         type:'singleLineText' },
   { name:'seriennummer',            type:'singleLineText' },
@@ -19018,7 +19019,15 @@ const ANGEBOTE_TABLE_FIELDS = [
 let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _angeboteTableEnsured = false;
 
-const ANGEBOT_VP_DEFAULT_MARGE = 1.20;  // KONE-EK × 1.20 → VP-Vorschlag
+const ANGEBOT_VP_DEFAULT_MARGE = 1.20;  // Anbieter-EK × 1.20 → VP-Vorschlag
+
+// Anbieter die ich (Claude) bereits anhand echter PDFs verifiziert habe.
+// Wenn du neue Anbieter testest, hier ergänzen, damit sie im Dropdown
+// als "verifiziert" markiert werden. Dynamische Anbieter werden aus
+// bestehenden Records ergänzt — diese hier sind die Default-Liste.
+const ANGEBOT_VERIFIED_ANBIETER = [
+  { name:'KONE',           icon:'🛗', verified:true },
+];
 
 const ANGEBOT_TYP_OPTIONS = [
   { value:'reparatur',      label:'🔧 Reparatur',      color:'#DC2626' },
@@ -19175,7 +19184,7 @@ function _renderAngeboteList() {
           '</div>'+
         '</div>'+
         '<div style="font-size:11px;color:var(--txt3);margin-top:6px">'+
-          (f.kone_angebot_num ? '🔗 KONE '+escapeHtml(f.kone_angebot_num)+' · ' : '')+
+          (f.kone_angebot_num ? '🔗 '+escapeHtml(f.anbieter||'Original')+' '+escapeHtml(f.kone_angebot_num)+' · ' : '')+
           (f.erstellt_am ? '📅 '+escapeHtml(f.erstellt_am) : '')+
           (f.bearbeiter ? ' · 👤 '+escapeHtml(f.bearbeiter) : '')+
         '</div>'+
@@ -19193,21 +19202,45 @@ async function openAngebotWizard() {
   const m = document.createElement('div');
   m.id = 'ang-wizard';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:10px';
+  // Anbieter-Liste: verifiziert + dynamisch aus bestehenden Records
+  const dynamicAnbieter = new Set();
+  for (const r of (_angeboteCache.items||[])) {
+    const a = (r.fields?.anbieter || '').trim();
+    if (a) dynamicAnbieter.add(a);
+  }
+  for (const v of ANGEBOT_VERIFIED_ANBIETER) dynamicAnbieter.delete(v.name);  // doppelte raus
+  const dynList = Array.from(dynamicAnbieter).sort();
+
   m.innerHTML =
     '<div style="background:var(--surf);max-width:640px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
-        '<span>📄 Neues Angebot — KONE-PDF hochladen</span>'+
+        '<span>📄 Neues Angebot — Original-PDF hochladen</span>'+
         '<button onclick="document.getElementById(\'ang-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px;line-height:1.6">'+
         '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
-          '💡 Lade das Original-KONE-Angebot als PDF hoch. Die KI extrahiert Anschreiben, Positionen mit Leistungsbeschreibung, Einzelpreise und Konditionen. Danach öffnet sich der Editor wo du deinen Verkaufspreis pro Position einträgst.'+
+          '💡 Lade das Original-Angebot (KONE, Schindler, OTIS, TK, …) als PDF hoch. Die KI extrahiert Anschreiben, Positionen mit Leistungsbeschreibung, Einzelpreise und Konditionen. Danach öffnet sich der Editor wo du deinen Verkaufspreis pro Position einträgst.'+
         '</div>'+
-        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Angebotstyp</label>'+
-        '<select id="ang-w-typ" class="auf-input" style="margin-bottom:14px;cursor:pointer;width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
-          ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'">'+t.label+'</option>').join('')+
-        '</select>'+
-        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">KONE-Angebots-PDF</label>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
+          '<div>'+
+            '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Angebotstyp</label>'+
+            '<select id="ang-w-typ" style="cursor:pointer;width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+              ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'">'+t.label+'</option>').join('')+
+            '</select>'+
+          '</div>'+
+          '<div>'+
+            '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Anbieter (Quelle)</label>'+
+            '<select id="ang-w-anbieter" onchange="_angWizardOnAnbieterChange()" style="cursor:pointer;width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+              ANGEBOT_VERIFIED_ANBIETER.map(v => '<option value="'+escapeHtml(v.name)+'">'+v.icon+' '+escapeHtml(v.name)+' ✓ verifiziert</option>').join('')+
+              (dynList.length ? '<optgroup label="── Bereits verwendet ──">'+
+                dynList.map(a => '<option value="'+escapeHtml(a)+'">'+escapeHtml(a)+'</option>').join('')+
+              '</optgroup>' : '')+
+              '<option value="__other__">… Anderer Anbieter (manuell)</option>'+
+            '</select>'+
+            '<input type="text" id="ang-w-anbieter-other" placeholder="z.B. Schindler" style="display:none;margin-top:6px;width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+          '</div>'+
+        '</div>'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Angebots-PDF</label>'+
         '<div id="ang-w-drop" onclick="document.getElementById(\'ang-w-file\').click()" style="border:2px dashed var(--bdr);border-radius:10px;padding:30px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .15s" onmouseover="this.style.borderColor=\'#2152A9\';this.style.background=\'#EFF6FF\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.background=\'#fafafa\'">'+
           '<div style="font-size:36px;margin-bottom:8px">📄</div>'+
           '<div id="ang-w-droplbl" style="font-size:13px;color:var(--txt2)">Klick hier oder ziehe PDF hierher</div>'+
@@ -19232,6 +19265,18 @@ async function openAngebotWizard() {
   });
 }
 
+function _angWizardOnAnbieterChange() {
+  const sel = document.getElementById('ang-w-anbieter');
+  const inp = document.getElementById('ang-w-anbieter-other');
+  if (!sel || !inp) return;
+  if (sel.value === '__other__') {
+    inp.style.display = 'block';
+    inp.focus();
+  } else {
+    inp.style.display = 'none';
+  }
+}
+
 function _angWizardOnFile(ev) {
   const f = ev.target.files?.[0];
   if (f) _angWizardSetFile(f);
@@ -19252,12 +19297,18 @@ async function _angWizardGo() {
   const m = document.getElementById('ang-wizard');
   if (!m || !m._file) return;
   const typ = document.getElementById('ang-w-typ').value;
+  // Anbieter ermitteln
+  const sel = document.getElementById('ang-w-anbieter');
+  let anbieterHint = sel?.value || '';
+  if (anbieterHint === '__other__') {
+    anbieterHint = (document.getElementById('ang-w-anbieter-other')?.value || '').trim();
+  }
   const go = document.getElementById('ang-w-go');
   go.disabled = true; go.textContent = '⏳ KI extrahiert…';
   const info = document.getElementById('ang-w-info');
   if (info) info.textContent = '🤖 sende PDF an Claude, kann 30–60 s dauern…';
   try {
-    const extracted = await _extractKoneAngebot(m._file);
+    const extracted = await _extractKoneAngebot(m._file, anbieterHint);
     console.log('[Angebote] extrahiert:', extracted);
     // Anlage-Match versuchen über Seriennummer ↔ Fabriknummer im ERP
     let matchedAnlage = null;
@@ -19270,7 +19321,7 @@ async function _angWizardGo() {
       ) || null;
     }
     m.remove();
-    openAngebotEditor({ extracted, typ, koneFile: m._file, matchedAnlage });
+    openAngebotEditor({ extracted, typ, koneFile: m._file, matchedAnlage, anbieter: extracted.anbieter || anbieterHint || '' });
   } catch(e) {
     console.error('[Angebote] KI-Extract:', e);
     toast('❌ KI-Extract: '+(e.message||e).slice(0,200),'err');
@@ -19279,7 +19330,7 @@ async function _angWizardGo() {
 }
 
 /* ── KI-Extraktion: KONE-PDF → strukturiertes Objekt via Tool-Use ────── */
-async function _extractKoneAngebot(file) {
+async function _extractKoneAngebot(file, anbieterHint) {
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
   // PDF als ArrayBuffer lesen, BOM/Müll vor "%PDF-" entfernen, dann Base64 codieren.
   // Manche PDFs (z.B. KONE) tragen einen UTF-8 BOM (EF BB BF) am Anfang —
@@ -19305,12 +19356,13 @@ async function _extractKoneAngebot(file) {
   const b64 = btoa(bin);
   const tool = {
     name: 'extract_angebot_data',
-    description: 'Extrahiert strukturierte Daten aus einem PDF-Angebot (typisch KONE, Schindler, OTIS, TK).',
+    description: 'Extrahiert strukturierte Daten aus einem PDF-Angebot (typisch KONE, Schindler, OTIS, TK, Schmitt+Sohn).',
     input_schema: {
       type: 'object',
       required: ['positionen','summe_netto','ust_prozent','summe_brutto'],
       properties: {
-        kone_angebot_num:    { type:'string', description:'Original-Angebotsnummer aus dem PDF (z.B. T-0009784050)' },
+        anbieter:            { type:'string', description:'Erkannter Anbieter-Firmenname (z.B. KONE, Schindler, OTIS, TK Elevator, Schmitt+Sohn). Wenn im PDF nicht eindeutig erkennbar, bestmöglich raten.' },
+        kone_angebot_num:    { type:'string', description:'Original-Angebotsnummer aus dem PDF (z.B. T-0009784050) — Feldname ist legacy, gilt für jeden Anbieter.' },
         kone_angebot_datum:  { type:'string', description:'Datum des Original-Angebots, ISO YYYY-MM-DD' },
         equipmentnummer:     { type:'string', description:'Equipment-/Anlagennummer beim Anbieter' },
         seriennummer:        { type:'string', description:'Seriennummer der Anlage (= Fabriknummer im ERP)' },
@@ -19341,7 +19393,9 @@ async function _extractKoneAngebot(file) {
       },
     },
   };
-  const prompt = 'Extrahiere die Daten dieses Angebots-PDFs vollständig und originalgetreu. '+
+  const hintLine = anbieterHint ? ('Vermuteter Anbieter (vom User): '+anbieterHint+'. Wenn das PDF eindeutig zu einem anderen Anbieter gehört, überschreibe das Feld "anbieter" entsprechend.\n\n') : '';
+  const prompt = hintLine +
+    'Extrahiere die Daten dieses Angebots-PDFs vollständig und originalgetreu. '+
     'Positionen exakt wie im Original (auch die Leistungsbeschreibungs-Bullets). '+
     'Preise immer netto als Zahl ohne Währungssymbol, Punkt als Dezimaltrenner. '+
     'Bei mehreren Adressen zähle die der ANLAGE, nicht die des Empfängers.';
@@ -19372,9 +19426,9 @@ async function _extractKoneAngebot(file) {
   const data = await resp.json();
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
-  // KONE→Firma-Name Replace: das KONE-Original spricht von "KONE GmbH", "Ihr KONE Team",
-  // "Wir/unser" etc. Für Aszendio-Angebote ersetzen wir den Anbieter-Namen konsistent
-  // in allen Freitexten. Aszendio (Default-Firma) bzw. Aufzugshandwerk.
+  // Anbieter-Name vereinheitlichen: erkannter Wert oder User-Hint
+  if (!block.input.anbieter && anbieterHint) block.input.anbieter = anbieterHint;
+  // Anbieter→Firma-Name Replace in allen Freitexten (anbieter-agnostisch)
   _angRewriteAnbieterTexte(block.input);
   return block.input;
 }
@@ -19391,17 +19445,21 @@ function _angRewriteAnbieterTexte(extracted) {
   const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio Aufzugservice GmbH' };
   const companyShort = (firmaSlug === 'aufzug' || firmaSlug === 'aufzugshandwerk') ? 'Aufzugshandwerk' : 'Aszendio';
   const companyLong  = BR.company || 'Aszendio Aufzugservice GmbH';
+  // Anbieter aus Extraction (KI hat ihn erkannt). Fallback: KONE (Legacy)
+  const anbieter = String(extracted.anbieter || 'KONE').trim();
+  // Regex-Escape für anbieter (Schmitt+Sohn etc.)
+  const anbieterRe = anbieter.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   const fields = ['anschreiben','kond_lieferzeit','kond_preisbasis','kond_zahlung','kond_hinweise'];
   for (const f of fields) {
     if (typeof extracted[f] !== 'string') continue;
     let t = extracted[f];
-    // Konkrete Phrasen zuerst (sonst frisst KONE→Aszendio sie auseinander)
-    t = t.replace(/Ihr KONE Team/gi, 'Ihr '+companyShort+' Team');
-    t = t.replace(/KONE GmbH/g, companyLong);
-    t = t.replace(/KONE-Mitarbeiter/g, companyShort+'-Mitarbeiter');
-    t = t.replace(/KONE-Team/g, companyShort+'-Team');
-    // Generische KONE-Erwähnungen
-    t = t.replace(/\bKONE\b/g, companyShort);
+    // Konkrete Phrasen zuerst (sonst frisst Anbieter→Aszendio sie auseinander)
+    t = t.replace(new RegExp('Ihr '+anbieterRe+' Team', 'gi'), 'Ihr '+companyShort+' Team');
+    t = t.replace(new RegExp(anbieterRe+' GmbH', 'g'), companyLong);
+    t = t.replace(new RegExp(anbieterRe+'-Mitarbeiter', 'g'), companyShort+'-Mitarbeiter');
+    t = t.replace(new RegExp(anbieterRe+'-Team', 'g'), companyShort+'-Team');
+    // Generische Anbieter-Erwähnungen
+    t = t.replace(new RegExp('\\b'+anbieterRe+'\\b', 'g'), companyShort);
     extracted[f] = t;
   }
 }
@@ -19471,7 +19529,8 @@ async function openAngebotEditor(ctx) {
         anlage_adresse:     f.anlage_adresse || '',
       },
       typ: f.angebot_typ || 'sonstiges',
-      koneFile: null,  // Im Edit-Modus wird das KONE-PDF nicht neu hochgeladen
+      anbieter: f.anbieter || '',
+      koneFile: null,  // Im Edit-Modus wird das Original-PDF nicht neu hochgeladen
       // Anlage rekonstruieren — wenn anlage_id vorhanden, in Cache nachschlagen
       matchedAnlage: f.anlage_id
         ? ((_anlagenCache.items||[]).find(a => String(a.id) === String(f.anlage_id)) || null)
@@ -19495,6 +19554,7 @@ async function openAngebotEditor(ctx) {
     recId: ctx.recId || null,
     extracted: ctx.extracted,
     typ: ctx.typ,
+    anbieter: ctx.anbieter || ctx.extracted?.anbieter || (ctx.editMode ? '' : 'KONE'),
     koneFile: ctx.koneFile,
     matchedAnlage: ctx.matchedAnlage || null,
     bearbeiter: ctx._bearbeiter || APP_KEYS.user?.name || '',
@@ -19828,6 +19888,7 @@ async function _angEditorSave() {
       firma: firmaSlug,
       bearbeiter: E.bearbeiter || '',
       angebot_typ: E.typ || 'sonstiges',
+      anbieter: E.anbieter || '',
       kone_angebot_num: E.extracted.kone_angebot_num || '',
       kone_angebot_datum: E.extracted.kone_angebot_datum || '',
       equipmentnummer: E.equipmentnummer || '',
@@ -20107,7 +20168,7 @@ function openAngebotDetail(recId) {
         '</div>'+
         '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+(f.kunde_nummer?' (Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
-        (f.kone_angebot_num ? '<div><strong>🔗 KONE:</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
+        (f.kone_angebot_num ? '<div><strong>🔗 '+escapeHtml(f.anbieter||'Original')+':</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
         (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
@@ -20119,7 +20180,7 @@ function openAngebotDetail(recId) {
         // PDF-Buttons
         '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+
           (appPdf ? '<a href="'+escapeHtml(appPdf.url)+'" target="_blank" rel="noopener" class="btn prim" style="text-decoration:none">📄 Aszendio-PDF öffnen</a>' : '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)">📄 Aszendio-PDF erzeugen</button>')+
-          (konePdf ? '<a href="'+escapeHtml(konePdf.url)+'" target="_blank" rel="noopener" class="btn" style="text-decoration:none">📎 Original-KONE-PDF</a>' : '')+
+          (konePdf ? '<a href="'+escapeHtml(konePdf.url)+'" target="_blank" rel="noopener" class="btn" style="text-decoration:none">📎 Original-'+escapeHtml(f.anbieter||'Anbieter')+'-PDF</a>' : '')+
           '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)" title="PDF neu generieren mit aktuellen Daten">🔄 Neu generieren</button>'+
         '</div>'+
         // Status-Wechsel
