@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.07';
+const APP_VERSION = 'v5.08';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5898,7 +5898,7 @@ async function saveFirmaRow(recId) {
   });
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   try {
-    // Schema-Sicherstellung: erp_tenant + erp_auftrag_url + mailchimp_* ggf. anlegen
+    // Schema-Sicherstellung: erp_tenant + erp_auftrag_url + mailchimp_* + Counter ggf. anlegen
     if ('erp_tenant' in f) {
       try { await ensureField('Firmen', 'erp_tenant', 'singleLineText'); } catch(_){}
     }
@@ -5911,6 +5911,16 @@ async function saveFirmaRow(recId) {
     if ('mailchimp_audience_id' in f) {
       try { await ensureField('Firmen', 'mailchimp_audience_id', 'singleLineText'); } catch(_){}
     }
+    // Counter-Felder (start_num, auftrag_start_num, angebot_start_num) prophylaktisch
+    if ('start_num' in f) {
+      try { await ensureField('Firmen', 'start_num', 'number'); } catch(_){}
+    }
+    if ('auftrag_start_num' in f) {
+      try { await ensureField('Firmen', 'auftrag_start_num', 'number'); } catch(_){}
+    }
+    if ('angebot_start_num' in f) {
+      try { await ensureField('Firmen', 'angebot_start_num', 'number'); } catch(_){}
+    }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+recId, {
       method:'PATCH',
@@ -5919,6 +5929,22 @@ async function saveFirmaRow(recId) {
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message || 'Fehler');
+    // VERIFY: critical Felder zurücklesen — Airtable verwirft unbekannte Felder stumm
+    const critical = ['angebot_start_num','auftrag_start_num','start_num'].filter(k => k in f);
+    if (critical.length) {
+      const v = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+recId, {
+        headers:{ 'Authorization':'Bearer '+(APP_KEYS.airtableReadKey||APP_KEYS.airtableWriteKey) },
+      });
+      const vd = await v.json();
+      const stored = vd.fields || {};
+      const missing = critical.filter(k => +(stored[k]) !== +f[k]);
+      if (missing.length) {
+        console.error('[Firmen-Save] Felder nicht persistiert:', missing, 'gesendet:', f, 'gespeichert:', stored);
+        throw new Error('Felder nicht in Airtable angekommen: '+missing.join(', ')+
+          '. Vermutlich Schema-Permission. Bitte Felder einmal manuell in Airtable Firmen-Tabelle als Number anlegen.');
+      }
+      console.log('[Firmen-Save] Verifiziert OK:', critical.map(k => k+'='+stored[k]).join(', '));
+    }
     toast('✅ Firma "'+(f.name||f.slug)+'" gespeichert.', 'ok');
     await loadFirmen();
     renderFirmaView();
@@ -19343,13 +19369,23 @@ async function _ensureAngeboteTable() {
    damit die Nummern z.B. ab einer bestimmten Zahl beginnen. */
 async function _angebotGetNextNumber(baseId, firmaSlug) {
   const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
-  // angebot_start_num IMMER aus dem aktuellen _firmenCache lesen — S.firma kann ein
-  // veralteter Snapshot sein, der die letzten Änderungen aus der Firmen-Verwaltung
-  // nicht enthält. Wir holen den Cache vorher frisch nach.
+  // angebot_start_num IMMER frisch aus Airtable lesen — _firmenCache kann veraltet sein.
   try { await loadFirmen(); } catch(_){}
   const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug);
-  const firmaStart = +((firmaRec?.fields?.angebot_start_num) || (getCurrentFirma()?.angebot_start_num) || 1);
-  console.log('[Angebote] Next-Number: firma='+firmaSlug+' start='+firmaStart);
+  const startFromCache = +(firmaRec?.fields?.angebot_start_num) || 0;
+  const startFromS     = +(getCurrentFirma()?.angebot_start_num) || 0;
+  const firmaStart = Math.max(startFromCache, startFromS, 1);
+  console.log('[Angebote] Next-Number Diagnose:',
+    'firma='+firmaSlug,
+    'Cache-Wert='+startFromCache,
+    'S.firma-Wert='+startFromS,
+    '→ verwende='+firmaStart);
+  if (firmaRec?.fields) {
+    console.log('[Angebote] Firma-Record fields-Keys:', Object.keys(firmaRec.fields).join(', '));
+    console.log('[Angebote] Firma-Record komplett:', firmaRec.fields);
+  } else {
+    console.warn('[Angebote] Firma "'+firmaSlug+'" nicht in _firmenCache (Größe='+(_firmenCache?.length||0)+')');
+  }
   try {
     const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote'
       +'?pageSize=100&fields[]=app_angebot_num&fields[]=firma'
