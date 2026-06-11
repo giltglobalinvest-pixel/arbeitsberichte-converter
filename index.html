@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.91';
+const APP_VERSION = 'v4.92';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19894,7 +19894,7 @@ function _angRenderAnlageCard(E) {
     '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #A7F3D0">'+
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px">'+
         '<label style="color:var(--txt3);font-size:11px;font-weight:600">📬 Empfänger-Anschrift im PDF (Straße / PLZ Ort, je eine Zeile)</label>'+
-        '<button class="btn" style="font-size:10.5px;padding:3px 8px" onclick="_angAdresseAusAnlage()" title="Adresse aus Anlage-Standort übernehmen">📍 Aus Anlage übernehmen</button>'+
+        '<button class="btn" style="font-size:10.5px;padding:3px 8px" onclick="_angAdresseAusAnlage()" title="Adresse aus einem anderen Angebot dieses Kunden übernehmen">📋 Aus anderem Angebot</button>'+
       '</div>'+
       '<textarea id="ang-ed-kunde-adresse" rows="3" oninput="_angAdresseChange(this.value)" placeholder="Straße 12&#10;12345 Musterstadt" style="width:100%;padding:8px 10px;border:1px solid '+(((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)?'#EF4444':'var(--bdr)')+';border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;background:#fff">'+escapeHtml(E.kunde_adresse||'')+'</textarea>'+
       (((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)
@@ -19912,39 +19912,20 @@ function _angAdresseChange(v) {
   const m = document.getElementById('ang-editor'); if (!m) return;
   m._state.kunde_adresse = v;
 }
-/* Adresse aus dem ERP holen — nutzt dieselbe Logik wie der Auto-Loader,
-   gibt aber explizit User-Feedback per Toast. */
-async function _angAdresseAusAnlage() {
+/* Adresse aus anderem Angebot dieses Kunden übernehmen. KEIN Anlage-Standort-
+   Fallback mehr — der war falsch. Wenn kein anderes Angebot dieses Kunden
+   eine bessere Adresse hat, bleibt das Feld zur manuellen Eingabe. */
+function _angAdresseAusAnlage() {
   const m = document.getElementById('ang-editor'); if (!m) return;
   const E = m._state;
-  const before = E.kunde_adresse;
-  // 1. ERP-Liste durchsuchen
-  try {
-    await _angLoadKundeAdresse();
-    if (E.kunde_adresse !== before && (E.kunde_adresse||'').split('\n').filter(Boolean).length >= 2) {
-      toast('📍 Adresse aus ERP geladen','ok');
-      return;
-    }
-  } catch(e) { console.warn('[Angebot] ERP-Kunde-Lookup fail:', e); }
-  // 2. Anlage.kunde Object aus Cache
-  if (E.matchedAnlage?.kunde) {
-    const built = _angBuildKundeAdresse(E.matchedAnlage.kunde);
-    if (built && built.split('\n').filter(Boolean).length >= 2) {
-      E.kunde_adresse = built;
-      _angEditorRender();
-      toast('📍 Adresse aus Anlage-Cache übernommen','ok');
-      return;
-    }
-  }
-  // 3. Anlage-Standort als allerletzter Fallback
-  if (E.anlage_adresse) {
-    const lines = [E.kunde_name||'', E.anlage_adresse].filter(Boolean);
-    E.kunde_adresse = lines.join('\n');
+  const found = _angFindPreviousKundeAdresse(E.kunde_nummer, E.recId);
+  if (found && found.split('\n').filter(Boolean).length >= 2) {
+    E.kunde_adresse = found;
     _angEditorRender();
-    toast('📍 Anlage-Standort als Empfänger gesetzt (Fallback)','ok');
+    toast('📋 Adresse aus anderem Angebot dieses Kunden übernommen','ok');
     return;
   }
-  toast('Keine Quelle gefunden — bitte manuell eingeben','err');
+  toast('Keine andere Adresse für '+(E.kunde_name||'diesen Kunden')+' gefunden — bitte manuell eingeben','warn');
 }
 
 /**
@@ -20132,19 +20113,18 @@ async function _angLoadKundeAdresse() {
     E.kunde_name = kunde.firmenname || kunde.name;
     _angEditorRender();
   }
-  // Verdächtig: aktuelle Adresse ist nur der Anlage-Standort (alter v4.86-
-  // Fallback, der oft falsch ist — Hausverwaltung sitzt nicht am Anlagen-Ort).
-  // Diese Adressen behandeln wir wie leer und versuchen Recovery.
-  const suspectFromAnlage = _angAdresseIsFromAnlageStandort(E.kunde_adresse, E.anlage_adresse);
+  // Nur recovern wenn die Adresse leer/dünn ist (1 Zeile = nur Firmenname).
+  // Eine 2+ Zeilen Adresse wird NIEMALS automatisch überschrieben —
+  // der User soll explizit den Button drücken um aus anderem Angebot zu holen.
+  // Das verhindert, dass eine manuell gepflegte (z.B. Berlin) Adresse
+  // beim Reload durch eine andere ersetzt wird.
   const finalLines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
-  if (finalLines <= 1 || suspectFromAnlage) {
+  if (finalLines <= 1) {
     const previousAdr = _angFindPreviousKundeAdresse(wanted, E.recId);
     if (previousAdr && previousAdr.split('\n').filter(Boolean).length >= 2) {
       E.kunde_adresse = previousAdr;
       console.log('[Angebot] Adresse aus vorherigem Angebot uebernommen.');
       _angEditorRender();
-    } else if (suspectFromAnlage) {
-      console.warn('[Angebot] Aktuelle Adresse stammt vom Anlage-Standort — bitte manuell pruefen/setzen.');
     }
   }
 }
