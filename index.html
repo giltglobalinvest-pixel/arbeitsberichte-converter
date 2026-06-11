@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.10';
+const APP_VERSION = 'v5.11';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19369,9 +19369,11 @@ async function _ensureAngeboteTable() {
    damit die Nummern z.B. ab einer bestimmten Zahl beginnen. */
 // Hardcoded Mindest-Startwert pro Firma — greift wenn DB-Wert nicht ankommt
 // (z.B. weil das Airtable-Feld noch nicht angelegt wurde / Schema-Permission fehlt).
-// User-Wunsch v5.09: Aszendio bei 2480 starten.
+// User-Wunsch v5.09+: BEIDE Firmen starten bei 2480.
 const ANGEBOT_HARDCODED_START = {
-  aszendio: 2480,
+  aszendio:       2480,
+  aufzug:         2480,
+  aufzugshandwerk:2480,
 };
 
 async function _angebotGetNextNumber(baseId, firmaSlug) {
@@ -19381,7 +19383,8 @@ async function _angebotGetNextNumber(baseId, firmaSlug) {
   const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug);
   const startFromCache = +(firmaRec?.fields?.angebot_start_num) || 0;
   const startFromS     = +(getCurrentFirma()?.angebot_start_num) || 0;
-  const startHardcoded = +ANGEBOT_HARDCODED_START[firmaSlug] || 0;
+  const slugLower = String(firmaSlug||'').toLowerCase();
+  const startHardcoded = +(ANGEBOT_HARDCODED_START[firmaSlug] || ANGEBOT_HARDCODED_START[slugLower]) || 0;
   const firmaStart = Math.max(startFromCache, startFromS, startHardcoded, 1);
   console.log('[Angebote] Next-Number Diagnose:',
     'firma='+firmaSlug,
