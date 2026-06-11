@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.75';
+const APP_VERSION = 'v4.76';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20617,6 +20617,13 @@ async function _angPushToErp(recId, btn) {
   try {
     const today = new Date().toISOString().slice(0,10);
     const inDays = (n) => { const d = new Date(); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); };
+    // ISO-Instant Format (mit Zeit + Z) — Java java.time.Instant erwartet das,
+    // NICHT das reine Datum. Wir verwenden Mittag UTC um Timezone-Verschiebung zu vermeiden.
+    const todayInstant = new Date().toISOString();
+    const inDaysInstant = (n) => {
+      const d = new Date(); d.setDate(d.getDate()+n); d.setUTCHours(12,0,0,0);
+      return d.toISOString();
+    };
     const sumNetto = +f.summe_netto_vp || 0;
     if (sumNetto <= 0) throw new Error('Summe VP netto ist 0 — kein sinnvoller ERP-Push möglich.');
     // Positionen für Kurztitel
@@ -20703,8 +20710,8 @@ async function _angPushToErp(recId, btn) {
     }
     const innerAngebot = {
       anlageid:               +f.anlage_id,
-      // DB-Spalte 'datum' ist NOT NULL — Pflichtfeld
-      datum:                  today,
+      // DB-Spalte 'datum' ist NOT NULL und erwartet java.time.Instant (ISO mit Zeit)
+      datum:                  todayInstant,
       // Empfänger = KONTAKT-ID (Person), nicht Kunden-Nr (Firma)
       empfaengerid:           kontaktIdNum,
       empfaengerId:           kontaktIdNum,
@@ -20714,11 +20721,11 @@ async function _angPushToErp(recId, btn) {
       // Kunde = die FIRMA
       kundeid:                kundeIdNum,
       kundeId:                kundeIdNum,
-      angebotsdatum:          today,
-      datumAngebotserstellung: today,
-      datumAngebot:           today,
-      gueltigBis:             inDays(30),
-      gueltigkeitsdatum:      inDays(30),
+      angebotsdatum:          todayInstant,
+      datumAngebotserstellung: todayInstant,
+      datumAngebot:           todayInstant,
+      gueltigBis:             inDaysInstant(30),
+      gueltigkeitsdatum:      inDaysInstant(30),
       bezeichnung:            bezeichnung,
       titel:                  bezeichnung,
       leistungsumfang:        kurzTitel,
@@ -20765,10 +20772,10 @@ async function _angPushToErp(recId, btn) {
       offerExplanation:        erlaeuterungText,
       serviceDescription:      kurzTitel,
       einsatzpauschale:        0,
-      plannedInstallationDate: inDays(14),
+      plannedInstallationDate: inDaysInstant(14),
       offerNumber:             'EXT-ANG-'+angNum,
-      offerDate:               today,
-      offerValidUntil:         inDays(30),
+      offerDate:               todayInstant,
+      offerValidUntil:         inDaysInstant(30),
       offerTitle:              bezeichnung,
       offerDescription:        kurzTitel,
       title:                   bezeichnung,
