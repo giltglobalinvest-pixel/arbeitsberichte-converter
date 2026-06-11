@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.89';
+const APP_VERSION = 'v4.90';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20127,10 +20127,42 @@ async function _angLoadKundeAdresse() {
     E.kunde_name = kunde.firmenname || kunde.name;
     _angEditorRender();
   }
-  // Kein Anlage-Standort-Fallback mehr — der Anlage-Standort ist NICHT zwingend
-  // die Empfänger-Adresse (Hausverwaltung sitzt oft woanders als die Anlage).
-  // Wenn nach allem die Adresse leer ist, bleibt der Editor sichtbar und
-  // wartet auf manuelle Eingabe.
+  // Letzter, sinnvoller Fallback: Adresse aus FRÜHEREN Angeboten desselben
+  // Kunden übernehmen. Wenn der User die Berliner Adresse für Digital Spine
+  // einmal manuell eingetragen hat, soll sie für jedes weitere Angebot
+  // automatisch verwendet werden.
+  const finalLines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
+  if (finalLines <= 1) {
+    const previousAdr = _angFindPreviousKundeAdresse(wanted, E.recId);
+    if (previousAdr && previousAdr.split('\n').filter(Boolean).length >= 2) {
+      E.kunde_adresse = previousAdr;
+      console.log('[Angebot] Adresse aus vorherigem Angebot uebernommen.');
+      _angEditorRender();
+    }
+  }
+}
+
+/**
+ * Sucht in den geladenen Angeboten desselben Kunden nach einer bereits
+ * gepflegten Empfänger-Adresse (mind. 2 Zeilen) und gibt sie zurück.
+ * Aktuell offenes Angebot (excludeRecId) wird ausgeschlossen.
+ */
+function _angFindPreviousKundeAdresse(kundeNummer, excludeRecId) {
+  const wanted = String(kundeNummer||'').trim();
+  const items  = _angeboteCache?.items || [];
+  for (const r of items) {
+    if (!r || r.id === excludeRecId) continue;
+    const f = r.fields || {};
+    if (String(f.kunde_nummer||'').trim() !== wanted) continue;
+    const adr = String(f.kunde_adresse||'').trim();
+    if (!adr) continue;
+    const lines = (adr.indexOf('\n')>=0 ? adr.split('\n') : adr.split(',')).map(s=>s.trim()).filter(Boolean);
+    if (lines.length >= 2) {
+      console.log('[Angebot] Vorherige Adresse gefunden via ANG-'+(f.app_angebot_num||'?'));
+      return lines.join('\n');
+    }
+  }
+  return '';
 }
 
 function _angClearAnlage() {
