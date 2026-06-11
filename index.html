@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.71';
+const APP_VERSION = 'v4.72';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18999,6 +18999,9 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'kunde_name',              type:'singleLineText' },
   { name:'kunde_nummer',            type:'singleLineText' },
   { name:'kunde_adresse',           type:'multilineText'  },
+  // Kontakt (Person beim Endkunden — wird als Empfänger im ERP genutzt)
+  { name:'kontakt_id',              type:'singleLineText' },
+  { name:'kontakt_name',            type:'singleLineText' },
   // Inhalt
   { name:'anschreiben',             type:'multilineText'  },
   { name:'positionen_json',         type:'multilineText'  },  // [{nr, titel, leistung[], ep_kone, vp, menge}]
@@ -19548,6 +19551,8 @@ async function openAngebotEditor(ctx) {
       _kunde_name: f.kunde_name || '',
       _kunde_nummer: f.kunde_nummer || '',
       _kunde_adresse: f.kunde_adresse || '',
+      _kontakt_id: f.kontakt_id || '',
+      _kontakt_name: f.kontakt_name || '',
     };
   }
   // State
@@ -19596,6 +19601,10 @@ async function openAngebotEditor(ctx) {
     anlage_adresse: ctx.matchedAnlage?.anzeigeAdresse || ctx.extracted.anlage_adresse || '',
     equipmentnummer: ctx.extracted.equipmentnummer || '',
     seriennummer: ctx.extracted.seriennummer || ctx.matchedAnlage?.fabriknummer || '',
+    // Kontakt (Person beim Endkunden) — wird im Picker gesetzt, vom User gewählt
+    kontakt_id:    ctx._kontakt_id   || '',
+    kontakt_name:  ctx._kontakt_name || '',
+    _kontakte_list: null,  // Cache der Kontakte-Liste (nach Anlage-Wahl geladen)
   };
   const m = document.createElement('div');
   m.id = 'ang-editor';
@@ -19615,6 +19624,11 @@ async function openAngebotEditor(ctx) {
   document.body.appendChild(m);
   m._state = E;
   _angEditorRender();
+  // Wenn beim Erstöffnen schon eine Anlage gewählt ist (Auto-Match oder Edit-Mode),
+  // gleich die Kontakte für den Kunden nachladen — außer der Kontakt ist schon gesetzt.
+  if (E.anlage_id && E.kunde_nummer && !E.kontakt_id) {
+    _angLoadKontakte();
+  }
 }
 
 function _angBuildKundeAdresse(k) {
@@ -19656,8 +19670,11 @@ function _angEditorRender() {
   const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
   // Anlage-Sektion: gewählt → Card mit allen Daten, sonst → Picker mit Suche
   const anlageBlock = E.anlage_id ? _angRenderAnlageCard(E) : _angRenderAnlagePicker(E);
+  // Kontakt-Picker (nur sichtbar wenn Anlage gewählt)
+  const kontaktBlock = E.anlage_id ? _angRenderKontaktPicker(E) : '';
   body.innerHTML =
     anlageBlock+
+    kontaktBlock+
     // Nur Bearbeiter ist hier editierbar — alles andere kommt aus der Anlage
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Bearbeiter (VP) *</label>'+
@@ -19804,7 +19821,12 @@ function _angSelectAnlage(anlageId) {
   m._state.kunde_name = k.firmenname || k.name || '';
   m._state.kunde_nummer = String(k.kundennummer || k.id || '');
   m._state.kunde_adresse = _angBuildKundeAdresse(k);
+  // Kontakte für den neuen Kunden frisch laden (anderer Kunde → andere Kontakte)
+  m._state.kontakt_id = '';
+  m._state.kontakt_name = '';
+  m._state._kontakte_list = null;
   _angEditorRender();
+  _angLoadKontakte();
 }
 
 function _angClearAnlage() {
@@ -19842,6 +19864,115 @@ function _angOpenCreateAnlage() {
   openCreateAnlageStandalone();
   // Sanfter Hinweis — der Anlage-Dialog hat keinen Callback-Hook, deshalb der manuelle Refresh-Schritt
   setTimeout(() => toast('💡 Nach Anlegen: ↻ klicken um die neue Anlage zu finden','', ), 1200);
+}
+
+/**
+ * Kontakt-Picker im Editor — Person beim Endkunden, die das ERP als Empfänger
+ * der Anfrage/des Angebots speichern soll.
+ *
+ * Wird sichtbar, wenn eine Anlage gewählt ist. Bei Erst-Render werden die
+ * Kontakte automatisch aus /api/Kunden/<kunde_nummer>/Kontakte geladen.
+ */
+function _angRenderKontaktPicker(E) {
+  const list = E._kontakte_list;
+  const loading = list === null || list === undefined;
+  // Bereits gewählt: kompakte Card
+  if (E.kontakt_id) {
+    return '<div style="background:#ECFDF5;border:2px solid #10b981;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'+
+      '<div>'+
+        '<div style="font-size:11px;font-weight:700;color:#065F46;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px">✅ Kontakt (Empfänger)</div>'+
+        '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(E.kontakt_name||'?')+'</div>'+
+        '<div style="font-size:11px;color:var(--txt3)">Kontakt-ID '+escapeHtml(E.kontakt_id)+'</div>'+
+      '</div>'+
+      '<button onclick="_angClearKontakt()" class="btn" style="font-size:11px;padding:4px 10px">↺ Anderen Kontakt wählen</button>'+
+    '</div>';
+  }
+  // Noch nicht gewählt: Loading-Hinweis oder Dropdown
+  if (loading) {
+    return '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#92400E"><div class="spinner" style="display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:middle"></div>Lade Kontakte für Kunde '+escapeHtml(E.kunde_name||E.kunde_nummer)+' aus dem ERP…</div>';
+  }
+  if (!Array.isArray(list) || list.length === 0) {
+    return '<div style="background:#FEF2F2;border:1px solid #DC2626;border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:12px;color:#991B1B">'+
+      '⚠ <strong>Keine Kontakte für diesen Kunden im ERP</strong>. ERP-Push wird ohne Kontakt nicht möglich sein. Lege im ERP zuerst einen Kontakt (z.B. Hausverwaltung) für den Kunden an.'+
+      '<button onclick="_angReloadKontakte(this)" class="btn" style="margin-left:8px;font-size:11px">↻ Erneut laden</button>'+
+    '</div>';
+  }
+  // Dropdown
+  const opts = list.map(k => {
+    const label = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim()
+                + (k.rolle ? ' ('+k.rolle+')' : '')
+                + (k.email ? ' · '+k.email : '')
+                + (k.telefon ? ' · '+k.telefon : '');
+    return '<option value="'+escapeHtml(String(k.id))+'">'+escapeHtml(label || ('Kontakt '+k.id))+'</option>';
+  }).join('');
+  return '<div style="background:#EFF6FF;border:2px solid #2152A9;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+    '<div style="font-size:11px;font-weight:700;color:#1E3A8A;text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Kontakt wählen (Empfänger im ERP) *</div>'+
+    '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+
+      '<select id="ang-kontakt-sel" onchange="_angSelectKontakt(this.value)" style="flex:1;min-width:260px;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff">'+
+        '<option value="">— Kontakt wählen —</option>'+opts+
+      '</select>'+
+      '<button onclick="_angReloadKontakte(this)" class="btn" title="Liste aus dem ERP neu laden" style="font-size:11px">↻</button>'+
+    '</div>'+
+    '<div style="font-size:11px;color:var(--txt3);margin-top:6px">'+list.length+' Kontakt(e) für '+escapeHtml(E.kunde_name||E.kunde_nummer)+'</div>'+
+  '</div>';
+}
+
+async function _angLoadKontakte() {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const E = m._state;
+  if (!E.anlage_id || !E.kunde_nummer) return;
+  E._kontakte_list = null;  // loading
+  _angEditorRender();
+  try {
+    const firmaSlug = getCurrentFirmaSlug();
+    const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(E.kunde_nummer)+'/Kontakte');
+    const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+    E._kontakte_list = list;
+    console.log('[Angebote] Kontakte für Kunde', E.kunde_nummer, ':', list);
+    // Auto-Select wenn nur einer oder Standardansprechpartner
+    const std = list.find(k => k.isStandard || k.standard || k.isDefault);
+    if (list.length === 1) {
+      _angSelectKontakt(String(list[0].id));
+      return;
+    }
+    if (std) {
+      _angSelectKontakt(String(std.id));
+      return;
+    }
+    _angEditorRender();
+  } catch(e) {
+    console.error('[Angebote] Kontakte-Load:', e);
+    E._kontakte_list = [];
+    toast('❌ Kontakte konnten nicht geladen werden: '+(e.message||'').slice(0,160),'err');
+    _angEditorRender();
+  }
+}
+
+function _angSelectKontakt(kontaktId) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const k = (m._state._kontakte_list||[]).find(x => String(x.id) === String(kontaktId));
+  if (!k) return;
+  m._state.kontakt_id   = String(k.id);
+  m._state.kontakt_name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || ('Kontakt '+k.id);
+  _angEditorRender();
+}
+
+function _angClearKontakt() {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  m._state.kontakt_id   = '';
+  m._state.kontakt_name = '';
+  _angEditorRender();
+}
+
+async function _angReloadKontakte(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  const m = document.getElementById('ang-editor');
+  if (m && m._state) m._state._kontakte_list = null;
+  await _angLoadKontakte();
+  if (btn) { btn.disabled = false; btn.textContent = '↻'; }
 }
 
 /**
@@ -19922,6 +20053,7 @@ async function _angEditorSave() {
   const E = m._state;
   if (!E.anlage_id) return toast('Bitte zuerst eine Anlage wählen','err');
   if (!E.kunde_name) return toast('Endkunde fehlt — bitte Anlage neu wählen','err');
+  if (!E.kontakt_id) return toast('Bitte einen Kontakt (Empfänger im ERP) wählen','err');
   if (!E.positionen.length) return toast('Keine Positionen vorhanden','err');
   const btn = document.getElementById('ang-ed-save');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
@@ -19962,6 +20094,8 @@ async function _angEditorSave() {
       kunde_name: E.kunde_name || '',
       kunde_nummer: E.kunde_nummer || '',
       kunde_adresse: E.kunde_adresse || '',
+      kontakt_id: E.kontakt_id || '',
+      kontakt_name: E.kontakt_name || '',
       anschreiben: E.anschreiben || '',
       positionen_json: JSON.stringify(E.positionen),
       ust_prozent: ust,
@@ -20332,41 +20466,23 @@ async function _angCreateErpAnfrage(rec) {
   const anlageIdNum = parseInt(String(f.anlage_id).replace(/[^\d]/g,''), 10);
   if (!Number.isFinite(anlageIdNum) || anlageIdNum <= 0) throw new Error('Anlage-ID "'+f.anlage_id+'" ist nicht numerisch');
 
-  // empfaengerId = KONTAKT-ID (NICHT Kunden-Nr.!) Die Anlage hat oft einen
-  // Standard-Kontakt; sonst aus api/Kunden/<nr>/Kontakte den ersten holen.
-  const anlage = (_anlagenCache.items||[]).find(a => String(a.id) === String(f.anlage_id)) || null;
-  let kontaktId = anlage?.standardansprechpartnerId
-                 || anlage?.standardAnsprechpartnerId
-                 || anlage?.standardAnsprechpartner?.id
-                 || anlage?.ansprechpartner?.id
-                 || anlage?.kontakt?.id
-                 || anlage?.empfaenger?.id
-                 || anlage?.kunde?.standardansprechpartnerId
-                 || anlage?.kunde?.standardAnsprechpartnerId
-                 || anlage?.kunde?.standardAnsprechpartner?.id
-                 || null;
-  if (kontaktId) console.log('[ERP-Anfrage] Kontakt-ID aus Anlage gefunden:', kontaktId);
+  // empfaengerId = KONTAKT-ID — wurde im Editor vom User explizit gewählt.
+  // Fallback nur falls Legacy-Record ohne kontakt_id: Multi-Source-Lookup.
+  let kontaktId = f.kontakt_id || null;
+  if (kontaktId) console.log('[ERP-Anfrage] Kontakt-ID aus App-Record (User-Wahl):', kontaktId);
   if (!kontaktId) {
-    // Fallback: alle Kontakte des Kunden holen und den ersten nehmen
-    const kundenNr = String(f.kunde_nummer).trim();
-    try {
-      console.log('[ERP-Anfrage] Suche Kontakte für Kunde', kundenNr);
-      const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
-      const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
-      console.log('[ERP-Anfrage] Kontakte-Response:', list);
-      // Bevorzugt einen mit "Standard"-Flag, sonst den ersten
-      const std = list.find(k => k.isStandard || k.standard || k.isDefault);
-      const pick = std || list[0];
-      if (pick && pick.id) {
-        kontaktId = +pick.id;
-        console.log('[ERP-Anfrage] Kontakt-ID aus Kunden-Kontakten:', kontaktId, pick);
-      }
-    } catch(kontaktErr) {
-      console.warn('[ERP-Anfrage] Konnte Kontakte nicht laden:', kontaktErr.message);
-    }
+    const anlage = (_anlagenCache.items||[]).find(a => String(a.id) === String(f.anlage_id)) || null;
+    kontaktId = anlage?.standardansprechpartnerId
+               || anlage?.standardAnsprechpartnerId
+               || anlage?.standardAnsprechpartner?.id
+               || anlage?.ansprechpartner?.id
+               || anlage?.kontakt?.id
+               || anlage?.empfaenger?.id
+               || null;
+    if (kontaktId) console.log('[ERP-Anfrage] Kontakt-ID aus Anlage (Fallback):', kontaktId);
   }
   if (!kontaktId) {
-    throw new Error('Kein Kontakt für Anlage gefunden (weder Standardansprechpartner an der Anlage noch über api/Kunden/'+f.kunde_nummer+'/Kontakte). Bitte im ERP einen Standardansprechpartner für den Kunden hinterlegen.');
+    throw new Error('Kein Kontakt im App-Angebot hinterlegt. Bitte das Angebot bearbeiten und einen Kontakt auswählen.');
   }
   // kontaktIdNum: ID der Person (Empfänger), kundeIdNum: ID der Firma (Auftraggeber).
   // KLAR getrennt halten — vorher haben wir kundeId fälschlich mit kontaktId überschrieben.
