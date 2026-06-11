@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.92';
+const APP_VERSION = 'v4.93';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19895,6 +19895,7 @@ function _angRenderAnlageCard(E) {
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px">'+
         '<label style="color:var(--txt3);font-size:11px;font-weight:600">📬 Empfänger-Anschrift im PDF (Straße / PLZ Ort, je eine Zeile)</label>'+
         '<button class="btn" style="font-size:10.5px;padding:3px 8px" onclick="_angAdresseAusAnlage()" title="Adresse aus einem anderen Angebot dieses Kunden übernehmen">📋 Aus anderem Angebot</button>'+
+        ' <button class="btn" style="font-size:10.5px;padding:3px 8px" onclick="_angInspectKundeDaten()" title="Alle Kunden-Daten aus dem ERP anzeigen — Adresse manuell auswählen">🔍 ERP-Daten anzeigen</button>'+
       '</div>'+
       '<textarea id="ang-ed-kunde-adresse" rows="3" oninput="_angAdresseChange(this.value)" placeholder="Straße 12&#10;12345 Musterstadt" style="width:100%;padding:8px 10px;border:1px solid '+(((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)?'#EF4444':'var(--bdr)')+';border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;background:#fff">'+escapeHtml(E.kunde_adresse||'')+'</textarea>'+
       (((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)
@@ -19912,13 +19913,106 @@ function _angAdresseChange(v) {
   const m = document.getElementById('ang-editor'); if (!m) return;
   m._state.kunde_adresse = v;
 }
+
+/**
+ * ERP-Daten-Inspektor: zeigt alle Felder des Kunden aus dem ERP als JSON
+ * UND extrahiert alle Strings die nach Adressen aussehen — klickbar damit
+ * der User mit einem Klick die richtige Adresse übernehmen kann.
+ */
+async function _angInspectKundeDaten() {
+  const m = document.getElementById('ang-editor'); if (!m) return;
+  const E = m._state;
+  if (!E.kunde_nummer) return toast('Kein Kunde gewählt','err');
+  const wanted = String(E.kunde_nummer).trim();
+  const slug = getCurrentFirmaSlug();
+  // Loading-Modal
+  const id = 'ang-inspector';
+  document.getElementById(id)?.remove();
+  const ov = document.createElement('div');
+  ov.id = id;
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10800;display:flex;align-items:center;justify-content:center;padding:8px';
+  ov.innerHTML = '<div style="background:#fff;max-width:760px;width:100%;max-height:92vh;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 18px;background:#1F2937;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+      '<span>🔍 ERP-Kundendaten · '+escapeHtml(E.kunde_name||'?')+' (Nr. '+escapeHtml(wanted)+')</span>'+
+      '<button onclick="document.getElementById(\''+id+'\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:28px;height:28px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div id="ang-insp-body" style="padding:16px 18px;overflow-y:auto;flex:1"><div style="text-align:center;color:#6B7280;padding:30px"><div class="spinner" style="margin:0 auto 12px"></div>Lade Kunde aus ERP…</div></div>'+
+  '</div>';
+  document.body.appendChild(ov);
+  // Liste laden + Kunde finden
+  let kunde = null;
+  try {
+    let liste = (_kundenCache?.firma === slug && Array.isArray(_kundenCache.items)) ? _kundenCache.items : null;
+    if (!liste) {
+      const res = await _erpTryPaths(slug, ['api/Kunden','api/kunden','Kunden','kunden']);
+      liste = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+    }
+    const matchOne = (k) => k && (String(k.kundennummer||'').trim()===wanted || String(k.id||'').trim()===wanted || String(k.nummer||'').trim()===wanted);
+    kunde = liste.find(matchOne);
+  } catch(e) {
+    console.warn('[Angebot-Inspector] Fehler:', e);
+  }
+  const body = document.getElementById('ang-insp-body'); if (!body) return;
+  if (!kunde) {
+    body.innerHTML = '<div style="color:#991B1B;text-align:center;padding:20px">Kunde nicht im ERP gefunden.</div>';
+    return;
+  }
+  // Plausible Adress-Kandidaten extrahieren
+  const candidates = [];
+  const pushIf = (label, val) => {
+    if (!val) return;
+    if (typeof val === 'string' && val.trim()) {
+      candidates.push({ label, value: val.trim() });
+    } else if (typeof val === 'object') {
+      const built = _angBuildKundeAdresse(val);
+      const adrOnly = built.split('\n').slice(1).filter(Boolean).join('\n');
+      if (adrOnly) candidates.push({ label, value: adrOnly });
+    }
+  };
+  pushIf('adresse (flach)',          kunde.adresse);
+  pushIf('rechnungsadresse',         kunde.rechnungsadresse || kunde.rechnungAdresse);
+  pushIf('lieferadresse',            kunde.lieferadresse || kunde.lieferAdresse);
+  pushIf('postanschrift',            kunde.postanschrift);
+  pushIf('standort',                 kunde.standort);
+  pushIf('defaultrechnungsempfaenger', kunde.defaultrechnungsempfaenger);
+  pushIf('formatted_address',        kunde.formatted_address || kunde.formattedAddress);
+  // Dedup
+  const seen = new Set();
+  const unique = candidates.filter(c => { if (seen.has(c.value)) return false; seen.add(c.value); return true; });
+  const firma = kunde.firmenname || kunde.name || E.kunde_name;
+  let html = '';
+  if (unique.length) {
+    html += '<div style="font-size:12px;font-weight:700;color:#065F46;margin-bottom:8px">💡 Vorschläge — klicke auf die passende Adresse:</div>';
+    html += '<div style="display:grid;gap:6px;margin-bottom:16px">'+ unique.map((c, i) => {
+      const fullAdr = [firma, c.value].filter(Boolean).join('\n');
+      return '<button onclick="_angInspectorPick('+i+')" data-adr="'+escapeHtml(fullAdr)+'" style="text-align:left;background:#ECFDF5;border:1px solid #10B981;border-radius:6px;padding:10px 12px;cursor:pointer;font-family:inherit;font-size:12px"><div style="font-size:10px;color:#065F46;font-weight:700;text-transform:uppercase;margin-bottom:4px">'+escapeHtml(c.label)+'</div><div style="white-space:pre-line;color:#111">'+escapeHtml(c.value)+'</div></button>';
+    }).join('') +'</div>';
+  } else {
+    html += '<div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px 12px;border-radius:4px;font-size:12px;color:#92400E;margin-bottom:12px">⚠ Keine direkten Klartext-Adressfelder im ERP — der Kunde hat nur eine Google-Places-ID (siehe JSON unten unter <code>adresseId</code>). Bitte manuell eingeben.</div>';
+  }
+  html += '<div style="font-size:12px;font-weight:700;color:#374151;margin-bottom:6px">Komplette Kunden-Daten:</div>';
+  html += '<pre style="background:#0F172A;color:#E2E8F0;padding:12px;border-radius:6px;font-size:11px;font-family:Menlo,Monaco,monospace;white-space:pre-wrap;word-wrap:break-word;max-height:340px;overflow:auto">'+escapeHtml(JSON.stringify(kunde, null, 2))+'</pre>';
+  body.innerHTML = html;
+  // Pick-Handler speichern via Window-Property (Buttons brauchen den State)
+  window._angInspectorPicks = unique.map(c => [firma, c.value].filter(Boolean).join('\n'));
+}
+
+function _angInspectorPick(idx) {
+  const m = document.getElementById('ang-editor');
+  const adr = (window._angInspectorPicks||[])[idx];
+  if (!m || !adr) return;
+  m._state.kunde_adresse = adr;
+  document.getElementById('ang-inspector')?.remove();
+  _angEditorRender();
+  toast('✅ Adresse übernommen','ok');
+}
 /* Adresse aus anderem Angebot dieses Kunden übernehmen. KEIN Anlage-Standort-
    Fallback mehr — der war falsch. Wenn kein anderes Angebot dieses Kunden
    eine bessere Adresse hat, bleibt das Feld zur manuellen Eingabe. */
 function _angAdresseAusAnlage() {
   const m = document.getElementById('ang-editor'); if (!m) return;
   const E = m._state;
-  const found = _angFindPreviousKundeAdresse(E.kunde_nummer, E.recId);
+  const found = _angFindPreviousKundeAdresse(E.kunde_nummer, E.recId, E.anlage_adresse);
   if (found && found.split('\n').filter(Boolean).length >= 2) {
     E.kunde_adresse = found;
     _angEditorRender();
@@ -20120,7 +20214,7 @@ async function _angLoadKundeAdresse() {
   // beim Reload durch eine andere ersetzt wird.
   const finalLines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
   if (finalLines <= 1) {
-    const previousAdr = _angFindPreviousKundeAdresse(wanted, E.recId);
+    const previousAdr = _angFindPreviousKundeAdresse(wanted, E.recId, E.anlage_adresse);
     if (previousAdr && previousAdr.split('\n').filter(Boolean).length >= 2) {
       E.kunde_adresse = previousAdr;
       console.log('[Angebot] Adresse aus vorherigem Angebot uebernommen.');
@@ -20145,10 +20239,11 @@ function _angAdresseIsFromAnlageStandort(kundeAdr, anlageAdr) {
 
 /**
  * Sucht in den geladenen Angeboten desselben Kunden nach einer bereits
- * gepflegten Empfänger-Adresse (mind. 2 Zeilen) und gibt sie zurück.
- * Aktuell offenes Angebot (excludeRecId) wird ausgeschlossen.
+ * gepflegten Empfänger-Adresse. KRITISCH: Adressen die nur den Anlage-Standort
+ * spiegeln (alter v4.86-Fallback in einigen Records) werden NICHT übernommen,
+ * sonst wird die manuell korrigierte Adresse beim Reload wieder kaputt gemacht.
  */
-function _angFindPreviousKundeAdresse(kundeNummer, excludeRecId) {
+function _angFindPreviousKundeAdresse(kundeNummer, excludeRecId, anlageAdresse) {
   const wanted = String(kundeNummer||'').trim();
   const items  = _angeboteCache?.items || [];
   for (const r of items) {
@@ -20157,6 +20252,9 @@ function _angFindPreviousKundeAdresse(kundeNummer, excludeRecId) {
     if (String(f.kunde_nummer||'').trim() !== wanted) continue;
     const adr = String(f.kunde_adresse||'').trim();
     if (!adr) continue;
+    // Wenn diese gespeicherte Adresse den Anlage-Standort enthält, ist sie der
+    // alte v4.86-Auto-Fallback und mit hoher Wahrscheinlichkeit falsch — skip.
+    if (anlageAdresse && _angAdresseIsFromAnlageStandort(adr, anlageAdresse)) continue;
     const lines = (adr.indexOf('\n')>=0 ? adr.split('\n') : adr.split(',')).map(s=>s.trim()).filter(Boolean);
     if (lines.length >= 2) {
       console.log('[Angebot] Vorherige Adresse gefunden via ANG-'+(f.app_angebot_num||'?'));
