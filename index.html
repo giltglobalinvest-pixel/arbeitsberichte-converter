@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.06';
+const APP_VERSION = 'v5.07';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19343,7 +19343,13 @@ async function _ensureAngeboteTable() {
    damit die Nummern z.B. ab einer bestimmten Zahl beginnen. */
 async function _angebotGetNextNumber(baseId, firmaSlug) {
   const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
-  const firmaStart = +((getCurrentFirma()?.angebot_start_num) || 1);
+  // angebot_start_num IMMER aus dem aktuellen _firmenCache lesen — S.firma kann ein
+  // veralteter Snapshot sein, der die letzten Änderungen aus der Firmen-Verwaltung
+  // nicht enthält. Wir holen den Cache vorher frisch nach.
+  try { await loadFirmen(); } catch(_){}
+  const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug);
+  const firmaStart = +((firmaRec?.fields?.angebot_start_num) || (getCurrentFirma()?.angebot_start_num) || 1);
+  console.log('[Angebote] Next-Number: firma='+firmaSlug+' start='+firmaStart);
   try {
     const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote'
       +'?pageSize=100&fields[]=app_angebot_num&fields[]=firma'
@@ -19822,7 +19828,7 @@ async function _extractKoneAngebot(file, anbieterHint, opts) {
       '• "leistungsbeschreibung": Bullet-Liste der Maßnahme zur Behebung (was muss konkret getan werden, um den Mangel zu beheben) — orientiere dich am Mängelwortlaut, aber formuliere als ausführende Tätigkeit (z.B. "Notrufknopf erneuern", "Verstärkungsblech anbringen", "Tür neu justieren und Hub einstellen")\n'+
       '• "einzelpreis_netto": IMMER 0 (User trägt den Preis pro Mangel im Editor selbst ein)\n'+
       '• "menge": 1\n'+
-      '• "anschreiben": kurzer Text der erklärt dass es um die Mängelbeseitigung aus dem TÜV-Bericht geht (Datum/Prüfnummer falls vorhanden nennen). KEINE Anrede! Nicht mit "Sehr geehrter Herr" / "Sehr geehrte Frau" beginnen — direkt mit "Bezug nehmend auf den TÜV-Mängelbericht …" oder "Wir freuen uns, Ihnen für die Behebung der Mängel folgendes Angebot zu unterbreiten:" starten.\n'+
+      '• "anschreiben": kurzer höflicher Anschreiben-Text der erklärt dass es um die Mängelbeseitigung aus dem TÜV-Bericht geht. Beginne MIT Anrede ("Sehr geehrte Damen und Herren," wenn Empfänger nicht klar, sonst passend). Datum/Prüfnummer falls vorhanden nennen.\n'+
       '• "anbieter": "TÜV-Mängelbericht" (lass den Wert so)\n'+
       '• "kone_angebot_num": die Prüf-/Berichts-Nummer aus dem TÜV-Dokument (falls vorhanden)\n'+
       '• "kone_angebot_datum": das Prüfdatum aus dem TÜV-Dokument\n'+
@@ -20074,23 +20080,17 @@ async function openAngebotEditor(ctx) {
     })),
     ust_prozent: +ctx.extracted.ust_prozent || 19,
     anschreiben: ctx.extracted.anschreiben || '',
-    // Konditionen-Defaults Priorisierung bei NEU:
-    //   1. Firma-spezifisch gespeicherte Standardwerte (vom User per "Als Standard speichern" gepflegt)
-    //   2. Aus KI extrahierte Werte (vom Original-Angebot)
-    //   3. Typ-Defaults (Reparatur=14 Tage netto etc.)
+    // Konditionen: kein Auto-Load der Firma-Defaults — wir wollen die KI-extrahierten
+    // bzw. manuell eingetragenen Werte respektieren. Wenn der User die gespeicherten
+    // Standardwerte braucht, klickt er auf "📥 Standard laden".
     // Bei EDIT: nur was im Record steht.
-    kond_lieferzeit:  ctx.editMode
-                        ? (ctx.extracted.kond_lieferzeit || '')
-                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.lieferzeit) || ctx.extracted.kond_lieferzeit || ''),
-    kond_preisbasis:  ctx.editMode
-                        ? (ctx.extracted.kond_preisbasis || '')
-                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.preisbasis) || ctx.extracted.kond_preisbasis || ''),
+    // Bei NEU: KI-extrahiert (Original-Angebot) bzw. bei Zahlung der Typ-Default.
+    kond_lieferzeit:  ctx.extracted.kond_lieferzeit || '',
+    kond_preisbasis:  ctx.extracted.kond_preisbasis || '',
     kond_zahlung:     ctx.editMode
                         ? (ctx.extracted.kond_zahlung || '')
-                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.zahlung) || typDefaults.kond_zahlung || ctx.extracted.kond_zahlung || ''),
-    kond_hinweise:    ctx.editMode
-                        ? (ctx.extracted.kond_hinweise || '')
-                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.hinweise) || ctx.extracted.kond_hinweise || ''),
+                        : (typDefaults.kond_zahlung || ctx.extracted.kond_zahlung || ''),
+    kond_hinweise:    ctx.extracted.kond_hinweise || '',
     // Anlage übernehmen (entweder gematcht oder im Edit aus Record)
     kunde_name:    fromEditKunde?.kunde_name    || ctx.matchedAnlage?.kunde?.firmenname || ctx.matchedAnlage?.kunde?.name || '',
     kunde_nummer:  fromEditKunde?.kunde_nummer  || String(ctx.matchedAnlage?.kunde?.kundennummer || ctx.matchedAnlage?.kunde?.id || ''),
@@ -20916,7 +20916,10 @@ function _angSelectKontakt(kontaktId) {
   const k = (m._state._kontakte_list||[]).find(x => String(x.id) === String(kontaktId));
   if (!k) return;
   m._state.kontakt_id   = String(k.id);
-  m._state.kontakt_name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || ('Kontakt '+k.id);
+  // Anrede-Wort allein als Anrede ("Herr"/"Frau") nutzen, NICHT die volle Brief-Anrede
+  // ("Sehr geehrter Herr"). Im PDF wird "z.Hd. Herr Karl-Heinz Dürnsteiner" geschrieben.
+  const anrede = String(k.anrede || '').replace(/^Sehr\s+geehrte[rn]?\s*/i, '').trim();
+  m._state.kontakt_name = [anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || ('Kontakt '+k.id);
   _angEditorRender();
 }
 
@@ -21213,10 +21216,12 @@ async function _buildAngebotPdf(rec) {
   doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...NAVY);
   const kundeName = (rec.kunde_name || '').trim();
   if (kundeName) { doc.text(_sanPdf(kundeName), ml, y); y += 5; }
-  // z.Hd.-Zeile wenn ein Kontakt ausgewählt wurde
+  // z.Hd.-Zeile wenn ein Kontakt ausgewählt wurde — Brief-Anrede ("Sehr geehrter Herr ...")
+  // wird hier zu kurzer Anrede + Name gestutzt damit "z.Hd. Herr X" rauskommt.
   if (rec.kontakt_name && String(rec.kontakt_name).trim()) {
+    const cleanKontakt = String(rec.kontakt_name).replace(/^Sehr\s+geehrte[rn]?\s*/i, '').trim();
     doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-    doc.text(_sanPdf('z.Hd. '+String(rec.kontakt_name).trim()), ml, y); y += 5;
+    doc.text(_sanPdf('z.Hd. '+cleanKontakt), ml, y); y += 5;
   }
   // Adresszeilen aufbereiten — Fallback-Chain:
   //   1. rec.kunde_adresse (gespeichert beim Anlegen)
