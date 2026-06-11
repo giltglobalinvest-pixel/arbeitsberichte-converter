@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.95';
+const APP_VERSION = 'v4.96';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18653,16 +18653,31 @@ function _daFirmaBranding(firmaSlug) {
   return {
     slug: 'aszendio',
     logoB64: LOGO_B64,
-    logoW: 36, logoH: 6,
+    logoW: 54, logoH: 9,     // v4.96: 1.5x größer
     company: 'Aszendio Aufzugservice GmbH',
     headerLine: 'Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com',
     footerLine: 'Aszendio Aufzugservice GmbH',
     navy: [26, 51, 83],
     accent: [33, 82, 169],
     footerCols: [
-      { title:'Aszendio Aufzugservice GmbH', lines:['Mörikestraße 7','71636 Ludwigsburg'] },
-      { title:'Kontakt',                     lines:['service@aszendio.com','www.aszendio.com'] },
-      { title:'Bankverbindung & Rechtliches',lines:['Geschäftsführer: Patrizio Fontanarosa','Amtsgericht Stuttgart'] },
+      { title:'Aszendio Aufzugservice GmbH',
+        lines:[
+          'Mörikestraße 7',
+          '71636 Ludwigsburg',
+          'Tel. +49 7141 / 64 73 990',
+        ]},
+      { title:'Kontakt',
+        lines:[
+          'service@aszendio.com',
+          'www.aszendio.com',
+          'Geschäftsführer: P. Fontanarosa',
+        ]},
+      { title:'Bank & Rechtliches',
+        lines:[
+          'HRB 783234 · USt-IdNr. DE362157987',
+          'IBAN: DE21 6005 0101 0405 2538 03',
+          'BIC: SOLADEST600 (BW-Bank)',
+        ]},
     ],
   };
 }
@@ -20681,11 +20696,11 @@ async function _buildAngebotPdf(rec) {
   const GREY = [55,65,81], GREY_L = [120,130,145], GREY_X = [229,231,235];
   const ORANGE = [234,88,12];
   const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
-  // KOPF
+  // KOPF — Logo prominent rechts, Adresszeile dezent links darunter
   try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW, 12, BR.logoW, BR.logoH); } catch(_){}
-  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
-  doc.text(_sanPdf(BR.headerLine), ml, 16);
-  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, 12+BR.logoH+4, mr, 12+BR.logoH+4);
+  doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf(BR.headerLine), ml, 12+BR.logoH+8.5);
   // EMPFÄNGER-BLOCK — vollständige Geschäftsbrief-Anschrift:
   //   Firma (fett)
   //   z.Hd. Kontakt-Name (wenn vorhanden)
@@ -20695,9 +20710,9 @@ async function _buildAngebotPdf(rec) {
   // kunde_adresse kann je nach Quelle \n-getrennt oder Komma-getrennt sein
   // (siehe _angBuildKundeAdresse vs erpKunden-Sync). Wir splitten flexibel
   // auf BEIDES und filtern doppelte Firmenname-Zeile (kommt von _angBuildKundeAdresse).
-  let y = 32;
-  doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
-  doc.text('EMPFÄNGER', ml, y); y += 4;
+  let y = 40;  // v4.96: tiefer wegen größerem Logo
+  doc.setFontSize(7); doc.setTextColor(...GREY_L);
+  doc.text('EMPFÄNGER', ml, y); y += 4.5;
   doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...NAVY);
   const kundeName = (rec.kunde_name || '').trim();
   if (kundeName) { doc.text(_sanPdf(kundeName), ml, y); y += 5; }
@@ -20733,26 +20748,26 @@ async function _buildAngebotPdf(rec) {
   for (const ln of adrLines) {
     doc.text(_sanPdf(ln), ml, y); y += 4.5;
   }
-  // RECHTS: Datum + Angebot-Nr.
-  doc.setFontSize(9); doc.setTextColor(...GREY_L);
+  // RECHTS: Datum + Angebot-Nr. (gleiche y-Höhe wie Empfänger-Block)
+  doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
   const today = rec.erstellt_am || new Date().toISOString().slice(0,10);
   const angNr = 'ANG-' + (rec.app_angebot_num||'?');
-  doc.text('Datum:', mr-50, 32);
+  const metaY = 40;
+  doc.text('Datum:', mr-50, metaY);
   doc.setTextColor(...GREY);
-  doc.text(_sanPdf(today), mr-2, 32, { align:'right' });
+  doc.text(_sanPdf(today), mr-2, metaY, { align:'right' });
   doc.setTextColor(...GREY_L);
-  doc.text('Angebot-Nr.:', mr-50, 37);
-  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(10);
-  doc.text(angNr, mr-2, 37, { align:'right' });
-  doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+  doc.text('Angebot-Nr.:', mr-50, metaY+5);
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+  doc.text(angNr, mr-2, metaY+5, { align:'right' });
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
   if (rec.bearbeiter) {
-    doc.text('Bearbeiter:', mr-50, 42);
+    doc.text('Bearbeiter:', mr-50, metaY+10);
     doc.setTextColor(...GREY);
-    doc.text(_sanPdf(rec.bearbeiter), mr-2, 42, { align:'right' });
+    doc.text(_sanPdf(rec.bearbeiter), mr-2, metaY+10, { align:'right' });
   }
-  y = Math.max(y, 50);
+  y = Math.max(y, 72);  // genug Luft nach Empfänger-Block
   // BETREFF — prominenter Titel mit feiner Unterstreichung
-  y = Math.max(y, 64);
   y += 4;
   doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.setTextColor(...NAVY);
   doc.text('Angebot ' + angNr, ml, y);
@@ -20784,16 +20799,17 @@ async function _buildAngebotPdf(rec) {
     });
     y += 4;
   }
-  // POSITIONS-TABELLE
+  // POSITIONS-TABELLE — subtiler Header mit dünner Accent-Linie unten statt Vollfarbe
   if (y > 230) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
-  doc.setFillColor(...NAVY); doc.rect(ml, y, cw, 8, 'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(10);
+  doc.setFillColor(247,249,252); doc.rect(ml, y, cw, 7.5, 'F');
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
   const colNr = 8, colTitel = cw - 8 - 22 - 28 - 28, colMenge = 22, colEP = 28, colGes = 28;
-  doc.text('Nr.', ml+2, y+5.5);
-  doc.text('Technische Spezifikation', ml+colNr+2, y+5.5);
-  doc.text('Menge', ml+colNr+colTitel+2, y+5.5);
-  doc.text('Einzelpreis', ml+colNr+colTitel+colMenge+colEP-2, y+5.5, { align:'right' });
-  doc.text('Gesamt', mr-2, y+5.5, { align:'right' });
+  doc.text('NR.', ml+2, y+5);
+  doc.text('TECHNISCHE SPEZIFIKATION', ml+colNr+2, y+5);
+  doc.text('MENGE', ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
+  doc.text('EINZELPREIS', ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
+  doc.text('GESAMT', mr-2, y+5, { align:'right' });
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.line(ml, y+7.5, mr, y+7.5);
   y += 8;
   let positionen = [];
   try { positionen = JSON.parse(rec.positionen_json||'[]'); } catch(_){}
@@ -20826,24 +20842,31 @@ async function _buildAngebotPdf(rec) {
     y += rowH;
     doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
   });
-  // SUMMEN
-  y += 2;
+  // SUMMEN — rechtsbündig, dezente Linien-Hierarchie
+  y += 4;
   const ust = +rec.ust_prozent || 19;
   const ustBetrag = sumNetto * ust/100;
   const brutto = sumNetto + ustBetrag;
-  doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...NAVY);
-  doc.text('Gesamtnettopreis', ml+2, y+5);
-  doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+5, { align:'right' });
-  y += 6;
-  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
-  doc.text('Zuzüglich gesetzl. USt. '+ust+'%', ml+2, y+4);
+  const sumX = ml + cw - 80;  // Summen-Block rechts, ~80mm Breite
+  // Netto
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+  doc.text('Gesamtnettopreis', sumX, y+4);
+  doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+  doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+4, { align:'right' });
+  y += 5.5;
+  // USt
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+  doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
   doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
+  y += 6;
+  // Trennlinie + Brutto (prominent ohne Vollfarb-Block)
+  doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
   y += 5;
-  doc.setFillColor(...ORANGE); doc.rect(ml, y, cw, 9, 'F');
-  doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text('Gesamtbruttopreis', ml+2, y+6);
-  doc.text(fmtEUR(brutto)+' EUR', mr-2, y+6, { align:'right' });
-  y += 14;
+  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
+  doc.text('Gesamtbruttopreis', sumX, y);
+  doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
+  doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
+  y += 10;
   // KONDITIONEN-BLOCK
   const kondSections = [
     ['Lieferzeit', rec.kond_lieferzeit],
@@ -20901,9 +20924,11 @@ async function _buildAngebotPdf(rec) {
 }
 
 function _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X) {
+  // Folgeseiten: dezenter Kopf mit kleinem Logo
+  try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW*0.7, 10, BR.logoW*0.7, BR.logoH*0.7); } catch(_){}
   doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal'); doc.setFontSize(8);
   doc.text(_sanPdf('Angebot · '+BR.company), ml, 14);
-  doc.setDrawColor(...GREY_X); doc.line(ml, 17, mr, 17);
+  doc.setDrawColor(...GREY_X); doc.line(ml, 18, mr, 18);
 }
 
 /* ── DETAIL-MODAL ──────────────────────────────────────────────────── */
