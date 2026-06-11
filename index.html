@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.68';
+const APP_VERSION = 'v4.69';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20328,6 +20328,12 @@ async function _angCreateErpAnfrage(rec) {
   const firmaSlug = f.firma || getCurrentFirmaSlug();
   if (!f.anlage_id) throw new Error('Keine Anlage verknüpft');
   if (!f.kunde_nummer) throw new Error('Kein Kunde verknüpft');
+  // Numerische IDs absichern — NaN würde in JSON zu null und ERP rejected.
+  const anlageIdNum = parseInt(String(f.anlage_id).replace(/[^\d]/g,''), 10);
+  const kundeIdNum  = parseInt(String(f.kunde_nummer).replace(/[^\d]/g,''), 10);
+  if (!Number.isFinite(anlageIdNum) || anlageIdNum <= 0) throw new Error('Anlage-ID "'+f.anlage_id+'" ist nicht numerisch');
+  if (!Number.isFinite(kundeIdNum)  || kundeIdNum  <= 0) throw new Error('Kunde-Nr. "'+f.kunde_nummer+'" ist nicht numerisch');
+  console.log('[ERP-Anfrage] IDs parsed:', { anlageId: anlageIdNum, empfaengerId: kundeIdNum });
   const today = new Date().toISOString().slice(0,10);
   const angNum = String(f.app_angebot_num || '?');
   let firstTitle = '';
@@ -20347,14 +20353,14 @@ async function _angCreateErpAnfrage(rec) {
   // Wir senden beide Varianten parallel + die required Felder die wir aus dem Trace kennen.
   const payload = {
     // Anlage — Trace zeigte: 'anlageId' (camelCase) ist required
-    anlageId:               +f.anlage_id,
-    anlageid:               +f.anlage_id,
+    anlageId:               anlageIdNum,
+    anlageid:               anlageIdNum,
     // Empfänger/Kunde — beide Schreibweisen
-    empfaengerId:           +f.kunde_nummer,
-    empfaengerid:           +f.kunde_nummer,
-    kundeId:                +f.kunde_nummer,
-    kundeid:                +f.kunde_nummer,
-    customerId:             +f.kunde_nummer,
+    empfaengerId:           kundeIdNum,
+    empfaengerid:           kundeIdNum,
+    kundeId:                kundeIdNum,
+    kundeid:                kundeIdNum,
+    customerId:             kundeIdNum,
     // Pflicht-Felder aus Trace: details (NotEmpty String), anhang (NotNull List)
     details:                beschreibung,
     anhang:                 [],
