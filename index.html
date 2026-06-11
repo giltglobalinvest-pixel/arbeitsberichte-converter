@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.86';
+const APP_VERSION = 'v4.87';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19643,18 +19643,37 @@ function _angBuildKundeAdresse(k) {
   if (!k) return '';
   const lines = [];
   if (k.firmenname || k.name) lines.push(k.firmenname || k.name);
-  // Adresse kann flach ODER nested unter k.adresse / k.standort liegen, mit deutschen
-  // ODER englischen Feldnamen. Wir extrahieren defensive aus allen plausiblen Stellen.
-  const a = (k.adresse && typeof k.adresse === 'object') ? k.adresse : null;
-  const s = (k.standort && typeof k.standort === 'object') ? k.standort : null;
-  const street = k.strasse || k.street || (typeof k.adresse === 'string' ? k.adresse : '')
-                || a?.strasse || a?.street
-                || s?.strasse || s?.street || '';
-  const hnr = k.hausnummer || k.houseNumber || a?.hausnummer || a?.houseNumber || s?.hausnummer || '';
+  // Adresse kann an MEHREREN Stellen liegen — wir sammeln aus allen plausiblen Quellen
+  // und nehmen die erste, die wenigstens Straße ODER PLZ/Ort liefert.
+  // Kandidaten in Reihenfolge: flach (k.*) → k.adresse → k.rechnungsadresse → k.lieferadresse → k.postanschrift → k.standort
+  const sources = [
+    k,
+    (k.adresse && typeof k.adresse === 'object') ? k.adresse : null,
+    (k.rechnungsadresse && typeof k.rechnungsadresse === 'object') ? k.rechnungsadresse : null,
+    (k.rechnungAdresse && typeof k.rechnungAdresse === 'object') ? k.rechnungAdresse : null,
+    (k.billingAddress && typeof k.billingAddress === 'object') ? k.billingAddress : null,
+    (k.invoiceAddress && typeof k.invoiceAddress === 'object') ? k.invoiceAddress : null,
+    (k.lieferadresse && typeof k.lieferadresse === 'object') ? k.lieferadresse : null,
+    (k.lieferAdresse && typeof k.lieferAdresse === 'object') ? k.lieferAdresse : null,
+    (k.shippingAddress && typeof k.shippingAddress === 'object') ? k.shippingAddress : null,
+    (k.postanschrift && typeof k.postanschrift === 'object') ? k.postanschrift : null,
+    (k.standort && typeof k.standort === 'object') ? k.standort : null,
+  ].filter(Boolean);
+  const pickStreet = (o) => o.strasse || o.street || o.strassenname || o.streetName || (typeof o.adresse === 'string' ? o.adresse : '') || '';
+  const pickHnr    = (o) => o.hausnummer || o.houseNumber || o.hnr || '';
+  const pickPlz    = (o) => o.plz || o.postleitzahl || o.zip || o.zipCode || o.postalCode || '';
+  const pickOrt    = (o) => o.ort || o.stadt || o.city || o.town || '';
+  let street='', hnr='', plz='', ort='';
+  for (const o of sources) {
+    if (!street) street = pickStreet(o);
+    if (!hnr)    hnr    = pickHnr(o);
+    if (!plz)    plz    = pickPlz(o);
+    if (!ort)    ort    = pickOrt(o);
+    if (street && plz && ort) break;
+  }
+  // Manche ERPs liefern "strasse" als komplette Zeile inkl. Hausnummer
   const streetFull = [street, hnr].filter(Boolean).join(' ').trim();
   if (streetFull) lines.push(streetFull);
-  const plz = k.plz || k.postleitzahl || k.zip || a?.plz || a?.postleitzahl || a?.zip || s?.plz || '';
-  const ort = k.ort || k.stadt || k.city || a?.ort || a?.stadt || a?.city || s?.ort || s?.stadt || '';
   const cityLine = [plz, ort].filter(Boolean).join(' ').trim();
   if (cityLine) lines.push(cityLine);
   return lines.join('\n');
@@ -19949,6 +19968,8 @@ async function _angLoadKundeAdresse() {
     return;
   }
   console.log('[Angebot] Voller Kunde aus ERP:', kunde);
+  console.log('[Angebot] Kunde Top-Keys:', Object.keys(kunde).join(', '));
+  try { console.log('[Angebot] Kunde JSON:\n'+JSON.stringify(kunde, null, 2)); } catch(_){}
   const built = _angBuildKundeAdresse(kunde);
   const builtLines = (built||'').split('\n').filter(Boolean).length;
   const haveLines  = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
