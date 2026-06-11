@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.93';
+const APP_VERSION = 'v4.94';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19699,45 +19699,64 @@ async function _angResolveAdresseId(firmaSlug, adresseId) {
   if (!adresseId) return '';
   const enc = encodeURIComponent(adresseId);
   const candidates = [
+    // Vom User identifizierter echter Endpoint:
+    'api/users/me/google/maps/adresse/'+enc,
+    // Fallbacks falls sich der Endpoint mal ändert
     'api/Adressen/'+enc,
     'api/adressen/'+enc,
-    'api/Adresse/'+enc,
-    'api/adresse/'+enc,
-    'api/Address/'+enc,
-    'api/address/'+enc,
-    'api/Places/'+enc,
-    'api/places/'+enc,
-    'api/Google/Places/'+enc,
     'api/google/places/'+enc,
   ];
   for (const path of candidates) {
     try {
       const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
       if (!res || typeof res !== 'object') continue;
-      // Falls voll-strukturierte ERP-Adresse — bauen
-      const lines = [];
-      const street = res.strasse || res.street || res.strassenname || '';
-      const hnr    = res.hausnummer || res.houseNumber || '';
-      const plz    = res.plz || res.postleitzahl || res.zip || '';
-      const ort    = res.ort || res.stadt || res.city || '';
-      const sf = [street, hnr].filter(Boolean).join(' ').trim();
-      const co = [plz, ort].filter(Boolean).join(' ').trim();
-      if (sf) lines.push(sf);
-      if (co) lines.push(co);
-      if (lines.length) {
-        console.log('[Angebot] AdresseId aufgeloest via '+path);
-        return lines.join('\n');
-      }
-      // Falls Google-Places-Format mit formatted_address
-      if (typeof res.formatted_address === 'string' && res.formatted_address.trim()) {
-        const parts = res.formatted_address.split(',').map(s => s.trim()).filter(Boolean);
-        // typisch: "Straße 12, 12345 Stadt, Land" → erste 2 nehmen
-        console.log('[Angebot] AdresseId aufgeloest via '+path+' (formatted_address)');
-        return parts.slice(0, 2).join('\n');
-      }
-      if (typeof res.formattedAddress === 'string' && res.formattedAddress.trim()) {
-        const parts = res.formattedAddress.split(',').map(s => s.trim()).filter(Boolean);
-        return parts.slice(0, 2).join('\n');
+      console.log('[Angebot] AdresseId-Response via '+path+':', res);
+      // Bei nested-Antworten (Google's API gibt oft {result:{...}} zurück)
+      const sources = [res, res.result, res.place, res.adresse, res.address].filter(Boolean);
+      for (const r of sources) {
+        // Voll-strukturierte Adresse?
+        const street = r.strasse || r.street || r.strassenname || r.streetName || '';
+        const hnr    = r.hausnummer || r.houseNumber || r.hnr || '';
+        const plz    = r.plz || r.postleitzahl || r.zip || r.postalCode || r.zipCode || '';
+        const ort    = r.ort || r.stadt || r.city || r.town || '';
+        const sf = [street, hnr].filter(Boolean).join(' ').trim();
+        const co = [plz, ort].filter(Boolean).join(' ').trim();
+        const lines = [];
+        if (sf) lines.push(sf);
+        if (co) lines.push(co);
+        if (lines.length) {
+          console.log('[Angebot] AdresseId aufgeloest via '+path+' (strukturiert)');
+          return lines.join('\n');
+        }
+        // Google-Places-formatted_address
+        const fa = r.formatted_address || r.formattedAddress || r.formattedAdress;
+        if (typeof fa === 'string' && fa.trim()) {
+          const parts = fa.split(',').map(s => s.trim()).filter(Boolean);
+          // typisch "Friedrichstr. 123, 10117 Berlin, Deutschland" → erste 2 nehmen
+          const useful = parts.filter(p => p.toLowerCase() !== 'deutschland' && p.toLowerCase() !== 'germany');
+          console.log('[Angebot] AdresseId aufgeloest via '+path+' (formatted_address)');
+          return useful.slice(0, 2).join('\n');
+        }
+        // Google address_components → zusammensetzen
+        if (Array.isArray(r.address_components) && r.address_components.length) {
+          const comp = (typeArr) => {
+            const c = r.address_components.find(c => c.types && typeArr.some(t => c.types.includes(t)));
+            return c ? (c.long_name || c.short_name || '') : '';
+          };
+          const route = comp(['route']);
+          const streetNumber = comp(['street_number']);
+          const postal = comp(['postal_code']);
+          const locality = comp(['locality','postal_town']);
+          const sf2 = [route, streetNumber].filter(Boolean).join(' ').trim();
+          const co2 = [postal, locality].filter(Boolean).join(' ').trim();
+          const lines2 = [];
+          if (sf2) lines2.push(sf2);
+          if (co2) lines2.push(co2);
+          if (lines2.length) {
+            console.log('[Angebot] AdresseId aufgeloest via '+path+' (address_components)');
+            return lines2.join('\n');
+          }
+        }
       }
     } catch(e) {
       if (e.status && e.status !== 404 && e.status !== 405) {
@@ -19969,6 +19988,14 @@ async function _angInspectKundeDaten() {
       if (adrOnly) candidates.push({ label, value: adrOnly });
     }
   };
+  // PRIO 1: adresseId via Google-Maps-Endpoint auflösen — das ist die echte Adresse
+  const adId = kunde.adresseId || kunde.defaultrechnungsempfaenger?.adresseId;
+  if (adId) {
+    try {
+      const resolved = await _angResolveAdresseId(slug, adId);
+      if (resolved) candidates.push({ label:'adresseId (Google Maps)', value: resolved });
+    } catch(e) { console.warn('[Inspector] adresseId fail:', e); }
+  }
   pushIf('adresse (flach)',          kunde.adresse);
   pushIf('rechnungsadresse',         kunde.rechnungsadresse || kunde.rechnungAdresse);
   pushIf('lieferadresse',            kunde.lieferadresse || kunde.lieferAdresse);
