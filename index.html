@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.87';
+const APP_VERSION = 'v4.88';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18635,12 +18635,18 @@ function _daFirmaBranding(firmaSlug) {
     return {
       slug: 'aufzug',
       logoB64: AUFZUG_LOGO_B64,
-      logoW: 36, logoH: 7.4,                  // selbes Verhältnis wie 48x9.8
+      logoW: 36, logoH: 7.4,
       company: 'Aufzugshandwerk',
       headerLine: 'Aufzugshandwerk',
       footerLine: 'Aufzugshandwerk',
       navy: [40, 40, 40],
       accent: [40, 40, 40],
+      // 3-Spalten-Briefpapier-Footer für PDFs
+      footerCols: [
+        { title:'Aufzugshandwerk',   lines:['Hauptstraße 1','12345 Musterstadt'] },
+        { title:'Kontakt',           lines:['info@aufzugshandwerk.de','www.aufzugshandwerk.de'] },
+        { title:'Rechtliches',       lines:['HRB 00000','USt-IdNr. DE000000000'] },
+      ],
     };
   }
   // Default: Aszendio
@@ -18653,6 +18659,11 @@ function _daFirmaBranding(firmaSlug) {
     footerLine: 'Aszendio Aufzugservice GmbH',
     navy: [26, 51, 83],
     accent: [33, 82, 169],
+    footerCols: [
+      { title:'Aszendio Aufzugservice GmbH', lines:['Mörikestraße 7','71636 Ludwigsburg'] },
+      { title:'Kontakt',                     lines:['service@aszendio.com','www.aszendio.com'] },
+      { title:'Bankverbindung & Rechtliches',lines:['Geschäftsführer: Patrizio Fontanarosa','Amtsgericht Stuttgart'] },
+    ],
   };
 }
 
@@ -19639,6 +19650,66 @@ async function openAngebotEditor(ctx) {
   }
 }
 
+/**
+ * Versucht eine ERP-`adresseId` (Google-Places-Style) zu Klartext aufzulösen.
+ * Probiert mehrere bekannte und vermutete Endpoint-Patterns durch.
+ * Erwartet als Antwort entweder einen flachen Adress-Record oder einen
+ * Google-Places-ähnlichen Body mit formatted_address / address_components.
+ */
+async function _angResolveAdresseId(firmaSlug, adresseId) {
+  if (!adresseId) return '';
+  const enc = encodeURIComponent(adresseId);
+  const candidates = [
+    'api/Adressen/'+enc,
+    'api/adressen/'+enc,
+    'api/Adresse/'+enc,
+    'api/adresse/'+enc,
+    'api/Address/'+enc,
+    'api/address/'+enc,
+    'api/Places/'+enc,
+    'api/places/'+enc,
+    'api/Google/Places/'+enc,
+    'api/google/places/'+enc,
+  ];
+  for (const path of candidates) {
+    try {
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
+      if (!res || typeof res !== 'object') continue;
+      // Falls voll-strukturierte ERP-Adresse — bauen
+      const lines = [];
+      const street = res.strasse || res.street || res.strassenname || '';
+      const hnr    = res.hausnummer || res.houseNumber || '';
+      const plz    = res.plz || res.postleitzahl || res.zip || '';
+      const ort    = res.ort || res.stadt || res.city || '';
+      const sf = [street, hnr].filter(Boolean).join(' ').trim();
+      const co = [plz, ort].filter(Boolean).join(' ').trim();
+      if (sf) lines.push(sf);
+      if (co) lines.push(co);
+      if (lines.length) {
+        console.log('[Angebot] AdresseId aufgeloest via '+path);
+        return lines.join('\n');
+      }
+      // Falls Google-Places-Format mit formatted_address
+      if (typeof res.formatted_address === 'string' && res.formatted_address.trim()) {
+        const parts = res.formatted_address.split(',').map(s => s.trim()).filter(Boolean);
+        // typisch: "Straße 12, 12345 Stadt, Land" → erste 2 nehmen
+        console.log('[Angebot] AdresseId aufgeloest via '+path+' (formatted_address)');
+        return parts.slice(0, 2).join('\n');
+      }
+      if (typeof res.formattedAddress === 'string' && res.formattedAddress.trim()) {
+        const parts = res.formattedAddress.split(',').map(s => s.trim()).filter(Boolean);
+        return parts.slice(0, 2).join('\n');
+      }
+    } catch(e) {
+      if (e.status && e.status !== 404 && e.status !== 405) {
+        console.warn('[Angebot] Adress-Endpoint '+path+' fail:', e.status);
+      }
+    }
+  }
+  console.warn('[Angebot] adresseId konnte nicht aufgeloest werden:', adresseId);
+  return '';
+}
+
 function _angBuildKundeAdresse(k) {
   if (!k) return '';
   const lines = [];
@@ -19970,6 +20041,21 @@ async function _angLoadKundeAdresse() {
   console.log('[Angebot] Voller Kunde aus ERP:', kunde);
   console.log('[Angebot] Kunde Top-Keys:', Object.keys(kunde).join(', '));
   try { console.log('[Angebot] Kunde JSON:\n'+JSON.stringify(kunde, null, 2)); } catch(_){}
+  // ERP-Erkenntnis: Adresse ist als Google-Places-ID "adresseId" gespeichert
+  // (z.B. "ChIJ..."), nicht als Klartext-Felder. _angBuildKundeAdresse findet
+  // daher nur den Firmennamen. Wir versuchen die ID per ERP-Endpoint
+  // aufzulösen.
+  const adresseId = kunde.adresseId || kunde.defaultrechnungsempfaenger?.adresseId;
+  if (adresseId) {
+    const klartext = await _angResolveAdresseId(slug, adresseId);
+    if (klartext) {
+      console.log('[Angebot] Adresse aufgeloest aus ID:', klartext);
+      const firma = kunde.firmenname || kunde.name || E.kunde_name;
+      E.kunde_adresse = [firma, klartext].filter(Boolean).join('\n');
+      _angEditorRender();
+      return;
+    }
+  }
   const built = _angBuildKundeAdresse(kunde);
   const builtLines = (built||'').split('\n').filter(Boolean).length;
   const haveLines  = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
@@ -19982,6 +20068,20 @@ async function _angLoadKundeAdresse() {
   // Firmenname aus ERP übernehmen, wenn lokal leer
   if (!E.kunde_name && (kunde.firmenname || kunde.name)) {
     E.kunde_name = kunde.firmenname || kunde.name;
+    _angEditorRender();
+  }
+  // Letzter Fallback: Wenn nach allem die Adresse immer noch nur 1 Zeile hat
+  // (Firmenname allein), nimm die Anlage-Standort-Adresse. Bei Hausverwaltung
+  // sitzt der Kunde oft am Anlagen-Standort, plus es ist immer noch deutlich
+  // besser als "Empfänger-Adresse fehlt".
+  const finalLines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
+  if (finalLines <= 1 && E.anlage_adresse) {
+    const adrParts = String(E.anlage_adresse).split(',').map(s => s.trim()).filter(Boolean);
+    // typisch: "Brandenburger Str. 2, 04103 Leipzig, Deutschland"
+    const useParts = adrParts.filter(p => p.toLowerCase() !== 'deutschland' && p.toLowerCase() !== 'germany');
+    const firma = E.kunde_name || (kunde.firmenname || kunde.name || '');
+    E.kunde_adresse = [firma, ...useParts].filter(Boolean).join('\n');
+    console.log('[Angebot] Fallback auf Anlage-Standort als Empfaenger-Adresse');
     _angEditorRender();
   }
 }
@@ -20441,18 +20541,28 @@ async function _buildAngebotPdf(rec) {
     doc.text(_sanPdf(rec.bearbeiter), mr-2, 42, { align:'right' });
   }
   y = Math.max(y, 50);
-  // BETREFF
-  y += 6;
-  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...NAVY);
-  doc.text('Angebot', ml, y); y += 6;
-  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
-  if (rec.anlage_adresse) {
-    const lines = doc.splitTextToSize(_sanPdf('Anlage / Standort: '+rec.anlage_adresse), cw);
-    lines.forEach(l => { doc.text(l, ml, y); y += 5; });
-  }
-  if (rec.seriennummer) {
-    doc.text(_sanPdf('Fabriknummer: '+rec.seriennummer), ml, y); y += 5;
-  }
+  // BETREFF — prominenter Titel mit feiner Unterstreichung
+  y = Math.max(y, 64);
+  y += 4;
+  doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.setTextColor(...NAVY);
+  doc.text('Angebot ' + angNr, ml, y);
+  y += 2;
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y+1, ml+30, y+1);
+  y += 7;
+  // Anlage-Info kompakt — eine Zeile pro Detail mit subtilen Labels
+  doc.setFontSize(9.5);
+  const anlageItems = [];
+  if (rec.anlage_adresse) anlageItems.push(['Anlage-Standort', rec.anlage_adresse]);
+  if (rec.seriennummer)   anlageItems.push(['Fabriknummer',     rec.seriennummer]);
+  if (rec.equipmentnummer && rec.anbieter) anlageItems.push([rec.anbieter+'-Equipment', rec.equipmentnummer]);
+  anlageItems.forEach(([label, val]) => {
+    doc.setFont('helvetica','normal'); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf(label+':'), ml, y);
+    doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+    const lines = doc.splitTextToSize(_sanPdf(val), cw - 45);
+    lines.forEach((l, i) => { doc.text(l, ml+38, y + i*4.5); });
+    y += Math.max(5, lines.length*4.5);
+  });
   y += 4;
   // ANSCHREIBEN
   if (rec.anschreiben) {
@@ -20549,14 +20659,33 @@ async function _buildAngebotPdf(rec) {
       y = _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, y + 2, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
     } catch(e) { console.warn('[Angebot-PDF] Konditionen:', e); }
   }
-  // FOOTER auf jeder Seite
+  // FOOTER auf jeder Seite — 3-Spalten Briefpapier-Stil
   const total = doc.getNumberOfPages();
+  const cols  = BR.footerCols || [
+    { title: BR.company, lines:[] },
+    { title:'Kontakt',  lines:[] },
+    { title:'Rechtliches', lines:[] },
+  ];
+  const colW = (mr - ml) / 3;
   for (let p = 1; p <= total; p++) {
     doc.setPage(p);
-    doc.setDrawColor(...GREY_X); doc.line(ml, 285, mr, 285);
-    doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
-    doc.text(_sanPdf('Angebot '+angNr+'  ·  '+BR.footerLine), ml, 290);
-    doc.text('Seite '+p+' / '+total, mr, 290, { align:'right' });
+    // Trennlinie oben
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, 275, mr, 275);
+    // 3 Spalten
+    for (let c = 0; c < 3; c++) {
+      const x = ml + c * colW + 1;
+      const col = cols[c] || { title:'', lines:[] };
+      doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...NAVY);
+      doc.text(_sanPdf(col.title || ''), x, 279);
+      doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+      let yy = 283;
+      (col.lines || []).forEach(l => {
+        if (yy <= 290) { doc.text(_sanPdf(l), x, yy); yy += 3.4; }
+      });
+    }
+    // Seitenzahl + Angebot-Nr rechts unten
+    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf('Angebot '+angNr+' · Seite '+p+' / '+total), mr, 293, { align:'right' });
   }
   return doc.output('blob');
 }
