@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.94';
+const APP_VERSION = 'v4.95';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19699,13 +19699,20 @@ async function _angResolveAdresseId(firmaSlug, adresseId) {
   if (!adresseId) return '';
   const enc = encodeURIComponent(adresseId);
   const candidates = [
-    // Vom User identifizierter echter Endpoint:
+    // Vom User identifizierter Endpoint (braucht User-Login-Token):
     'api/users/me/google/maps/adresse/'+enc,
-    // Fallbacks falls sich der Endpoint mal ändert
+    // Service-Account-Varianten OHNE /users/me/ — Proxy nutzt X-Partner-Key
+    'api/google/maps/adresse/'+enc,
+    'api/google/maps/adressen/'+enc,
+    'api/google/maps/'+enc,
+    'api/maps/adresse/'+enc,
+    'api/maps/'+enc,
+    // Klassische Adresse-Endpoints
     'api/Adressen/'+enc,
     'api/adressen/'+enc,
     'api/google/places/'+enc,
   ];
+  console.log('[Angebot] Probiere '+candidates.length+' Endpoints fuer adresseId='+adresseId);
   for (const path of candidates) {
     try {
       const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
@@ -19759,9 +19766,7 @@ async function _angResolveAdresseId(firmaSlug, adresseId) {
         }
       }
     } catch(e) {
-      if (e.status && e.status !== 404 && e.status !== 405) {
-        console.warn('[Angebot] Adress-Endpoint '+path+' fail:', e.status);
-      }
+      console.warn('[Angebot] Adress-Endpoint '+path+' →', e.status||'?', e.message||'');
     }
   }
   console.warn('[Angebot] adresseId konnte nicht aufgeloest werden:', adresseId);
