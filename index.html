@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.03';
+const APP_VERSION = 'v5.04';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20245,9 +20245,10 @@ function _angEditorRender() {
   }
   const bodyScroll = body ? body.scrollTop : 0;
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
-  // Summen
+  // Summen — ausgeblendete (hidden) Positionen ignorieren
   let sumKone = 0, sumVp = 0;
   for (const p of E.positionen) {
+    if (p.hidden) continue;
     sumKone += (+p.ep_kone||0) * (+p.menge||1);
     sumVp   += (+p.vp||0)      * (+p.menge||1);
   }
@@ -20864,8 +20865,9 @@ async function _angReloadKontakte(btn) {
  */
 function _angRenderSummaryBoxHtml(E) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
-  let sumKone = 0, sumVp = 0;
+  let sumKone = 0, sumVp = 0, hiddenCount = 0;
   for (const p of E.positionen) {
+    if (p.hidden) { hiddenCount++; continue; }
     sumKone += (+p.ep_kone||0) * (+p.menge||1);
     sumVp   += (+p.vp||0)      * (+p.menge||1);
   }
@@ -20879,6 +20881,7 @@ function _angRenderSummaryBoxHtml(E) {
     '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
     '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(sumVp*ust/100)+' €</div></div>'+
     '<div><span style="color:var(--txt3);font-size:11px">Summe VP Brutto</span><div style="font-weight:700;font-size:15px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
+    (hiddenCount>0 ? '<div style="width:100%;font-size:11px;color:#6B7280;margin-top:4px">🚫 '+hiddenCount+' Position'+(hiddenCount===1?'':'en')+' aus dem Angebot ausgeblendet — nicht in Summen enthalten</div>' : '')+
   '</div>';
 }
 
@@ -20886,11 +20889,15 @@ function _angRenderPositionRow(p, i) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   const gesamt = (+p.vp||0) * (+p.menge||1);
   const leistungHtml = (p.leistungsbeschreibung||[]).map(l => '<div>• '+escapeHtml(l)+'</div>').join('');
-  return '<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);background:'+(i%2?'#FAFBFD':'#fff')+'">'+
-    '<div style="display:grid;grid-template-columns:30px 1fr 90px 130px 100px;gap:10px;align-items:start">'+
-      '<div style="background:#2152A9;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
+  const isHidden = !!p.hidden;
+  const rowOpacity = isHidden ? '0.4' : '1';
+  const rowBg = isHidden ? '#F3F4F6' : (i%2?'#FAFBFD':'#fff');
+  return '<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);background:'+rowBg+';opacity:'+rowOpacity+';position:relative">'+
+    (isHidden ? '<div style="position:absolute;top:8px;right:14px;background:#6B7280;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">👁‍🗨 NICHT IM ANGEBOT</div>' : '')+
+    '<div style="display:grid;grid-template-columns:30px 1fr 90px 130px 100px 32px;gap:10px;align-items:start">'+
+      '<div style="background:'+(isHidden?'#9CA3AF':'#2152A9')+';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
       '<div>'+
-        '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px">'+
+        '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px'+(isHidden?';text-decoration:line-through':'')+'">'+
         (leistungHtml ? '<div style="font-size:11px;color:var(--txt2);line-height:1.5">'+leistungHtml+'</div>' : '')+
       '</div>'+
       '<div><label style="font-size:10px;color:var(--txt3);display:block">EK (KONE)</label>'+
@@ -20899,8 +20906,19 @@ function _angRenderPositionRow(p, i) {
         '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>'+
       '<div><label style="font-size:10px;color:var(--txt3);display:block">Gesamt VP</label>'+
         '<div id="ang-pos-sum-'+i+'" style="font-size:13px;font-weight:700;color:#7C2D12;padding:5px 0;text-align:right">'+fmt(gesamt)+' €</div></div>'+
+      // Toggle-Button: Position aus dem PDF ausblenden
+      '<div style="display:flex;flex-direction:column;gap:3px;align-items:center">'+
+        '<button onclick="_angTogglePosHidden('+i+')" title="'+(isHidden?'Wieder in Angebot aufnehmen':'Aus dem Angebot ausblenden (Position bleibt erhalten)')+'" style="background:'+(isHidden?'#6B7280':'transparent')+';color:'+(isHidden?'#fff':'var(--txt3)')+';border:1px solid '+(isHidden?'#6B7280':'var(--bdr)')+';border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:14px;padding:0">'+(isHidden?'👁':'🚫')+'</button>'+
+      '</div>'+
     '</div>'+
   '</div>';
+}
+
+function _angTogglePosHidden(i) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state || !m._state.positionen[i]) return;
+  m._state.positionen[i].hidden = !m._state.positionen[i].hidden;
+  _angEditorRender();
 }
 
 function _angEditorSet(field, value) {
@@ -20954,9 +20972,10 @@ async function _angEditorSave() {
     } else {
       angebotNum = await _angebotGetNextNumber(baseId, firmaSlug);
     }
-    // Summen finalisieren
+    // Summen finalisieren — ausgeblendete (hidden) Positionen ignorieren
     let sumKone = 0, sumVp = 0;
     for (const p of E.positionen) {
+      if (p.hidden) continue;
       sumKone += (+p.ep_kone||0) * (+p.menge||1);
       sumVp   += (+p.vp||0)      * (+p.menge||1);
     }
@@ -21214,6 +21233,8 @@ async function _buildAngebotPdf(rec) {
   y += 8;
   let positionen = [];
   try { positionen = JSON.parse(rec.positionen_json||'[]'); } catch(_){}
+  // Ausgeblendete Positionen (hidden) raus + Nummerierung neu (1, 2, 3 ohne Lücken)
+  positionen = positionen.filter(p => !p.hidden).map((p, i) => ({ ...p, nr: i+1 }));
   let sumNetto = 0;
   positionen.forEach((p, idx) => {
     const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
