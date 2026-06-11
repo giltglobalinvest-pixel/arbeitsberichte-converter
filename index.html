@@ -1391,13 +1391,15 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav active" id="tnav-dashboard" onclick="switchView('dashboard')">🏠 Dashboard</button>
 
     <!-- GRUPPE: Operativ (immer sichtbar) -->
-    <div class="tnav-group" id="tnav-grp-operativ" data-group-views="conv,overview,auftraege,anlagen,wartung,angebote,vertraege">
+    <div class="tnav-group" id="tnav-grp-operativ" data-group-views="conv,overview,auftraege,anlagen,wartung,angebote,projekte,verantw,vertraege">
       <button class="tnav tnav-trigger" onclick="_toggleTnavGroup('tnav-grp-operativ', event)">🛠 Operativ</button>
       <div class="tnav-menu">
         <button class="tnav-menu-item" id="tnav-conv" onclick="switchView('conv')">🔧 Arbeitsberichte-Konverter</button>
         <button class="tnav-menu-item" id="tnav-overview" onclick="switchView('overview')">📋 Berichts-Übersicht</button>
         <button class="tnav-menu-item" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
         <button class="tnav-menu-item" id="tnav-angebote" onclick="switchView('angebote')">📄 Angebote</button>
+        <button class="tnav-menu-item" id="tnav-projekte" onclick="switchView('projekte')" style="display:none">📅 Projekte</button>
+        <button class="tnav-menu-item" id="tnav-verantw" onclick="switchView('verantw')" style="display:none">👷 Verantwortliche</button>
         <button class="tnav-menu-item" id="tnav-vertraege" onclick="switchView('vertraege')">📑 Wartungsverträge</button>
         <button class="tnav-menu-item" id="tnav-anlagen" onclick="switchView('anlagen')">🏢 Anlagen</button>
         <button class="tnav-menu-item" id="tnav-wartung" onclick="switchView('wartung')">🧮 Wartungspreis-Kalkulator</button>
@@ -2032,6 +2034,26 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-body" id="angebote-list" style="padding:20px"></div>
 </div>
 
+<!-- PROJEKTE (Projektmanager mit Timeline) -->
+<div class="firma-view" id="projekte-view">
+  <div class="firma-hdr">
+    <h2>📅 Projekte <span id="projekte-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
+    <button class="btn" onclick="renderProjekteView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" id="projekte-new-btn" onclick="openProjektWizard()">+ Neues Projekt</button>
+  </div>
+  <div class="firma-body" id="projekte-list" style="padding:20px"></div>
+</div>
+
+<!-- VERANTWORTLICHE (Personen-Verwaltung für Projekte) -->
+<div class="firma-view" id="verantw-view">
+  <div class="firma-hdr">
+    <h2>👷 Verantwortliche <span id="verantw-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
+    <button class="btn" onclick="renderVerantwortlicheView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" id="verantw-new-btn" onclick="openVerantwortlicheEditor(null)">+ Neuer Verantwortlicher</button>
+  </div>
+  <div class="firma-body" id="verantw-list" style="padding:20px"></div>
+</div>
+
 <!-- INFOBEREICH (Anleitungen + Downloads für alle User) -->
 <div class="firma-view" id="info-view">
   <div class="firma-hdr">
@@ -2610,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.11';
+const APP_VERSION = 'v5.12';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3287,6 +3309,11 @@ async function showApp() {
   if (tnavExtract) tnavExtract.style.display              = hasPermission('tool_data_extract') ? '' : 'none';
   const tnavAngebote = document.getElementById('tnav-angebote');
   if (tnavAngebote) tnavAngebote.style.display            = hasPermission('tool_angebote') ? '' : 'none';
+  // Projekte + Verantwortliche: Admin-only
+  const tnavProjekte = document.getElementById('tnav-projekte');
+  if (tnavProjekte) tnavProjekte.style.display            = isAdmin() ? '' : 'none';
+  const tnavVerantw = document.getElementById('tnav-verantw');
+  if (tnavVerantw)  tnavVerantw.style.display             = isAdmin() ? '' : 'none';
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
   trackEvent('app', 'login');
@@ -3885,6 +3912,10 @@ function switchView(view) {
   if (extract) extract.classList.toggle('show', view==='extract');
   const angeboteEl = document.getElementById('angebote-view');
   if (angeboteEl) angeboteEl.classList.toggle('show', view==='angebote');
+  const projekteEl = document.getElementById('projekte-view');
+  if (projekteEl) projekteEl.classList.toggle('show', view==='projekte');
+  const verantwEl = document.getElementById('verantw-view');
+  if (verantwEl) verantwEl.classList.toggle('show', view==='verantw');
   if (view==='dashboard') renderDashboard();
   if (view==='overview') renderOverview();
   if (view==='users')    renderUsers();
@@ -3907,6 +3938,8 @@ function switchView(view) {
   if (view==='dav') renderDaVorlagenView();
   if (view==='extract') renderDataExtractView();
   if (view==='angebote') renderAngeboteView();
+  if (view==='projekte') renderProjekteView();
+  if (view==='verantw')  renderVerantwortlicheView();
   // Mobile-Drawer schließen, falls offen
   closeMobileMenu();
 }
@@ -5632,6 +5665,42 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Firmen',       'briefpapier_footer_md', 'multilineText');
   // Angebots-Standardkonditionen (Lieferzeit, Preisbasis, Zahlung, Hinweise) als JSON
   await ensureField('Firmen',       'angebot_kond_defaults', 'multilineText');
+  // ═══════════════════════════════════════════════════════════════════════
+  // PROJEKTMANAGER (v5.12) — Verantwortliche + Projekte mit Timeline
+  // ═══════════════════════════════════════════════════════════════════════
+  try {
+    await ensureTable('App_Verantwortliche', [
+      { name:'name',        type:'singleLineText' },
+      { name:'email',       type:'singleLineText' },
+      { name:'telefon',     type:'singleLineText' },
+      { name:'rolle',       type:'singleLineText' },
+      { name:'firma_extern',type:'singleLineText' },
+      { name:'notizen',     type:'multilineText'  },
+      { name:'firma',       type:'singleLineText' },
+      { name:'erstellt_am', type:'singleLineText' },
+      { name:'archived',    type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+    ]);
+  } catch(e) { console.warn('[Verantwortliche] ensureTable:', e.message); }
+  try {
+    await ensureTable('App_Projekte', [
+      { name:'projekt_num',          type:'number', options:{ precision:0 } },
+      { name:'firma',                type:'singleLineText' },
+      { name:'name',                 type:'singleLineText' },
+      { name:'beschreibung',         type:'multilineText'  },
+      { name:'projekt_verantw_id',   type:'singleLineText' },
+      { name:'projekt_verantw_name', type:'singleLineText' },
+      { name:'anlage_id',            type:'singleLineText' },
+      { name:'anlage_fabriknummer',  type:'singleLineText' },
+      { name:'anlage_adresse',       type:'multilineText'  },
+      { name:'kunde_name',           type:'singleLineText' },
+      { name:'kunde_nummer',         type:'singleLineText' },
+      { name:'status',               type:'singleLineText' },
+      { name:'positionen_json',      type:'multilineText'  },
+      { name:'erstellt_am',          type:'singleLineText' },
+      { name:'erstellt_von',         type:'singleLineText' },
+      { name:'archived',             type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+    ]);
+  } catch(e) { console.warn('[Projekte] ensureTable:', e.message); }
   // Berichte ↔ Auftrag-Verknüpfung + Bilder
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
@@ -29899,6 +29968,653 @@ async function loadReportForEditing(recId) {
 
   goTo(3);
   toast('✅ Bericht Nr. ' + f.bericht_num + ' geladen – Daten bearbeiten und neu generieren.', 'ok');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PROJEKTMANAGER (v5.12) — Verantwortliche-Verwaltung + Projekt-Timeline
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const PROJEKT_STATUS = [
+  { value:'geplant',       label:'📋 Geplant',       color:'#6B7280' },
+  { value:'laufend',       label:'🔄 Laufend',       color:'#2152A9' },
+  { value:'abgeschlossen', label:'✅ Abgeschlossen', color:'#10b981' },
+];
+const POSITION_STATUS = [
+  { value:'offen',     label:'⚪ Offen',     color:'#6B7280' },
+  { value:'in_arbeit', label:'🟠 In Arbeit', color:'#F59E0B' },
+  { value:'erledigt',  label:'✅ Erledigt',   color:'#10b981' },
+];
+
+// ============== VERANTWORTLICHE ==============
+let _verantwCache = { items:null, loadedAt:0, loading:false };
+
+async function renderVerantwortlicheView(opts) {
+  opts = opts || {};
+  if (!isAdmin()) return;
+  const list = document.getElementById('verantw-list');
+  if (!list) return;
+  if (opts.force) _verantwCache = { items:null, loadedAt:0, loading:false };
+  if (!_verantwCache.items) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade…</div>';
+    try { await _loadVerantwortliche(); }
+    catch(e) { list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+escapeHtml(e.message)+'</div>'; return; }
+  }
+  _renderVerantwList();
+}
+
+async function _loadVerantwortliche() {
+  _verantwCache.loading = true;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Verantwortliche?pageSize=100&sort[0][field]=name&sort[0][direction]=asc';
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) { _verantwCache = { items:[], loadedAt:Date.now(), loading:false }; return; }
+    const d = await r.json();
+    _verantwCache = { items: d.records||[], loadedAt:Date.now(), loading:false };
+  } finally { _verantwCache.loading = false; }
+}
+
+function _renderVerantwList() {
+  const list = document.getElementById('verantw-list');
+  const cnt = document.getElementById('verantw-count');
+  if (!list) return;
+  const items = (_verantwCache.items||[]).filter(r => !r.fields?.archived);
+  if (cnt) cnt.textContent = items.length + ' Personen';
+  const q = (document.getElementById('verantw-search')?.value || '').toLowerCase().trim();
+  const filtered = items.filter(r => {
+    if (!q) return true;
+    const f = r.fields || {};
+    const hay = [f.name, f.email, f.telefon, f.rolle, f.firma_extern].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  const search = '<div style="margin-bottom:14px"><input id="verantw-search" type="text" placeholder="🔎 Suche (Name, Email, Tel, Rolle, Firma)" oninput="_renderVerantwList()" value="'+escapeHtml(document.getElementById('verantw-search')?.value || '')+'" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>';
+  if (filtered.length === 0) {
+    list.innerHTML = search + '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(items.length?'Keine Treffer.':'Noch keine Verantwortlichen. Klick <strong>+ Neuer Verantwortlicher</strong> oben.')+'</div>';
+    return;
+  }
+  const html = filtered.map(r => {
+    const f = r.fields || {};
+    return '<div onclick="openVerantwortlicheEditor(\''+r.id+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\'" onmouseout="this.style.borderColor=\'var(--bdr)\'">'+
+      '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(f.name||'(ohne Name)')+(f.rolle?' <span style="color:var(--txt3);font-weight:500;font-size:12px">· '+escapeHtml(f.rolle)+'</span>':'')+'</div>'+
+      '<div style="font-size:12px;color:var(--txt3);margin-top:4px">'+
+        (f.email?'📧 '+escapeHtml(f.email):'')+
+        (f.email && f.telefon?' · ':'')+
+        (f.telefon?'📞 '+escapeHtml(f.telefon):'')+
+        (f.firma_extern?' · 🏢 '+escapeHtml(f.firma_extern):'')+
+      '</div>'+
+    '</div>';
+  }).join('');
+  list.innerHTML = search + '<div>'+ html + '</div>';
+}
+
+function _vfFld(label, id, val, type, placeholder) {
+  return '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">'+escapeHtml(label)+'</label>'+
+    '<input type="'+type+'" id="'+id+'" value="'+escapeHtml(val||'')+'" placeholder="'+escapeHtml(placeholder||'')+'" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>';
+}
+
+function openVerantwortlicheEditor(recId) {
+  const rec = recId ? (_verantwCache.items||[]).find(r => r.id === recId) : null;
+  const f = rec?.fields || {};
+  document.getElementById('verantw-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'verantw-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10800;display:flex;align-items:center;justify-content:center;padding:8px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:560px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#1A3353;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>👷 '+(rec ? 'Verantwortlicher bearbeiten' : 'Neuer Verantwortlicher')+'</span>'+
+      '<button onclick="document.getElementById(\'verantw-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
+      _vfFld('Name *', 'verantw-fld-name', f.name, 'text', 'z.B. Stefan Müller')+
+      _vfFld('E-Mail', 'verantw-fld-email', f.email, 'email', 'stefan.mueller@beispiel.de')+
+      _vfFld('Telefon', 'verantw-fld-telefon', f.telefon, 'tel', '+49 711 1234567')+
+      _vfFld('Rolle / Funktion', 'verantw-fld-rolle', f.rolle, 'text', 'z.B. Projektleiter, Monteur, Elektriker')+
+      _vfFld('Externe Firma (falls Lieferant/Subunternehmer)', 'verantw-fld-firma_extern', f.firma_extern, 'text', 'z.B. Schmitt Elektro GmbH')+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Notizen</label>'+
+        '<textarea id="verantw-fld-notizen" rows="3" placeholder="Optional" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(f.notizen||'')+'</textarea></div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+      '<button class="btn" onclick="document.getElementById(\'verantw-editor\').remove()">Abbrechen</button>'+
+      (rec ? '<button class="btn" onclick="_verantwDelete(\''+rec.id+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)">🗑 Löschen</button>' : '')+
+      '<button class="btn prim" onclick="_verantwSave(\''+(rec?.id || '')+'\', this)">💾 Speichern</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById('verantw-fld-name')?.focus(), 100);
+}
+
+async function _verantwSave(recId, btn) {
+  const name = document.getElementById('verantw-fld-name')?.value.trim();
+  if (!name) return toast('Name ist Pflicht','err');
+  const fields = {
+    name,
+    email:        document.getElementById('verantw-fld-email')?.value.trim() || '',
+    telefon:      document.getElementById('verantw-fld-telefon')?.value.trim() || '',
+    rolle:        document.getElementById('verantw-fld-rolle')?.value.trim() || '',
+    firma_extern: document.getElementById('verantw-fld-firma_extern')?.value.trim() || '',
+    notizen:      document.getElementById('verantw-fld-notizen')?.value.trim() || '',
+    firma:        getCurrentFirmaSlug(),
+  };
+  if (!recId) fields.erstellt_am = new Date().toISOString().slice(0,10);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Verantwortliche'+(recId?'/'+recId:'');
+    const r = await fetch(url, {
+      method: recId ? 'PATCH' : 'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    toast('💾 Gespeichert','ok');
+    document.getElementById('verantw-editor')?.remove();
+    await renderVerantwortlicheView({force:true});
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
+}
+
+async function _verantwDelete(recId) {
+  if (!confirm('Verantwortlichen wirklich löschen?\n\nBestehende Projekt-Positionen mit dieser Person bleiben unverändert (Name wird statt Live-Lookup im Record gespeichert).')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Verantwortliche/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    toast('🗑 Gelöscht','ok');
+    document.getElementById('verantw-editor')?.remove();
+    await renderVerantwortlicheView({force:true});
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+// ============== PROJEKTE ==============
+let _projektCache = { firma:null, items:null, loadedAt:0, loading:false };
+
+async function renderProjekteView(opts) {
+  opts = opts || {};
+  if (!isAdmin()) return;
+  const list = document.getElementById('projekte-list');
+  if (!list) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  if (opts.force) _projektCache = { firma:null, items:null, loadedAt:0, loading:false };
+  if (!_projektCache.items || _projektCache.firma !== firmaSlug) {
+    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Projekte…</div>';
+    try { await _loadProjekte(firmaSlug); }
+    catch(e) { list.innerHTML = '<div style="color:var(--err);padding:20px">Fehler: '+escapeHtml(e.message)+'</div>'; return; }
+  }
+  if (!_verantwCache.items) _loadVerantwortliche().catch(()=>{});
+  _renderProjekteList();
+}
+
+async function _loadProjekte(firmaSlug) {
+  _projektCache.loading = true;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Projekte?pageSize=100&filterByFormula='+encodeURIComponent('{firma}="'+firmaSlug+'"');
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) { _projektCache = { firma:firmaSlug, items:[], loadedAt:Date.now(), loading:false }; return; }
+    const d = await r.json();
+    _projektCache = { firma:firmaSlug, items: d.records||[], loadedAt:Date.now(), loading:false };
+  } finally { _projektCache.loading = false; }
+}
+
+function _renderProjekteList() {
+  const list = document.getElementById('projekte-list');
+  const cnt = document.getElementById('projekte-count');
+  if (!list) return;
+  const showArchived = document.getElementById('proj-flt-archived')?.checked === true;
+  const items = (_projektCache.items||[]).filter(r => showArchived || !r.fields?.archived);
+  if (cnt) cnt.textContent = items.length + ' Stück';
+  const q = (document.getElementById('proj-search')?.value || '').toLowerCase().trim();
+  const filterStatus = document.getElementById('proj-flt-status')?.value || '';
+  const filtered = items.filter(r => {
+    const f = r.fields || {};
+    if (filterStatus && f.status !== filterStatus) return false;
+    if (q) {
+      const hay = [f.name, f.anlage_fabriknummer, f.anlage_adresse, f.kunde_name, f.beschreibung, f.projekt_verantw_name].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    }
+    return true;
+  });
+  filtered.sort((a,b) => (+b.fields?.projekt_num||0) - (+a.fields?.projekt_num||0));
+
+  const filtBar = '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;align-items:center">'+
+    '<input id="proj-search" type="text" placeholder="🔎 Suche (Name, Anlage, Kunde, Verantwortlicher)" oninput="_renderProjekteList()" value="'+escapeHtml(document.getElementById('proj-search')?.value || '')+'" style="flex:1;min-width:220px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+    '<select id="proj-flt-status" onchange="_renderProjekteList()" style="padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
+      '<option value="">Alle Status</option>'+
+      PROJEKT_STATUS.map(s => '<option value="'+s.value+'"'+(document.getElementById('proj-flt-status')?.value===s.value?' selected':'')+'>'+s.label+'</option>').join('')+
+    '</select>'+
+    '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);cursor:pointer;padding:6px 10px;background:'+(showArchived?'#FEF3C7':'transparent')+';border-radius:6px"><input type="checkbox" id="proj-flt-archived" '+(showArchived?'checked':'')+' onchange="_renderProjekteList()"> 📁 Archivierte zeigen</label>'+
+  '</div>';
+  if (filtered.length === 0) {
+    list.innerHTML = filtBar + '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(items.length?'Keine Treffer.':'Noch keine Projekte. Klick <strong>+ Neues Projekt</strong> oben.')+'</div>';
+    return;
+  }
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const html = filtered.map(rec => {
+    const f = rec.fields || {};
+    const stat = PROJEKT_STATUS.find(s => s.value === f.status) || PROJEKT_STATUS[0];
+    const isArchived = !!f.archived;
+    let positionen = [];
+    try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    const totalEK = positionen.reduce((s,p) => s + (+p.preis_ek||0), 0);
+    const erledigtCount = positionen.filter(p => p.status === 'erledigt').length;
+    return '<div onclick="openProjektDetail(\''+rec.id+'\')" style="background:'+(isArchived?'#F9FAFB':'var(--surf)')+';border:1px solid '+(isArchived?'#D1D5DB':'var(--bdr)')+';border-radius:8px;padding:14px 18px;margin-bottom:10px;cursor:pointer;opacity:'+(isArchived?'0.65':'1')+'" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\'" onmouseout="this.style.borderColor=\''+(isArchived?'#D1D5DB':'var(--bdr)')+'\'">'+
+      '<div style="display:flex;justify-content:space-between;align-items:start;gap:12px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:240px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:15px">'+(isArchived?'<span style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px">ARCHIV</span>':'')+'PRJ-'+escapeHtml(String(f.projekt_num||'?'))+' · '+escapeHtml(f.name||'(ohne Name)')+'</div>'+
+          '<div style="font-size:12px;color:var(--txt3);margin-top:4px">'+escapeHtml(f.kunde_name||'')+(f.anlage_adresse?' · '+escapeHtml(f.anlage_adresse):'')+'</div>'+
+          (f.projekt_verantw_name?'<div style="font-size:11px;color:var(--txt3);margin-top:2px">👷 '+escapeHtml(f.projekt_verantw_name)+'</div>':'')+
+        '</div>'+
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
+          '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+stat.label+'</span>'+
+          (canSeePrices() && totalEK > 0 ? '<span style="font-weight:700;color:var(--navy);font-size:13px">'+fmt(totalEK)+' € EK</span>' : '')+
+          '<span style="font-size:11px;color:var(--txt3)">'+positionen.length+' Position'+(positionen.length===1?'':'en')+' · '+erledigtCount+'/'+positionen.length+' erledigt</span>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+  list.innerHTML = filtBar + html;
+}
+
+function openProjektWizard() {
+  document.getElementById('projekt-wizard')?.remove();
+  if (!_anlagenCache.items || _anlagenCache.firma !== getCurrentFirmaSlug()) {
+    toast('⏳ Lade Anlagen…','');
+    _loadAnlagenForFirma(getCurrentFirmaSlug()).then(() => openProjektWizard()).catch(() => toast('Anlagen nicht geladen','err'));
+    return;
+  }
+  const m = document.createElement('div');
+  m.id = 'projekt-wizard';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:640px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#1A3353;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>📅 Neues Projekt</span>'+
+      '<button onclick="document.getElementById(\'projekt-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:14px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektname *</label>'+
+        '<input id="prj-w-name" placeholder="z.B. Modernisierung Friedrichstr. 29" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektverantwortlicher *</label>'+
+        '<select id="prj-w-verantw" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
+          '<option value="">— bitte wählen —</option>'+
+          (_verantwCache.items||[]).filter(r => !r.fields?.archived).map(r => '<option value="'+escapeHtml(r.id)+'">'+escapeHtml(r.fields?.name||'')+(r.fields?.rolle?' ('+escapeHtml(r.fields.rolle)+')':'')+'</option>').join('')+
+        '</select>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Verantwortliche unter <a href="#" onclick="event.preventDefault();document.getElementById(\'projekt-wizard\').remove();switchView(\'verantw\')" style="color:var(--navy)">👷 Verantwortliche</a> verwalten</div>'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anlage *</label>'+
+        '<input id="prj-w-anl-search" placeholder="🔎 Suche (Fabrik-Nr, Adresse, Kunde)" oninput="_prjwFilterAnl()" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-bottom:6px">'+
+        '<div id="prj-w-anl-list" style="border:1px solid var(--bdr);border-radius:6px;max-height:220px;overflow-y:auto"></div>'+
+        '<input type="hidden" id="prj-w-anl-id">'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Beschreibung</label>'+
+        '<textarea id="prj-w-beschreibung" rows="3" placeholder="Optional" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea></div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'projekt-wizard\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" onclick="_prjwSubmit(this)">📅 Projekt anlegen</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  _prjwFilterAnl();
+  setTimeout(() => document.getElementById('prj-w-name')?.focus(), 100);
+}
+
+function _prjwFilterAnl() {
+  const q = (document.getElementById('prj-w-anl-search')?.value || '').toLowerCase().trim();
+  const container = document.getElementById('prj-w-anl-list');
+  if (!container) return;
+  const all = _anlagenCache.items || [];
+  const filt = q ? all.filter(a => {
+    const hay = [a.fabriknummer, a.anzeigeAdresse, a.kunde?.firmenname, a.kunde?.name].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  }) : all.slice(0, 30);
+  if (filt.length === 0) { container.innerHTML = '<div style="padding:12px;color:var(--txt3);font-size:12px;text-align:center">Keine Anlage gefunden</div>'; return; }
+  const selId = document.getElementById('prj-w-anl-id')?.value;
+  container.innerHTML = filt.slice(0, 100).map(a => {
+    const isSel = String(a.id) === String(selId);
+    return '<div onclick="_prjwPickAnl(\''+escapeHtml(String(a.id))+'\')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;background:'+(isSel?'#EFF6FF':'#fff')+'">'+
+      '<div style="font-size:12px;font-weight:'+(isSel?'700':'500')+';color:var(--navy)">'+escapeHtml(a.fabriknummer||'?')+' · '+escapeHtml(a.kunde?.firmenname || a.kunde?.name || '')+'</div>'+
+      '<div style="font-size:11px;color:var(--txt3)">'+escapeHtml(a.anzeigeAdresse||'')+'</div>'+
+    '</div>';
+  }).join('');
+}
+
+function _prjwPickAnl(aid) {
+  const inp = document.getElementById('prj-w-anl-id');
+  if (inp) inp.value = aid;
+  _prjwFilterAnl();
+}
+
+async function _prjwSubmit(btn) {
+  const name = document.getElementById('prj-w-name')?.value.trim();
+  const verantwId = document.getElementById('prj-w-verantw')?.value || '';
+  const anlageId = document.getElementById('prj-w-anl-id')?.value || '';
+  const beschreibung = document.getElementById('prj-w-beschreibung')?.value.trim() || '';
+  if (!name) return toast('Projektname ist Pflicht','err');
+  if (!verantwId) return toast('Projektverantwortlichen wählen','err');
+  if (!anlageId) return toast('Anlage wählen','err');
+  const a = (_anlagenCache.items||[]).find(x => String(x.id) === String(anlageId));
+  const v = (_verantwCache.items||[]).find(x => x.id === verantwId);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Lege an…'; }
+  try {
+    const firmaSlug = getCurrentFirmaSlug();
+    const items = (_projektCache.items||[]);
+    const maxN = items.reduce((m, r) => Math.max(m, +r.fields?.projekt_num || 0), 0);
+    const projektNum = maxN + 1;
+    const fields = {
+      projekt_num: projektNum,
+      firma: firmaSlug,
+      name,
+      beschreibung,
+      projekt_verantw_id: verantwId,
+      projekt_verantw_name: v?.fields?.name || '',
+      anlage_id: String(a?.id || ''),
+      anlage_fabriknummer: a?.fabriknummer || '',
+      anlage_adresse: a?.anzeigeAdresse || '',
+      kunde_name: a?.kunde?.firmenname || a?.kunde?.name || '',
+      kunde_nummer: String(a?.kunde?.kundennummer || a?.kunde?.id || ''),
+      status: 'geplant',
+      positionen_json: '[]',
+      erstellt_am: new Date().toISOString().slice(0,10),
+      erstellt_von: APP_KEYS.user?.name || '',
+    };
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    toast('📅 Projekt PRJ-'+projektNum+' angelegt','ok');
+    document.getElementById('projekt-wizard')?.remove();
+    await renderProjekteView({force:true});
+    openProjektDetail(d.id);
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '📅 Projekt anlegen'; }
+  }
+}
+
+function openProjektDetail(recId) {
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Projekt nicht gefunden','err');
+  const f = rec.fields || {};
+  let positionen = [];
+  try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+
+  document.getElementById('projekt-detail')?.remove();
+  const m = document.createElement('div');
+  m.id = 'projekt-detail';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:8px';
+  const stat = PROJEKT_STATUS.find(s => s.value === f.status) || PROJEKT_STATUS[0];
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const totalEK = positionen.reduce((s,p) => s + (+p.preis_ek||0), 0);
+  const statCounts = POSITION_STATUS.reduce((acc,s) => ({...acc, [s.value]: positionen.filter(p => (p.status||'offen') === s.value).length}), {});
+
+  m.innerHTML = '<div style="background:var(--surf);max-width:920px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:'+stat.color+';color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">'+
+      '<span>📅 PRJ-'+escapeHtml(String(f.projekt_num||'?'))+' · '+escapeHtml(f.name||'')+'</span>'+
+      '<button onclick="document.getElementById(\'projekt-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:14px 20px;background:#F9FAFB;border-bottom:1px solid var(--bdr);font-size:12px;display:grid;grid-template-columns:1fr 1fr;gap:6px 18px">'+
+      '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+'</div>'+
+      '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+'</div>'+
+      '<div style="grid-column:1/3"><strong>📍 Standort:</strong> '+escapeHtml(f.anlage_adresse||'')+'</div>'+
+      '<div><strong>👷 Projektverantwortlicher:</strong> '+escapeHtml(f.projekt_verantw_name||'?')+'</div>'+
+      '<div><strong>Status:</strong> '+
+        PROJEKT_STATUS.map(s => '<button onclick="_prjSetStatus(\''+recId+'\',\''+s.value+'\')" style="background:'+(f.status===s.value?s.color:'#fff')+';color:'+(f.status===s.value?'#fff':s.color)+';border:1px solid '+s.color+';padding:3px 8px;border-radius:99px;font-size:10px;font-weight:600;cursor:pointer;margin-right:3px">'+s.label+'</button>').join('')+
+      '</div>'+
+      (f.beschreibung?'<div style="grid-column:1/3"><strong>📝</strong> '+escapeHtml(f.beschreibung)+'</div>':'')+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+      '<div style="position:relative;padding-left:32px">'+
+        '<div style="position:absolute;left:14px;top:0;bottom:0;width:2px;background:'+(positionen.length?'#D1D5DB':'transparent')+'"></div>'+
+        positionen.map((p, idx) => _prjRenderPosTimeline(p, idx, recId)).join('')+
+        '<div style="margin-top:'+(positionen.length?'14px':'0')+';margin-left:-32px"><button class="btn prim" onclick="_prjAddPos(\''+recId+'\')" style="width:100%;padding:10px;background:#2152A9;color:#fff;border-color:#2152A9">+ Position hinzufügen</button></div>'+
+      '</div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'+
+      '<div style="font-size:12px;color:var(--txt2)">'+
+        '<strong>'+positionen.length+' Position'+(positionen.length===1?'':'en')+':</strong> '+
+        POSITION_STATUS.map(s => '<span style="color:'+s.color+';font-weight:600;margin-right:8px">'+s.label+': '+(statCounts[s.value]||0)+'</span>').join('')+
+        (canSeePrices() && totalEK > 0 ? ' · <strong>Σ EK '+fmt(totalEK)+' €</strong>' : '')+
+      '</div>'+
+      '<div style="display:flex;gap:6px">'+
+        '<button class="btn" onclick="document.getElementById(\'projekt-detail\').remove()">Schließen</button>'+
+        '<button class="btn" onclick="_prjSetArchived(\''+recId+'\','+(!f.archived)+')" style="color:#92400E;border-color:#F59E0B">'+(f.archived?'📂 Wiederherstellen':'📁 Archivieren')+'</button>'+
+        '<button class="btn" onclick="_prjDelete(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)">🗑</button>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+}
+
+function _prjRenderPosTimeline(p, idx, recId) {
+  const stat = POSITION_STATUS.find(s => s.value === (p.status||'offen')) || POSITION_STATUS[0];
+  const v = (_verantwCache.items||[]).find(x => x.id === p.verantwortlicher_id);
+  const vName = v?.fields?.name || p.verantwortlicher_name || '';
+  const vKontakt = v?.fields ? [v.fields.email, v.fields.telefon].filter(Boolean).join(' · ') : '';
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const fmtDt = d => d ? new Date(d).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
+  let isUeberfaellig = false;
+  if (p.geplant_am && (p.status||'offen') !== 'erledigt') {
+    const today = new Date().toISOString().slice(0,10);
+    if (p.geplant_am < today) isUeberfaellig = true;
+  }
+  const cardBorder = isUeberfaellig ? '#DC2626' : '#E5E7EB';
+  return '<div style="position:relative;margin-bottom:14px">'+
+    '<div style="position:absolute;left:-26px;top:8px;width:18px;height:18px;border-radius:50%;background:'+stat.color+';border:3px solid #fff;box-shadow:0 0 0 1px '+stat.color+'"></div>'+
+    '<div style="background:#fff;border:1px solid '+cardBorder+';border-left:4px solid '+stat.color+';border-radius:8px;padding:12px 14px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:200px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(p.titel||'(ohne Titel)')+(isUeberfaellig?' <span style="background:#DC2626;color:#fff;font-size:10px;padding:1px 6px;border-radius:4px;margin-left:6px">⚠ ÜBERFÄLLIG</span>':'')+'</div>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:4px;display:flex;gap:14px;flex-wrap:wrap">'+
+            '<span>📅 Geplant: <strong style="color:var(--txt2)">'+fmtDt(p.geplant_am)+'</strong></span>'+
+            '<span>✅ Erledigt: <strong style="color:var(--txt2)">'+fmtDt(p.erledigt_am)+'</strong></span>'+
+          '</div>'+
+          (vName?'<div style="font-size:11px;color:var(--txt3);margin-top:4px">👷 <strong style="color:var(--txt2)">'+escapeHtml(vName)+'</strong>'+(vKontakt?' · '+escapeHtml(vKontakt):'')+'</div>':'')+
+          (p.notizen?'<div style="font-size:11px;color:var(--txt2);margin-top:6px;padding:6px 8px;background:#F9FAFB;border-radius:4px;white-space:pre-line">'+escapeHtml(p.notizen)+'</div>':'')+
+        '</div>'+
+        '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
+          '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+stat.label+'</span>'+
+          (canSeePrices() && +p.preis_ek > 0 ? '<span style="font-weight:700;color:var(--navy);font-size:13px">'+fmt(p.preis_ek)+' € EK</span>' : '')+
+        '</div>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="_prjEditPos(\''+recId+'\','+idx+')" style="font-size:11px;padding:4px 10px">✏️ Bearbeiten</button>'+
+        '<button class="btn" onclick="_prjDeletePos(\''+recId+'\','+idx+')" style="font-size:11px;padding:4px 10px;color:var(--err);border-color:rgba(220,38,38,.3)">🗑</button>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+function _prjAddPos(recId) {
+  _prjOpenPosEditor(recId, -1, {});
+}
+
+function _prjEditPos(recId, idx) {
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  let positionen = [];
+  try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
+  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  _prjOpenPosEditor(recId, idx, positionen[idx] || {});
+}
+
+function _prjOpenPosEditor(recId, idx, p) {
+  document.getElementById('prj-pos-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'prj-pos-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10800;display:flex;align-items:center;justify-content:center;padding:8px';
+  const verantw = (_verantwCache.items||[]).filter(r => !r.fields?.archived);
+  m.innerHTML = '<div style="background:var(--surf);max-width:560px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>'+(idx>=0?'✏️ Position bearbeiten':'+ Neue Position')+'</span>'+
+      '<button onclick="document.getElementById(\'prj-pos-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Titel *</label>'+
+        '<input id="pos-fld-titel" value="'+escapeHtml(p.titel||'')+'" placeholder="z.B. Antrieb bestellen" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Geplant am</label>'+
+          '<input type="date" id="pos-fld-geplant" value="'+escapeHtml(p.geplant_am||'')+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Erledigt am</label>'+
+          '<input type="date" id="pos-fld-erledigt" value="'+escapeHtml(p.erledigt_am||'')+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Verantwortlicher</label>'+
+        '<select id="pos-fld-verantw" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
+          '<option value="">— keiner —</option>'+
+          verantw.map(r => '<option value="'+escapeHtml(r.id)+'"'+(r.id===p.verantwortlicher_id?' selected':'')+'>'+escapeHtml(r.fields?.name||'')+(r.fields?.rolle?' ('+escapeHtml(r.fields.rolle)+')':'')+(r.fields?.firma_extern?' · '+escapeHtml(r.fields.firma_extern):'')+'</option>').join('')+
+        '</select></div>'+
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Preis EK (€)</label>'+
+          '<input type="number" step="0.01" min="0" id="pos-fld-preis" value="'+escapeHtml(String(p.preis_ek||''))+'" placeholder="0.00" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Status</label>'+
+          '<select id="pos-fld-status" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
+            POSITION_STATUS.map(s => '<option value="'+s.value+'"'+((p.status||'offen')===s.value?' selected':'')+'>'+s.label+'</option>').join('')+
+          '</select></div>'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Notizen</label>'+
+        '<textarea id="pos-fld-notizen" rows="3" placeholder="Optional" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(p.notizen||'')+'</textarea></div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'prj-pos-editor\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" onclick="_prjSavePos(\''+recId+'\','+idx+', this)">💾 Speichern</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById('pos-fld-titel')?.focus(), 100);
+}
+
+async function _prjSavePos(recId, idx, btn) {
+  const titel = document.getElementById('pos-fld-titel')?.value.trim();
+  if (!titel) return toast('Titel ist Pflicht','err');
+  const verantwId = document.getElementById('pos-fld-verantw')?.value || '';
+  const v = verantwId ? (_verantwCache.items||[]).find(x => x.id === verantwId) : null;
+  const newPos = {
+    id: 'p_' + Math.random().toString(36).slice(2, 9),
+    titel,
+    geplant_am:  document.getElementById('pos-fld-geplant')?.value || '',
+    erledigt_am: document.getElementById('pos-fld-erledigt')?.value || '',
+    verantwortlicher_id: verantwId,
+    verantwortlicher_name: v?.fields?.name || '',
+    preis_ek: +(document.getElementById('pos-fld-preis')?.value) || 0,
+    status: document.getElementById('pos-fld-status')?.value || 'offen',
+    notizen: document.getElementById('pos-fld-notizen')?.value.trim() || '',
+  };
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Projekt nicht gefunden','err');
+  let positionen = [];
+  try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
+  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  if (idx >= 0) {
+    newPos.id = positionen[idx]?.id || newPos.id;
+    positionen[idx] = newPos;
+  } else {
+    positionen.push(newPos);
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    await _prjPatchPositionen(recId, positionen);
+    toast('💾 Position gespeichert','ok');
+    document.getElementById('prj-pos-editor')?.remove();
+    document.getElementById('projekt-detail')?.remove();
+    openProjektDetail(recId);
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
+}
+
+async function _prjDeletePos(recId, idx) {
+  if (!confirm('Position wirklich löschen?')) return;
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  let positionen = [];
+  try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
+  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  positionen.splice(idx, 1);
+  try {
+    await _prjPatchPositionen(recId, positionen);
+    toast('🗑 Position gelöscht','ok');
+    document.getElementById('projekt-detail')?.remove();
+    openProjektDetail(recId);
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function _prjPatchPositionen(recId, positionen) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte/'+recId, {
+    method:'PATCH',
+    headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+    body: JSON.stringify({ fields:{ positionen_json: JSON.stringify(positionen) }}),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+  const idx = (_projektCache.items||[]).findIndex(x => x.id === recId);
+  if (idx >= 0) _projektCache.items[idx] = d;
+}
+
+async function _prjSetStatus(recId, status) {
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ status }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    const idx = (_projektCache.items||[]).findIndex(x => x.id === recId);
+    if (idx >= 0) _projektCache.items[idx] = d;
+    toast('✅ Status: '+status,'ok');
+    document.getElementById('projekt-detail')?.remove();
+    openProjektDetail(recId);
+    _renderProjekteList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function _prjSetArchived(recId, archive) {
+  if (archive && !confirm('Projekt archivieren?')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ archived: !!archive }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    const idx = (_projektCache.items||[]).findIndex(x => x.id === recId);
+    if (idx >= 0) _projektCache.items[idx] = d;
+    toast(archive?'📁 Archiviert':'📂 Wiederhergestellt','ok');
+    document.getElementById('projekt-detail')?.remove();
+    _renderProjekteList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+async function _prjDelete(recId) {
+  if (!confirm('Projekt PERMANENT löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden!')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    _projektCache.items = (_projektCache.items||[]).filter(x => x.id !== recId);
+    toast('🗑 Gelöscht','ok');
+    document.getElementById('projekt-detail')?.remove();
+    _renderProjekteList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 </script>
