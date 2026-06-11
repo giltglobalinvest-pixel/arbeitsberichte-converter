@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.97';
+const APP_VERSION = 'v4.98';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18687,9 +18687,13 @@ function _daFirmaBranding(firmaSlug) {
   };
   // Custom-Daten aus Firmen-Record überschreiben Defaults (Briefpapier-Editor in Firmen-Verwaltung)
   const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === slug);
+  console.log('[Branding] slug='+slug+', firmaRec gefunden?', !!firmaRec, 'briefpapier_footer_md vorhanden?', !!firmaRec?.fields?.briefpapier_footer_md);
   if (firmaRec?.fields?.briefpapier_footer_md) {
     const cols = _parseBriefpapierMd(firmaRec.fields.briefpapier_footer_md);
+    console.log('[Branding] Custom-Footer geparst:', cols.length, 'Spalten →', cols);
     if (cols.length) baseAszendio.footerCols = cols;
+  } else {
+    console.log('[Branding] Verwende hardcoded Default-Footer fuer', slug);
   }
   return baseAszendio;
 }
@@ -18806,15 +18810,32 @@ async function _bpSave(firmaId, btn) {
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
   try {
     if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
-    try { await ensureField('Firmen', 'briefpapier_footer_md', 'multilineText'); } catch(_){}
+    // Feld sicherstellen — wenn es nicht existiert, würde Airtable den Wert still verwerfen
+    let fieldEnsureErr = null;
+    try { await ensureField('Firmen', 'briefpapier_footer_md', 'multilineText'); }
+    catch(e) { fieldEnsureErr = e; console.warn('[Briefpapier] ensureField:', e.message); }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    // PATCH
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+firmaId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
       body: JSON.stringify({ fields:{ briefpapier_footer_md: md }}),
     });
     const d = await r.json();
-    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    if (d.error) throw new Error(d.error.message||d.error.type||'Airtable-Fehler');
+    // VERIFY — Airtable verwirft unbekannte Felder STILL (ohne Fehler).
+    // Wir lesen den Wert zurück und prüfen ob er wirklich angekommen ist.
+    const v = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+firmaId, {
+      headers:{ 'Authorization':'Bearer '+(APP_KEYS.airtableReadKey||APP_KEYS.airtableWriteKey) },
+    });
+    const vd = await v.json();
+    const stored = vd.fields?.briefpapier_footer_md;
+    if (stored !== md) {
+      console.error('[Briefpapier] Save verifiziert FEHLGESCHLAGEN. Erwartet:', md.slice(0,80), '... Bekommen:', stored);
+      throw new Error('Feld "briefpapier_footer_md" wurde nicht persistiert — Airtable-Feld fehlt vermutlich. '+
+        (fieldEnsureErr ? ('ensureField-Fehler: '+fieldEnsureErr.message) : 'Schema-Permission im Write-Token prüfen.'));
+    }
+    console.log('[Briefpapier] Save verifiziert OK fuer Firma '+firmaId);
     // Cache aktualisieren
     const idx = _firmenCache.findIndex(f => f.id === firmaId);
     if (idx >= 0) {
@@ -18824,6 +18845,7 @@ async function _bpSave(firmaId, btn) {
     toast('💾 Briefpapier gespeichert','ok');
     document.getElementById('briefpapier-modal')?.remove();
   } catch(e) {
+    console.error('[Briefpapier] Save fail:', e);
     toast('❌ '+(e.message||e),'err');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
   }
