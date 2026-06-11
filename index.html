@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.02';
+const APP_VERSION = 'v5.03';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19304,7 +19304,8 @@ const ANGEBOT_VP_DEFAULT_MARGE = 1.20;  // Anbieter-EK × 1.20 → VP-Vorschlag
 // als "verifiziert" markiert werden. Dynamische Anbieter werden aus
 // bestehenden Records ergänzt — diese hier sind die Default-Liste.
 const ANGEBOT_VERIFIED_ANBIETER = [
-  { name:'KONE',           icon:'🛗', verified:true },
+  { name:'KONE',                icon:'🛗', verified:true },
+  { name:'TÜV-Mängelbericht',   icon:'🛡️', verified:true, isTuev:true },
 ];
 
 const ANGEBOT_TYP_OPTIONS = [
@@ -19631,13 +19632,19 @@ async function openAngebotWizard() {
             '<input type="text" id="ang-w-anbieter-other" placeholder="z.B. Schindler" style="display:none;margin-top:6px;width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
           '</div>'+
         '</div>'+
-        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Angebots-PDF</label>'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Quell-PDF</label>'+
         '<div id="ang-w-drop" onclick="document.getElementById(\'ang-w-file\').click()" style="border:2px dashed var(--bdr);border-radius:10px;padding:30px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .15s" onmouseover="this.style.borderColor=\'#2152A9\';this.style.background=\'#EFF6FF\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.background=\'#fafafa\'">'+
           '<div style="font-size:36px;margin-bottom:8px">📄</div>'+
           '<div id="ang-w-droplbl" style="font-size:13px;color:var(--txt2)">Klick hier oder ziehe PDF hierher</div>'+
         '</div>'+
         '<input type="file" id="ang-w-file" accept="application/pdf" style="display:none" onchange="_angWizardOnFile(event)">'+
         '<div id="ang-w-info" style="margin-top:10px;font-size:11px;color:var(--txt3)"></div>'+
+        // Custom-Prompt für Sonderwünsche
+        '<div style="margin-top:14px">'+
+          '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">🤖 Zusätzliche KI-Anweisung <span style="color:var(--txt3);font-weight:normal">(optional)</span></label>'+
+          '<textarea id="ang-w-custom-prompt" rows="3" placeholder="z.B.&#10;• Berücksichtige nur Mängel mit Priorität A&#10;• Schreibe Maßnahmen aus Sicht der Aszendio&#10;• Falls Preis fehlt: 0 EUR setzen, ich trage später ein" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;color:#222"></textarea>'+
+          '<div id="ang-w-prompt-hint" style="font-size:11px;color:var(--txt3);margin-top:4px"></div>'+
+        '</div>'+
       '</div>'+
       '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'ang-wizard\').remove()">Abbrechen</button>'+
@@ -19659,12 +19666,23 @@ async function openAngebotWizard() {
 function _angWizardOnAnbieterChange() {
   const sel = document.getElementById('ang-w-anbieter');
   const inp = document.getElementById('ang-w-anbieter-other');
+  const hint = document.getElementById('ang-w-prompt-hint');
   if (!sel || !inp) return;
   if (sel.value === '__other__') {
     inp.style.display = 'block';
     inp.focus();
   } else {
     inp.style.display = 'none';
+  }
+  // Hint je nach Quelle aktualisieren
+  if (hint) {
+    if (sel.value === 'TÜV-Mängelbericht') {
+      hint.innerHTML = '🛡️ <strong>TÜV-Modus:</strong> KI erstellt pro Mangel eine eigene Angebotsposition mit Maßnahme zur Behebung. Preise lässt die KI offen (0 EUR) — du trägst sie im Editor pro Mangel ein.';
+      hint.style.color = '#92400E';
+    } else {
+      hint.innerHTML = 'Hilft bei Sonderfällen: z.B. „nur Positionen ab 500€ extrahieren" oder „Anschreiben in formelles Sie formulieren".';
+      hint.style.color = 'var(--txt3)';
+    }
   }
 }
 
@@ -19694,12 +19712,15 @@ async function _angWizardGo() {
   if (anbieterHint === '__other__') {
     anbieterHint = (document.getElementById('ang-w-anbieter-other')?.value || '').trim();
   }
+  const customPrompt = (document.getElementById('ang-w-custom-prompt')?.value || '').trim();
+  const isTuev = anbieterHint === 'TÜV-Mängelbericht'
+              || ANGEBOT_VERIFIED_ANBIETER.find(v => v.name === anbieterHint)?.isTuev;
   const go = document.getElementById('ang-w-go');
   go.disabled = true; go.textContent = '⏳ KI extrahiert…';
   const info = document.getElementById('ang-w-info');
   if (info) info.textContent = '🤖 sende PDF an Claude, kann 30–60 s dauern…';
   try {
-    const extracted = await _extractKoneAngebot(m._file, anbieterHint);
+    const extracted = await _extractKoneAngebot(m._file, anbieterHint, { customPrompt, isTuev });
     console.log('[Angebote] extrahiert:', extracted);
     // Anlage-Match versuchen über Seriennummer ↔ Fabriknummer im ERP
     let matchedAnlage = null;
@@ -19720,8 +19741,11 @@ async function _angWizardGo() {
   }
 }
 
-/* ── KI-Extraktion: KONE-PDF → strukturiertes Objekt via Tool-Use ────── */
-async function _extractKoneAngebot(file, anbieterHint) {
+/* ── KI-Extraktion: PDF → strukturiertes Angebot via Tool-Use ────── */
+async function _extractKoneAngebot(file, anbieterHint, opts) {
+  opts = opts || {};
+  const isTuev = !!opts.isTuev;
+  const customPrompt = (opts.customPrompt || '').trim();
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
   // PDF als ArrayBuffer lesen, BOM/Müll vor "%PDF-" entfernen, dann Base64 codieren.
   // Manche PDFs (z.B. KONE) tragen einen UTF-8 BOM (EF BB BF) am Anfang —
@@ -19785,11 +19809,35 @@ async function _extractKoneAngebot(file, anbieterHint) {
     },
   };
   const hintLine = anbieterHint ? ('Vermuteter Anbieter (vom User): '+anbieterHint+'. Wenn das PDF eindeutig zu einem anderen Anbieter gehört, überschreibe das Feld "anbieter" entsprechend.\n\n') : '';
-  const prompt = hintLine +
-    'Extrahiere die Daten dieses Angebots-PDFs vollständig und originalgetreu. '+
-    'Positionen exakt wie im Original (auch die Leistungsbeschreibungs-Bullets). '+
-    'Preise immer netto als Zahl ohne Währungssymbol, Punkt als Dezimaltrenner. '+
-    'Bei mehreren Adressen zähle die der ANLAGE, nicht die des Empfängers.';
+  let prompt;
+  if (isTuev) {
+    // TÜV-Mängelbericht: jeder Mangel = eine Position
+    prompt = hintLine +
+      'Dies ist KEIN klassisches Angebot, sondern ein TÜV-MÄNGELBERICHT zu einer Aufzugsanlage. '+
+      'Erstelle daraus ein REPARATURANGEBOT mit folgenden Regeln:\n\n'+
+      '• Pro ERFASSTEM MANGEL → eine eigene Position\n'+
+      '• "titel": klare Kurzbezeichnung des Mangels (z.B. "Notrufknopf defekt", "Schachttüre Hub verschoben")\n'+
+      '• "leistungsbeschreibung": Bullet-Liste der Maßnahme zur Behebung (was muss konkret getan werden, um den Mangel zu beheben) — orientiere dich am Mängelwortlaut, aber formuliere als ausführende Tätigkeit (z.B. "Notrufknopf erneuern", "Verstärkungsblech anbringen", "Tür neu justieren und Hub einstellen")\n'+
+      '• "einzelpreis_netto": IMMER 0 (User trägt den Preis pro Mangel im Editor selbst ein)\n'+
+      '• "menge": 1\n'+
+      '• "anschreiben": kurzer höflicher Anschreiben-Text der erklärt dass es um die Mängelbeseitigung aus dem TÜV-Bericht geht (Datum/Prüfnummer falls vorhanden nennen)\n'+
+      '• "anbieter": "TÜV-Mängelbericht" (lass den Wert so)\n'+
+      '• "kone_angebot_num": die Prüf-/Berichts-Nummer aus dem TÜV-Dokument (falls vorhanden)\n'+
+      '• "kone_angebot_datum": das Prüfdatum aus dem TÜV-Dokument\n'+
+      '• "summe_netto": 0, "summe_brutto": 0, "ust_prozent": 19\n'+
+      '• "anlage_adresse", "kunde_name", "kunde_adresse", "seriennummer" aus dem Bericht extrahieren\n'+
+      '• Konditionen (kond_*): leer lassen oder nur Standardphrasen\n';
+  } else {
+    prompt = hintLine +
+      'Extrahiere die Daten dieses Angebots-PDFs vollständig und originalgetreu. '+
+      'Positionen exakt wie im Original (auch die Leistungsbeschreibungs-Bullets). '+
+      'Preise immer netto als Zahl ohne Währungssymbol, Punkt als Dezimaltrenner. '+
+      'Bei mehreren Adressen zähle die der ANLAGE, nicht die des Empfängers.';
+  }
+  // User-Custom-Prompt am Ende anhängen
+  if (customPrompt) {
+    prompt += '\n\nZUSÄTZLICHE ANWEISUNG VOM USER (befolge sie, wenn sie sinnvoll ist):\n'+customPrompt;
+  }
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{
