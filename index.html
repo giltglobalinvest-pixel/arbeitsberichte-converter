@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.83';
+const APP_VERSION = 'v4.84';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19751,9 +19751,48 @@ function _angRenderAnlageCard(E) {
       '<div><span style="color:var(--txt3);font-size:11px">Fabrik-Nr.</span><div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(E.seriennummer||'?')+'</div></div>'+
       '<div><span style="color:var(--txt3);font-size:11px">Standort</span><div style="font-weight:600">'+escapeHtml(E.anlage_adresse||'')+'</div></div>'+
       '<div><span style="color:var(--txt3);font-size:11px">Endkunde</span><div style="font-weight:700;color:var(--navy)">'+escapeHtml(E.kunde_name||'?')+(E.kunde_nummer?' (Nr. '+escapeHtml(E.kunde_nummer)+')':'')+'</div></div>'+
-      '<div><span style="color:var(--txt3);font-size:11px">Kunden-Adresse (Empfänger)</span><div style="white-space:pre-line;font-weight:600">'+escapeHtml(E.kunde_adresse||'?')+'</div></div>'+
+      '<div></div>'+
+    '</div>'+
+    // Editierbare Empfänger-Anschrift — bei leer/unvollständig deutliche Warnung
+    '<div style="margin-top:10px;padding-top:10px;border-top:1px dashed #A7F3D0">'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:4px">'+
+        '<label style="color:var(--txt3);font-size:11px;font-weight:600">📬 Empfänger-Anschrift im PDF (Straße / PLZ Ort, je eine Zeile)</label>'+
+        '<button class="btn" style="font-size:10.5px;padding:3px 8px" onclick="_angAdresseAusAnlage()" title="Adresse aus Anlage-Standort übernehmen">📍 Aus Anlage übernehmen</button>'+
+      '</div>'+
+      '<textarea id="ang-ed-kunde-adresse" rows="3" oninput="_angAdresseChange(this.value)" placeholder="Straße 12&#10;12345 Musterstadt" style="width:100%;padding:8px 10px;border:1px solid '+(((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)?'#EF4444':'var(--bdr)')+';border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;background:#fff">'+escapeHtml(E.kunde_adresse||'')+'</textarea>'+
+      (((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2) ? '<div style="font-size:11px;color:#991B1B;margin-top:4px">⚠ Adresse fehlt oder unvollständig — bitte Straße + PLZ + Ort eingeben.</div>' : '')+
     '</div>'+
   '</div>';
+}
+
+/* Sync textarea → state */
+function _angAdresseChange(v) {
+  const m = document.getElementById('ang-editor'); if (!m) return;
+  m._state.kunde_adresse = v;
+}
+/* Adresse aus aktuellem Anlage-Match neu setzen (überschreibt was da steht). */
+function _angAdresseAusAnlage() {
+  const m = document.getElementById('ang-editor'); if (!m) return;
+  const E = m._state;
+  // Erst: Anlage.kunde Object versuchen
+  if (E.matchedAnlage?.kunde) {
+    const built = _angBuildKundeAdresse(E.matchedAnlage.kunde);
+    if (built && built.split('\n').filter(Boolean).length >= 2) {
+      E.kunde_adresse = built;
+      _angEditorRender();
+      toast('📍 Adresse aus Endkunde übernommen','ok');
+      return;
+    }
+  }
+  // Fallback: anlage_adresse (Standort) — nicht 100% Empfänger aber besser als leer
+  if (E.anlage_adresse) {
+    const lines = [E.kunde_name||'', E.anlage_adresse].filter(Boolean);
+    E.kunde_adresse = lines.join('\n');
+    _angEditorRender();
+    toast('📍 Anlage-Standort als Empfänger gesetzt','ok');
+    return;
+  }
+  toast('Keine Quelle gefunden — bitte manuell eingeben','err');
 }
 
 /**
@@ -20448,6 +20487,16 @@ function openAngebotDetail(recId) {
           (f.erstellt_am ? '<span style="color:var(--txt3);font-size:11px">📅 '+escapeHtml(f.erstellt_am)+'</span>' : '')+
         '</div>'+
         '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+(f.kunde_nummer?' (Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
+        // Empfänger-Anschrift wie sie ins PDF kommt — sofort sichtbar
+        (() => {
+          const adrRaw = String(f.kunde_adresse||'').trim();
+          const adrLines = adrRaw ? (adrRaw.indexOf('\n')>=0 ? adrRaw.split('\n') : adrRaw.split(',')).map(s=>s.trim()).filter(Boolean).filter(l => l.toLowerCase() !== String(f.kunde_name||'').toLowerCase()) : [];
+          const kontakt = f.kontakt_name ? '<div>z.Hd. '+escapeHtml(f.kontakt_name)+'</div>' : '';
+          if (adrLines.length >= 2) {
+            return '<div style="margin-top:6px;padding:8px 10px;background:#F0FDF4;border-left:3px solid #10b981;border-radius:4px;font-size:11.5px"><strong style="color:#065F46">📬 Empfänger (PDF):</strong>'+kontakt+adrLines.map(l => '<div>'+escapeHtml(l)+'</div>').join('')+'</div>';
+          }
+          return '<div style="margin-top:6px;padding:8px 10px;background:#FEF2F2;border-left:3px solid #EF4444;border-radius:4px;font-size:11.5px"><strong style="color:#991B1B">⚠ Empfänger-Adresse unvollständig:</strong> '+(adrLines.length?adrLines.join(', '):'(leer)')+'<br><span style="color:#7F1D1D">Bitte über „Bearbeiten" ergänzen — sonst fehlt sie im PDF.</span></div>';
+        })()+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
         (f.kone_angebot_num ? '<div><strong>🔗 '+escapeHtml(f.anbieter||'Original')+':</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
         (f.erp_anfrage_id ? '<div style="margin-top:6px;padding:6px 10px;background:#EFF6FF;border-left:3px solid #2152A9;border-radius:4px"><strong style="color:#1E3A8A">📋 ERP-Anfrage:</strong> '+(f.erp_anfrage_url ? '<a href="'+escapeHtml(f.erp_anfrage_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Anfrage '+escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id)+' öffnen ↗</a>' : escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id))+'</div>' : '')+
