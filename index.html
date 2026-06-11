@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.69';
+const APP_VERSION = 'v4.70';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20328,11 +20328,47 @@ async function _angCreateErpAnfrage(rec) {
   const firmaSlug = f.firma || getCurrentFirmaSlug();
   if (!f.anlage_id) throw new Error('Keine Anlage verknüpft');
   if (!f.kunde_nummer) throw new Error('Kein Kunde verknüpft');
-  // Numerische IDs absichern — NaN würde in JSON zu null und ERP rejected.
+  // Numerische Anlage-ID absichern — NaN würde in JSON zu null und ERP rejected.
   const anlageIdNum = parseInt(String(f.anlage_id).replace(/[^\d]/g,''), 10);
-  const kundeIdNum  = parseInt(String(f.kunde_nummer).replace(/[^\d]/g,''), 10);
   if (!Number.isFinite(anlageIdNum) || anlageIdNum <= 0) throw new Error('Anlage-ID "'+f.anlage_id+'" ist nicht numerisch');
-  if (!Number.isFinite(kundeIdNum)  || kundeIdNum  <= 0) throw new Error('Kunde-Nr. "'+f.kunde_nummer+'" ist nicht numerisch');
+
+  // empfaengerId = KONTAKT-ID (NICHT Kunden-Nr.!) Die Anlage hat oft einen
+  // Standard-Kontakt; sonst aus api/Kunden/<nr>/Kontakte den ersten holen.
+  const anlage = (_anlagenCache.items||[]).find(a => String(a.id) === String(f.anlage_id)) || null;
+  let kontaktId = anlage?.standardansprechpartnerId
+                 || anlage?.standardAnsprechpartnerId
+                 || anlage?.standardAnsprechpartner?.id
+                 || anlage?.ansprechpartner?.id
+                 || anlage?.kontakt?.id
+                 || anlage?.empfaenger?.id
+                 || anlage?.kunde?.standardansprechpartnerId
+                 || anlage?.kunde?.standardAnsprechpartnerId
+                 || anlage?.kunde?.standardAnsprechpartner?.id
+                 || null;
+  if (kontaktId) console.log('[ERP-Anfrage] Kontakt-ID aus Anlage gefunden:', kontaktId);
+  if (!kontaktId) {
+    // Fallback: alle Kontakte des Kunden holen und den ersten nehmen
+    const kundenNr = String(f.kunde_nummer).trim();
+    try {
+      console.log('[ERP-Anfrage] Suche Kontakte für Kunde', kundenNr);
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
+      const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+      console.log('[ERP-Anfrage] Kontakte-Response:', list);
+      // Bevorzugt einen mit "Standard"-Flag, sonst den ersten
+      const std = list.find(k => k.isStandard || k.standard || k.isDefault);
+      const pick = std || list[0];
+      if (pick && pick.id) {
+        kontaktId = +pick.id;
+        console.log('[ERP-Anfrage] Kontakt-ID aus Kunden-Kontakten:', kontaktId, pick);
+      }
+    } catch(kontaktErr) {
+      console.warn('[ERP-Anfrage] Konnte Kontakte nicht laden:', kontaktErr.message);
+    }
+  }
+  if (!kontaktId) {
+    throw new Error('Kein Kontakt für Anlage gefunden (weder Standardansprechpartner an der Anlage noch über api/Kunden/'+f.kunde_nummer+'/Kontakte). Bitte im ERP einen Standardansprechpartner für den Kunden hinterlegen.');
+  }
+  const kundeIdNum = +kontaktId;
   console.log('[ERP-Anfrage] IDs parsed:', { anlageId: anlageIdNum, empfaengerId: kundeIdNum });
   const today = new Date().toISOString().slice(0,10);
   const angNum = String(f.app_angebot_num || '?');
