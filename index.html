@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.96';
+const APP_VERSION = 'v4.97';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5628,6 +5628,8 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Firmen',       'start_num',         'number');
   await ensureField('Firmen',       'auftrag_start_num', 'number');
   await ensureField('Firmen',       'angebot_start_num', 'number');
+  // Briefpapier-Footer-Daten (Adresse, Kontakt, Rechtliches) für PDF-Footer
+  await ensureField('Firmen',       'briefpapier_footer_md', 'multilineText');
   // Berichte ↔ Auftrag-Verknüpfung + Bilder
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
@@ -5874,7 +5876,8 @@ function firmaRowHtml(f) {
       <td class="firma-action" style="text-align:right;white-space:nowrap">
         ${isDefault
           ? `<button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="createFirmaFromDefault('${fl.slug}')">💾 In DB anlegen</button>`
-          : `<button class="btn" style="padding:5px 10px;font-size:12px" onclick="openAngebotKonditionenModal('${fid}')" title="Angebots-Konditionen: AGBs, Lieferzeit, Gewährleistung, Zahlung, Geltungsdauer">📋 Angebot</button>
+          : `<button class="btn" style="padding:5px 10px;font-size:12px" onclick="openBriefpapierEditor('${fid}')" title="Briefpapier-Daten für PDF-Footer (Anschrift, Kontakt, Rechtliches)">📝 Briefpapier</button>
+             <button class="btn" style="padding:5px 10px;font-size:12px" onclick="openAngebotKonditionenModal('${fid}')" title="Angebots-Konditionen: AGBs, Lieferzeit, Gewährleistung, Zahlung, Geltungsdauer">📋 Angebot</button>
              <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveFirmaRow('${fid}')">💾 Speichern</button>`}
       </td>
     </tr>
@@ -18649,37 +18652,181 @@ function _daFirmaBranding(firmaSlug) {
       ],
     };
   }
-  // Default: Aszendio
-  return {
+  // Default: Aszendio — echte Daten aus aszendio.com/impressum (v4.97).
+  // User kann die Werte in der Firmen-Verwaltung pro Firma überschreiben
+  // (Feld briefpapier_footer_md im Firmen-Record). _daFirmaBranding mergt das beim Aufruf.
+  const baseAszendio = {
     slug: 'aszendio',
     logoB64: LOGO_B64,
-    logoW: 54, logoH: 9,     // v4.96: 1.5x größer
+    logoW: 54, logoH: 9,
     company: 'Aszendio Aufzugservice GmbH',
-    headerLine: 'Aszendio Aufzugservice GmbH  ·  service@aszendio.com  ·  www.aszendio.com',
+    headerLine: 'Aszendio Aufzugservice GmbH  ·  info@aszendio.com  ·  www.aszendio.com',
     footerLine: 'Aszendio Aufzugservice GmbH',
     navy: [26, 51, 83],
     accent: [33, 82, 169],
     footerCols: [
       { title:'Aszendio Aufzugservice GmbH',
         lines:[
-          'Mörikestraße 7',
-          '71636 Ludwigsburg',
-          'Tel. +49 7141 / 64 73 990',
+          'Boschstraße 10',
+          '73734 Esslingen am Neckar',
+          'Tel. +49 711 9688 2904',
         ]},
       { title:'Kontakt',
         lines:[
-          'service@aszendio.com',
+          'info@aszendio.com',
           'www.aszendio.com',
-          'Geschäftsführer: P. Fontanarosa',
+          'Geschäftsführer: Walter Schäfer',
         ]},
-      { title:'Bank & Rechtliches',
+      { title:'Rechtliches',
         lines:[
-          'HRB 783234 · USt-IdNr. DE362157987',
-          'IBAN: DE21 6005 0101 0405 2538 03',
-          'BIC: SOLADEST600 (BW-Bank)',
+          'HRB 800526',
+          'Amtsgericht Stuttgart',
+          'USt-IdNr.: folgt',
         ]},
     ],
   };
+  // Custom-Daten aus Firmen-Record überschreiben Defaults (Briefpapier-Editor in Firmen-Verwaltung)
+  const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === slug);
+  if (firmaRec?.fields?.briefpapier_footer_md) {
+    const cols = _parseBriefpapierMd(firmaRec.fields.briefpapier_footer_md);
+    if (cols.length) baseAszendio.footerCols = cols;
+  }
+  return baseAszendio;
+}
+
+/**
+ * Parst das Briefpapier-Footer-Format:
+ *   Sektion 1: erste Zeile = Titel, weitere Zeilen = Lines
+ *   ---
+ *   Sektion 2: …
+ *   ---
+ *   Sektion 3: …
+ * Whitespace wird getrimmt, leere Zeilen ignoriert. Returns: Array{title, lines}.
+ */
+function _parseBriefpapierMd(md) {
+  if (!md || typeof md !== 'string') return [];
+  return md.split(/\n-{3,}\n/).map(s => s.trim()).filter(Boolean).map(s => {
+    const lines = s.split('\n').map(l => l.trim()).filter(Boolean);
+    return { title: lines[0] || '', lines: lines.slice(1) };
+  }).filter(c => c.title || c.lines.length);
+}
+
+/** Serialisiert Footer-Cols zurück ins MD-Format — für den Editor-Initialwert. */
+function _stringifyBriefpapierMd(cols) {
+  return (cols || []).map(c => [c.title, ...(c.lines||[])].join('\n')).join('\n---\n');
+}
+
+/**
+ * Modal zum Bearbeiten der Briefpapier-Daten einer Firma.
+ * 3 Sektionen getrennt durch eine Zeile "---". Erste Zeile pro Sektion = Spalten-Titel.
+ * Live-Vorschau rechts zeigt das Footer-Layout wie es ins PDF kommt.
+ */
+function openBriefpapierEditor(firmaId) {
+  const rec = (_firmenCache||[]).find(f => f.id === firmaId);
+  if (!rec) return toast('Firma nicht gefunden','err');
+  const slug = rec.fields?.slug || '';
+  // Initialwert: aus Record oder aus Defaults
+  let initial = (rec.fields?.briefpapier_footer_md || '').trim();
+  if (!initial) {
+    const defaults = _daFirmaBranding(slug).footerCols || [];
+    initial = _stringifyBriefpapierMd(defaults);
+  }
+  document.getElementById('briefpapier-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'briefpapier-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10800;display:flex;align-items:center;justify-content:center;padding:8px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:1080px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 20px;background:#1A3353;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📝 Briefpapier-Daten — '+escapeHtml(rec.fields?.name||slug)+'</span>'+
+        '<button onclick="document.getElementById(\'briefpapier-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:18px">'+
+        '<div>'+
+          '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">Editor</div>'+
+          '<div style="font-size:11px;color:var(--txt3);line-height:1.5;margin-bottom:8px;padding:8px 10px;background:#EFF6FF;border-radius:6px">'+
+            '<strong>Format:</strong> 3 Spalten, getrennt durch <code>---</code> (3 Bindestriche auf eigener Zeile).<br>'+
+            '<strong>Erste Zeile</strong> jeder Spalte = Überschrift (fett im PDF).<br>'+
+            'Weitere Zeilen = Inhalt (z.B. Adresse, Telefon, IBAN). Empfohlen: 3–4 Zeilen je Spalte.'+
+          '</div>'+
+          '<textarea id="bp-editor" oninput="_bpRefreshPreview()" style="width:100%;height:380px;padding:12px;border:1px solid var(--bdr);border-radius:8px;font-family:Menlo,Monaco,monospace;font-size:12.5px;line-height:1.55;resize:vertical;background:#fff">'+escapeHtml(initial)+'</textarea>'+
+        '</div>'+
+        '<div>'+
+          '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:6px">Vorschau (Footer)</div>'+
+          '<div id="bp-preview" style="border:1px solid var(--bdr);border-radius:8px;padding:14px 16px;background:#fff;min-height:120px"></div>'+
+          '<div style="font-size:11px;color:var(--txt3);line-height:1.5;margin-top:8px">'+
+            '💡 Dieser Footer erscheint auf jeder Seite des Angebots-PDF — als Briefpapier-Style mit Trennlinie oben.'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+        '<button class="btn" onclick="document.getElementById(\'briefpapier-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn" onclick="_bpResetToDefault(\''+slug+'\')" title="Auf Default-Werte zurücksetzen (Aszendio-Impressum-Daten)">↺ Default laden</button>'+
+        '<button class="btn prim" onclick="_bpSave(\''+firmaId+'\',this)">💾 Speichern</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  _bpRefreshPreview();
+}
+
+function _bpRefreshPreview() {
+  const md = document.getElementById('bp-editor')?.value || '';
+  const cols = _parseBriefpapierMd(md);
+  const prev = document.getElementById('bp-preview');
+  if (!prev) return;
+  if (!cols.length) {
+    prev.innerHTML = '<div style="color:var(--txt3);font-size:12px;text-align:center;padding:20px">(noch nichts eingegeben)</div>';
+    return;
+  }
+  prev.innerHTML = '<div style="border-top:1.5px solid #2152A9;padding-top:10px;display:grid;grid-template-columns:repeat('+cols.length+',1fr);gap:14px;font-size:10.5px;color:#374151;line-height:1.45;font-family:Helvetica,Arial,sans-serif">'+
+    cols.map(c =>
+      '<div><div style="font-weight:700;color:#1A3353;margin-bottom:3px">'+escapeHtml(c.title)+'</div>'+
+      c.lines.map(l => '<div style="color:#6B7280">'+escapeHtml(l)+'</div>').join('')+
+      '</div>'
+    ).join('')+
+  '</div>';
+}
+
+function _bpResetToDefault(slug) {
+  // Defaults aus Branding holen — ABER vorher firmen-spezifischen Wert ausnullen,
+  // damit _daFirmaBranding tatsächlich die hardcoded Defaults liefert.
+  const orig = (_firmenCache||[]).find(f => f.fields?.slug === slug);
+  const savedMd = orig?.fields?.briefpapier_footer_md;
+  if (orig?.fields) orig.fields.briefpapier_footer_md = '';
+  const defaults = _daFirmaBranding(slug).footerCols || [];
+  if (orig?.fields) orig.fields.briefpapier_footer_md = savedMd;
+  const md = _stringifyBriefpapierMd(defaults);
+  const ta = document.getElementById('bp-editor');
+  if (ta) { ta.value = md; _bpRefreshPreview(); }
+  toast('Default-Werte geladen — nicht gespeichert','ok');
+}
+
+async function _bpSave(firmaId, btn) {
+  const md = document.getElementById('bp-editor')?.value || '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    try { await ensureField('Firmen', 'briefpapier_footer_md', 'multilineText'); } catch(_){}
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+firmaId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ briefpapier_footer_md: md }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    // Cache aktualisieren
+    const idx = _firmenCache.findIndex(f => f.id === firmaId);
+    if (idx >= 0) {
+      _firmenCache[idx].fields = _firmenCache[idx].fields || {};
+      _firmenCache[idx].fields.briefpapier_footer_md = md;
+    }
+    toast('💾 Briefpapier gespeichert','ok');
+    document.getElementById('briefpapier-modal')?.remove();
+  } catch(e) {
+    toast('❌ '+(e.message||e),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
 }
 
 async function _buildDatenaufnahmePdf(rec, cps, opts) {
