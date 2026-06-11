@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.04';
+const APP_VERSION = 'v5.05';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19820,7 +19820,7 @@ async function _extractKoneAngebot(file, anbieterHint, opts) {
       '• "leistungsbeschreibung": Bullet-Liste der Maßnahme zur Behebung (was muss konkret getan werden, um den Mangel zu beheben) — orientiere dich am Mängelwortlaut, aber formuliere als ausführende Tätigkeit (z.B. "Notrufknopf erneuern", "Verstärkungsblech anbringen", "Tür neu justieren und Hub einstellen")\n'+
       '• "einzelpreis_netto": IMMER 0 (User trägt den Preis pro Mangel im Editor selbst ein)\n'+
       '• "menge": 1\n'+
-      '• "anschreiben": kurzer höflicher Anschreiben-Text der erklärt dass es um die Mängelbeseitigung aus dem TÜV-Bericht geht (Datum/Prüfnummer falls vorhanden nennen)\n'+
+      '• "anschreiben": kurzer Text der erklärt dass es um die Mängelbeseitigung aus dem TÜV-Bericht geht (Datum/Prüfnummer falls vorhanden nennen). KEINE Anrede! Nicht mit "Sehr geehrter Herr" / "Sehr geehrte Frau" beginnen — direkt mit "Bezug nehmend auf den TÜV-Mängelbericht …" oder "Wir freuen uns, Ihnen für die Behebung der Mängel folgendes Angebot zu unterbreiten:" starten.\n'+
       '• "anbieter": "TÜV-Mängelbericht" (lass den Wert so)\n'+
       '• "kone_angebot_num": die Prüf-/Berichts-Nummer aus dem TÜV-Dokument (falls vorhanden)\n'+
       '• "kone_angebot_datum": das Prüfdatum aus dem TÜV-Dokument\n'+
@@ -21199,13 +21199,21 @@ async function _buildAngebotPdf(rec) {
   const anlageItems = [];
   if (rec.anlage_adresse) anlageItems.push(['Anlage-Standort', rec.anlage_adresse]);
   if (rec.seriennummer)   anlageItems.push(['Fabriknummer',     rec.seriennummer]);
-  if (rec.equipmentnummer && rec.anbieter) anlageItems.push([rec.anbieter+'-Equipment', rec.equipmentnummer]);
+  if (rec.equipmentnummer && rec.anbieter) {
+    // Equipment-Label: bei TÜV / sehr langen Anbieter-Namen "Equipment-Nr." als generisches Label,
+    // damit Spalte 1 (Label) nicht in Spalte 2 (Wert) hineinläuft.
+    const isLongAnbieter = String(rec.anbieter).length > 8;
+    const eqLabel = isLongAnbieter ? 'Equipment-Nr.' : (rec.anbieter+'-Equipment');
+    anlageItems.push([eqLabel, rec.equipmentnummer]);
+  }
+  // Spalte 1 (Label) bekommt die Breite der längsten Beschriftung + Puffer
+  const labelW = Math.max(40, ...anlageItems.map(([l]) => doc.getTextWidth(_sanPdf(l+':'))+6));
   anlageItems.forEach(([label, val]) => {
     doc.setFont('helvetica','normal'); doc.setTextColor(...GREY_L);
     doc.text(_sanPdf(label+':'), ml, y);
     doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
-    const lines = doc.splitTextToSize(_sanPdf(val), cw - 45);
-    lines.forEach((l, i) => { doc.text(l, ml+38, y + i*4.5); });
+    const lines = doc.splitTextToSize(_sanPdf(val), cw - labelW - 3);
+    lines.forEach((l, i) => { doc.text(l, ml+labelW, y + i*4.5); });
     y += Math.max(5, lines.length*4.5);
   });
   y += 4;
