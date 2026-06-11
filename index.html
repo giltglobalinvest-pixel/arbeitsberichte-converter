@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.88';
+const APP_VERSION = 'v4.89';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19651,6 +19651,45 @@ async function openAngebotEditor(ctx) {
 }
 
 /**
+ * Versucht über den DefaultRechnungsempfaenger-Datensatz an die Adresse zu kommen.
+ * Manche ERP-Endpoints liefern den Empfänger mit Klartext-Adressfeldern obwohl
+ * der Kunde nur eine adresseId hat.
+ */
+async function _angResolveEmpfaengerAdresse(firmaSlug, empfId) {
+  if (!empfId) return '';
+  const enc = encodeURIComponent(empfId);
+  const candidates = [
+    'api/Rechnungsempfaenger/'+enc,
+    'api/rechnungsempfaenger/'+enc,
+    'api/Empfaenger/'+enc,
+    'api/empfaenger/'+enc,
+    'api/Empfanger/'+enc,
+    'api/Adressen/'+enc,
+    'api/adressen/'+enc,
+  ];
+  for (const path of candidates) {
+    try {
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
+      if (!res || typeof res !== 'object') continue;
+      console.log('[Angebot] Empfaenger-Response via '+path+':', res);
+      const built = _angBuildKundeAdresse(res);
+      const lines = (built||'').split('\n').filter(Boolean);
+      // Wir verwerfen die Firmenname-Zeile (haben wir schon) und nehmen Adresse:
+      const adrOnly = lines.slice(lines[0] === (res.firmenname || res.name) ? 1 : 0).join('\n');
+      if (adrOnly && adrOnly.split('\n').filter(Boolean).length >= 1) {
+        console.log('[Angebot] Adresse aus Empfaenger '+empfId+' via '+path);
+        return adrOnly;
+      }
+    } catch(e) {
+      if (e.status && e.status !== 404 && e.status !== 405) {
+        console.warn('[Angebot] Empfaenger-Endpoint '+path+' fail:', e.status);
+      }
+    }
+  }
+  return '';
+}
+
+/**
  * Versucht eine ERP-`adresseId` (Google-Places-Style) zu Klartext aufzulösen.
  * Probiert mehrere bekannte und vermutete Endpoint-Patterns durch.
  * Erwartet als Antwort entweder einen flachen Adress-Record oder einen
@@ -20043,8 +20082,20 @@ async function _angLoadKundeAdresse() {
   try { console.log('[Angebot] Kunde JSON:\n'+JSON.stringify(kunde, null, 2)); } catch(_){}
   // ERP-Erkenntnis: Adresse ist als Google-Places-ID "adresseId" gespeichert
   // (z.B. "ChIJ..."), nicht als Klartext-Felder. _angBuildKundeAdresse findet
-  // daher nur den Firmennamen. Wir versuchen die ID per ERP-Endpoint
-  // aufzulösen.
+  // daher nur den Firmennamen. Wir versuchen mehrere Pfade:
+  //   1. Direkter Empfaenger-Lookup (defaultrechnungsempfaenger.id)
+  //   2. Diverse Adressen-Endpoints mit der Places-ID
+  const empfId = kunde.defaultrechnungsempfaenger?.id;
+  if (empfId) {
+    const empfAdr = await _angResolveEmpfaengerAdresse(slug, empfId);
+    if (empfAdr) {
+      console.log('[Angebot] Adresse aus Empfaenger-Lookup:', empfAdr);
+      const firma = kunde.firmenname || kunde.name || E.kunde_name;
+      E.kunde_adresse = [firma, empfAdr].filter(Boolean).join('\n');
+      _angEditorRender();
+      return;
+    }
+  }
   const adresseId = kunde.adresseId || kunde.defaultrechnungsempfaenger?.adresseId;
   if (adresseId) {
     const klartext = await _angResolveAdresseId(slug, adresseId);
@@ -20055,6 +20106,12 @@ async function _angLoadKundeAdresse() {
       _angEditorRender();
       return;
     }
+  }
+  // Wenn weder Klartext-Felder noch ID-Auflösung klappten: NICHT mehr automatisch
+  // den Anlage-Standort nehmen — der gehört der Anlage, nicht zwingend dem
+  // Kunden. Stattdessen Warnung loggen damit User Adresse manuell setzt.
+  if (adresseId) {
+    console.warn('[Angebot] Empfaenger-Adresse muss manuell gesetzt werden — ERP liefert nur Google-Places-ID '+adresseId);
   }
   const built = _angBuildKundeAdresse(kunde);
   const builtLines = (built||'').split('\n').filter(Boolean).length;
@@ -20070,20 +20127,10 @@ async function _angLoadKundeAdresse() {
     E.kunde_name = kunde.firmenname || kunde.name;
     _angEditorRender();
   }
-  // Letzter Fallback: Wenn nach allem die Adresse immer noch nur 1 Zeile hat
-  // (Firmenname allein), nimm die Anlage-Standort-Adresse. Bei Hausverwaltung
-  // sitzt der Kunde oft am Anlagen-Standort, plus es ist immer noch deutlich
-  // besser als "Empfänger-Adresse fehlt".
-  const finalLines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
-  if (finalLines <= 1 && E.anlage_adresse) {
-    const adrParts = String(E.anlage_adresse).split(',').map(s => s.trim()).filter(Boolean);
-    // typisch: "Brandenburger Str. 2, 04103 Leipzig, Deutschland"
-    const useParts = adrParts.filter(p => p.toLowerCase() !== 'deutschland' && p.toLowerCase() !== 'germany');
-    const firma = E.kunde_name || (kunde.firmenname || kunde.name || '');
-    E.kunde_adresse = [firma, ...useParts].filter(Boolean).join('\n');
-    console.log('[Angebot] Fallback auf Anlage-Standort als Empfaenger-Adresse');
-    _angEditorRender();
-  }
+  // Kein Anlage-Standort-Fallback mehr — der Anlage-Standort ist NICHT zwingend
+  // die Empfänger-Adresse (Hausverwaltung sitzt oft woanders als die Anlage).
+  // Wenn nach allem die Adresse leer ist, bleibt der Editor sichtbar und
+  // wartet auf manuelle Eingabe.
 }
 
 function _angClearAnlage() {
