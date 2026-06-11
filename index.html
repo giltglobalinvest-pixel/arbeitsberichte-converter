@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.66';
+const APP_VERSION = 'v4.67';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20343,34 +20343,54 @@ async function _angCreateErpAnfrage(rec) {
   ].join('\n');
   // Defensive Payload — alle plausiblen Feld-Varianten gleichzeitig.
   // Bei Validation-Fehler iterieren wir hier ähnlich wie beim Pauschal-Angebot.
+  // /api/anfragen erwartet camelCase-Englisch (anders als die deutschen Auftrag-Endpoints).
+  // Wir senden beide Varianten parallel + die required Felder die wir aus dem Trace kennen.
   const payload = {
+    // Anlage — Trace zeigte: 'anlageId' (camelCase) ist required
+    anlageId:               +f.anlage_id,
     anlageid:               +f.anlage_id,
+    // Empfänger/Kunde — beide Schreibweisen
+    empfaengerId:           +f.kunde_nummer,
     empfaengerid:           +f.kunde_nummer,
+    kundeId:                +f.kunde_nummer,
     kundeid:                +f.kunde_nummer,
+    customerId:             +f.kunde_nummer,
+    // Pflicht-Felder aus Trace: details (NotEmpty String), anhang (NotNull List)
+    details:                beschreibung,
+    anhang:                 [],
+    // Titel/Bezeichnung
     titel:                  bezeichnung,
     title:                  bezeichnung,
     bezeichnung:            bezeichnung,
     name:                   bezeichnung,
+    subject:                bezeichnung,
+    // Beschreibung (zusätzlich zu details, defensiv)
     beschreibung:           beschreibung,
     description:            beschreibung,
     inhalt:                 beschreibung,
-    kategorie:              typLabel,                            // REPARATUR / MODERNISIERUNG / SONSTIGES
+    // Typ/Kategorie
+    kategorie:              typLabel,
     category:               typLabel,
     typ:                    typLabel,
     type:                   typLabel,
     bestellform:            'PAUSCHAL',
+    // Datum
     datumEingang:           today,
     datumAnfrage:           today,
     eingangsdatum:          today,
     receivedDate:           today,
+    requestDate:            today,
+    // Status
     status:                 'In Bearbeitung',
     state:                  'In Bearbeitung',
+    // Bearbeiter + Auftraggeber
     bearbeiter:             f.bearbeiter || '',
     bearbeiterName:         f.bearbeiter || '',
     auftraggeber:           f.kunde_name || '',
     auftraggeberName:       f.kunde_name || '',
     customer:               f.kunde_name || '',
     customerName:           f.kunde_name || '',
+    // Misc
     notizen:                beschreibung,
     notes:                  beschreibung,
     kundeMail:              false,
