@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.01';
+const APP_VERSION = 'v5.02';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19398,6 +19398,93 @@ async function _loadAngebote(firmaSlug) {
   }
 }
 
+// Bulk-Auswahl für Angebote-Liste (Massen-Archivierung/Löschen)
+const _angSelectedIds = new Set();
+
+function _angToggleSelect(recId, ev) {
+  if (ev) { ev.stopPropagation(); }
+  if (_angSelectedIds.has(recId)) _angSelectedIds.delete(recId);
+  else _angSelectedIds.add(recId);
+  _renderAngeboteList();
+}
+function _angSelectAllVisible() {
+  // Alle aktuell gefilterten Angebote auswählen (oder bei "alle aus" wenn schon alle drin: Auswahl leeren)
+  const items = (_angeboteCache.items||[]).filter(r => {
+    const f = r.fields||{};
+    const showArchived = document.getElementById('ang-flt-archived')?.checked === true;
+    if (!showArchived && f.archived) return false;
+    return true;
+  });
+  const allSel = items.length>0 && items.every(r => _angSelectedIds.has(r.id));
+  if (allSel) items.forEach(r => _angSelectedIds.delete(r.id));
+  else items.forEach(r => _angSelectedIds.add(r.id));
+  _renderAngeboteList();
+}
+function _angClearSelection() { _angSelectedIds.clear(); _renderAngeboteList(); }
+
+async function _angBulkArchive(archive) {
+  const ids = Array.from(_angSelectedIds);
+  if (!ids.length) return;
+  const verb = archive ? 'archivieren' : 'wiederherstellen';
+  if (!confirm(ids.length+' Angebot(e) '+verb+'?')) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  try { await ensureField('App_Angebote', 'archived', 'checkbox', { icon:'check', color:'grayBright' }); } catch(_){}
+  // Airtable PATCH unterstützt 10 Records pro Request — in Chunks aufteilen
+  toast('⏳ '+verb+' '+ids.length+' Angebot(e)…','');
+  let ok = 0, fail = 0;
+  for (let i = 0; i < ids.length; i += 10) {
+    const chunk = ids.slice(i, i+10);
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ records: chunk.map(id => ({ id, fields:{ archived: !!archive }})) }),
+      });
+      const d = await r.json();
+      if (d.error) { fail += chunk.length; console.warn('[Angebote Bulk]', d.error); continue; }
+      ok += chunk.length;
+      // Cache aktualisieren
+      for (const id of chunk) {
+        const idx = (_angeboteCache.items||[]).findIndex(x => x.id === id);
+        if (idx >= 0) {
+          _angeboteCache.items[idx].fields = _angeboteCache.items[idx].fields || {};
+          _angeboteCache.items[idx].fields.archived = !!archive;
+        }
+      }
+    } catch(e) { fail += chunk.length; console.warn('[Angebote Bulk]', e); }
+  }
+  _angSelectedIds.clear();
+  toast(ok+' '+verb+(fail?(' · '+fail+' fehlgeschlagen'):''), fail?'warn':'ok');
+  _renderAngeboteList();
+}
+
+async function _angBulkDelete() {
+  const ids = Array.from(_angSelectedIds);
+  if (!ids.length) return;
+  if (!confirm('⚠ '+ids.length+' Angebot(e) PERMANENT löschen?\n\nDieser Vorgang kann nicht rückgängig gemacht werden!')) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  toast('⏳ Lösche '+ids.length+' Angebot(e)…','');
+  let ok = 0, fail = 0;
+  for (let i = 0; i < ids.length; i += 10) {
+    const chunk = ids.slice(i, i+10);
+    try {
+      const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote?'+chunk.map(id => 'records[]='+encodeURIComponent(id)).join('&');
+      const r = await fetch(url, {
+        method:'DELETE',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+      });
+      if (!r.ok) { fail += chunk.length; continue; }
+      ok += chunk.length;
+      _angeboteCache.items = (_angeboteCache.items||[]).filter(x => !chunk.includes(x.id));
+    } catch(e) { fail += chunk.length; console.warn('[Angebote Bulk-Delete]', e); }
+  }
+  _angSelectedIds.clear();
+  toast(ok+' gelöscht'+(fail?(' · '+fail+' fehlgeschlagen'):''), fail?'warn':'ok');
+  _renderAngeboteList();
+}
+
 function _renderAngeboteList() {
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
@@ -19422,7 +19509,19 @@ function _renderAngeboteList() {
         ANGEBOT_STATUS_OPTIONS.map(s => '<option value="'+s.value+'"'+(document.getElementById('ang-status')?.value===s.value?' selected':'')+'>'+s.label+'</option>').join('')+
       '</select>'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);cursor:pointer;padding:6px 10px;background:'+(showArchived?'#FEF3C7':'transparent')+';border-radius:6px"><input type="checkbox" id="ang-flt-archived" '+(showArchived?'checked':'')+' onchange="_renderAngeboteList()"> 📁 Archivierte zeigen'+(totalArchived?' ('+totalArchived+')':'')+'</label>'+
-    '</div>';
+      '<button class="btn" onclick="_angSelectAllVisible()" style="font-size:11px;padding:6px 10px" title="Alle sichtbaren auswählen / Auswahl aufheben">☑ Alle</button>'+
+    '</div>'+
+    // Bulk-Action-Bar — nur sichtbar wenn Auswahl > 0
+    (_angSelectedIds.size > 0
+      ? '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px;padding:10px 14px;background:#1A3353;color:#fff;border-radius:8px;position:sticky;top:0;z-index:50">'+
+          '<span style="font-weight:700"><strong>'+_angSelectedIds.size+'</strong> ausgewählt</span>'+
+          '<span style="flex:1"></span>'+
+          '<button class="btn" onclick="_angBulkArchive(true)" style="background:#fff;color:#1A3353;font-weight:600">📁 Archivieren</button>'+
+          '<button class="btn" onclick="_angBulkArchive(false)" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.3)" title="Aus Archiv zurückholen">📂 Wiederherstellen</button>'+
+          '<button class="btn" onclick="_angBulkDelete()" style="background:#DC2626;color:#fff;border-color:#DC2626;font-weight:600" title="PERMANENT löschen">🗑 Löschen</button>'+
+          '<button class="btn" onclick="_angClearSelection()" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.3)">✕ Aufheben</button>'+
+        '</div>'
+      : '');
   // Filtern
   const q = (document.getElementById('ang-search')?.value || '').toLowerCase().trim();
   const filterTyp = document.getElementById('ang-typ')?.value || '';
@@ -19457,22 +19556,28 @@ function _renderAngeboteList() {
     const typ = ANGEBOT_TYP_OPTIONS.find(t => t.value === f.angebot_typ) || ANGEBOT_TYP_OPTIONS[3];
     const stat = ANGEBOT_STATUS_OPTIONS.find(s => s.value === f.status) || ANGEBOT_STATUS_OPTIONS[0];
     const isArchived = !!f.archived;
-    return '<div onclick="openAngebotDetail(\''+rec.id+'\')" style="background:'+(isArchived?'#F9FAFB':'var(--surf)')+';border:1px solid '+(isArchived?'#D1D5DB':'var(--bdr)')+';border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;transition:all .15s;opacity:'+(isArchived?'0.65':'1')+'" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,.06)\'" onmouseout="this.style.borderColor=\''+(isArchived?'#D1D5DB':'var(--bdr)')+'\';this.style.boxShadow=\'none\'">'+
-        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">'+
-          '<div style="flex:1;min-width:200px">'+
-            '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(isArchived?'<span title="Archiviert" style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">📁 ARCHIV</span>':'')+'ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
-            '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+'</div>'+
+    const isSelected = _angSelectedIds.has(rec.id);
+    return '<div onclick="openAngebotDetail(\''+rec.id+'\')" style="background:'+(isArchived?'#F9FAFB':(isSelected?'#EFF6FF':'var(--surf)'))+';border:1px solid '+(isSelected?'#2152A9':(isArchived?'#D1D5DB':'var(--bdr)'))+';border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer;transition:all .15s;opacity:'+(isArchived?'0.65':'1')+';display:flex;align-items:flex-start;gap:12px" onmouseover="this.style.boxShadow=\'0 2px 8px rgba(0,0,0,.06)\'" onmouseout="this.style.boxShadow=\'none\'">'+
+        // Checkbox für Bulk-Auswahl
+        '<input type="checkbox" '+(isSelected?'checked':'')+' onclick="_angToggleSelect(\''+rec.id+'\', event)" style="width:18px;height:18px;cursor:pointer;flex-shrink:0;margin-top:3px" title="Für Bulk-Aktion auswählen">'+
+        // Content-Spalte: Titel-Row + Footer-Zeile
+        '<div style="flex:1;min-width:0">'+
+          '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">'+
+            '<div style="flex:1;min-width:200px">'+
+              '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(isArchived?'<span title="Archiviert" style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">📁 ARCHIV</span>':'')+'ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
+              '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+'</div>'+
+            '</div>'+
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+              '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'+
+              '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'+
+              (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')+
+            '</div>'+
           '</div>'+
-          '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
-            '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'+
-            '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'+
-            (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:6px">'+
+            (f.kone_angebot_num ? '🔗 '+escapeHtml(f.anbieter||'Original')+' '+escapeHtml(f.kone_angebot_num)+' · ' : '')+
+            (f.erstellt_am ? '📅 '+escapeHtml(f.erstellt_am) : '')+
+            (f.bearbeiter ? ' · 👤 '+escapeHtml(f.bearbeiter) : '')+
           '</div>'+
-        '</div>'+
-        '<div style="font-size:11px;color:var(--txt3);margin-top:6px">'+
-          (f.kone_angebot_num ? '🔗 '+escapeHtml(f.anbieter||'Original')+' '+escapeHtml(f.kone_angebot_num)+' · ' : '')+
-          (f.erstellt_am ? '📅 '+escapeHtml(f.erstellt_am) : '')+
-          (f.bearbeiter ? ' · 👤 '+escapeHtml(f.bearbeiter) : '')+
         '</div>'+
       '</div>';
   }).join('');
