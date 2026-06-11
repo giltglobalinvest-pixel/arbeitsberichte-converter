@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.81';
+const APP_VERSION = 'v4.82';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20219,16 +20219,45 @@ async function _buildAngebotPdf(rec) {
   doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
   doc.text(_sanPdf(BR.headerLine), ml, 16);
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
-  // EMPFÄNGER-BLOCK
+  // EMPFÄNGER-BLOCK — vollständige Geschäftsbrief-Anschrift:
+  //   Firma (fett)
+  //   z.Hd. Kontakt-Name (wenn vorhanden)
+  //   Straße
+  //   PLZ Ort
+  //
+  // kunde_adresse kann je nach Quelle \n-getrennt oder Komma-getrennt sein
+  // (siehe _angBuildKundeAdresse vs erpKunden-Sync). Wir splitten flexibel
+  // auf BEIDES und filtern doppelte Firmenname-Zeile (kommt von _angBuildKundeAdresse).
   let y = 32;
   doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
   doc.text('EMPFÄNGER', ml, y); y += 4;
   doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...NAVY);
-  const kundeName = rec.kunde_name || '';
+  const kundeName = (rec.kunde_name || '').trim();
   if (kundeName) { doc.text(_sanPdf(kundeName), ml, y); y += 5; }
+  // z.Hd.-Zeile wenn ein Kontakt ausgewählt wurde
+  if (rec.kontakt_name && String(rec.kontakt_name).trim()) {
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    doc.text(_sanPdf('z.Hd. '+String(rec.kontakt_name).trim()), ml, y); y += 5;
+  }
+  // Adresszeilen aufbereiten
   doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
-  for (const ln of String(rec.kunde_adresse||'').split('\n')) {
-    if (ln.trim()) { doc.text(_sanPdf(ln), ml, y); y += 4.5; }
+  const adrRaw = String(rec.kunde_adresse||'').trim();
+  let adrLines = [];
+  if (adrRaw) {
+    // Newline-Trenner bevorzugt, sonst Komma als Fallback
+    if (adrRaw.indexOf('\n') >= 0) {
+      adrLines = adrRaw.split('\n');
+    } else if (adrRaw.indexOf(',') >= 0) {
+      adrLines = adrRaw.split(',');
+    } else {
+      adrLines = [adrRaw];
+    }
+    adrLines = adrLines.map(s => s.trim()).filter(Boolean);
+    // Doppelten Firmenname rausfiltern (kommt von _angBuildKundeAdresse vor)
+    adrLines = adrLines.filter(l => l.toLowerCase() !== kundeName.toLowerCase());
+  }
+  for (const ln of adrLines) {
+    doc.text(_sanPdf(ln), ml, y); y += 4.5;
   }
   // RECHTS: Datum + Angebot-Nr.
   doc.setFontSize(9); doc.setTextColor(...GREY_L);
