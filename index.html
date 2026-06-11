@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.08';
+const APP_VERSION = 'v5.09';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19367,6 +19367,13 @@ async function _ensureAngeboteTable() {
 /* Nächste Angebot-Nummer für die aktuelle Firma — max(maxDB+1, firma.angebot_start_num).
    So kann jede Firma einen eigenen Mindest-Startwert konfigurieren (z.B. 2350),
    damit die Nummern z.B. ab einer bestimmten Zahl beginnen. */
+// Hardcoded Mindest-Startwert pro Firma — greift wenn DB-Wert nicht ankommt
+// (z.B. weil das Airtable-Feld noch nicht angelegt wurde / Schema-Permission fehlt).
+// User-Wunsch v5.09: Aszendio bei 2480 starten.
+const ANGEBOT_HARDCODED_START = {
+  aszendio: 2480,
+};
+
 async function _angebotGetNextNumber(baseId, firmaSlug) {
   const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
   // angebot_start_num IMMER frisch aus Airtable lesen — _firmenCache kann veraltet sein.
@@ -19374,15 +19381,16 @@ async function _angebotGetNextNumber(baseId, firmaSlug) {
   const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug);
   const startFromCache = +(firmaRec?.fields?.angebot_start_num) || 0;
   const startFromS     = +(getCurrentFirma()?.angebot_start_num) || 0;
-  const firmaStart = Math.max(startFromCache, startFromS, 1);
+  const startHardcoded = +ANGEBOT_HARDCODED_START[firmaSlug] || 0;
+  const firmaStart = Math.max(startFromCache, startFromS, startHardcoded, 1);
   console.log('[Angebote] Next-Number Diagnose:',
     'firma='+firmaSlug,
     'Cache-Wert='+startFromCache,
     'S.firma-Wert='+startFromS,
+    'Hardcoded='+startHardcoded,
     '→ verwende='+firmaStart);
   if (firmaRec?.fields) {
     console.log('[Angebote] Firma-Record fields-Keys:', Object.keys(firmaRec.fields).join(', '));
-    console.log('[Angebote] Firma-Record komplett:', firmaRec.fields);
   } else {
     console.warn('[Angebote] Firma "'+firmaSlug+'" nicht in _firmenCache (Größe='+(_firmenCache?.length||0)+')');
   }
