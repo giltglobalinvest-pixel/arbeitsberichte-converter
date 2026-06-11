@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.98';
+const APP_VERSION = 'v4.99';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -18045,6 +18045,38 @@ async function openDaDetail(recId) {
   m._cps = cps;
   m._dirty = false;
   _daRenderCheckpunkte();
+  // Recovery-Check: gibt es einen lokalen Autosave der NEUER ist als der Server-Stand?
+  // Das passiert wenn ein vorheriger Save abbrach (Crash, Tab-Discard, Netzwerkproblem).
+  const autosaved = _daAutosaveGet(recId);
+  if (autosaved && Array.isArray(autosaved.cps)) {
+    const serverJson = JSON.stringify(cps);
+    const localJson  = JSON.stringify(autosaved.cps);
+    // Nur anbieten wenn lokaler Stand WIRKLICH anders ist UND mehr Substanz hat
+    const localHasMore = localJson.length > serverJson.length + 50;
+    const localCpCount = autosaved.cps.filter(cp => cp && (cp.titel||cp.ist_zustand||cp.massnahme||'').trim()).length;
+    const serverCpCount = cps.filter(cp => cp && (cp.titel||cp.ist_zustand||cp.massnahme||'').trim()).length;
+    if (localJson !== serverJson && (localHasMore || localCpCount > serverCpCount)) {
+      const tsStr = new Date(autosaved.ts).toLocaleString('de-DE');
+      setTimeout(() => {
+        const ok = confirm(
+          '⚠ Ungespeicherte lokale Version gefunden!\n\n'+
+          'Gespeichert: '+tsStr+'\n'+
+          'Server-Stand:  '+serverCpCount+' Checkpunkt(e), '+Math.round(serverJson.length/1024)+' KB\n'+
+          'Lokal:         '+localCpCount+' Checkpunkt(e), '+Math.round(localJson.length/1024)+' KB\n\n'+
+          '→ OK: Lokale Version wiederherstellen (du musst dann "Speichern" klicken)\n'+
+          '→ Abbrechen: Server-Stand behalten, lokale Version verwerfen'
+        );
+        if (ok) {
+          m._cps = autosaved.cps;
+          m._dirty = true;
+          _daRenderCheckpunkte();
+          toast('🔄 Lokale Version wiederhergestellt — bitte „💾 Speichern" klicken','ok');
+        } else {
+          _daAutosaveClear(recId);
+        }
+      }, 200);
+    }
+  }
 }
 
 function _daRenderCheckpunkte() {
@@ -18122,12 +18154,48 @@ function _daRenderCheckpunktItem(cp, i, editable) {
   );
 }
 
+/* ═══════════════════════════════════════════════════════════════
+   AUTOSAVE-SICHERUNG (v4.99): Bei jeder Änderung in localStorage
+   sichern. Beim nächsten Open Recovery-Prompt wenn lokale Daten
+   neuer/voller sind als Server-Stand. Verhindert Datenverlust bei
+   Crash, Tab-Discard, vorzeitig geschlossenem Modal, abgebrochenem
+   Save etc.
+   ═══════════════════════════════════════════════════════════════ */
+function _daAutosaveKey(recId) { return 'da_autosave_'+recId; }
+function _daAutosaveSet(recId, cps) {
+  if (!recId || !Array.isArray(cps)) return;
+  try {
+    const payload = { ts: Date.now(), cps };
+    const json = JSON.stringify(payload);
+    localStorage.setItem(_daAutosaveKey(recId), json);
+  } catch(e) {
+    // Quota-Überschreitung (z.B. zu viele Bilder im DataURL-Format)
+    console.warn('[DA-Autosave] localStorage voll:', e.message);
+  }
+}
+function _daAutosaveGet(recId) {
+  if (!recId) return null;
+  try {
+    const raw = localStorage.getItem(_daAutosaveKey(recId));
+    return raw ? JSON.parse(raw) : null;
+  } catch(_) { return null; }
+}
+function _daAutosaveClear(recId) {
+  try { localStorage.removeItem(_daAutosaveKey(recId)); } catch(_){}
+}
+/** Markiert Modal als dirty + sichert sofort lokal. Wird statt m._dirty=true verwendet. */
+function _daMarkDirty(m) {
+  if (!m) return;
+  m._dirty = true;
+  if (m._recId && Array.isArray(m._cps)) _daAutosaveSet(m._recId, m._cps);
+}
+
 /* Preis-Update mit Live-Summary, ohne komplettes Re-Render */
 function _daUpdateCpPrice(i, val) {
   const m = document.getElementById('da-detail');
   if (!m || !m._cps[i]) return;
   m._cps[i].pauschalpreis = val === '' ? null : +val || 0;
-  m._dirty = true;
+  _daMarkDirty(m);
   _daRenderAngebotSummary();
 }
 
@@ -18173,14 +18241,14 @@ function _daUpdateCp(i, field, value) {
   const m = document.getElementById('da-detail');
   if (!m || !m._cps[i]) return;
   m._cps[i][field] = value;
-  m._dirty = true;
+  _daMarkDirty(m);
 }
 
 function _daAddCheckpunkt() {
   const m = document.getElementById('da-detail');
   if (!m) return;
   m._cps.push({ titel:'', ist_zustand:'', massnahme:'', bilder_ist:[] });
-  m._dirty = true;
+  _daMarkDirty(m);
   _daRenderCheckpunkte();
   // Zum neuen Checkpunkt scrollen
   setTimeout(() => {
@@ -18194,7 +18262,7 @@ function _daRemoveCp(i) {
   const m = document.getElementById('da-detail');
   if (!m) return;
   m._cps.splice(i, 1);
-  m._dirty = true;
+  _daMarkDirty(m);
   _daRenderCheckpunkte();
 }
 
@@ -18229,7 +18297,7 @@ function _daAddImage(i) {
         added++;
       } catch(_) { errs++; }
     }
-    if (added) { m._dirty = true; _daRenderCheckpunkte(); }
+    if (added) { _daMarkDirty(m); _daRenderCheckpunkte(); }
     if (added && !errs) toast('🖼 '+added+' Foto'+(added===1?'':'s')+' hinzugefügt','ok');
     else if (added && errs) toast('🖼 '+added+' OK · '+errs+' Fehler','');
     else toast('❌ Keine Bilder hinzugefügt','err');
@@ -18242,7 +18310,7 @@ function _daRemoveImage(i, idx) {
   const m = document.getElementById('da-detail');
   if (!m || !m._cps[i] || !Array.isArray(m._cps[i].bilder_ist)) return;
   m._cps[i].bilder_ist.splice(idx, 1);
-  m._dirty = true;
+  _daMarkDirty(m);
   _daRenderCheckpunkte();
 }
 
@@ -18320,6 +18388,8 @@ async function _daSave(recId) {
     const idx = _daCache.items.findIndex(x => x.id === recId);
     if (idx >= 0) _daCache.items[idx] = d;
     m._dirty = false;
+    // Autosave-Backup nach erfolgreichem Save löschen
+    _daAutosaveClear(recId);
     toast('💾 Datenaufnahme gespeichert ('+Math.round(json.length/1024)+'KB)','ok');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
     _renderDaList();
