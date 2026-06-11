@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.84';
+const APP_VERSION = 'v4.85';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19629,6 +19629,14 @@ async function openAngebotEditor(ctx) {
   if (E.anlage_id && E.kunde_nummer && !E.kontakt_id) {
     _angLoadKontakte();
   }
+  // Adresse aus ERP nachladen wenn sie dünn ist (Edit-Open mit altem Record
+  // oder Neu-Anlage wo Anlage-Kunde-Objekt unvollständig war).
+  if (E.kunde_nummer) {
+    const lines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
+    if (lines < 2) {
+      _angLoadKundeAdresse();
+    }
+  }
 }
 
 function _angBuildKundeAdresse(k) {
@@ -19770,26 +19778,48 @@ function _angAdresseChange(v) {
   const m = document.getElementById('ang-editor'); if (!m) return;
   m._state.kunde_adresse = v;
 }
-/* Adresse aus aktuellem Anlage-Match neu setzen (überschreibt was da steht). */
-function _angAdresseAusAnlage() {
+/* Adresse aus aktuellem Anlage-Match neu setzen (überschreibt was da steht).
+   Versucht zuerst den vollen Kunden aus dem ERP zu holen — das hat immer die
+   beste Adresse. Erst danach Fallbacks. */
+async function _angAdresseAusAnlage() {
   const m = document.getElementById('ang-editor'); if (!m) return;
   const E = m._state;
-  // Erst: Anlage.kunde Object versuchen
+  // 1. ERP-Lookup: voller Kunde aus /api/Kunden/<nr>
+  if (E.kunde_nummer) {
+    try {
+      const slug = getCurrentFirmaSlug();
+      let kunde = null;
+      for (const p of ['api/Kunden/'+encodeURIComponent(E.kunde_nummer), 'api/kunden/'+encodeURIComponent(E.kunde_nummer)]) {
+        try { kunde = await erpFetch('/aufzug/'+slug+'/'+p); if (kunde) break; } catch(_){}
+      }
+      if (kunde) {
+        const built = _angBuildKundeAdresse(kunde);
+        if (built && built.split('\n').filter(Boolean).length >= 2) {
+          E.kunde_adresse = built;
+          if (!E.kunde_name) E.kunde_name = kunde.firmenname || kunde.name || E.kunde_name;
+          _angEditorRender();
+          toast('📍 Adresse aus ERP geladen','ok');
+          return;
+        }
+      }
+    } catch(e) { console.warn('[Angebot] ERP-Kunde-Lookup fail:', e); }
+  }
+  // 2. Anlage.kunde Object aus Cache
   if (E.matchedAnlage?.kunde) {
     const built = _angBuildKundeAdresse(E.matchedAnlage.kunde);
     if (built && built.split('\n').filter(Boolean).length >= 2) {
       E.kunde_adresse = built;
       _angEditorRender();
-      toast('📍 Adresse aus Endkunde übernommen','ok');
+      toast('📍 Adresse aus Anlage-Cache übernommen','ok');
       return;
     }
   }
-  // Fallback: anlage_adresse (Standort) — nicht 100% Empfänger aber besser als leer
+  // 3. Anlage-Standort als allerletzter Fallback
   if (E.anlage_adresse) {
     const lines = [E.kunde_name||'', E.anlage_adresse].filter(Boolean);
     E.kunde_adresse = lines.join('\n');
     _angEditorRender();
-    toast('📍 Anlage-Standort als Empfänger gesetzt','ok');
+    toast('📍 Anlage-Standort als Empfänger gesetzt (Fallback)','ok');
     return;
   }
   toast('Keine Quelle gefunden — bitte manuell eingeben','err');
@@ -19876,6 +19906,58 @@ function _angSelectAnlage(anlageId) {
   m._state._kontakte_list = null;
   _angEditorRender();
   _angLoadKontakte();
+  // VOLLE Kunden-Daten asynchron aus ERP holen — die Anlage liefert nur
+  // einen reduzierten Kunden ohne Straße/PLZ/Ort. Erst /api/Kunden/<nr>
+  // gibt uns die richtige Empfänger-Anschrift.
+  _angLoadKundeAdresse();
+}
+
+/**
+ * Lädt den vollen Kunden mit Adresse aus dem ERP nach und setzt die
+ * Empfänger-Anschrift im Editor. Ergänzt was die Anlage liefert (die hat
+ * meist nur firmenname + id). Überschreibt nur, wenn die ERP-Adresse
+ * eine vollständigere Variante hat (mehr Zeilen als das was schon da steht).
+ */
+async function _angLoadKundeAdresse() {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const E = m._state;
+  if (!E.kunde_nummer) return;
+  const candidates = [
+    'api/Kunden/'+encodeURIComponent(E.kunde_nummer),
+    'api/kunden/'+encodeURIComponent(E.kunde_nummer),
+  ];
+  let kunde = null;
+  for (const p of candidates) {
+    try {
+      const res = await erpFetch('/aufzug/'+getCurrentFirmaSlug()+'/'+p);
+      if (res && typeof res === 'object') { kunde = res; break; }
+    } catch(e) {
+      if (e.status === 401 || e.status === 403) { console.warn('[Angebot] Kunde-Lookup auth fail:', e.status); return; }
+    }
+  }
+  if (!kunde) {
+    console.warn('[Angebot] Kunde nicht aus ERP holbar:', E.kunde_nummer);
+    return;
+  }
+  console.log('[Angebot] Voller Kunde aus ERP:', kunde);
+  const built = _angBuildKundeAdresse(kunde);
+  const builtLines = (built||'').split('\n').filter(Boolean).length;
+  const haveLines  = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
+  // Nur überschreiben wenn die neu gebaute Adresse mehr Substanz hat
+  if (builtLines > haveLines) {
+    E.kunde_adresse = built;
+    console.log('[Angebot] Empfaenger-Adresse aktualisiert:', built);
+    _angEditorRender();
+  } else if (haveLines === 0 && builtLines > 0) {
+    E.kunde_adresse = built;
+    _angEditorRender();
+  }
+  // Firmenname aus ERP übernehmen, wenn lokal leer
+  if (!E.kunde_name && (kunde.firmenname || kunde.name)) {
+    E.kunde_name = kunde.firmenname || kunde.name;
+    _angEditorRender();
+  }
 }
 
 function _angClearAnlage() {
