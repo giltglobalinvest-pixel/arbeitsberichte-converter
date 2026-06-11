@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.05';
+const APP_VERSION = 'v5.06';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5630,6 +5630,8 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Firmen',       'angebot_start_num', 'number');
   // Briefpapier-Footer-Daten (Adresse, Kontakt, Rechtliches) für PDF-Footer
   await ensureField('Firmen',       'briefpapier_footer_md', 'multilineText');
+  // Angebots-Standardkonditionen (Lieferzeit, Preisbasis, Zahlung, Hinweise) als JSON
+  await ensureField('Firmen',       'angebot_kond_defaults', 'multilineText');
   // Berichte ↔ Auftrag-Verknüpfung + Bilder
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
@@ -19922,6 +19924,66 @@ function _angTypDefaults(typ, firmaSlug) {
   return D[typ] || D.sonstiges;
 }
 
+/** Liest die gespeicherten Standardkonditionen einer Firma aus _firmenCache. */
+function _angGetKondDefaults(firmaSlug) {
+  const rec = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug);
+  const raw = rec?.fields?.angebot_kond_defaults;
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch(_) { return null; }
+}
+
+/** Speichert die 4 Konditionen-Felder als Default für die aktuelle Firma. */
+async function _angSaveKondDefaults(btn) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const E = m._state;
+  const firmaSlug = getCurrentFirmaSlug();
+  const rec = (_firmenCache||[]).find(f => f.fields?.slug === firmaSlug);
+  if (!rec) return toast('Firma nicht gefunden','err');
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    try { await ensureField('Firmen', 'angebot_kond_defaults', 'multilineText'); } catch(_){}
+    const data = {
+      lieferzeit: E.kond_lieferzeit || '',
+      preisbasis: E.kond_preisbasis || '',
+      zahlung:    E.kond_zahlung    || '',
+      hinweise:   E.kond_hinweise   || '',
+    };
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Firmen/'+rec.id, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ angebot_kond_defaults: JSON.stringify(data) }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    rec.fields = rec.fields || {};
+    rec.fields.angebot_kond_defaults = JSON.stringify(data);
+    toast('💾 Konditionen als Standard gespeichert','ok');
+  } catch(e) {
+    toast('❌ '+(e.message||e),'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel || '💾 Als Standard speichern'; }
+  }
+}
+
+/** Lädt gespeicherte Standardkonditionen in den Editor. */
+function _angLoadKondDefaults(btn) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state) return;
+  const defs = _angGetKondDefaults(getCurrentFirmaSlug());
+  if (!defs) return toast('Kein Standard hinterlegt — erst über „💾 Als Standard speichern" anlegen','warn');
+  if (!confirm('Aktuelle Konditionen mit gespeichertem Standard überschreiben?')) return;
+  m._state.kond_lieferzeit = defs.lieferzeit || '';
+  m._state.kond_preisbasis = defs.preisbasis || '';
+  m._state.kond_zahlung    = defs.zahlung    || '';
+  m._state.kond_hinweise   = defs.hinweise   || '';
+  _angEditorRender();
+  toast('📥 Standard-Konditionen geladen','ok');
+}
+
 /* ── EDITOR — Positionen + VP-Eingabe + Live-Summe + Konditionen ────── */
 /**
  * ctx-Modi:
@@ -20012,14 +20074,23 @@ async function openAngebotEditor(ctx) {
     })),
     ust_prozent: +ctx.extracted.ust_prozent || 19,
     anschreiben: ctx.extracted.anschreiben || '',
-    kond_lieferzeit:  ctx.extracted.kond_lieferzeit  || '',
-    kond_preisbasis:  ctx.extracted.kond_preisbasis  || '',
-    // Bei NEU: KONE-Zahlung wird durch firma-typ-Default überschrieben (Kundenwunsch — Reparatur=14 Tage netto).
-    // Bei EDIT: was im Record steht bleibt erhalten.
+    // Konditionen-Defaults Priorisierung bei NEU:
+    //   1. Firma-spezifisch gespeicherte Standardwerte (vom User per "Als Standard speichern" gepflegt)
+    //   2. Aus KI extrahierte Werte (vom Original-Angebot)
+    //   3. Typ-Defaults (Reparatur=14 Tage netto etc.)
+    // Bei EDIT: nur was im Record steht.
+    kond_lieferzeit:  ctx.editMode
+                        ? (ctx.extracted.kond_lieferzeit || '')
+                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.lieferzeit) || ctx.extracted.kond_lieferzeit || ''),
+    kond_preisbasis:  ctx.editMode
+                        ? (ctx.extracted.kond_preisbasis || '')
+                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.preisbasis) || ctx.extracted.kond_preisbasis || ''),
     kond_zahlung:     ctx.editMode
                         ? (ctx.extracted.kond_zahlung || '')
-                        : (typDefaults.kond_zahlung || ctx.extracted.kond_zahlung || ''),
-    kond_hinweise:    ctx.extracted.kond_hinweise    || '',
+                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.zahlung) || typDefaults.kond_zahlung || ctx.extracted.kond_zahlung || ''),
+    kond_hinweise:    ctx.editMode
+                        ? (ctx.extracted.kond_hinweise || '')
+                        : ((_angGetKondDefaults(getCurrentFirmaSlug())?.hinweise) || ctx.extracted.kond_hinweise || ''),
     // Anlage übernehmen (entweder gematcht oder im Edit aus Record)
     kunde_name:    fromEditKunde?.kunde_name    || ctx.matchedAnlage?.kunde?.firmenname || ctx.matchedAnlage?.kunde?.name || '',
     kunde_nummer:  fromEditKunde?.kunde_nummer  || String(ctx.matchedAnlage?.kunde?.kundennummer || ctx.matchedAnlage?.kunde?.id || ''),
@@ -20285,8 +20356,14 @@ function _angEditorRender() {
     '<div id="ang-summary-box" style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
       _angRenderSummaryBoxHtml(E)+
     '</div>'+
-    // Konditionen
-    '<h3 style="margin:0 0 8px;font-size:14px;color:var(--navy)">📜 Konditionen</h3>'+
+    // Konditionen — mit Speichern-Button für Firma-Defaults
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 0 8px">'+
+      '<h3 style="margin:0;font-size:14px;color:var(--navy)">📜 Konditionen</h3>'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
+        '<button type="button" class="btn" style="font-size:11px;padding:5px 10px" onclick="_angLoadKondDefaults(this)" title="Letzte gespeicherten Standardkonditionen dieser Firma laden">📥 Standard laden</button>'+
+        '<button type="button" class="btn prim" style="font-size:11px;padding:5px 10px" onclick="_angSaveKondDefaults(this)" title="Aktuelle Konditionen für künftige Angebote dieser Firma als Standard speichern">💾 Als Standard speichern</button>'+
+      '</div>'+
+    '</div>'+
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Lieferzeit</label>'+
         '<textarea id="ang-fld-kond_lieferzeit" rows="2" oninput="_angEditorSet(\'kond_lieferzeit\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_lieferzeit)+'</textarea></div>'+
