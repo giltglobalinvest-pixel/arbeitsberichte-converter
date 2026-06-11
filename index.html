@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.65';
+const APP_VERSION = 'v4.66';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19014,7 +19014,11 @@ const ANGEBOTE_TABLE_FIELDS = [
   // Output
   { name:'app_pdf',                 type:'multipleAttachments' },
   { name:'notizen',                 type:'multilineText'  },
-  // ERP-Verknüpfung (nach Push)
+  // ERP-Verknüpfung Anfrage (entsteht bei Save) + Angebot (entsteht beim Push)
+  { name:'erp_anfrage_id',          type:'singleLineText' },
+  { name:'erp_anfrage_nummer',      type:'singleLineText' },
+  { name:'erp_anfrage_url',         type:'singleLineText' },
+  { name:'erp_anfrage_created_at',  type:'singleLineText' },
   { name:'erp_angebot_id',          type:'singleLineText' },
   { name:'erp_angebot_nummer',      type:'singleLineText' },
   { name:'erp_angebot_url',         type:'singleLineText' },
@@ -20014,7 +20018,44 @@ async function _angEditorSave() {
       console.warn('[Angebote] App-PDF:', pdfErr);
       toast('⚠ Angebot gespeichert, App-PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
     }
+    // === ERP-Anfrage anlegen (nur bei NEU, nicht bei Edit) ===
+    // So ist die Anfrage-ID bereits gespeichert, wenn später der Push aufgerufen wird.
+    // Fehler hier blockieren NICHT die App-Angebot-Speicherung.
+    let anfrageInfo = null, anfrageErr = null;
+    if (!E.editMode) {
+      if (btn) btn.textContent = '⏳ ERP-Anfrage anlegen…';
+      try {
+        const recForAnfrage = { id: recId, fields };
+        anfrageInfo = await _angCreateErpAnfrage(recForAnfrage);
+        // Anfrage-IDs in Airtable persistieren
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields: {
+            erp_anfrage_id: anfrageInfo.id,
+            erp_anfrage_nummer: anfrageInfo.nummer,
+            erp_anfrage_url: anfrageInfo.url,
+            erp_anfrage_created_at: new Date().toISOString(),
+          }}),
+        });
+        console.log('[Angebote] ERP-Anfrage angelegt:', anfrageInfo);
+      } catch(anfErr) {
+        anfrageErr = anfErr;
+        console.error('[Angebote] ERP-Anfrage fehlgeschlagen:', anfErr);
+      }
+    }
+
     toast(E.editMode ? '✅ ANG-'+angebotNum+' aktualisiert' : '✅ Angebot ANG-'+angebotNum+' angelegt','ok');
+    if (anfrageInfo) toast('🔗 ERP-Anfrage angelegt: '+(anfrageInfo.nummer || anfrageInfo.id),'ok');
+    if (anfrageErr) {
+      // Sanfter Hinweis — App-Angebot ist gespeichert, nur ERP-Anfrage hat nicht geklappt
+      const msg = (anfrageErr.message || '').slice(0,160);
+      toast('⚠ ERP-Anfrage fehlgeschlagen: '+msg,'warn');
+      // Bei ERP-Trace: Diagnose-Modal automatisch öffnen, damit User den Fehler kopieren kann
+      if (typeof _showErpErrorDetails === 'function' && anfrageErr.body && (anfrageErr.body.upstream_body_excerpt || anfrageErr.body.trace)) {
+        setTimeout(() => _showErpErrorDetails(anfrageErr), 1500);
+      }
+    }
     m.remove();
     _angeboteCache.firma = null; _angeboteCache.items = null;
     await renderAngeboteView({force:true});
@@ -20229,7 +20270,8 @@ function openAngebotDetail(recId) {
         '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+(f.kunde_nummer?' (Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
         (f.kone_angebot_num ? '<div><strong>🔗 '+escapeHtml(f.anbieter||'Original')+':</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
-        (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 Im ERP:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
+        (f.erp_anfrage_id ? '<div style="margin-top:6px;padding:6px 10px;background:#EFF6FF;border-left:3px solid #2152A9;border-radius:4px"><strong style="color:#1E3A8A">📋 ERP-Anfrage:</strong> '+(f.erp_anfrage_url ? '<a href="'+escapeHtml(f.erp_anfrage_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Anfrage '+escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id)+' öffnen ↗</a>' : escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id))+'</div>' : '')+
+        (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 ERP-Angebot:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
         (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
@@ -20272,6 +20314,94 @@ function openAngebotDetail(recId) {
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+}
+
+/**
+ * Erstellt eine Anfrage im ERP — isolierter Schritt, der beim Angebot-Save aufgerufen wird.
+ * Workflow-Pflicht im ERP: Anfrage→Angebot→Auftrag.
+ *
+ * @param {Object} rec  App_Angebote-Record { id, fields }
+ * @returns {Promise<{id:string, nummer:string, url:string}>}  Bei Fehler wird geworfen.
+ */
+async function _angCreateErpAnfrage(rec) {
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!f.anlage_id) throw new Error('Keine Anlage verknüpft');
+  if (!f.kunde_nummer) throw new Error('Kein Kunde verknüpft');
+  const today = new Date().toISOString().slice(0,10);
+  const angNum = String(f.app_angebot_num || '?');
+  let firstTitle = '';
+  try { firstTitle = (JSON.parse(f.positionen_json||'[]')[0]?.titel) || ''; } catch(_){}
+  const typLabel = (f.angebot_typ||'sonstiges').toUpperCase();
+  const bezeichnung = '['+typLabel+'] '+(firstTitle || 'Externes Angebot').slice(0,80);
+  const beschreibung = [
+    'Externes Angebot — Quelle: '+(f.anbieter||'Anbieter'),
+    'App-Angebot-Nr.: ANG-'+angNum,
+    'Anbieter-Nr.:    '+(f.kone_angebot_num||'?'),
+    '',
+    'Details, AGB und Original-PDF in der Servicebox App.',
+  ].join('\n');
+  // Defensive Payload — alle plausiblen Feld-Varianten gleichzeitig.
+  // Bei Validation-Fehler iterieren wir hier ähnlich wie beim Pauschal-Angebot.
+  const payload = {
+    anlageid:               +f.anlage_id,
+    empfaengerid:           +f.kunde_nummer,
+    kundeid:                +f.kunde_nummer,
+    titel:                  bezeichnung,
+    title:                  bezeichnung,
+    bezeichnung:            bezeichnung,
+    name:                   bezeichnung,
+    beschreibung:           beschreibung,
+    description:            beschreibung,
+    inhalt:                 beschreibung,
+    kategorie:              typLabel,                            // REPARATUR / MODERNISIERUNG / SONSTIGES
+    category:               typLabel,
+    typ:                    typLabel,
+    type:                   typLabel,
+    bestellform:            'PAUSCHAL',
+    datumEingang:           today,
+    datumAnfrage:           today,
+    eingangsdatum:          today,
+    receivedDate:           today,
+    status:                 'In Bearbeitung',
+    state:                  'In Bearbeitung',
+    bearbeiter:             f.bearbeiter || '',
+    bearbeiterName:         f.bearbeiter || '',
+    auftraggeber:           f.kunde_name || '',
+    auftraggeberName:       f.kunde_name || '',
+    customer:               f.kunde_name || '',
+    customerName:           f.kunde_name || '',
+    notizen:                beschreibung,
+    notes:                  beschreibung,
+    kundeMail:              false,
+    titelemail:             '-',
+    inhaltemail:            '-',
+  };
+  console.log('[ERP-Anfrage] Payload:', JSON.stringify(payload, null, 2));
+  // Verschiedene Endpoint-Kandidaten probieren
+  const candidates = ['api/anfragen','anfragen','api/anfrage','anfrage'];
+  let created = null, lastErr = null;
+  for (const p of candidates) {
+    try {
+      created = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: payload });
+      console.log('[ERP-Anfrage] OK via '+p+':', created);
+      break;
+    } catch(e) {
+      console.warn('[ERP-Anfrage] '+p+' →', e.status, e.message);
+      if (!lastErr) lastErr = e;
+      if (e.status === 404) continue;     // anderer Pfad
+      throw e;                            // Bei 4xx/5xx: Fehler weitergeben (mit Trace)
+    }
+  }
+  if (!created) throw (lastErr || new Error('Kein /api/anfragen-Endpoint gefunden'));
+  const id = String(created.id || created.anfrageid || created.anfrageId || '');
+  if (!id) throw new Error('Anfrage erstellt, aber keine ID im Response');
+  const nr = String(created.anfragenummer || created.nummer || created.belegnummer || '');
+  const fm = (_firmenCache||[]).find(x => x.fields.slug === firmaSlug);
+  const baseUrl = fm?.fields?.erp_auftrag_url || '';
+  const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
+  const url = erpHost ? (erpHost + '/anfragen/' + id) : '';
+  return { id, nummer: nr, url };
 }
 
 /**
@@ -20332,55 +20462,42 @@ async function _angPushToErp(recId, btn) {
     erlaeuterung.push('→ Vollständiges Angebot inkl. AGB im Aszendio-PDF (siehe Servicebox App).');
     const erlaeuterungText = erlaeuterung.join('\n');
 
-    // === SCHRITT 1: Erst eine Anfrage anlegen ===
-    // Das ERP verknüpft Angebote immer mit einer Anfrage (Workflow: Kunde→Anfrage→Angebot→Auftrag).
-    // Da wir extern starten (KONE-PDF), legen wir die Anfrage selbst an.
-    if (btn) btn.textContent = '⏳ erstelle Anfrage…';
-    const anfragePayload = {
-      anlageid:      +f.anlage_id,
-      empfaengerid:  +f.kunde_nummer,
-      kundeid:       +f.kunde_nummer,
-      titel:         bezeichnung,
-      bezeichnung:   bezeichnung,
-      beschreibung:  'Externes Angebot: '+(f.anbieter||'Anbieter')+' '+(f.kone_angebot_num||''),
-      description:   'Externes Angebot: '+(f.anbieter||'Anbieter')+' '+(f.kone_angebot_num||''),
-      datumEingang:  today,
-      status:        'In Bearbeitung',
-      kategorie:     (f.angebot_typ||'sonstiges').toUpperCase(),
-      bestellform:   'PAUSCHAL',
-      kundeMail:     false,
-      titelemail:    '-',
-      inhaltemail:   '-',
-    };
-    console.log('[ERP-Anfrage] Payload:', JSON.stringify(anfragePayload, null, 2));
-    let anfrageid = null;
-    try {
-      const anfrageCandidates = ['api/anfragen','anfragen'];
-      let anfrage = null, anfrageErr = null;
-      for (const p of anfrageCandidates) {
-        try {
-          anfrage = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: anfragePayload });
-          console.log('[ERP-Anfrage] OK via '+p, anfrage);
-          break;
-        } catch(e) {
-          console.warn('[ERP-Anfrage] '+p+' →', e.status, e.message);
-          if (!anfrageErr) anfrageErr = e;
-          if (e.status !== 404) throw e;
+    // ERP-Anfrage muss vor dem Pauschal-Angebot existieren. Bei Save wurde sie schon angelegt.
+    // Falls nicht (alter Record / Anfrage damals fehlgeschlagen): jetzt nachholen.
+    let anfrageid = f.erp_anfrage_id ? +f.erp_anfrage_id : null;
+    if (!anfrageid) {
+      if (btn) btn.textContent = '⏳ ERP-Anfrage nachholen…';
+      try {
+        const anfrageInfo = await _angCreateErpAnfrage(rec);
+        anfrageid = +anfrageInfo.id;
+        // Anfrage-IDs nachträglich in Airtable persistieren
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields: {
+            erp_anfrage_id: anfrageInfo.id,
+            erp_anfrage_nummer: anfrageInfo.nummer,
+            erp_anfrage_url: anfrageInfo.url,
+            erp_anfrage_created_at: new Date().toISOString(),
+          }}),
+        });
+        const idx = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
+        if (idx >= 0) Object.assign(_angeboteCache.items[idx].fields, {
+          erp_anfrage_id: anfrageInfo.id, erp_anfrage_nummer: anfrageInfo.nummer, erp_anfrage_url: anfrageInfo.url
+        });
+      } catch(anfErr) {
+        console.error('[ERP-Angebot-Push] Anfrage-Nachholung fehlgeschlagen:', anfErr);
+        if (typeof _showErpErrorDetails === 'function' && anfErr.body && (anfErr.body.upstream_body_excerpt || anfErr.body.trace)) {
+          _showErpErrorDetails(anfErr);
+        } else {
+          toast('❌ ERP-Anfrage konnte nicht angelegt werden: '+(anfErr.message||'').slice(0,200),'err');
         }
+        if (btn) { btn.disabled = false; btn.textContent = origLabel || '📤 Ins ERP pushen'; }
+        return;
       }
-      if (!anfrage) throw (anfrageErr || new Error('Kein /api/anfragen-Endpoint'));
-      anfrageid = anfrage.id || anfrage.anfrageid || anfrage.anfrageId;
-      if (!anfrageid) throw new Error('Anfrage erstellt, aber keine ID zurückbekommen');
-      console.log('[ERP-Anfrage] ID:', anfrageid);
-    } catch(anfErr) {
-      console.error('[ERP-Anfrage] Fehler — wir versuchen Angebot dennoch ohne anfrageid:', anfErr.message);
-      // Wir machen weiter ohne anfrageid und hoffen dass das Angebot auch ohne Anfrage geht
-      // (manche ERPs lassen das zu, manche nicht — beim 500 wissen wir's)
     }
-
-    // === SCHRITT 2: Pauschal-Angebot mit anfrageid ===
     if (btn) btn.textContent = '⏳ pushe Angebot…';
-    // Im inneren angebot-Objekt + im äußeren Payload jeweils anfrageid setzen (defensive)
     if (anfrageid) innerAngebot.anfrageid = +anfrageid;
 
     // Payload — Aufzugshandwerk ERP erwartet bei /api/angebote/pauschal ein NESTED-Schema:
