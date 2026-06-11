@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.90';
+const APP_VERSION = 'v4.91';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19897,7 +19897,12 @@ function _angRenderAnlageCard(E) {
         '<button class="btn" style="font-size:10.5px;padding:3px 8px" onclick="_angAdresseAusAnlage()" title="Adresse aus Anlage-Standort übernehmen">📍 Aus Anlage übernehmen</button>'+
       '</div>'+
       '<textarea id="ang-ed-kunde-adresse" rows="3" oninput="_angAdresseChange(this.value)" placeholder="Straße 12&#10;12345 Musterstadt" style="width:100%;padding:8px 10px;border:1px solid '+(((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)?'#EF4444':'var(--bdr)')+';border-radius:6px;font-size:13px;font-family:inherit;resize:vertical;background:#fff">'+escapeHtml(E.kunde_adresse||'')+'</textarea>'+
-      (((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2) ? '<div style="font-size:11px;color:#991B1B;margin-top:4px">⚠ Adresse fehlt oder unvollständig — bitte Straße + PLZ + Ort eingeben.</div>' : '')+
+      (((E.kunde_adresse||'').split(/[\n,]/).filter(s=>s.trim()).length<2)
+        ? '<div style="font-size:11px;color:#991B1B;margin-top:4px">⚠ Adresse fehlt oder unvollständig — bitte Straße + PLZ + Ort eingeben.</div>'
+        : (_angAdresseIsFromAnlageStandort(E.kunde_adresse, E.anlage_adresse)
+            ? '<div style="font-size:11px;color:#92400E;margin-top:4px;padding:6px 8px;background:#FEF3C7;border-radius:4px;border-left:3px solid #F59E0B">⚠ Adresse stammt vermutlich aus dem Anlage-Standort — bitte prüfen ob das wirklich die Empfänger-Anschrift des Kunden ist (Hausverwaltung sitzt oft woanders als die Anlage). Du kannst direkt im Feld korrigieren.</div>'
+            : '')
+      )+
     '</div>'+
   '</div>';
 }
@@ -20127,19 +20132,35 @@ async function _angLoadKundeAdresse() {
     E.kunde_name = kunde.firmenname || kunde.name;
     _angEditorRender();
   }
-  // Letzter, sinnvoller Fallback: Adresse aus FRÜHEREN Angeboten desselben
-  // Kunden übernehmen. Wenn der User die Berliner Adresse für Digital Spine
-  // einmal manuell eingetragen hat, soll sie für jedes weitere Angebot
-  // automatisch verwendet werden.
+  // Verdächtig: aktuelle Adresse ist nur der Anlage-Standort (alter v4.86-
+  // Fallback, der oft falsch ist — Hausverwaltung sitzt nicht am Anlagen-Ort).
+  // Diese Adressen behandeln wir wie leer und versuchen Recovery.
+  const suspectFromAnlage = _angAdresseIsFromAnlageStandort(E.kunde_adresse, E.anlage_adresse);
   const finalLines = (E.kunde_adresse||'').split('\n').filter(Boolean).length;
-  if (finalLines <= 1) {
+  if (finalLines <= 1 || suspectFromAnlage) {
     const previousAdr = _angFindPreviousKundeAdresse(wanted, E.recId);
     if (previousAdr && previousAdr.split('\n').filter(Boolean).length >= 2) {
       E.kunde_adresse = previousAdr;
       console.log('[Angebot] Adresse aus vorherigem Angebot uebernommen.');
       _angEditorRender();
+    } else if (suspectFromAnlage) {
+      console.warn('[Angebot] Aktuelle Adresse stammt vom Anlage-Standort — bitte manuell pruefen/setzen.');
     }
   }
+}
+
+/**
+ * Prüft, ob eine Empfänger-Adresse offenbar nur den Anlage-Standort enthält
+ * (Fallback aus alten App-Versionen). Solche Adressen sollten als verdächtig
+ * gelten, weil die Hausverwaltung des Kunden meist NICHT am Anlagen-Ort sitzt.
+ */
+function _angAdresseIsFromAnlageStandort(kundeAdr, anlageAdr) {
+  if (!kundeAdr || !anlageAdr) return false;
+  const norm = s => String(s).replace(/[,\s]+/g, ' ').toLowerCase().trim();
+  const nk = norm(kundeAdr), na = norm(anlageAdr);
+  if (!nk || !na) return false;
+  // Wenn die Anlagen-Adresse als Substring drinsteckt → suspekt
+  return nk.includes(na) || na.includes(nk.replace(/^.*?\s/,''));  // erste Zeile (Firma) wegcutten
 }
 
 /**
