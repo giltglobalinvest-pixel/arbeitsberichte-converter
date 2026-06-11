@@ -2610,7 +2610,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v4.80';
+const APP_VERSION = 'v4.81';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20619,6 +20619,58 @@ function _angMapTypForErp(appTyp) {
   return 'REPARATUR';
 }
 
+/**
+ * Recovery-Lookup: nach 500 mit FreshSales-NPE prüfen ob das Angebot
+ * trotzdem angelegt wurde (DB-Insert läuft VOR der Sync). Wir suchen über
+ * die eindeutige offerNumber EXT-ANG-X die wir gesendet haben.
+ *
+ * Probiert mehrere Such-Endpoints, fällt auf "letzte 50 holen + filtern" zurück.
+ */
+async function _angTryFindByOfferNumber(firmaSlug, offerNumber) {
+  if (!offerNumber) return null;
+  const enc = encodeURIComponent(offerNumber);
+  const probes = [
+    'api/angebote?q='+enc,
+    'api/angebote?search='+enc,
+    'api/angebote?offerNumber='+enc,
+    'api/angebote?angebotsnummer='+enc,
+    'api/angebote/pauschal?q='+enc,
+    'api/angebote/pauschal',
+    'api/angebote?size=100&sort=id,desc',
+    'api/angebote?page=0&size=100',
+    'api/angebote',
+  ];
+  for (const path of probes) {
+    try {
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
+      const list = Array.isArray(res) ? res
+                 : Array.isArray(res?.content) ? res.content
+                 : Array.isArray(res?.items)   ? res.items
+                 : Array.isArray(res?.data)    ? res.data
+                 : null;
+      if (!list) continue;
+      const matchOffer = (a) =>
+        a && (
+          a.offerNumber      === offerNumber ||
+          a.angebotsnummer   === offerNumber ||
+          a.nummer           === offerNumber ||
+          a.belegnummer      === offerNumber ||
+          a.externalNumber   === offerNumber ||
+          a.externeNummer    === offerNumber ||
+          (a.angebot && a.angebot.offerNumber === offerNumber)
+        );
+      const found = list.find(matchOffer);
+      if (found) {
+        console.log('[ERP-Angebot-Recovery] Treffer via', path, '→', found);
+        return found;
+      }
+    } catch(e) {
+      console.warn('[ERP-Angebot-Recovery] '+path+' →', e.status||'?', e.message||'');
+    }
+  }
+  return null;
+}
+
 async function _angPushToErp(recId, btn) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
@@ -20825,7 +20877,7 @@ async function _angPushToErp(recId, btn) {
 
     // Nur noch der bekannte Pauschal-Endpoint — den anderen brauchen wir nicht durchprobieren
     const candidates = ['api/angebote/pauschal'];
-    let created = null, lastErr = null;
+    let created = null, lastErr = null, recoveredFromSync = false;
     for (const p of candidates) {
       try {
         created = await erpFetch('/aufzug/'+firmaSlug+'/'+p, { method:'POST', body: payload });
@@ -20835,6 +20887,26 @@ async function _angPushToErp(recId, btn) {
         console.warn('[ERP-Angebot-Push] '+p+' →', e.status, e.message);
         if (!lastErr) lastErr = e;
         if (e.status === 404) continue;
+        // RECOVERY: bei 500 mit FreshSales-Sync-NPE Angebot trotzdem über Lookup finden.
+        // Der NPE entsteht NACH dem DB-Insert (siehe Trace: AngebotPauschalController →
+        // AufzughandwerkSyncManager → FreshSaleSync.upsertDealFromAngebot →
+        // findDealTypeToAngebot mit Optional.get() auf empty Lookup).
+        const traceTxt = String(e?.body?.upstream_body_excerpt || e?.body?.trace || e?.message || '');
+        const isSyncNpe = e.status === 500 && /FreshSaleSync|findDealTypeToAngebot|NoSuchElementException/i.test(traceTxt);
+        if (isSyncNpe) {
+          console.warn('[ERP-Angebot-Push] FreshSales-Sync-NPE erkannt — versuche Recovery via offerNumber-Lookup');
+          const offerNumber = 'EXT-ANG-'+angNum;
+          // kurze Verzögerung damit der DB-Commit garantiert sichtbar ist
+          await new Promise(r => setTimeout(r, 1500));
+          const found = await _angTryFindByOfferNumber(firmaSlug, offerNumber);
+          if (found) {
+            console.log('[ERP-Angebot-Push] Recovery erfolgreich:', found);
+            created = found;
+            recoveredFromSync = true;
+            break;
+          }
+          console.warn('[ERP-Angebot-Push] Recovery-Lookup hat nichts gefunden — Fehler bleibt');
+        }
         throw e;  // Bei 4xx/5xx echten Fehler weiterwerfen
       }
     }
@@ -20868,7 +20940,11 @@ async function _angPushToErp(recId, btn) {
       _angeboteCache.items[idx].fields.erp_angebot_url    = erpUrl;
       _angeboteCache.items[idx].fields.erp_pushed_at      = new Date().toISOString();
     }
-    toast('✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+')','ok');
+    if (recoveredFromSync) {
+      toast('✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+'). ⚠ FreshSales-Sync hatte einen Konfigurations-Fehler — bitte beim ERP-Admin DealType-Mapping prüfen.','ok');
+    } else {
+      toast('✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+')','ok');
+    }
     document.getElementById('ang-detail')?.remove();
     openAngebotDetail(recId);
   } catch(e) {
