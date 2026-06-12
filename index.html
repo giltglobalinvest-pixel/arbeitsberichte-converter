@@ -59,12 +59,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .app.view-conv .main{display:flex}
 /* Topbar immer ueber allem stehend – verhindert Verschwinden hinter Sidebar/Main */
 .topbar{position:relative;z-index:60}
-/* v5.31: Persisch/RTL-Spracheinstellung — Text-Richtung umdrehen, Persisch-Font für bessere Lesbarkeit */
-body.lang-fa{direction:rtl}
-body.lang-fa input, body.lang-fa textarea{font-family:Tahoma,Arial,sans-serif}
-body.lang-fa .auf-card, body.lang-fa .card{text-align:right}
-body.lang-fa code, body.lang-fa pre, body.lang-fa .ver-pill, body.lang-fa input[type="number"]{direction:ltr;text-align:left}
-body.lang-fa #lang-toggle-btn{direction:ltr}
 
 /* ── Topbar ── */
 .topbar{grid-column:1/-1;background:var(--navy-d);display:flex;align-items:center;gap:14px;padding:calc(env(safe-area-inset-top, 0px) + 10px) 20px 8px;box-shadow:0 2px 8px rgba(0,0,0,.35)}
@@ -1470,7 +1464,6 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <button class="topbar-btn" id="btn-out-preview" onclick="showOutPreview()" style="display:none">🔍 Ergebnis</button>
   <button class="topbar-btn" id="btn-reset" onclick="confirmReset()" style="display:none;background:rgba(220,38,38,.25);border-color:rgba(220,38,38,.4)">↺ Reset</button>
   <span class="ver-pill" id="ver-pill" title="App-Version">–</span>
-  <button class="topbar-btn" id="lang-toggle-btn" onclick="toggleLanguage()" title="Sprache wechseln: Deutsch / Persisch" data-no-translate="true">🌐 <span id="lang-toggle-label">فا</span></button>
   <button class="topbar-btn tb-only-desktop" id="theme-toggle-btn" onclick="toggleTheme()" title="Design wechseln (Modern / Playful / Classic)">🎨</button>
   <button class="topbar-btn tb-only-desktop" onclick="forceUpdate()" title="Auf neueste Version prüfen und App neu laden">↻ Update</button>
   <div class="firma-pill-wrap">
@@ -2639,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.34';
+const APP_VERSION = 'v5.35';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7583,295 +7576,21 @@ async function _ftSubmit(btn) {
   }
 }
 
-// ═══════════════════════════════════════════════════════════════════════
-// v5.31: i18n — Sprachumschaltung Deutsch ↔ Persisch (Farsi)
-// AI-gestützte DOM-Übersetzung mit Cache in localStorage. Walkt Text-Nodes
-// + Button/Input-Attributes (placeholder, title, value für submit-Buttons).
-// MutationObserver übersetzt neue Inhalte automatisch nach View-Wechseln.
-// ═══════════════════════════════════════════════════════════════════════
-const I18N = {
-  currentLang: 'de',
-  cache: {},
-  pendingTexts: new Set(),
-  batchTimer: null,
-  observer: null,
-  translating: false,
-  translateScheduled: null,
-};
-
-(function _i18nInit() {
-  try { I18N.cache = JSON.parse(localStorage.getItem('i18n.fa.cache') || '{}'); } catch(_){}
-  const stored = localStorage.getItem('i18n.lang');
-  if (stored === 'fa') {
-    // v5.34: Reihenfolge so, dass beim Reload alle dynamisch nachgeladenen
-    // Views (Dashboard, Auftragsliste, ERP-Calls) erfasst werden:
-    //  1) Sofort RTL setzen damit das Layout vom ersten Frame stimmt.
-    //  2) Observer SOFORT starten — fängt alle DOM-Mutationen ab.
-    //  3) Mehrere applyAll-Sweeps mit wachsenden Delays (200ms, 1s, 2.5s, 5s)
-    //     damit late-mounted Inhalte spätestens dann übersetzt werden, auch
-    //     wenn der Observer wegen frischer fa.cache-Einträge nichts zu tun
-    //     hatte (er triggert nicht bei reiner Text-Node-Veränderung durch uns).
-    document.documentElement.setAttribute('dir','rtl');
-    setTimeout(() => {
-      I18N.currentLang = 'fa';
-      document.body.classList.add('lang-fa');
-      document.body.setAttribute('dir','rtl');
-      const lbl = document.getElementById('lang-toggle-label'); if (lbl) lbl.textContent = 'DE';
-      _i18nStartObserver();
-      _i18nApplyAll().catch(()=>{});
-      // Nachzügler-Sweeps für Inhalte, die erst durch async-Loads erscheinen
-      [1000, 2500, 5000, 10000].forEach(delay => {
-        setTimeout(() => { if (I18N.currentLang === 'fa') _i18nApplyAll().catch(()=>{}); }, delay);
-      });
-    }, 200);
+// v5.35: i18n-Modul vollstaendig entfernt — die generelle Seitenuebersetzung war
+// zu fragil. Die spezifische Arbeitsbericht-KI-Uebersetzung (siehe
+// _bfTranslateAllFields) bleibt erhalten. Hier nur ein einmaliger Cleanup
+// damit aelte Persisch-Einstellungen aus localStorage entfernt werden und
+// das RTL-Layout nicht haengen bleibt.
+(function _i18nCleanup() {
+  try { localStorage.removeItem('i18n.lang'); } catch(_){}
+  try { localStorage.removeItem('i18n.fa.cache'); } catch(_){}
+  if (document.body) {
+    document.body.removeAttribute('dir');
+    document.body.classList.remove('lang-fa');
   }
+  if (document.documentElement) document.documentElement.removeAttribute('dir');
 })();
 
-function _i18nIsTextlike(s) {
-  if (!s) return false;
-  const t = s.trim();
-  if (t.length < 2) return false;
-  // Nur Zahlen/Symbole überspringen
-  if (/^[\d\s.,:;_\-+=\/\\#*•·°€%§$@!?(){}[\]<>"'`~|&]+$/.test(t)) return false;
-  // Reine URLs oder E-Mails überspringen
-  if (/^https?:\/\//.test(t)) return false;
-  if (/^[\w._%+-]+@[\w.-]+\.\w+$/.test(t)) return false;
-  // Reine Daten überspringen (z.B. "2026-06-13")
-  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return false;
-  return true;
-}
-
-function _i18nCollectNodes(root) {
-  const out = { texts: [], attrs: [] };
-  if (!root) return out;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: (node) => {
-      if (!_i18nIsTextlike(node.nodeValue)) return NodeFilter.FILTER_REJECT;
-      const p = node.parentElement;
-      if (!p) return NodeFilter.FILTER_REJECT;
-      const tag = p.tagName;
-      if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'CODE' || tag === 'PRE') return NodeFilter.FILTER_REJECT;
-      if (p.closest('[data-no-translate]')) return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    }
-  });
-  let n;
-  while (n = walker.nextNode()) out.texts.push(n);
-  // Attribute (placeholder, title, alt, value für button/submit)
-  const els = root.nodeType === 1 ? root.querySelectorAll('[placeholder], [title], [alt]') : [];
-  for (const el of els) {
-    if (el.closest('[data-no-translate]')) continue;
-    for (const att of ['placeholder','title','alt']) {
-      const v = el.getAttribute(att);
-      if (_i18nIsTextlike(v)) out.attrs.push({ el, att });
-    }
-  }
-  return out;
-}
-
-async function toggleLanguage() {
-  if (!APP_KEYS.anthropicKey) { toast('Spracheinstellung benötigt Anthropic-API-Key','err'); return; }
-  if (I18N.currentLang === 'de') {
-    I18N.currentLang = 'fa';
-    document.body.classList.add('lang-fa');
-    document.body.setAttribute('dir', 'rtl');
-    localStorage.setItem('i18n.lang', 'fa');
-    const lbl = document.getElementById('lang-toggle-label'); if (lbl) lbl.textContent = 'DE';
-    toast('🌐 Übersetze App ins Persische — kann beim ersten Mal 10–30 s dauern …','');
-    // v5.34: Observer ZUERST starten — fängt alle Mutations während der API-Calls ab.
-    _i18nStartObserver();
-    const startTs = Date.now();
-    try {
-      const stats = await _i18nApplyAll();
-      const dur = Math.round((Date.now() - startTs) / 1000);
-      if (stats && stats.translated > 0) {
-        toast('✅ '+stats.translated+' Texte übersetzt in '+dur+' s','ok');
-      } else if (stats && stats.errors) {
-        toast('⚠ Übersetzung scheiterte: '+stats.errors,'err');
-      } else {
-        toast('ℹ Keine neuen Texte zu übersetzen','');
-      }
-    } catch(e) {
-      toast('❌ Übersetzung: '+(e.message||e).slice(0,180),'err');
-      console.error('[i18n] toggle:', e);
-    }
-    // v5.34: Nachzügler — Views die nach dem ersten Apply geladen wurden, abdecken.
-    [1500, 4000].forEach(d => setTimeout(() => { if (I18N.currentLang === 'fa') _i18nApplyAll().catch(()=>{}); }, d));
-  } else {
-    I18N.currentLang = 'de';
-    document.body.classList.remove('lang-fa');
-    document.body.removeAttribute('dir');
-    localStorage.setItem('i18n.lang', 'de');
-    const lbl = document.getElementById('lang-toggle-label'); if (lbl) lbl.textContent = 'فا';
-    _i18nStopObserver();
-    _i18nRestoreAll();
-    toast('🌐 Zurück auf Deutsch','ok');
-  }
-}
-
-async function _i18nApplyAll() {
-  if (I18N.translating) return { translated:0, cached:0, errors:'' };
-  I18N.translating = true;
-  let cachedCount = 0, newCount = 0, errMsg = '';
-  try {
-    const { texts, attrs } = _i18nCollectNodes(document.body);
-    console.log('[i18n] gefunden:', texts.length, 'Text-Nodes,', attrs.length, 'Attribute');
-    const missing = new Set();
-    // Originals sichern + cached anwenden
-    for (const n of texts) {
-      if (n._i18nOriginal == null) n._i18nOriginal = n.nodeValue;
-      const trimmed = n._i18nOriginal.trim();
-      if (I18N.cache[trimmed]) {
-        n.nodeValue = n._i18nOriginal.replace(trimmed, I18N.cache[trimmed]); cachedCount++;
-      } else {
-        missing.add(trimmed);
-      }
-    }
-    for (const a of attrs) {
-      const key = '_i18nOrigAttr_'+a.att;
-      const orig = a.el[key] != null ? a.el[key] : a.el.getAttribute(a.att);
-      a.el[key] = orig;
-      const trimmed = orig.trim();
-      if (I18N.cache[trimmed]) { a.el.setAttribute(a.att, orig.replace(trimmed, I18N.cache[trimmed])); cachedCount++; }
-      else missing.add(trimmed);
-    }
-    console.log('[i18n] cached:', cachedCount, '· neu zu übersetzen:', missing.size);
-    if (missing.size > 0) {
-      const res = await _i18nBatchTranslate([...missing]);
-      newCount = res.added;
-      if (res.error) errMsg = res.error;
-      // Nochmal anwenden für die jetzt gecachten
-      for (const n of texts) {
-        if (!n._i18nOriginal) continue;
-        const trimmed = n._i18nOriginal.trim();
-        if (I18N.cache[trimmed]) n.nodeValue = n._i18nOriginal.replace(trimmed, I18N.cache[trimmed]);
-      }
-      for (const a of attrs) {
-        const orig = a.el['_i18nOrigAttr_'+a.att]; if (!orig) continue;
-        const trimmed = orig.trim();
-        if (I18N.cache[trimmed]) a.el.setAttribute(a.att, orig.replace(trimmed, I18N.cache[trimmed]));
-      }
-    }
-  } finally {
-    I18N.translating = false;
-  }
-  return { translated: cachedCount + newCount, cached: cachedCount, newAdded: newCount, errors: errMsg };
-}
-
-function _i18nRestoreAll() {
-  if (I18N.translating) return;
-  I18N.translating = true;
-  try {
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-    let n;
-    while (n = walker.nextNode()) {
-      if (n._i18nOriginal != null && n.nodeValue !== n._i18nOriginal) n.nodeValue = n._i18nOriginal;
-    }
-    const els = document.querySelectorAll('[placeholder], [title], [alt]');
-    for (const el of els) {
-      for (const att of ['placeholder','title','alt']) {
-        const k = '_i18nOrigAttr_'+att;
-        if (el[k] != null && el.getAttribute(att) !== el[k]) el.setAttribute(att, el[k]);
-      }
-    }
-  } finally {
-    I18N.translating = false;
-  }
-}
-
-async function _i18nBatchTranslate(texts) {
-  if (!APP_KEYS.anthropicKey || !texts.length) return { added: 0, error: 'kein API-Key oder leer' };
-  let added = 0;
-  let lastError = '';
-  const CHUNK = 30;
-  // Tool-Use: zwingt Claude strukturierte JSON-Antwort zu liefern (robust vs. Text-Parsing).
-  const tool = {
-    name: 'submit_translations',
-    description: 'Liefert die Übersetzungen der gegebenen deutschen UI-Texte ins Persische (Farsi). Reihenfolge muss exakt mit den Eingabe-Texten übereinstimmen.',
-    input_schema: {
-      type: 'object',
-      required: ['translations'],
-      properties: {
-        translations: {
-          type: 'array',
-          description: 'Persische Übersetzungen in derselben Reihenfolge wie die deutschen Eingabe-Texte.',
-          items: { type: 'string' },
-        },
-      },
-    },
-  };
-  for (let i = 0; i < texts.length; i += CHUNK) {
-    const slice = texts.slice(i, i + CHUNK);
-    const numberedList = slice.map((t, idx) => (idx+1)+'. '+t).join('\n');
-    const prompt =
-      'Du übersetzt UI-Texte einer App fürs Aufzugshandwerk (Bericht-Erstellung, Auftragsverwaltung, Wartung) vom Deutschen ins Persische (Farsi).\n\n'+
-      'Regeln:\n'+
-      '• Eigennamen / Firmen / Produktnamen unverändert lassen (KONE, Aszendio, TÜV, Freshdesk, ERP, PDF, GBU, DA).\n'+
-      '• Emojis im Text behalten.\n'+
-      '• Kurze prägnante UI-Sprache, nicht literarisch.\n'+
-      '• Fachbegriffe Aufzugstechnik korrekt übersetzen (Schacht, Antrieb, Steuerung, Notruf, etc.).\n'+
-      '• Liefere die Übersetzungen in der EXAKT gleichen Reihenfolge wie die deutschen Texte.\n\n'+
-      'DEUTSCHE TEXTE:\n'+numberedList+'\n\n'+
-      'Rufe das Tool submit_translations mit den persischen Übersetzungen auf.';
-    try {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method:'POST',
-        headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
-        body: JSON.stringify({
-          model:'claude-sonnet-4-6',
-          max_tokens: 4000,
-          tools: [tool],
-          tool_choice: { type:'tool', name:'submit_translations' },
-          messages:[{ role:'user', content: prompt }],
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) {
-        console.warn('[i18n] API',r.status, data?.error?.message);
-        lastError = (data?.error?.message || ('HTTP '+r.status)).slice(0,120);
-        continue;
-      }
-      const block = (data?.content||[]).find(b => b.type === 'tool_use');
-      const translations = block?.input?.translations;
-      if (!Array.isArray(translations)) {
-        console.warn('[i18n] keine translations im Tool-Output:', block);
-        lastError = 'Tool-Output unvollständig';
-        continue;
-      }
-      for (let k = 0; k < slice.length; k++) {
-        const src = slice[k];
-        const tgt = translations[k];
-        if (src && typeof tgt === 'string' && tgt.trim()) {
-          I18N.cache[src] = tgt.trim();
-          added++;
-        }
-      }
-      try { localStorage.setItem('i18n.fa.cache', JSON.stringify(I18N.cache)); } catch(_){}
-      console.log('[i18n] Batch übersetzt:', slice.length, '· Cache jetzt:', Object.keys(I18N.cache).length);
-    } catch(e) {
-      console.error('[i18n] fetch:', e);
-      lastError = e.message || String(e);
-    }
-  }
-  return { added, error: added === 0 ? lastError : '' };
-}
-
-function _i18nStartObserver() {
-  if (I18N.observer) return;
-  I18N.observer = new MutationObserver(() => {
-    if (I18N.translating) return;
-    clearTimeout(I18N.translateScheduled);
-    I18N.translateScheduled = setTimeout(() => {
-      if (I18N.currentLang === 'fa') _i18nApplyAll().catch(()=>{});
-    }, 350);
-  });
-  I18N.observer.observe(document.body, { childList: true, subtree: true, characterData: true });
-}
-function _i18nStopObserver() {
-  if (!I18N.observer) return;
-  I18N.observer.disconnect();
-  I18N.observer = null;
-}
 
 /* ── Bulk-Select / Bulk-Delete für Aufträge ── */
 function toggleAuftragSelectMode() {
