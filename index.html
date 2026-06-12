@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.21';
+const APP_VERSION = 'v5.22';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6668,6 +6668,146 @@ function _auftragCardHtml(r) {
   `;
 }
 
+/* ──────────────────────────────────────────────────────────
+   v5.22: Mehrere Berichte pro Auftrag — Liste im Detail-View
+   ────────────────────────────────────────────────────────── */
+function _aufRenderBerichteSection(rec) {
+  const f = rec.fields || {};
+  const list = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[rec.id]) || [];
+  // Falls Cache noch leer: Legacy-Fallback auf single bericht_num
+  if (list.length === 0 && f.bericht_num) {
+    return '<div class="auf-section"><h3>Verknüpfter Bericht</h3>'+
+      '<div style="font-size:13px">📄 Nr. '+f.bericht_num+(f.completed_at?' (am '+f.completed_at.slice(0,10)+')':'')+'</div>'+
+      '<div style="font-size:11px;color:var(--txt3);margin-top:6px">(Lade weitere Berichte …)</div>'+
+    '</div>';
+  }
+  if (list.length === 0) {
+    return '<div class="auf-section"><h3>Berichte</h3><div style="font-size:12px;color:var(--txt3)">Noch keine Berichte zu diesem Auftrag.</div></div>';
+  }
+  const canDelete = hasPermission('auftraege_edit') || hasPermission('delete_reports');
+  const rows = list.map(b => {
+    const ticketChip = b.fd_ticket_id
+      ? (b.fd_ticket_url
+          ? '<a href="'+escapeHtml(b.fd_ticket_url)+'" target="_blank" rel="noopener" style="background:#ECFDF5;color:#065F46;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #6EE7B7;text-decoration:none;display:inline-flex;align-items:center;gap:3px">🎫 #'+escapeHtml(String(b.fd_ticket_id))+' ↗</a>'
+          : '<span style="background:#F3F4F6;color:#6B7280;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #E5E7EB">🎫 #'+escapeHtml(String(b.fd_ticket_id))+'</span>')
+      : '';
+    const datumLabel = b.datum ? ' · '+escapeHtml(String(b.datum)) : '';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;margin-bottom:6px;flex-wrap:wrap">'+
+      '<div style="flex:1;min-width:160px;font-size:13px">'+
+        '<a href="#" onclick="event.preventDefault();event.stopPropagation();viewAuftragsBericht(\''+b.id+'\')" style="color:var(--navy);font-weight:600;text-decoration:none">📄 Bericht Nr. '+escapeHtml(String(b.bericht_num||'?'))+'</a>'+
+        '<span style="color:var(--txt3);font-size:11px">'+datumLabel+'</span>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
+        ticketChip+
+        (hasPermission('auftraege_edit') ? '<button class="btn" onclick="event.stopPropagation();openBerichtForm(\''+rec.id+'\',\''+b.id+'\')" style="font-size:11px;padding:3px 9px">✏</button>' : '')+
+        (canDelete ? '<button class="btn" onclick="event.stopPropagation();_aufDeleteBericht(\''+rec.id+'\',\''+b.id+'\','+(b.bericht_num||0)+')" style="font-size:11px;padding:3px 9px;color:var(--err);border-color:rgba(220,38,38,.3)" title="Bericht löschen">🗑</button>' : '')+
+      '</div>'+
+    '</div>';
+  }).join('');
+  return '<div class="auf-section"><h3>Berichte <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">'+list.length+'</span></h3>'+rows+'</div>';
+}
+
+async function _aufDeleteBericht(auftragRecId, berichtRecId, berichtNum) {
+  if (!confirm('Bericht Nr. '+berichtNum+' wirklich löschen?\n\nDas PDF + die Bilder werden ebenfalls entfernt. Dieser Vorgang kann nicht rückgängig gemacht werden.')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+berichtRecId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    if (!r.ok) throw new Error('Airtable '+r.status);
+    // Cache invalidieren — die Liste lädt sich beim re-render frisch
+    _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+    // Falls der gelöschte Bericht der "primäre" am Auftrag war, Verknüpfung aufheben
+    const auftragRec = _auftragCache.find(x => x.id === auftragRecId);
+    if (auftragRec?.fields?.bericht_id === berichtRecId) {
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+auftragRecId, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ bericht_id:null, bericht_num:null }}),
+        });
+        if (auftragRec.fields) { auftragRec.fields.bericht_id = null; auftragRec.fields.bericht_num = null; }
+      } catch(_){}
+    }
+    toast('🗑 Bericht Nr. '+berichtNum+' gelöscht','ok');
+    await loadAuftraegeAndRender();
+    openAuftragDetail(auftragRecId);
+  } catch(e) {
+    toast('❌ Löschen fehlgeschlagen: '+e.message, 'err');
+  }
+}
+
+/** ✅ Auftrag fertigstellen: Status → abgeschlossen + genau ein FD-Ticket erzeugen
+ *  (sammelt zusammen aus dem letzten/aktuellsten Bericht). Idempotent: wenn schon
+ *  ein FD-Ticket existiert, kein zweites erzeugen. */
+async function _aufCompleteWithFd(auftragRecId, btn) {
+  const rec = _auftragCache.find(r => r.id === auftragRecId);
+  if (!rec) return;
+  const list = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[auftragRecId]) || [];
+  if (!list.length) {
+    if (!confirm('Es gibt noch keinen Bericht zu diesem Auftrag.\n\nTrotzdem als "abgeschlossen" markieren? (Kein Freshdesk-Ticket wird erzeugt.)')) return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Schließe ab…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const firmaSlug = rec.fields.firma || getCurrentFirmaSlug();
+    // 1) Status auf abgeschlossen + completed_at
+    await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+auftragRecId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{
+        status: 'abgeschlossen',
+        completed_at: new Date().toISOString(),
+      }}),
+    });
+    // 2) FD-Ticket — nur wenn konfiguriert UND noch kein Bericht der Liste eins hat
+    const hasExistingTicket = list.some(b => b.fd_ticket_id);
+    if (hasExistingTicket) {
+      toast('✅ Auftrag abgeschlossen (Freshdesk-Ticket besteht schon)','ok');
+    } else if (!freshdeskIsConfigured(firmaSlug)) {
+      toast('✅ Auftrag abgeschlossen (Freshdesk nicht konfiguriert)','ok');
+    } else if (!list.length) {
+      toast('✅ Auftrag abgeschlossen','ok');
+    } else {
+      if (btn) btn.textContent = '🎫 Erzeuge Ticket…';
+      // Den jüngsten Bericht als "Ticket-Bericht" wählen (letzter Eintrag)
+      const primary = list[list.length - 1];
+      // Bericht-Record komplett aus Airtable holen (für PDF-URL + Felder)
+      const rR = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+primary.id, {
+        headers:{ 'Authorization':'Bearer '+(APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey) },
+      });
+      const berichtRec = await rR.json();
+      const pdfUrl = berichtRec?.fields?.out_pdf?.[0]?.url || '';
+      // pdfBlob nachladen (für Attachment)
+      let pdfBlob = null;
+      if (pdfUrl) {
+        try { pdfBlob = await (await fetch(pdfUrl)).blob(); } catch(_){}
+      }
+      const result = await freshdeskCreateTicketForBericht(berichtRec, pdfBlob, rec, pdfUrl);
+      if (result && result.ticketId) {
+        // Ticket-ID am Bericht speichern
+        try {
+          await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+primary.id, {
+            method:'PATCH',
+            headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+            body: JSON.stringify({ fields:{ fd_ticket_id:result.ticketId, fd_ticket_url:result.ticketUrl||'' }}),
+          });
+        } catch(_){}
+        toast('✅ Auftrag abgeschlossen · 🎫 Ticket #'+result.ticketId+' erstellt','ok');
+      } else {
+        toast('✅ Auftrag abgeschlossen (Ticket konnte nicht erzeugt werden)','warn');
+      }
+    }
+    _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+    await loadAuftraegeAndRender();
+    openAuftragDetail(auftragRecId);
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Auftrag fertigstellen'; }
+  }
+}
+
 /* ── Bulk-Select / Bulk-Delete für Aufträge ── */
 function toggleAuftragSelectMode() {
   _auftragSelectMode = !_auftragSelectMode;
@@ -6858,6 +6998,13 @@ function openAuftragDetail(recId) {
   const rec = _auftragCache.find(r => r.id === recId);
   if (!rec) return;
   const f = rec.fields;
+  // v5.22: Berichte-Cache anstoßen, damit die Liste im Detail-View befüllt ist.
+  // Wenn der Cache schon da ist (vom Listen-Render), kein Reload — sonst lazy laden + Detail re-rendern.
+  if (rec.fields.firma && (!_aufBerichteByAuftrag.map || _aufBerichteByAuftrag.firma !== rec.fields.firma)) {
+    _aufLoadBerichteForList(rec.fields.firma).then(() => {
+      if (document.getElementById('auf-detail-modal')?.classList.contains('show')) openAuftragDetail(recId);
+    }).catch(() => {});
+  }
   document.getElementById('auf-detail-title').innerHTML =
     'Auftrag #' + (f.auftrag_num || '–') + ' · <span style="font-weight:400;opacity:.7">' + (T[f.tmpl]?.label || f.tmpl || '') + '</span>';
   let techs = [];
@@ -6947,7 +7094,7 @@ function openAuftragDetail(recId) {
       <h3>Zugewiesene Techniker</h3>
       <div id="auf-detail-techniker">${_renderInlineTechnikerPicker(rec)}</div>
     </div>
-    ${f.bericht_num ? '<div class="auf-section"><h3>Verknüpfter Bericht</h3><div style="font-size:13px">📄 Nr. '+f.bericht_num+(f.completed_at?' (am '+f.completed_at.slice(0,10)+')':'')+'</div></div>' : ''}
+    ${_aufRenderBerichteSection(rec)}
     ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
   `;
 
@@ -6968,15 +7115,19 @@ function openAuftragDetail(recId) {
   if (status !== 'abgeschlossen' && status !== 'abgerechnet' && canStartBericht) {
     html += '<button class="btn" onclick="openBerichtPicker(\''+rec.id+'\')" title="Vorhandenen Bericht aus der Übersicht zuweisen (z.B. konvertierter Subunternehmer-Bericht)">📎 Bericht verknüpfen</button>';
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Neuer Bericht</button>';
+    // v5.22: Auftrag fertigstellen → setzt Status + erzeugt FD-Ticket (idempotent)
+    if (hasPermission('auftraege_edit')) {
+      html += '<button class="btn prim" onclick="_aufCompleteWithFd(\''+rec.id+'\', this)" title="Auftrag auf Abgeschlossen setzen und Freshdesk-Ticket aus dem letzten Bericht erzeugen">✅ Auftrag fertigstellen</button>';
+    }
   }
   if ((status === 'abgeschlossen' || status === 'abgerechnet') && f.bericht_id) {
     html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Ansehen</button>';
     if ((_isAssignedToMe(rec) || hasPermission('auftraege_edit')) && status !== 'abgerechnet') {
       html += '<button class="btn" onclick="openBerichtForm(\''+rec.id+'\',\''+f.bericht_id+'\')">✏ Bericht bearbeiten</button>';
     }
-    // Manuell ein Freshdesk-Ticket erstellen (z.B. nach Bericht-Bearbeitung oder falls Auto-Hook nicht griff)
+    // Manuell ein Freshdesk-Ticket erstellen (z.B. falls beim Fertigstellen noch keins erzeugt wurde)
     if (hasPermission('auftraege_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())) {
-      html += '<button class="btn" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" onclick="manualCreateFreshdeskTicket(\''+rec.id+'\')" title="Freshdesk-Ticket für diesen Auftrag/Bericht jetzt erstellen">🎫 Freshdesk-Ticket erstellen</button>';
+      html += '<button class="btn" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" onclick="manualCreateFreshdeskTicket(\''+rec.id+'\')" title="Freshdesk-Ticket für diesen Auftrag/Bericht jetzt erstellen">🎫 Ticket erstellen</button>';
     }
   }
   foot.innerHTML = html;
@@ -10991,73 +11142,33 @@ async function saveBerichtFromForm() {
         }
       }
 
-      btn.textContent = '☁ Auftrag aktualisieren…';
-      await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+_currentBerichtAuftragId, {
-        method:'PATCH',
-        headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
-        body: JSON.stringify({ fields: {
-          status:       'abgeschlossen',
-          bericht_id:   recId,
-          bericht_num:  berichtNum,
-          completed_at: new Date().toISOString(),
-        }}),
-      });
-
-      trackEvent('auftraege', 'complete', { auftrag_num: af.auftrag_num, bericht_num: berichtNum });
-      toast('✅ Bericht Nr. '+berichtNum+' erstellt – Auftrag abgeschlossen.', 'ok');
-    }
-
-    // ── Freshdesk-Auto-Ticket nach erfolgreichem Bericht-Save ──
-    // Nur bei NEUEN Berichten (nicht beim Edit) und wenn Freshdesk konfiguriert ist.
-    if (_bfMode === 'edit') {
-      console.log('[Freshdesk] Edit-Modus → kein Auto-Ticket. Nutze "🎫 Ticket erstellen" am Auftrag.');
-    }
-    if (_bfMode !== 'edit') {
-      const firmaSlug = af.firma || S.firma?.slug || getCurrentFirmaSlug();
-      if (freshdeskIsConfigured(firmaSlug)) {
-        btn.textContent = '🎫 erstelle Freshdesk-Ticket…';
-        try {
-          // Bericht-Record aus Cache zusammenbauen (für Subject/Description)
-          const stubRec = { id: recId, fields: {
-            bericht_num: berichtNum,
-            firma:       firmaSlug,
-            standort:    data.standort,
-            fabriknummer:data.fabriknummer,
-            datum:       data.datum,
-            techniker:   techName,
-            tmpl:        S.tmpl,
-          }};
-          // PDF-URL aus Airtable nachladen (das PDF wurde gerade hochgeladen)
-          let berichtPdfUrl = '';
-          try {
-            const rRead = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
-              headers: { 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
-            });
-            const dRead = await rRead.json();
-            const url = dRead && dRead.fields && dRead.fields.out_pdf && dRead.fields.out_pdf[0] && dRead.fields.out_pdf[0].url;
-            if (url) berichtPdfUrl = url;
-          } catch(_){}
-          const r = await freshdeskCreateTicketForBericht(stubRec, pdfBlob, auftrag, berichtPdfUrl);
-          if (r.skipped) {
-            toast('ℹ Freshdesk nicht konfiguriert für '+firmaSlug+' – kein Ticket erstellt.', '');
-          } else if (r.ticketId) {
-            // Ticket-Info zurück in den Bericht-Record speichern
-            try {
-              await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
-                method:'PATCH',
-                headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
-                body: JSON.stringify({ fields:{ fd_ticket_id: r.ticketId, fd_ticket_url: r.ticketUrl||'' }}),
-              });
-            } catch(_){}
-            toast('🎫 Freshdesk-Ticket #'+r.ticketId+' erstellt.', 'ok');
-          }
-        } catch(fde) {
-          console.error('Freshdesk-Auto-Ticket:', fde);
-          toast('⚠ Bericht gespeichert, ABER Freshdesk-Ticket fehlgeschlagen: '+(fde.message||fde).slice(0,180), 'warn');
-        }
+      // v5.22: Auftrag bleibt OFFEN, FD-Ticket entkoppelt.
+      // Berichte werden über bericht.auftrag_id verknüpft (1:N). Der Auftrag
+      // wird erst beim explizit ausgelösten "✅ Auftrag fertigstellen" auf
+      // abgeschlossen gesetzt — dort wird auch genau ein FD-Ticket erzeugt.
+      // Für Rückwärtskompatibilität speichern wir bericht_id/bericht_num
+      // immer noch, aber NUR wenn der Auftrag noch keinen verknüpften
+      // Bericht hat (so bleibt die Legacy-Ansicht "Verknüpfter Bericht"
+      // beim ersten Bericht stehen, ohne dass weitere Berichte sie kapern).
+      if (!af.bericht_id) {
+        btn.textContent = '☁ Auftrag verknüpfen…';
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+_currentBerichtAuftragId, {
+          method:'PATCH',
+          headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
+          body: JSON.stringify({ fields: {
+            bericht_id:   recId,
+            bericht_num:  berichtNum,
+          }}),
+        });
       }
+
+      trackEvent('auftraege', 'bericht_added', { auftrag_num: af.auftrag_num, bericht_num: berichtNum });
+      toast('✅ Bericht Nr. '+berichtNum+' erfasst.', 'ok');
     }
 
+    // v5.22: Kein Auto-FD-Ticket mehr beim Bericht-Save. Das Ticket entsteht
+    // beim "✅ Auftrag fertigstellen"-Schritt (sammelt alle Berichte zusammen).
+    _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };  // Cache invalidieren
     closeBerichtForm();
     await loadAuftraegeAndRender();
   } catch(e) {
