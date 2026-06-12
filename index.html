@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.36';
+const APP_VERSION = 'v5.37';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5720,6 +5720,18 @@ async function ensureLegacyFirmaFields() {
   await ensureField('App_Verantwortliche', 'typ',                  'singleLineText');
   await ensureField('App_Projekte',        'projekt_verantw_firma','singleLineText');
   await ensureField('App_Projekte',        'projekt_verantw_typ',  'singleLineText');
+  // v5.37: Anhänge (Bilder + PDFs) pro Projekt-Position
+  try {
+    await ensureTable('App_Projekt_Anhaenge', [
+      { name:'position_id',  type:'singleLineText' },   // p_xxx aus positionen_json
+      { name:'projekt_id',   type:'singleLineText' },   // Airtable-recid des Projekts
+      { name:'name',         type:'singleLineText' },
+      { name:'typ',          type:'singleLineText' },   // image | pdf | file
+      { name:'file',         type:'multipleAttachments' },
+      { name:'firma',        type:'singleLineText' },
+      { name:'erstellt_am',  type:'singleLineText' },
+    ]);
+  } catch(e) { console.warn('[ProjektAnhaenge] ensureTable:', e.message); }
   // v5.29: Folge-Tickets pro Auftrag als JSON-Array [{id,url,subject,created_at}]
   await ensureField('Auftraege',           'followup_tickets_json','multilineText');
   // v5.14: Angebots-Prompt-Vorlagen
@@ -32271,7 +32283,7 @@ function _prjRenderPosTimeline(p, idx, recId) {
         '</div>'+
         '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
           '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+stat.label+'</span>'+
-          (canSeePrices() && +p.preis_ek > 0 ? '<span style="font-weight:700;color:var(--navy);font-size:13px">'+fmt(p.preis_ek)+' € EK</span>' : '')+
+          (canSeePrices() && !p.preis_hidden && +p.preis_ek > 0 ? '<span style="font-weight:700;color:var(--navy);font-size:13px">'+fmt(p.preis_ek)+' € EK</span>' : '')+
         '</div>'+
       '</div>'+
       '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">'+
@@ -32318,11 +32330,15 @@ function _prjOpenPosEditor(recId, idx, p) {
   m.id = 'prj-pos-editor';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10800;display:flex;align-items:center;justify-content:center;padding:8px';
   const verantw = (_verantwCache.items||[]).filter(r => !r.fields?.archived);
+  // v5.37: Position-ID frühzeitig sichern — Anhänge brauchen sie sofort
+  const posId = p.id || ('p_' + Math.random().toString(36).slice(2, 9));
+  const preisHidden = !!p.preis_hidden;
   m.innerHTML = '<div style="background:var(--surf);max-width:560px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
     '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
       '<span>'+(idx>=0?'✏️ Position bearbeiten':'+ Neue Position')+'</span>'+
       '<button onclick="document.getElementById(\'prj-pos-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
     '</div>'+
+    '<input type="hidden" id="pos-fld-id" value="'+escapeHtml(posId)+'">'+
     '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Titel *</label>'+
         '<input id="pos-fld-titel" value="'+escapeHtml(p.titel||'')+'" placeholder="z.B. Antrieb bestellen" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
@@ -32345,9 +32361,15 @@ function _prjOpenPosEditor(recId, idx, p) {
             return '<option value="'+escapeHtml(r.id)+'"'+(r.id===p.verantwortlicher_id?' selected':'')+'>'+escapeHtml(t+(r.fields?.name||'')+(r.fields?.firma_extern?' · '+r.fields.firma_extern:'')+(r.fields?.rolle?' ('+r.fields.rolle+')':''))+'</option>';
           }).join('')+
         '</select></div>'+
+      // v5.37: Preis ausblendbar — Toggle direkt über dem Feld
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
-        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Preis EK (€)</label>'+
-          '<input type="number" step="0.01" min="0" id="pos-fld-preis" value="'+escapeHtml(String(p.preis_ek||''))+'" placeholder="0.00" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+        '<div>'+
+          '<label style="font-size:11px;font-weight:700;color:var(--navy);display:flex;align-items:center;gap:6px;margin-bottom:4px;justify-content:space-between">'+
+            '<span>Preis EK (€)</span>'+
+            '<label style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:500;color:var(--txt3);cursor:pointer"><input type="checkbox" id="pos-fld-preis-hidden" '+(preisHidden?'checked':'')+' onchange="_prjPosTogglePreis(this)" style="margin:0"> ausblenden</label>'+
+          '</label>'+
+          '<input type="number" step="0.01" min="0" id="pos-fld-preis" value="'+escapeHtml(String(p.preis_ek||''))+'" placeholder="0.00" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px'+(preisHidden?';opacity:.4;background:#F3F4F6':'')+'" '+(preisHidden?'disabled':'')+'>'+
+        '</div>'+
         '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Status</label>'+
           '<select id="pos-fld-status" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
             POSITION_STATUS.map(s => '<option value="'+s.value+'"'+((p.status||'offen')===s.value?' selected':'')+'>'+s.label+'</option>').join('')+
@@ -32355,6 +32377,23 @@ function _prjOpenPosEditor(recId, idx, p) {
       '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Notizen</label>'+
         '<textarea id="pos-fld-notizen" rows="3" placeholder="Optional" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(p.notizen||'')+'</textarea></div>'+
+      // v5.37: Anhänge — Bilder + PDFs
+      '<div style="border-top:1px solid var(--bdr);padding-top:12px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap">'+
+          '<label style="font-size:11px;font-weight:700;color:var(--navy);display:block">📎 Anhänge <span id="pos-anh-count" style="color:var(--txt3);font-weight:500;margin-left:4px">…</span></label>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+            '<input type="file" accept="image/*" capture="environment" id="pos-anh-cam" style="display:none" onchange="_prjPosUploadFromInput(this, \''+recId+'\', \'image\')">'+
+            '<input type="file" accept="image/*" multiple id="pos-anh-img" style="display:none" onchange="_prjPosUploadFromInput(this, \''+recId+'\', \'image\')">'+
+            '<input type="file" accept="application/pdf,.pdf,.doc,.docx" multiple id="pos-anh-pdf" style="display:none" onchange="_prjPosUploadFromInput(this, \''+recId+'\', \'pdf\')">'+
+            '<button type="button" class="btn" onclick="document.getElementById(\'pos-anh-cam\').click()" style="font-size:11px;padding:4px 9px">📷 Foto</button>'+
+            '<button type="button" class="btn" onclick="document.getElementById(\'pos-anh-img\').click()" style="font-size:11px;padding:4px 9px">🖼 Bild</button>'+
+            '<button type="button" class="btn" onclick="document.getElementById(\'pos-anh-pdf\').click()" style="font-size:11px;padding:4px 9px">📄 PDF</button>'+
+          '</div>'+
+        '</div>'+
+        '<div id="pos-anh-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:6px;min-height:30px">'+
+          '<div style="grid-column:1/-1;font-size:11px;color:var(--txt3);text-align:center;padding:6px">Lade Anhänge …</div>'+
+        '</div>'+
+      '</div>'+
     '</div>'+
     '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
       '<button class="btn" onclick="document.getElementById(\'prj-pos-editor\').remove()">Abbrechen</button>'+
@@ -32363,6 +32402,23 @@ function _prjOpenPosEditor(recId, idx, p) {
   '</div>';
   document.body.appendChild(m);
   setTimeout(() => document.getElementById('pos-fld-titel')?.focus(), 100);
+  // Anhänge laden + rendern
+  _prjPosRenderAnhaenge(posId);
+}
+
+// v5.37: Preis-Toggle anschalten/deaktivieren
+function _prjPosTogglePreis(cb) {
+  const inp = document.getElementById('pos-fld-preis');
+  if (!inp) return;
+  if (cb.checked) {
+    inp.disabled = true;
+    inp.style.opacity = '.4';
+    inp.style.background = '#F3F4F6';
+  } else {
+    inp.disabled = false;
+    inp.style.opacity = '';
+    inp.style.background = '';
+  }
 }
 
 async function _prjSavePos(recId, idx, btn) {
@@ -32370,8 +32426,11 @@ async function _prjSavePos(recId, idx, btn) {
   if (!titel) return toast('Titel ist Pflicht','err');
   const verantwId = document.getElementById('pos-fld-verantw')?.value || '';
   const v = verantwId ? (_verantwCache.items||[]).find(x => x.id === verantwId) : null;
+  // v5.37: ID + preis_hidden aus den hidden Feldern
+  const editorId = document.getElementById('pos-fld-id')?.value || ('p_' + Math.random().toString(36).slice(2, 9));
+  const preisHidden = !!document.getElementById('pos-fld-preis-hidden')?.checked;
   const newPos = {
-    id: 'p_' + Math.random().toString(36).slice(2, 9),
+    id: editorId,
     titel,
     geplant_am:  document.getElementById('pos-fld-geplant')?.value || '',
     erledigt_am: document.getElementById('pos-fld-erledigt')?.value || '',
@@ -32379,7 +32438,8 @@ async function _prjSavePos(recId, idx, btn) {
     verantwortlicher_name:  v?.fields?.name || '',
     verantwortlicher_firma: v?.fields?.firma_extern || '',
     verantwortlicher_typ:   v?.fields?.typ || (v?.fields?.firma_extern ? 'extern' : ''),
-    preis_ek: +(document.getElementById('pos-fld-preis')?.value) || 0,
+    preis_ek: preisHidden ? 0 : (+(document.getElementById('pos-fld-preis')?.value) || 0),
+    preis_hidden: preisHidden,
     status: document.getElementById('pos-fld-status')?.value || 'offen',
     notizen: document.getElementById('pos-fld-notizen')?.value.trim() || '',
   };
@@ -32420,6 +32480,103 @@ async function _prjDeletePos(recId, idx) {
     toast('🗑 Position gelöscht','ok');
     document.getElementById('projekt-detail')?.remove();
     openProjektDetail(recId);
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.37: Anhänge pro Projekt-Position — Bilder + PDFs in App_Projekt_Anhaenge
+// ═══════════════════════════════════════════════════════════════════════
+async function _prjPosLoadAttachments(positionId) {
+  if (!positionId) return [];
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Projekt_Anhaenge?pageSize=100&filterByFormula='+encodeURIComponent('{position_id}="'+positionId.replace(/"/g,'')+'"');
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) return [];
+    const d = await r.json();
+    return d.records || [];
+  } catch(_) { return []; }
+}
+
+async function _prjPosRenderAnhaenge(positionId) {
+  const list = document.getElementById('pos-anh-list');
+  const cnt = document.getElementById('pos-anh-count');
+  if (!list) return;
+  const items = await _prjPosLoadAttachments(positionId);
+  if (cnt) cnt.textContent = items.length ? '('+items.length+')' : '(keine)';
+  if (!items.length) {
+    list.innerHTML = '<div style="grid-column:1/-1;font-size:11px;color:var(--txt3);text-align:center;padding:8px;background:#F9FAFB;border:1px dashed var(--bdr);border-radius:6px">Noch keine Anhänge. Foto · Bild · PDF oben anhängen.</div>';
+    return;
+  }
+  list.innerHTML = items.map(rec => {
+    const f = rec.fields || {};
+    const file = (f.file && f.file[0]) || null;
+    const url = file?.url || '';
+    const name = f.name || file?.filename || 'Datei';
+    const isImage = (f.typ === 'image') || /^image\//.test(file?.type || '');
+    const thumb = file?.thumbnails?.small?.url || (isImage ? url : '');
+    return '<div style="position:relative;aspect-ratio:1;border:1px solid var(--bdr);border-radius:6px;overflow:hidden;background:#F9FAFB">'+
+      (thumb
+        ? '<a href="'+escapeHtml(url)+'" target="_blank" rel="noopener" style="display:block;width:100%;height:100%"><img src="'+escapeHtml(thumb)+'" style="width:100%;height:100%;object-fit:cover"></a>'
+        : '<a href="'+escapeHtml(url)+'" target="_blank" rel="noopener" style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;height:100%;text-decoration:none;color:var(--navy);padding:4px"><div style="font-size:32px">📄</div><div style="font-size:10px;text-align:center;line-height:1.2;word-break:break-all;max-height:30px;overflow:hidden">'+escapeHtml(name)+'</div></a>'
+      )+
+      '<button onclick="_prjPosDeleteAttachment(\''+rec.id+'\',\''+positionId+'\')" title="Löschen" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.9);color:#fff;border:none;width:22px;height:22px;border-radius:50%;font-size:12px;cursor:pointer">×</button>'+
+    '</div>';
+  }).join('');
+}
+
+async function _prjPosUploadFromInput(input, projektRecId, typ) {
+  const files = Array.from(input.files || []);
+  if (!files.length) return;
+  const posId = document.getElementById('pos-fld-id')?.value;
+  if (!posId) { toast('Position-ID fehlt','err'); return; }
+  if (!APP_KEYS.airtableWriteKey) { toast('Kein Write-Token','err'); return; }
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const firmaSlug = getCurrentFirmaSlug();
+  const cntEl = document.getElementById('pos-anh-count');
+  let done = 0;
+  for (const file of files) {
+    if (cntEl) cntEl.textContent = '⏳ Lade '+(done+1)+'/'+files.length+' …';
+    try {
+      // Record anlegen
+      const r1 = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekt_Anhaenge', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields:{
+          position_id: posId,
+          projekt_id: projektRecId,
+          name: file.name,
+          typ: typ,
+          firma: firmaSlug,
+          erstellt_am: new Date().toISOString().slice(0,10),
+        }}),
+      });
+      const d1 = await r1.json();
+      if (d1.error) throw new Error(d1.error.message);
+      // File anhängen
+      await atBlobUpload(d1.id, 'file', file, file.name, file.type || 'application/octet-stream');
+      done++;
+    } catch(e) {
+      console.warn('[PosAnh] upload', file.name, e.message);
+      toast('❌ '+file.name+': '+e.message.slice(0,100),'err');
+    }
+  }
+  input.value = '';
+  if (done > 0) toast('✅ '+done+' Anhang/Anhänge hochgeladen','ok');
+  await _prjPosRenderAnhaenge(posId);
+}
+
+async function _prjPosDeleteAttachment(recId, positionId) {
+  if (!confirm('Anhang wirklich löschen?')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekt_Anhaenge/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    toast('🗑 Anhang gelöscht','ok');
+    await _prjPosRenderAnhaenge(positionId);
   } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
