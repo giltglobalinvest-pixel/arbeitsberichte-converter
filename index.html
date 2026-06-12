@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.16';
+const APP_VERSION = 'v5.17';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5704,6 +5704,17 @@ async function ensureLegacyFirmaFields() {
       { name:'archived',             type:'checkbox', options:{ icon:'check', color:'grayBright' }},
     ]);
   } catch(e) { console.warn('[Projekte] ensureTable:', e.message); }
+  // v5.17: Projekt-Vorlagen mit vorgefertigten Bausteinen
+  try {
+    await ensureTable('App_Projekt_Vorlagen', [
+      { name:'name',            type:'singleLineText' },
+      { name:'beschreibung',    type:'multilineText'  },
+      { name:'positionen_json', type:'multilineText'  },
+      { name:'firma',           type:'singleLineText' },
+      { name:'erstellt_am',     type:'singleLineText' },
+      { name:'archived',        type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+    ]);
+  } catch(e) { console.warn('[ProjektVorlagen] ensureTable:', e.message); }
   // v5.13 → v5.15: Felder per ensureField nachrüsten falls Tabelle schon
   // existiert (ensureTable überspringt dann das Schema komplett).
   await ensureField('App_Verantwortliche', 'typ',                  'singleLineText');
@@ -30736,6 +30747,17 @@ function openProjektWizard() {
     '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:14px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektname *</label>'+
         '<input id="prj-w-name" placeholder="z.B. Modernisierung Friedrichstr. 29" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      // v5.17: Vorlage-Picker
+      '<div>'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px">'+
+          '<label style="font-size:11px;font-weight:700;color:var(--navy)">📚 Vorlage (optional)</label>'+
+          '<button type="button" class="btn" onclick="openProjektVorlagenModal()" style="font-size:11px;padding:4px 9px">⚙ Verwalten</button>'+
+        '</div>'+
+        '<select id="prj-w-vorlage" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+          '<option value="">— ohne Vorlage —</option>'+
+        '</select>'+
+        '<div id="prj-w-vorlage-info" style="font-size:11px;color:var(--txt3);margin-top:4px"></div>'+
+      '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektverantwortlicher * <span style="color:var(--txt3);font-weight:500">(meist Externer: GU, Planungsbüro, Auftraggeber)</span></label>'+
         '<select id="prj-w-verantw" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
           '<option value="">— bitte wählen —</option>'+
@@ -30772,7 +30794,42 @@ function openProjektWizard() {
   '</div>';
   document.body.appendChild(m);
   _prjwFilterAnl();
+  // v5.17: Vorlagen async laden + Dropdown füllen
+  _loadProjektVorlagen(true).then(() => _prjwRefreshVorlagenSelect()).catch(() => {});
   setTimeout(() => document.getElementById('prj-w-name')?.focus(), 100);
+}
+
+function _prjwRefreshVorlagenSelect() {
+  const sel = document.getElementById('prj-w-vorlage');
+  if (!sel) return;
+  const items = _projektVorlagenCache.items || [];
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— ohne Vorlage —</option>' +
+    items.map(rec => {
+      const f = rec.fields || {};
+      let pos = []; try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+      return '<option value="'+escapeHtml(rec.id)+'">'+escapeHtml((f.name||'(ohne Name)') + ' · '+pos.length+' Baustein'+(pos.length===1?'':'e'))+'</option>';
+    }).join('');
+  if (current) sel.value = current;
+  sel.onchange = _prjwOnVorlageChange;
+  _prjwOnVorlageChange();
+}
+
+function _prjwOnVorlageChange() {
+  const sel = document.getElementById('prj-w-vorlage');
+  const info = document.getElementById('prj-w-vorlage-info');
+  const beschrInput = document.getElementById('prj-w-beschreibung');
+  if (!sel || !info) return;
+  const recId = sel.value;
+  if (!recId) { info.innerHTML = ''; return; }
+  const rec = (_projektVorlagenCache.items||[]).find(r => r.id === recId);
+  if (!rec) { info.innerHTML = ''; return; }
+  let pos = []; try { pos = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
+  info.innerHTML = '<span style="color:#10b981">✓</span> <strong>'+pos.length+'</strong> Baustein'+(pos.length===1?'':'e')+' werden beim Anlegen ins Projekt kopiert (mit Status „offen", ohne Datumsfelder).';
+  // Beschreibung übernehmen wenn leer
+  if (beschrInput && !beschrInput.value.trim() && rec.fields?.beschreibung) {
+    beschrInput.value = rec.fields.beschreibung;
+  }
 }
 
 function _prjwFilterAnl() {
@@ -30806,6 +30863,7 @@ async function _prjwSubmit(btn) {
   const verantwId = document.getElementById('prj-w-verantw')?.value || '';
   const anlageId = document.getElementById('prj-w-anl-id')?.value || '';
   const beschreibung = document.getElementById('prj-w-beschreibung')?.value.trim() || '';
+  const vorlageId = document.getElementById('prj-w-vorlage')?.value || '';
   if (!name) return toast('Projektname ist Pflicht','err');
   if (!verantwId) return toast('Projektverantwortlichen wählen','err');
   if (!anlageId) return toast('Anlage wählen','err');
@@ -30832,7 +30890,13 @@ async function _prjwSubmit(btn) {
       kunde_name: a?.kunde?.firmenname || a?.kunde?.name || '',
       kunde_nummer: String(a?.kunde?.kundennummer || a?.kunde?.id || ''),
       status: 'geplant',
-      positionen_json: '[]',
+      positionen_json: (() => {
+        if (!vorlageId) return '[]';
+        const vor = (_projektVorlagenCache.items||[]).find(r => r.id === vorlageId);
+        if (!vor) return '[]';
+        let bp = []; try { bp = JSON.parse(vor.fields?.positionen_json||'[]'); } catch(_){}
+        return JSON.stringify(_prjPositionenFromVorlage(bp));
+      })(),
       erstellt_am: new Date().toISOString().slice(0,10),
       erstellt_von: APP_KEYS.user?.name || '',
     };
@@ -30861,7 +30925,8 @@ async function _prjwSubmit(btn) {
       d = await r.json();
     }
     if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
-    toast('📅 Projekt PRJ-'+projektNum+' angelegt','ok');
+    const vorlageHinweis = vorlageId ? ' (mit Vorlage)' : '';
+    toast('📅 Projekt PRJ-'+projektNum+' angelegt'+vorlageHinweis,'ok');
     document.getElementById('projekt-wizard')?.remove();
     await renderProjekteView({force:true});
     openProjektDetail(d.id);
@@ -30877,7 +30942,7 @@ function openProjektDetail(recId) {
   const f = rec.fields || {};
   let positionen = [];
   try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
-  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  // v5.17: Manuelle Reihenfolge ist canonical — kein Auto-Sort mehr nach geplant_am.
 
   document.getElementById('projekt-detail')?.remove();
   const m = document.createElement('div');
@@ -30918,6 +30983,7 @@ function openProjektDetail(recId) {
       '</div>'+
       '<div style="display:flex;gap:6px">'+
         '<button class="btn" onclick="document.getElementById(\'projekt-detail\').remove()">Schließen</button>'+
+        '<button class="btn" onclick="_prjSaveAsVorlage(\''+recId+'\')" style="color:#2152A9;border-color:rgba(33,82,169,.3)" title="Bausteine dieses Projekts als wiederverwendbare Vorlage speichern">💾 Als Vorlage</button>'+
         '<button class="btn" onclick="_prjSetArchived(\''+recId+'\','+(!f.archived)+')" style="color:#92400E;border-color:#F59E0B">'+(f.archived?'📂 Wiederherstellen':'📁 Archivieren')+'</button>'+
         '<button class="btn" onclick="_prjDelete(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)">🗑</button>'+
       '</div>'+
@@ -30960,12 +31026,29 @@ function _prjRenderPosTimeline(p, idx, recId) {
           (canSeePrices() && +p.preis_ek > 0 ? '<span style="font-weight:700;color:var(--navy);font-size:13px">'+fmt(p.preis_ek)+' € EK</span>' : '')+
         '</div>'+
       '</div>'+
-      '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end">'+
+      '<div style="display:flex;gap:6px;margin-top:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        // v5.17: Reihenfolge ändern
+        '<button class="btn" onclick="_prjMovePos(\''+recId+'\','+idx+',-1)" title="Nach oben" style="font-size:11px;padding:4px 8px">↑</button>'+
+        '<button class="btn" onclick="_prjMovePos(\''+recId+'\','+idx+', 1)" title="Nach unten" style="font-size:11px;padding:4px 8px">↓</button>'+
         '<button class="btn" onclick="_prjEditPos(\''+recId+'\','+idx+')" style="font-size:11px;padding:4px 10px">✏️ Bearbeiten</button>'+
         '<button class="btn" onclick="_prjDeletePos(\''+recId+'\','+idx+')" style="font-size:11px;padding:4px 10px;color:var(--err);border-color:rgba(220,38,38,.3)">🗑</button>'+
       '</div>'+
     '</div>'+
   '</div>';
+}
+
+// v5.17: Baustein in der Reihenfolge verschieben (Cache + Airtable patchen)
+async function _prjMovePos(recId, idx, delta) {
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  let positionen = [];
+  try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= positionen.length) return;
+  const [moved] = positionen.splice(idx, 1);
+  positionen.splice(newIdx, 0, moved);
+  await _prjPatchPositionen(recId, positionen);
+  openProjektDetail(recId);
 }
 
 function _prjAddPos(recId) {
@@ -30977,7 +31060,7 @@ function _prjEditPos(recId, idx) {
   if (!rec) return;
   let positionen = [];
   try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
-  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  // v5.17: Manuelle Reihenfolge ist canonical — kein Auto-Sort mehr nach geplant_am.
   _prjOpenPosEditor(recId, idx, positionen[idx] || {});
 }
 
@@ -31056,7 +31139,7 @@ async function _prjSavePos(recId, idx, btn) {
   if (!rec) return toast('Projekt nicht gefunden','err');
   let positionen = [];
   try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
-  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  // v5.17: Manuelle Reihenfolge ist canonical — kein Auto-Sort mehr nach geplant_am.
   if (idx >= 0) {
     newPos.id = positionen[idx]?.id || newPos.id;
     positionen[idx] = newPos;
@@ -31082,7 +31165,7 @@ async function _prjDeletePos(recId, idx) {
   if (!rec) return;
   let positionen = [];
   try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
-  positionen.sort((a,b) => (a.geplant_am||'9').localeCompare(b.geplant_am||'9'));
+  // v5.17: Manuelle Reihenfolge ist canonical — kein Auto-Sort mehr nach geplant_am.
   positionen.splice(idx, 1);
   try {
     await _prjPatchPositionen(recId, positionen);
@@ -31155,6 +31238,158 @@ async function _prjDelete(recId) {
     toast('🗑 Gelöscht','ok');
     document.getElementById('projekt-detail')?.remove();
     _renderProjekteList();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.17: PROJEKT-VORLAGEN
+// Speichert eine Liste vorgefertigter Bausteine, die beim Anlegen eines
+// neuen Projekts geladen werden können. IDs der Positionen werden beim
+// Anwenden neu vergeben, Status auf "offen" zurückgesetzt, Datumsfelder
+// geleert — eine Vorlage ist eine Blaupause für Bausteine, kein Schnappschuss.
+// ═══════════════════════════════════════════════════════════════════════
+let _projektVorlagenCache = { firma:null, items:null, loadedAt:0 };
+
+async function _loadProjektVorlagen(useCache) {
+  const firmaSlug = getCurrentFirmaSlug();
+  if (useCache && _projektVorlagenCache.items && _projektVorlagenCache.firma === firmaSlug && (Date.now() - _projektVorlagenCache.loadedAt) < 60_000) {
+    return _projektVorlagenCache.items;
+  }
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  const url = 'https://api.airtable.com/v0/'+baseId+'/App_Projekt_Vorlagen?pageSize=100&sort[0][field]=name&sort[0][direction]=asc';
+  try {
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) { _projektVorlagenCache = { firma:firmaSlug, items:[], loadedAt:Date.now() }; return []; }
+    const d = await r.json();
+    const items = (d.records||[]).filter(rec => rec.fields?.firma === firmaSlug && !rec.fields?.archived);
+    _projektVorlagenCache = { firma:firmaSlug, items, loadedAt:Date.now() };
+    return items;
+  } catch(_) {
+    _projektVorlagenCache = { firma:firmaSlug, items:[], loadedAt:Date.now() };
+    return [];
+  }
+}
+
+/** Bausteine aus einer Vorlage in frische Projekt-Positionen umwandeln —
+ *  neue IDs, Status zurück auf "offen", Daten geleert. */
+function _prjPositionenFromVorlage(vorlageItems) {
+  return (vorlageItems||[]).map(b => ({
+    id: 'p_' + Math.random().toString(36).slice(2, 9),
+    titel: b.titel || '',
+    geplant_am: '',
+    erledigt_am: '',
+    verantwortlicher_id:    b.verantwortlicher_id    || '',
+    verantwortlicher_name:  b.verantwortlicher_name  || '',
+    verantwortlicher_firma: b.verantwortlicher_firma || '',
+    verantwortlicher_typ:   b.verantwortlicher_typ   || '',
+    preis_ek: +b.preis_ek || 0,
+    status: 'offen',
+    notizen: b.notizen || '',
+  }));
+}
+
+/** Aktuelles Projekt als neue Vorlage speichern. */
+async function _prjSaveAsVorlage(recId) {
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  let positionen = [];
+  try { positionen = JSON.parse(rec.fields?.positionen_json||'[]'); } catch(_){}
+  if (!positionen.length) return toast('Vorlage benötigt mindestens eine Position','err');
+  const defaultName = 'Vorlage: ' + (rec.fields?.name || 'Projekt');
+  const name = prompt('Name für die Vorlage:', defaultName);
+  if (!name || !name.trim()) return;
+  // Datumsfelder + IDs raus (sie sind projekt-spezifisch). Status setzen wir beim Anwenden.
+  const blueprint = positionen.map(p => ({
+    titel: p.titel || '',
+    verantwortlicher_id:    p.verantwortlicher_id    || '',
+    verantwortlicher_name:  p.verantwortlicher_name  || '',
+    verantwortlicher_firma: p.verantwortlicher_firma || '',
+    verantwortlicher_typ:   p.verantwortlicher_typ   || '',
+    preis_ek: +p.preis_ek || 0,
+    notizen: p.notizen || '',
+  }));
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const fields = {
+      name: name.trim(),
+      beschreibung: rec.fields?.beschreibung || '',
+      positionen_json: JSON.stringify(blueprint),
+      firma: getCurrentFirmaSlug(),
+      erstellt_am: new Date().toISOString().slice(0,10),
+    };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekt_Vorlagen', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    toast('💾 Vorlage „'+name.trim()+'" gespeichert','ok');
+    await _loadProjektVorlagen(false);
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/** Vorlagen-Verwaltung CRUD-Modal. */
+async function openProjektVorlagenModal() {
+  document.getElementById('prj-vorl-modal')?.remove();
+  await _loadProjektVorlagen(false);
+  const m = document.createElement('div');
+  m.id = 'prj-vorl-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:740px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#1A3353;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>📚 Projekt-Vorlagen verwalten</span>'+
+      '<button onclick="document.getElementById(\'prj-vorl-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div id="prj-vorl-list" style="padding:18px 22px;flex:1;overflow-y:auto"></div>'+
+  '</div>';
+  document.body.appendChild(m);
+  _renderProjektVorlagenList();
+}
+
+function _renderProjektVorlagenList() {
+  const list = document.getElementById('prj-vorl-list');
+  if (!list) return;
+  const items = _projektVorlagenCache.items || [];
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Noch keine Vorlagen. Öffne ein bestehendes Projekt → <strong>💾 Als Vorlage speichern</strong>, um eine Blaupause anzulegen.</div>';
+    return;
+  }
+  list.innerHTML = items.map(rec => {
+    const f = rec.fields || {};
+    let pos = [];
+    try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    const totalEK = pos.reduce((s,b) => s + (+b.preis_ek||0), 0);
+    const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+    return '<div style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid #2152A9;border-radius:8px;padding:12px 14px;margin-bottom:10px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:200px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(f.name||'(ohne Name)')+'</div>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:4px">'+pos.length+' Baustein'+(pos.length===1?'':'e')+(canSeePrices() && totalEK>0 ? ' · Σ EK '+fmt(totalEK)+' €' : '')+'</div>'+
+          (pos.length ? '<div style="font-size:11px;color:var(--txt2);margin-top:6px;line-height:1.5">'+pos.slice(0,5).map((b,i) => (i+1)+'. '+escapeHtml(b.titel||'(?)')).join('<br>')+(pos.length>5?'<br>… +'+(pos.length-5)+' weitere':'')+'</div>' : '')+
+        '</div>'+
+        '<div style="display:flex;gap:6px;flex-direction:column">'+
+          '<button class="btn" onclick="_prjVorlageDelete(\''+rec.id+'\')" style="font-size:11px;padding:4px 10px;color:var(--err);border-color:rgba(220,38,38,.3)">🗑 Löschen</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+async function _prjVorlageDelete(recId) {
+  if (!confirm('Vorlage wirklich löschen?\n\nBestehende Projekte die mit dieser Vorlage angelegt wurden bleiben erhalten.')) return;
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekt_Vorlagen/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    toast('🗑 Gelöscht','ok');
+    await _loadProjektVorlagen(false);
+    _renderProjektVorlagenList();
   } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
