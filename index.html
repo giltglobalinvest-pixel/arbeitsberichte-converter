@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.15';
+const APP_VERSION = 'v5.16';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -19764,14 +19764,14 @@ async function openAngebotWizard() {
         '<div id="ang-w-hint-prompt" style="display:none;background:#F0FDF4;border-left:3px solid #10b981;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#065F46">'+
           '✍️ Beschreibe das Angebot frei — die KI generiert daraus Anschreiben, Positionen, Leistungsbeschreibung und Preisvorschläge. <strong>Du kannst Prompts als Vorlagen speichern</strong> und immer wieder verwenden (z.B. „Standard-Modernisierung 13-Personen-Aufzug").'+
         '</div>'+
-        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
+        '<div id="ang-w-typ-row" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
           '<div>'+
             '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Angebotstyp</label>'+
             '<select id="ang-w-typ" style="cursor:pointer;width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
               ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'">'+t.label+'</option>').join('')+
             '</select>'+
           '</div>'+
-          '<div>'+
+          '<div id="ang-w-anbieter-block">'+
             '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Anbieter (Quelle)</label>'+
             '<select id="ang-w-anbieter" onchange="_angWizardOnAnbieterChange()" style="cursor:pointer;width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
               ANGEBOT_VERIFIED_ANBIETER.map(v => '<option value="'+escapeHtml(v.name)+'">'+v.icon+' '+escapeHtml(v.name)+' ✓ verifiziert</option>').join('')+
@@ -19929,6 +19929,8 @@ function _angWizardSetMode(mode) {
   const hintB     = document.getElementById('ang-w-hint-prompt');
   const go        = document.getElementById('ang-w-go');
   const title     = document.getElementById('ang-w-title');
+  const anbBlock  = document.getElementById('ang-w-anbieter-block');
+  const typRow    = document.getElementById('ang-w-typ-row');
   if (mode === 'prompt') {
     if (tabPdf)    { tabPdf.style.background    = 'transparent'; tabPdf.style.color    = 'var(--txt2)'; tabPdf.style.borderBottomColor    = 'transparent'; tabPdf.style.fontWeight    = '600'; }
     if (tabPrompt) { tabPrompt.style.background = '#fff';        tabPrompt.style.color = '#10b981';     tabPrompt.style.borderBottomColor = '#10b981';     tabPrompt.style.fontWeight = '700'; }
@@ -19938,6 +19940,9 @@ function _angWizardSetMode(mode) {
     if (hintB) hintB.style.display = '';
     if (title) title.textContent = '✍️ Neues Angebot — Nur aus Prompt';
     if (go)    { go.textContent = '🤖 Generieren'; go.disabled = false; go.style.opacity = '1'; }
+    // Anbieter-Quelle bei Prompt-Modus weglassen + Typ einspaltig anzeigen
+    if (anbBlock) anbBlock.style.display = 'none';
+    if (typRow)   typRow.style.gridTemplateColumns = '1fr';
   } else {
     if (tabPrompt) { tabPrompt.style.background = 'transparent'; tabPrompt.style.color = 'var(--txt2)'; tabPrompt.style.borderBottomColor = 'transparent'; tabPrompt.style.fontWeight = '600'; }
     if (tabPdf)    { tabPdf.style.background    = '#fff';        tabPdf.style.color    = '#2152A9';    tabPdf.style.borderBottomColor    = '#2152A9';    tabPdf.style.fontWeight    = '700'; }
@@ -19952,6 +19957,8 @@ function _angWizardSetMode(mode) {
       go.disabled = !hasFile;
       go.style.opacity = hasFile ? '1' : '.5';
     }
+    if (anbBlock) anbBlock.style.display = '';
+    if (typRow)   typRow.style.gridTemplateColumns = '1fr 1fr';
   }
 }
 
@@ -20898,7 +20905,7 @@ function _angEditorRender() {
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Bearbeiter (VP) *</label>'+
         '<input id="ang-fld-bearbeiter" value="'+escapeHtml(E.bearbeiter)+'" oninput="_angEditorSet(\'bearbeiter\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;color:#222;background:#fff"></div>'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--txt3);display:block;margin-bottom:4px">KONE-Equipmentnummer</label>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--txt3);display:block;margin-bottom:4px">'+(_angIsManuell(E) ? 'Equipment-/Anlagennummer' : (E.anbieter||'Anbieter')+'-Equipmentnummer')+'</label>'+
         '<input value="'+escapeHtml(E.equipmentnummer||'')+'" oninput="_angEditorSet(\'equipmentnummer\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff"></div>'+
     '</div>'+
     // Anschreiben
@@ -20907,10 +20914,10 @@ function _angEditorRender() {
     '</div>'+
     // Positionen
     '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
-      '<span style="font-size:11px;color:var(--txt3)">Trage rechts deinen Verkaufspreis (VP) ein — Default = KONE-EK × 1.20</span>'+
+      '<span style="font-size:11px;color:var(--txt3)">'+(_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')+'</span>'+
     '</div>'+
     '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px">'+
-      E.positionen.map((p, i) => _angRenderPositionRow(p, i)).join('')+
+      E.positionen.map((p, i) => _angRenderPositionRow(p, i, E)).join('')+
     '</div>'+
     // Summary — eigener Container, damit wir ihn bei VP-Tippen live aktualisieren können
     '<div id="ang-summary-box" style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
@@ -21525,13 +21532,28 @@ function _angRenderSummaryBoxHtml(E) {
   '</div>';
 }
 
-function _angRenderPositionRow(p, i) {
+/** v5.16: True wenn kein Original-Anbieter vorhanden (Prompt-only Modus).
+ *  Erlaubt EK-Feld editierbar + neutralisiert KONE-bezogene Labels. */
+function _angIsManuell(E) {
+  const a = String(E?.anbieter||'').trim().toLowerCase();
+  return !a || a === 'manuell' || a === 'aszendio' || a === 'aufzugshandwerk';
+}
+
+function _angRenderPositionRow(p, i, E) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   const gesamt = (+p.vp||0) * (+p.menge||1);
   const leistungHtml = (p.leistungsbeschreibung||[]).map(l => '<div>• '+escapeHtml(l)+'</div>').join('');
   const isHidden = !!p.hidden;
+  const isManuell = _angIsManuell(E);
+  const ekLabel = isManuell ? 'EK (manuell)' : 'EK ('+(E?.anbieter||'Anbieter')+')';
   const rowOpacity = isHidden ? '0.4' : '1';
   const rowBg = isHidden ? '#F3F4F6' : (i%2?'#FAFBFD':'#fff');
+  // Bei manueller Eingabe: EK ist editierbar; sonst read-only Display.
+  const ekCell = isManuell
+    ? '<div><label style="font-size:10px;color:#0E7490;font-weight:700;display:block">'+ekLabel+'</label>'+
+        '<input type="number" step="0.01" min="0" id="ang-pos-ek-'+i+'" value="'+(p.ep_kone||'')+'" oninput="_angSetPos('+i+',\'ep_kone\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #67E8F9;border-radius:4px;font-size:12px;font-weight:600;color:#0E7490;text-align:right;background:#ECFEFF"></div>'
+    : '<div><label style="font-size:10px;color:var(--txt3);display:block">'+ekLabel+'</label>'+
+        '<div style="font-size:12px;color:var(--txt2);padding:5px 0">'+fmt(p.ep_kone)+' €</div></div>';
   return '<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);background:'+rowBg+';opacity:'+rowOpacity+';position:relative">'+
     (isHidden ? '<div style="position:absolute;top:8px;right:14px;background:#6B7280;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">👁‍🗨 NICHT IM ANGEBOT</div>' : '')+
     '<div style="display:grid;grid-template-columns:30px 1fr 90px 130px 100px 32px;gap:10px;align-items:start">'+
@@ -21540,8 +21562,7 @@ function _angRenderPositionRow(p, i) {
         '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px'+(isHidden?';text-decoration:line-through':'')+'">'+
         (leistungHtml ? '<div style="font-size:11px;color:var(--txt2);line-height:1.5">'+leistungHtml+'</div>' : '')+
       '</div>'+
-      '<div><label style="font-size:10px;color:var(--txt3);display:block">EK (KONE)</label>'+
-        '<div style="font-size:12px;color:var(--txt2);padding:5px 0">'+fmt(p.ep_kone)+' €</div></div>'+
+      ekCell+
       '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">VP (deins) *</label>'+
         '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>'+
       '<div><label style="font-size:10px;color:var(--txt3);display:block">Gesamt VP</label>'+
@@ -21574,7 +21595,7 @@ function _angSetPos(i, field, value) {
   // Titel-Änderung: kein Re-Render nötig (kein Wert auf Summen).
   // VP/Menge: nur betroffene "Gesamt"-Zelle + Summary-Box neu berechnen — KEIN voller Re-Render
   // (das würde den Cursor aus dem Input werfen).
-  if (field === 'vp' || field === 'menge') {
+  if (field === 'vp' || field === 'menge' || field === 'ep_kone') {
     const p = m._state.positionen[i];
     const ges = (+p.vp||0) * (+p.menge||1);
     const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
