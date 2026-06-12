@@ -2639,7 +2639,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.32';
+const APP_VERSION = 'v5.33';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11630,7 +11630,15 @@ async function openBerichtForm(auftragId, berichtId) {
   `;
 
   // v5.29: Folge-Ticket-Card NICHT mehr im Bericht-Form — der Trigger gehört ans Auftrag-Detail.
-  document.getElementById('bf-body').innerHTML = infoCard + formHtml + imageCard + signCards;
+  // v5.33: Übersetzungs-Card oben — Techniker schreibt auf Arabisch/Persisch, KI macht Deutsch fürs PDF.
+  const translateCard = `
+    <div class="card" data-no-translate="true" style="background:#EFF6FF;border-color:#93C5FD">
+      <div class="card-title" style="color:#1E3A8A">🌐 Auf Arabisch oder Persisch geschrieben?</div>
+      <div style="font-size:12px;color:#1E40AF;line-height:1.5;margin-bottom:10px">Schreib die Berichts-Inhalte (Beschreibung, Sonstiges, …) ruhig in <strong>Arabisch</strong> oder <strong>Persisch</strong> — klick danach den Button, die KI übersetzt alle Textfelder ins Deutsche. Das PDF wird immer in Deutsch erzeugt.</div>
+      <button type="button" class="btn" onclick="_bfTranslateAllFields(this)" style="background:#2152A9;color:#fff;border-color:#2152A9;font-weight:600">🌐 Alle Felder ins Deutsche übersetzen</button>
+    </div>
+  `;
+  document.getElementById('bf-body').innerHTML = infoCard + translateCard + formHtml + imageCard + signCards;
   _bfRenderImageGrid();
   // Save-Button-Text passend
   const saveBtn = document.getElementById('bf-save-btn');
@@ -12012,6 +12020,106 @@ function _bfRemoveImage(idx) {
   if (idx < 0 || idx >= _bfImages.length) return;
   _bfImages.splice(idx, 1);
   _bfRenderImageGrid();
+}
+
+/**
+ * v5.33: Übersetzt alle Textfelder im Bericht-Form ins Deutsche.
+ * Liest aus allen <textarea data-f> + <input data-f> (außer Zahlen/Daten/Hidden),
+ * schickt sie batched per Tool-Use an Claude, ersetzt die Werte mit der dt. Übersetzung.
+ * Quellsprache wird auto-erkannt (Arabisch, Persisch, Englisch …). Schon-deutsche Texte
+ * werden 1:1 zurückgegeben.
+ */
+async function _bfTranslateAllFields(btn) {
+  if (!APP_KEYS.anthropicKey) return toast('Anthropic-API-Key fehlt','err');
+  // Kandidaten sammeln: Textareas + Text-Inputs (keine number/date/hidden, keine reinen Toggle-Inputs)
+  const root = document.getElementById('bf-body');
+  if (!root) return;
+  const els = [...root.querySelectorAll('textarea[data-f], input[data-f]')]
+    .filter(el => {
+      if (el.tagName === 'INPUT') {
+        const t = (el.type || '').toLowerCase();
+        if (t === 'number' || t === 'date' || t === 'hidden' || t === 'checkbox' || t === 'radio') return false;
+        // fiBool nutzt versteckte Inputs für Ja/Nein, die sind type=hidden — bereits gefiltert.
+      }
+      return true;
+    });
+  const items = [];
+  for (const el of els) {
+    const v = (el.value || '').trim();
+    if (!v || v.length < 2) continue;
+    // Reine Zahlen/Daten/Symbole überspringen
+    if (/^[\d\s.,:;_\-+=\/\\#@%§]+$/.test(v)) continue;
+    items.push({ el, original: v });
+  }
+  if (!items.length) return toast('Keine Texte zum Übersetzen','');
+
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Übersetze '+items.length+' Feld(er) …';
+
+  try {
+    const tool = {
+      name: 'submit_german_translations',
+      description: 'Liefert die deutschen Übersetzungen der gegebenen Berichts-Texte. Quellsprache kann Arabisch, Persisch, Englisch o.a. sein. Schon-deutsche Texte 1:1 zurückgeben.',
+      input_schema: {
+        type: 'object',
+        required: ['translations'],
+        properties: {
+          translations: {
+            type: 'array',
+            description: 'Deutsche Übersetzungen in derselben Reihenfolge wie die Eingabe-Texte.',
+            items: { type: 'string' },
+          },
+        },
+      },
+    };
+    // Einzeltexte mit Trenner damit Claude die Zuordnung sauber hinkriegt
+    const numbered = items.map((it, i) => '['+(i+1)+']\n'+it.original).join('\n\n---\n\n');
+    const prompt =
+      'Du bekommst Inhalte eines Aufzugstechniker-Arbeitsberichts. Quellsprache: meist Arabisch oder Persisch, manchmal Englisch.\n\n'+
+      'Aufgabe: Übersetze JEDEN Eintrag ins DEUTSCHE — sachlich, präzise, kurz, wie ein deutscher Aufzugstechniker im Berichtformular schreiben würde.\n\n'+
+      'Regeln:\n'+
+      '• Fachbegriffe der Aufzugstechnik korrekt: Schacht, Antrieb, Steuerung, Notrufknopf, Frequenzumrichter, Tableau, Türantrieb, Bremse, Kabine, Schachttür, etc.\n'+
+      '• Wenn der Text BEREITS Deutsch ist: 1:1 zurückgeben.\n'+
+      '• Eigennamen, Firmennamen, Produktnamen unverändert (KONE, Schindler, OTIS, TK, Aszendio).\n'+
+      '• Maße, Zahlen, Datumsangaben unverändert.\n'+
+      '• Keine Erklärungen, keine Vorrede — nur die deutsche Version.\n\n'+
+      'INHALTE:\n\n'+numbered+'\n\n'+
+      'Rufe submit_german_translations mit den deutschen Übersetzungen in derselben Reihenfolge auf.';
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        max_tokens: 6000,
+        tools:[tool],
+        tool_choice:{ type:'tool', name:'submit_german_translations' },
+        messages:[{ role:'user', content: prompt }],
+      }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data?.error?.message || ('API '+r.status));
+    const block = (data?.content||[]).find(b => b.type === 'tool_use');
+    const translations = block?.input?.translations;
+    if (!Array.isArray(translations)) throw new Error('Keine translations vom Tool');
+    let n = 0;
+    for (let i = 0; i < items.length; i++) {
+      const t = translations[i];
+      if (t && typeof t === 'string' && t.trim()) {
+        items[i].el.value = t.trim();
+        // Originals für Notfall am Element merken
+        items[i].el.dataset.origLang = items[i].original;
+        n++;
+      }
+    }
+    toast('✅ '+n+'/'+items.length+' Feld(er) ins Deutsche übersetzt — du kannst speichern','ok');
+  } catch(e) {
+    toast('❌ Übersetzung: '+(e.message||e).slice(0,180),'err');
+    console.error('[Bericht-Translate]', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 async function saveBerichtFromForm() {
