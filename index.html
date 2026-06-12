@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.27';
+const APP_VERSION = 'v5.28';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7143,9 +7143,15 @@ function _ftRenderBody() {
       // Video
       '<div>'+
         '<label style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between;align-items:center;margin-bottom:6px"><span>🎬 Videos</span><span id="ft-video-count" style="color:var(--txt3);font-weight:500">'+_ftState.videos.length+'</span></label>'+
+        // v5.28: Live-Preview während der Aufnahme
+        '<div id="ft-video-preview-wrap" style="display:none;margin-bottom:8px;position:relative">'+
+          '<video id="ft-video-preview" autoplay muted playsinline style="width:100%;max-height:240px;background:#000;border-radius:8px;display:block;object-fit:contain"></video>'+
+          '<div style="position:absolute;top:8px;left:8px;background:#DC2626;color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:99px;display:flex;align-items:center;gap:5px"><span style="width:8px;height:8px;border-radius:50%;background:#fff;animation:ft-pulse 1.2s infinite"></span>REC</div>'+
+        '</div>'+
         '<div id="ft-video-list" style="display:flex;flex-direction:column;gap:6px;margin-bottom:6px"></div>'+
         '<button type="button" id="ft-video-btn" onclick="_ftToggleVideo()" class="btn" style="font-size:12px;padding:6px 12px;color:#5b21b6;border-color:rgba(91,33,182,.35);background:rgba(124,58,237,.08)">🎬 Aufnahme starten</button>'+
         '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Tipp: kurz halten (max ~30 s) — größere Videos können das Ticket-Upload-Limit überschreiten.</div>'+
+        '<style>@keyframes ft-pulse{0%,100%{opacity:1}50%{opacity:.3}}</style>'+
       '</div>'+
       // Priorität
       '<div>'+
@@ -7236,9 +7242,28 @@ async function _ftToggleMedia(kind) {
       stream.getTracks().forEach(t => t.stop());
       if (_ftState.mediaTimer) { clearInterval(_ftState.mediaTimer); _ftState.mediaTimer = null; }
       _ftState.mediaRec = null; _ftState.mediaKind = null;
+      // v5.28: Live-Preview ausblenden
+      if (kind === 'video') {
+        const vidEl = document.getElementById('ft-video-preview');
+        const wrapEl = document.getElementById('ft-video-preview-wrap');
+        if (vidEl) { try { vidEl.srcObject = null; } catch(_){} }
+        if (wrapEl) wrapEl.style.display = 'none';
+      }
       if (kind === 'audio') _ftRenderAudioList(); else _ftRenderVideoList();
       if (btn) { btn.textContent = (kind==='audio'?'🎙':'🎬')+' Aufnahme starten'; btn.style.background = (kind==='audio'?'#ECFDF5':'rgba(124,58,237,.08)'); }
     };
+    // v5.28: Live-Preview einblenden (nur Video — Audio hat keinen visuellen Stream)
+    if (kind === 'video') {
+      const vidEl = document.getElementById('ft-video-preview');
+      const wrapEl = document.getElementById('ft-video-preview-wrap');
+      if (vidEl && wrapEl) {
+        vidEl.srcObject = stream;
+        vidEl.muted = true; vidEl.playsInline = true;
+        wrapEl.style.display = 'block';
+        // Auf iOS muss play() ggf. explizit aufgerufen werden
+        try { await vidEl.play(); } catch(_){}
+      }
+    }
     rec.start();
     _ftState.mediaRec = rec; _ftState.mediaKind = kind; _ftState.mediaStartTs = startTs;
     if (btn) { btn.style.background = '#FEE2E2'; }
