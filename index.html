@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.38';
+const APP_VERSION = 'v5.39';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -32530,7 +32530,7 @@ async function _prjOpenPresentation(recId) {
     '<div class="prj-pres-toolbar" style="background:#1A3353;color:#fff;padding:10px 18px;display:flex;justify-content:space-between;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,.2)">'+
       '<div style="font-weight:600;font-size:14px">🎨 Projekt-Ansicht — PRJ-'+escapeHtml(String(f.projekt_num||'?'))+'</div>'+
       '<div style="display:flex;gap:8px">'+
-        '<button onclick="window.print()" class="btn prim" style="background:#fff;color:#1A3353;border-color:#fff;font-weight:600;padding:6px 14px;font-size:13px">📄 PDF speichern / drucken</button>'+
+        '<button onclick="_prjPrintPresentation()" class="btn prim" style="background:#fff;color:#1A3353;border-color:#fff;font-weight:600;padding:6px 14px;font-size:13px">📄 PDF speichern / drucken</button>'+
         '<button onclick="document.getElementById(\'prj-present\').remove()" class="btn" style="background:rgba(255,255,255,.15);color:#fff;border-color:rgba(255,255,255,.3);padding:6px 14px;font-size:13px">✕ Schließen</button>'+
       '</div>'+
     '</div>'+
@@ -32538,19 +32538,40 @@ async function _prjOpenPresentation(recId) {
     '<div class="prj-pres-scroll" style="flex:1;overflow-y:auto;background:linear-gradient(180deg,#F8FAFC 0%,#fff 60%);-webkit-print-color-adjust:exact;print-color-adjust:exact">'+
       _prjBuildPresentationHtml(rec, positionen, attMap)+
     '</div>'+
-    // Print-CSS
+    // v5.39: Print-CSS — alles ausser #prj-present per display:none,
+    // Flex auf block für korrekte Höhen-Berechnung im Print-Modus.
     '<style>'+
       '@media print {'+
-        '.prj-pres-toolbar { display:none !important; }'+
-        '#prj-present { position:static !important; height:auto !important; }'+
-        '.prj-pres-scroll { overflow:visible !important; height:auto !important; background:#fff !important; }'+
+        'html, body { background:#fff !important; height:auto !important; overflow:visible !important; }'+
+        'body > *:not(#prj-present) { display:none !important; }'+
+        '#prj-present { position:static !important; display:block !important; height:auto !important; overflow:visible !important; background:#fff !important; inset:auto !important; }'+
+        '#prj-present .prj-pres-toolbar { display:none !important; }'+
+        '#prj-present .prj-pres-scroll { display:block !important; flex:none !important; overflow:visible !important; height:auto !important; background:#fff !important; }'+
         '.prj-pres-card { break-inside: avoid; page-break-inside: avoid; }'+
-        '@page { size: A4; margin: 14mm; }'+
-        'body * { visibility: hidden; }'+
-        '#prj-present, #prj-present * { visibility: visible; }'+
-        '#prj-present { left:0;top:0 }'+
+        '@page { size: A4; margin: 12mm; }'+
       '}'+
     '</style>';
+}
+
+/** v5.39: Print-Trigger — ruft window.print() asynchron auf damit das Layout
+ *  vor dem Print zu Ruhe kommt. Auf iOS Safari ist das wichtig damit Print
+ *  korrekt das #prj-present rendert (sonst weisse Seite). */
+function _prjPrintPresentation() {
+  // Erst sicherstellen dass alle Bilder geladen sind
+  const wrap = document.getElementById('prj-present');
+  if (!wrap) return;
+  const imgs = wrap.querySelectorAll('img');
+  const pending = [...imgs].filter(img => !img.complete);
+  const doPrint = () => setTimeout(() => window.print(), 100);
+  if (!pending.length) return doPrint();
+  let done = 0;
+  pending.forEach(img => {
+    const onDone = () => { if (++done === pending.length) doPrint(); };
+    img.addEventListener('load', onDone, { once:true });
+    img.addEventListener('error', onDone, { once:true });
+  });
+  // Sicherheits-Timeout
+  setTimeout(doPrint, 3000);
 }
 
 function _prjBuildPresentationHtml(rec, positionen, attMap) {
