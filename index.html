@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.19';
+const APP_VERSION = 'v5.20';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6408,6 +6408,11 @@ function _normAuftragStatus(s) {
 
 function renderAuftraegeList() {
   const list = document.getElementById('auf-list');
+  // v5.20: Berichte einmal pro Firma lazy nachladen (für Rechnungs-/FD-Zeile)
+  const _firma = getCurrentFirmaSlug();
+  if (!isFirmaAll() && (!_aufBerichteByAuftrag.map || _aufBerichteByAuftrag.firma !== _firma)) {
+    _aufLoadBerichteForList(_firma);
+  }
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
   // Cache nach hidden_invoiced ODER hidden_manual vorfiltern (außer Toggle ist aktiv)
   const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
@@ -6532,6 +6537,42 @@ function renderAuftraegeList() {
   }
 }
 
+// v5.20: Cache der Berichte-Lookup für die Auftrags-Liste.
+// Gruppiert die Berichte nach auftrag_id (Airtable-Recordid), damit wir pro
+// Auftrag schnell die FD-Tickets + bericht_num auflisten können.
+let _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+
+async function _aufLoadBerichteForList(firmaSlug) {
+  if (_aufBerichteByAuftrag.loading) return;
+  if (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.firma === firmaSlug && (Date.now() - _aufBerichteByAuftrag.loadedAt) < 5*60_000) return;
+  _aufBerichteByAuftrag.loading = true;
+  try {
+    const all = await atRead('Berichte', null);
+    const map = Object.create(null);
+    for (const rec of all) {
+      const f = rec.fields || {};
+      if (_firmaOfRec(rec) !== firmaSlug) continue;
+      if (!f.auftrag_id) continue;
+      (map[f.auftrag_id] = map[f.auftrag_id] || []).push({
+        id: rec.id,
+        bericht_num: f.bericht_num || null,
+        fd_ticket_id:  f.fd_ticket_id  || null,
+        fd_ticket_url: f.fd_ticket_url || '',
+        datum: f.datum || '',
+      });
+    }
+    // pro Auftrag: chronologisch sortieren (älteste zuerst → Ticket #1, #2 …)
+    for (const k of Object.keys(map)) {
+      map[k].sort((a,b) => (a.bericht_num||0) - (b.bericht_num||0));
+    }
+    _aufBerichteByAuftrag = { firma:firmaSlug, map, loadedAt:Date.now(), loading:false };
+    renderAuftraegeList();
+  } catch(e) {
+    console.warn('[Aufträge] Berichte-Lookup fehlgeschlagen:', e.message);
+    _aufBerichteByAuftrag.loading = false;
+  }
+}
+
 function _auftragCardHtml(r) {
   const f = r.fields;
   const status = _normAuftragStatus(f.status);
@@ -6562,6 +6603,22 @@ function _auftragCardHtml(r) {
   let hiddenBadge = '';
   if (f.hidden_invoiced) hiddenBadge += '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D">🙈 Rechnung im ERP'+(f.invoice_num?' · '+String(f.invoice_num).replace(/</g,'&lt;'):'')+'</span>';
   if (f.hidden_manual)   hiddenBadge += '<span style="font-size:10px;font-weight:600;padding:2px 7px;border-radius:99px;background:#E0E7FF;color:#3730A3;border:1px solid #A5B4FC">🙈 manuell</span>';
+  // v5.20: Rechnung + FD-Tickets als zweite Meta-Zeile
+  const fdList = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[r.id]) || [];
+  const fdTickets = fdList.filter(b => b.fd_ticket_id);
+  const linkChips = fdTickets.map(b => b.fd_ticket_url
+    ? '<a href="'+escapeHtml(b.fd_ticket_url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Freshdesk-Ticket #'+b.fd_ticket_id+' im neuen Tab oeffnen" style="background:#ECFDF5;color:#065F46;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #6EE7B7;text-decoration:none;display:inline-flex;align-items:center;gap:3px">🎫 #'+escapeHtml(String(b.fd_ticket_id))+' ↗</a>'
+    : '<span style="background:#F3F4F6;color:#6B7280;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #E5E7EB">🎫 #'+escapeHtml(String(b.fd_ticket_id))+'</span>'
+  ).join('');
+  const fdCountBadge = fdTickets.length > 1
+    ? '<span style="font-size:10px;color:var(--txt3);margin-right:4px">'+fdTickets.length+'×</span>'
+    : '';
+  const rechnungChip = f.invoice_num
+    ? '<span style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #FCD34D" title="Rechnung im ERP">📄 Rg. '+escapeHtml(String(f.invoice_num))+(f.invoice_date?' · '+escapeHtml(String(f.invoice_date).slice(0,10)):'')+'</span>'
+    : '';
+  const extraMeta = (rechnungChip || linkChips)
+    ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+rechnungChip+fdCountBadge+linkChips+'</div>'
+    : '';
   // Preis-Spalte (rechts) — nur wenn User canSeePrices() darf
   const showPrice = canSeePrices();
   const hasPrice = f.auftragswert_netto != null;
@@ -6590,6 +6647,7 @@ function _auftragCardHtml(r) {
                 ? '<span class="auf-tech-clickable" onclick="event.stopPropagation();openTechnikerQuickPicker(\''+r.id+'\',event)" style="color:#4338CA;cursor:pointer;font-weight:600;background:#EEF2FF;padding:2px 8px;border-radius:6px;border:1px dashed #A5B4FC" title="Techniker zuweisen">+ 👥 Zuweisen</span>'
                 : '<span style="color:var(--txt3)">👥 nicht zugewiesen</span>')}
         </div>
+        ${extraMeta}
       </div>
       ${priceHtml}
       <div class="auf-card-side">
