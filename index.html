@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.20';
+const APP_VERSION = 'v5.21';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6629,12 +6629,20 @@ function _auftragCardHtml(r) {
             : '<div class="price-value" style="color:var(--txt3);font-size:14px;font-weight:500">—</div><div class="price-label">nach Aufwand</div>')
         + '</div>'
     : '';
+  // v5.21: Auftragsnummer = ext_id (echte AuftragID aus ERP), Fallback auftrag_num.
+  // Alte Records ohne ext_id (oder vor v5.21 gesynct) zeigen weiter auftrag_num.
+  const auftragsNr = f.ext_id || f.auftrag_num || '–';
+  const vorgangsNr = f.ext_vorgangsnummer;
+  // Vorgangsnummer als kleines Sekundär-Badge daneben — interner Workflow-Counter
+  const vgBadge = vorgangsNr
+    ? '<span title="Vorgangsnummer (interner ERP-Workflow-Counter)" style="background:#F3F4F6;color:#6B7280;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;border:1px solid #E5E7EB;margin-left:6px">Vg. '+String(vorgangsNr).replace(/</g,'&lt;')+'</span>'
+    : '';
   return `
     <div class="auf-card" style="${cardStyle}" onclick="${onClick}">
       ${checkbox}
-      <div class="auf-card-num">#${f.auftrag_num || '–'}</div>
+      <div class="auf-card-num">#${String(auftragsNr).replace(/</g,'&lt;')}</div>
       <div class="auf-card-info">
-        <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}</div>
+        <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}${vgBadge}</div>
         <div class="auf-card-meta">
           ${firmaBadge}
           <span>🏷 ${tmplLabel}</span>
@@ -9029,25 +9037,27 @@ function closeAuftragForm() {
   }
 }
 
-/* Auftragsnummer aus ERP-Antwort defensiv extrahieren.
-   Bevorzugt die sichtbare Auftragsnummer (nicht die Vorgangsnummer).
-   Mehrere mögliche Feldnamen + verschachtelte Pfade werden geprüft. */
+/* Auftragsnummer aus ERP-Antwort.
+   v5.21: Im Aufzugshandwerk-ERP IST `id` die Auftragsnummer (= {AuftragID}
+   im Vorlagentext der Auftragsbestätigung). `vorgangsnummer` ist ein
+   interner Workflow-Counter und KEINE Auftragsnummer.
+   Die anderen Kandidaten bleiben als Fallback für ggf. andere ERPs. */
 function _erpAuftragNumber(a) {
   if (!a) return null;
-  // Top-Level-Felder in Prio-Reihenfolge (echte Auftragsnummer zuerst)
   const candidates = [
+    // Primär: ID des Auftrags (Aufzugshandwerk → entspricht {AuftragID})
+    a.id,
+    // Generische Namens-Varianten falls anderes ERP doch was anderes meldet
     a.auftragsnummer, a.auftragsNummer, a.auftragsNr, a.auftragNr, a.auftragNum, a.auftragNumber,
-    a.belegnummer,    a.belegNummer,   a.belegNr,    a.belegNum,
-    a.referenznummer, a.referenzNummer, a.refNr,     a.referenz,
+    a.belegnummer,    a.belegNummer,    a.belegNr,    a.belegNum,
+    a.referenznummer, a.referenzNummer, a.refNr,      a.referenz,
     a.bestellnummer,  a.bestellNummer,  a.bestellNr,
     a.nummer,         a.number,         a.no,
-    // Verschachtelt — manche ERPs packen das ins Angebot
+    // Verschachtelt
     a.angebot && a.angebot.auftragsnummer,
     a.angebot && a.angebot.nummer,
     a.auftragsbestaetigung && a.auftragsbestaetigung.nummer,
-    // Letzter Fallback: Vorgangsnummer (interne Workflow-ID) — und ganz hinten die DB-id
-    a.vorgangsnummer, a.vorgangsNummer, a.vorgangsNr,
-    a.id,
+    // Vorgangsnummer ist BEWUSST NICHT mehr Fallback — sie ist ein eigenes Feld.
   ];
   for (const v of candidates) {
     if (v != null && v !== '' && v !== 0) return v;
