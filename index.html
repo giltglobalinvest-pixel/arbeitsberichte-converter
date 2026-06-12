@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.18';
+const APP_VERSION = 'v5.19';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21971,29 +21971,12 @@ async function _buildAngebotPdf(rec) {
   doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
   doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
   y += 10;
-  // KONDITIONEN-BLOCK
-  const kondSections = [
-    ['Lieferzeit', rec.kond_lieferzeit],
-    ['Preisbasis', rec.kond_preisbasis],
-    ['Zahlung', rec.kond_zahlung],
-    ['Hinweise', rec.kond_hinweise],
-  ].filter(([_,v]) => (v||'').trim());
-  for (const [label, txt] of kondSections) {
-    if (y > 265) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
-    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...NAVY);
-    doc.text(label+':', ml, y); y += 5;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-    const lines = doc.splitTextToSize(_sanPdf(String(txt)), cw);
-    lines.forEach(l => {
-      if (y > 280) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
-      doc.text(l, ml, y); y += 4.5;
-    });
-    y += 4;
-  }
-  // AGB aus Firmen-Defaults
+  // v5.19: EINE einheitliche Konditionen-Sektion (boxed) — keine doppelte
+  // inline-Render mehr. Per-Record kond_* werden in _appendAngebotsKonditionen
+  // gegen die Firma-Defaults gemergt.
   if (typeof _appendAngebotsKonditionen === 'function') {
     try {
-      y = _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, y + 2, { NAVY, ACCENT, GREY, GREY_L, GREY_X });
+      y = _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, y + 2, { NAVY, ACCENT, GREY, GREY_L, GREY_X }, rec);
     } catch(e) { console.warn('[Angebot-PDF] Konditionen:', e); }
   }
   // FOOTER auf jeder Seite — 3-Spalten Briefpapier-Stil
@@ -23656,7 +23639,14 @@ function _sanPdf(s) {
 /* Hängt Angebots-Konditionen-Sektion (Lieferzeit/Gewährleistung/Zahlung/Geltungsdauer)
    + AGB-Seite an ein bestehendes PDF an. Wird von GBU- und DA-Angebot genutzt.
    Erwartet: doc (jsPDF-Instanz), ml/mr (Margins), aktuelle y-Position als Start. */
-function _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, yStart, colors) {
+/**
+ * Konditionen + AGB ans PDF anhängen.
+ * @param {object} [rec] - Optionaler Angebots-Record. Wenn vorhanden,
+ *   überschreiben rec.kond_lieferzeit / kond_zahlung / kond_preisbasis /
+ *   kond_hinweise die Firma-Defaults. Wird verwendet vom App_Angebote-Modul,
+ *   damit per Angebot extrahierte/geschriebene Konditionen Vorrang haben.
+ */
+function _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, yStart, colors, rec) {
   const k = getAngebotKonditionen(firmaSlug);
   const cw = mr - ml;
   const NAVY   = colors.NAVY   || [26,51,83];
@@ -23672,25 +23662,59 @@ function _appendAngebotsKonditionen(doc, firmaSlug, ml, mr, yStart, colors) {
   doc.text('Konditionen', ml, y); y += 2;
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, y, ml+38, y); y += 6;
 
-  const drawKondBlock = (icon, label, text) => {
-    if (!text) return;
-    const lines = doc.splitTextToSize(_sanPdf(text), cw - 4);
-    const blockH = 6 + lines.length * 4.2 + 4;
-    if (y + blockH > 280) { doc.addPage(); y = 22; }
-    doc.setFillColor(248, 250, 252); doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2);
-    doc.rect(ml, y, cw, blockH, 'FD');
-    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
-    doc.text(_sanPdf(icon+'  '+label), ml+3, y+5);
-    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-    let ly = y + 10;
-    lines.forEach(l => { doc.text(l, ml+3, ly); ly += 4.2; });
-    y += blockH + 3;
+  // v5.19: ohne Icon-Platzhalter (vorher [#]/[G]/[E]/[T] — waren als Emoji-
+  // Fallback gedacht, wurden aber als ASCII-Text gerendert und wirkten kryptisch).
+  // Page-Break: 268 statt 280 — Footer beginnt bei ~285, Briefpapier braucht Luft.
+  const FOOTER_SAFE = 268;
+  const drawKondBlock = (label, text) => {
+    if (!text || !String(text).trim()) return;
+    const lines = doc.splitTextToSize(_sanPdf(String(text)), cw - 6);
+    const blockH = 7 + lines.length * 4.2 + 4;
+    // Wenn der Block größer ist als eine Seite (~245mm nutzbar) →
+    // split: Header + so viele Zeilen wie passen, dann neue Seite + Rest ohne neuen Header.
+    const pageBudget = FOOTER_SAFE - 22;
+    if (blockH <= pageBudget) {
+      // Klassisch: passt am Stück
+      if (y + blockH > FOOTER_SAFE) { doc.addPage(); y = 22; }
+      doc.setFillColor(248, 250, 252); doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2);
+      doc.rect(ml, y, cw, blockH, 'FD');
+      doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+      doc.text(_sanPdf(label), ml+3, y+5);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+      let ly = y + 10;
+      lines.forEach(l => { doc.text(l, ml+3, ly); ly += 4.2; });
+      y += blockH + 3;
+    } else {
+      // Block ist länger als eine Seite — Zeile für Zeile rendern, Seitenwechsel pro Zeile
+      if (y + 12 > FOOTER_SAFE) { doc.addPage(); y = 22; }
+      doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(9.5);
+      doc.text(_sanPdf(label), ml+3, y+5);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+      let ly = y + 10;
+      for (const l of lines) {
+        if (ly > FOOTER_SAFE) { doc.addPage(); y = 22; ly = y + 5; }
+        doc.text(l, ml+3, ly); ly += 4.2;
+      }
+      y = ly + 3;
+    }
   };
 
-  drawKondBlock('[#]', 'Lieferzeit',             k.lieferzeit);
-  drawKondBlock('[G]', 'Gewaehrleistung',        k.gewaehrleistung);
-  drawKondBlock('[E]', 'Zahlungsbedingungen',    k.zahlung);
-  drawKondBlock('[T]', 'Angebot gueltig fuer '+k.geltungsdauer+' Tage', 'Geltungsdauer ab Datum der Erstellung dieses Angebots. Bei Annahme nach Ablauf behalten wir uns Preisanpassungen vor.');
+  // Per-Record-Override falls vorhanden, sonst Firma-Default
+  const lieferzeit = (rec && String(rec.kond_lieferzeit||'').trim()) || k.lieferzeit;
+  const zahlung    = (rec && String(rec.kond_zahlung   ||'').trim()) || k.zahlung;
+  // Preisbasis und Hinweise haben KEINEN Firma-Default — nur per Record
+  const preisbasis = rec && String(rec.kond_preisbasis||'').trim();
+  const hinweise   = rec && String(rec.kond_hinweise  ||'').trim();
+  // Geltungsdauer-Tage immer aus Firma; wenn per Record Preisbasis gesetzt, ist das die explizitere Aussage
+  const geltungstext = preisbasis
+    ? preisbasis
+    : ('Festpreis, gueltig '+k.geltungsdauer+' Tage ab Angebotsdatum. Bei Annahme nach Ablauf behalten wir uns Preisanpassungen vor.');
+
+  drawKondBlock('Lieferzeit',          lieferzeit);
+  drawKondBlock('Preisbasis',          geltungstext);
+  drawKondBlock('Zahlungsbedingungen', zahlung);
+  drawKondBlock('Gewaehrleistung',     k.gewaehrleistung);
+  if (hinweise) drawKondBlock('Hinweise', hinweise);
 
   // ── AGB-SEITE ──
   if (k.agb) {
