@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.23';
+const APP_VERSION = 'v5.24';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6727,6 +6727,8 @@ function _aufRenderBerichteSection(rec) {
     return '<div class="auf-section"><h3>Berichte</h3><div style="font-size:12px;color:var(--txt3)">Noch keine Berichte zu diesem Auftrag.</div></div>';
   }
   const canDelete = hasPermission('auftraege_edit') || hasPermission('delete_reports');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const canPushFd = hasPermission('auftraege_edit') && freshdeskIsConfigured(firmaSlug);
   const rows = list.map(b => {
     const ticketChip = b.fd_ticket_id
       ? (b.fd_ticket_url
@@ -6734,6 +6736,11 @@ function _aufRenderBerichteSection(rec) {
           : '<span style="background:#F3F4F6;color:#6B7280;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #E5E7EB">🎫 #'+escapeHtml(String(b.fd_ticket_id))+'</span>')
       : '';
     const datumLabel = b.datum ? ' · '+escapeHtml(String(b.datum)) : '';
+    // v5.24: 🎫-Push pro Bericht — nur sichtbar wenn FD konfiguriert und Bericht
+    // noch kein Ticket hat (idempotent: kein Re-Push erlauben).
+    const pushBtn = (canPushFd && !b.fd_ticket_id)
+      ? '<button class="btn" onclick="event.stopPropagation();_aufPushBerichtToFd(\''+rec.id+'\',\''+b.id+'\', this)" style="font-size:11px;padding:3px 9px;color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="Diesen Bericht als neues Freshdesk-Ticket pushen">🎫 Push</button>'
+      : '';
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;margin-bottom:6px;flex-wrap:wrap">'+
       '<div style="flex:1;min-width:160px;font-size:13px">'+
         '<a href="#" onclick="event.preventDefault();event.stopPropagation();viewAuftragsBericht(\''+b.id+'\')" style="color:var(--navy);font-weight:600;text-decoration:none">📄 Bericht Nr. '+escapeHtml(String(b.bericht_num||'?'))+'</a>'+
@@ -6741,12 +6748,21 @@ function _aufRenderBerichteSection(rec) {
       '</div>'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
         ticketChip+
+        pushBtn+
         (hasPermission('auftraege_edit') ? '<button class="btn" onclick="event.stopPropagation();openBerichtForm(\''+rec.id+'\',\''+b.id+'\')" style="font-size:11px;padding:3px 9px">✏</button>' : '')+
         (canDelete ? '<button class="btn" onclick="event.stopPropagation();_aufDeleteBericht(\''+rec.id+'\',\''+b.id+'\','+(b.bericht_num||0)+')" style="font-size:11px;padding:3px 9px;color:var(--err);border-color:rgba(220,38,38,.3)" title="Bericht löschen">🗑</button>' : '')+
       '</div>'+
     '</div>';
   }).join('');
-  return '<div class="auf-section"><h3>Berichte <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">'+list.length+'</span></h3>'+rows+'</div>';
+  // v5.24: "Alle in ein Ticket" — wenn mind. 2 Berichte UND wenigstens einer noch kein Ticket hat
+  const untickedCount = list.filter(b => !b.fd_ticket_id).length;
+  const headerActions = (list.length >= 2 && canPushFd && untickedCount >= 1)
+    ? '<button class="btn" onclick="_aufPushAllBerichteToFd(\''+rec.id+'\', this)" style="font-size:11px;padding:4px 10px;margin-left:auto;color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="Alle '+list.length+' Berichte gemeinsam in ein einziges Freshdesk-Ticket pushen">🎫 Alle in ein Ticket</button>'
+    : '';
+  return '<div class="auf-section">'+
+    '<div style="display:flex;align-items:center;gap:8px"><h3 style="margin:0">Berichte <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">'+list.length+'</span></h3>'+headerActions+'</div>'+
+    '<div style="margin-top:8px">'+rows+'</div>'+
+  '</div>';
 }
 
 async function _aufDeleteBericht(auftragRecId, berichtRecId, berichtNum) {
@@ -6847,6 +6863,161 @@ async function _aufCompleteWithFd(auftragRecId, btn) {
   } catch(e) {
     toast('❌ '+e.message, 'err');
     if (btn) { btn.disabled = false; btn.textContent = '✅ Auftrag fertigstellen'; }
+  }
+}
+
+/** v5.24: Einzelnen Bericht als neues FD-Ticket pushen.
+ *  Wenn der Bericht schon eine fd_ticket_id hat, wird vor dem Push gefragt. */
+async function _aufPushBerichtToFd(auftragRecId, berichtRecId, btn) {
+  const auftragRec = _auftragCache.find(r => r.id === auftragRecId);
+  if (!auftragRec) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    // Bericht-Record + PDF holen
+    const rR = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+berichtRecId, { headers:{ 'Authorization':'Bearer '+key } });
+    const berichtRec = await rR.json();
+    if (berichtRec.fields?.fd_ticket_id) {
+      if (!confirm('Dieser Bericht hat schon Ticket #'+berichtRec.fields.fd_ticket_id+'.\n\nTrotzdem ein weiteres Ticket anlegen? (Das alte bleibt in Freshdesk bestehen.)')) {
+        if (btn) { btn.disabled = false; btn.textContent = '🎫 Push'; }
+        return;
+      }
+    }
+    const pdfUrl = berichtRec?.fields?.out_pdf?.[0]?.url || '';
+    let pdfBlob = null;
+    if (pdfUrl) { try { pdfBlob = await (await fetch(pdfUrl)).blob(); } catch(_){} }
+    if (btn) btn.textContent = '🎫 …';
+    const result = await freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, pdfUrl);
+    if (result && result.ticketId) {
+      // Ticket-Info am Bericht speichern
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+berichtRecId, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ fd_ticket_id:result.ticketId, fd_ticket_url:result.ticketUrl||'' }}),
+        });
+      } catch(_){}
+      toast('🎫 Ticket #'+result.ticketId+' erstellt','ok');
+      // Cache invalidieren + Detail neu rendern
+      _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+      await loadAuftraegeAndRender();
+      openAuftragDetail(auftragRecId);
+    } else if (result && result.skipped) {
+      toast('ℹ '+result.reason,'');
+      if (btn) { btn.disabled = false; btn.textContent = '🎫 Push'; }
+    } else {
+      toast('⚠ Ticket konnte nicht erzeugt werden','warn');
+      if (btn) { btn.disabled = false; btn.textContent = '🎫 Push'; }
+    }
+  } catch(e) {
+    toast('❌ '+(e.message||e).slice(0,200), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🎫 Push'; }
+  }
+}
+
+/** v5.24: Alle Berichte des Auftrags als EIN gesamtes FD-Ticket pushen.
+ *  Hängt alle PDFs an, beschreibt jeden Bericht im Body, schreibt die
+ *  gemeinsame ticket_id auf alle Berichte zurück (auch die mit existierender id —
+ *  als zweites Ticket; das alte bleibt in Freshdesk bestehen). */
+async function _aufPushAllBerichteToFd(auftragRecId, btn) {
+  const auftragRec = _auftragCache.find(r => r.id === auftragRecId);
+  if (!auftragRec) return;
+  const list = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[auftragRecId]) || [];
+  if (!list.length) return toast('Keine Berichte zum Pushen','err');
+  const firmaSlug = auftragRec.fields.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für '+firmaSlug+' nicht konfiguriert','err');
+  const af = auftragRec.fields;
+  const alreadyTicketed = list.filter(b => b.fd_ticket_id);
+  if (alreadyTicketed.length > 0) {
+    if (!confirm(alreadyTicketed.length+' der '+list.length+' Berichte hat schon ein Ticket.\n\nTrotzdem alle in ein NEUES Sammel-Ticket pushen?\n(Die alten Tickets bleiben in Freshdesk bestehen.)')) return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sammle Berichte…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    // Alle Bericht-Records + PDFs laden
+    const detailed = [];
+    for (const b of list) {
+      try {
+        const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+b.id, { headers:{ 'Authorization':'Bearer '+key } });
+        const rec = await r.json();
+        const pdfUrl = rec?.fields?.out_pdf?.[0]?.url || '';
+        let blob = null;
+        if (pdfUrl) { try { blob = await (await fetch(pdfUrl)).blob(); } catch(_){} }
+        detailed.push({ id:b.id, fields:rec.fields||{}, pdfBlob:blob, pdfUrl });
+      } catch(_) {}
+    }
+    if (btn) btn.textContent = '🎫 Erzeuge Ticket…';
+    // Ticket-Beschreibung
+    const subject = 'Sammel-Ticket: '+detailed.length+' Berichte zu Auftrag #'+(af.auftrag_num||'?')+' – '+(af.standort||'').slice(0,60);
+    const firmaRec = (_firmenCache||[]).find(x => x.fields.slug === firmaSlug);
+    const erpPrefix = (firmaRec?.fields?.erp_auftrag_url || '').trim();
+    const erpUrl = (erpPrefix && af.auftrag_num) ? erpPrefix.replace(/\/+$/,'') + '/' + String(af.auftrag_num) : '';
+    const intro = [];
+    intro.push('<p>Auftrag kann abgerechnet werden.</p>');
+    if (erpUrl) intro.push('<p>🔗 <strong>Link zum Auftrag im ERP:</strong> <a href="'+escapeHtml(erpUrl)+'">'+escapeHtml(erpUrl)+'</a></p>');
+    intro.push('<p>Dieses Ticket fasst <strong>'+detailed.length+' Berichte</strong> zusammen:</p>');
+    const bullets = detailed.map(d => {
+      const f = d.fields;
+      const parts = ['<strong>Bericht Nr. '+(f.bericht_num||'?')+'</strong>'];
+      if (f.datum)        parts.push('Datum: '+escapeHtml(f.datum));
+      if (f.techniker)    parts.push('Techniker: '+escapeHtml(f.techniker));
+      if (d.pdfUrl)       parts.push('<a href="'+escapeHtml(d.pdfUrl)+'">PDF öffnen</a>');
+      return '<li>'+parts.join(' · ')+'</li>';
+    }).join('');
+    const description = [
+      intro.join(''),
+      '<hr>',
+      '<ul>'+bullets+'</ul>',
+      '<p>Alle Berichte sind als PDF-Anhang beigefügt.</p>',
+    ].join('');
+    // FD-Type aus angebot_typ
+    const ANGEBOT_TO_FD_TYPE = { WARTUNG_NOTRUF:'Wartung', WARTUNG:'Wartung', PAUSCHAL:'Pauschal', AUFWAND:'Nach Aufwand', MODERNISIERUNG:'Modernisierung' };
+    const fdType = ANGEBOT_TO_FD_TYPE[String(af.angebot_typ||'').toUpperCase()] || null;
+    // FormData mit allen PDFs
+    const fd = new FormData();
+    fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
+    fd.append('subject', subject);
+    fd.append('description', description);
+    fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
+    if (fdType) fd.append('type', fdType);
+    for (const d of detailed) {
+      if (d.pdfBlob) {
+        const fname = 'bericht-'+(d.fields.bericht_num||'').toString().replace(/[^\w-]/g,'')+'.pdf';
+        fd.append('attachments[]', d.pdfBlob, fname);
+      }
+    }
+    await erpEnsureSession();
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+    const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body:fd });
+    const text = await res.text();
+    let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
+    if (!res.ok) throw new Error('Freshdesk HTTP '+res.status+(data?.errors? ': '+JSON.stringify(data.errors).slice(0,200) : ''));
+    const ticketId = data?.id;
+    const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
+    if (ticketId) {
+      // Auf alle Berichte zurückschreiben
+      for (const d of detailed) {
+        try {
+          await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+d.id, {
+            method:'PATCH',
+            headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+            body: JSON.stringify({ fields:{ fd_ticket_id:ticketId, fd_ticket_url:ticketUrl }}),
+          });
+        } catch(_){}
+      }
+      toast('🎫 Sammel-Ticket #'+ticketId+' für '+detailed.length+' Berichte erstellt','ok');
+      _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+      await loadAuftraegeAndRender();
+      openAuftragDetail(auftragRecId);
+    } else {
+      toast('⚠ Ticket-ID fehlt in Response','warn');
+      if (btn) { btn.disabled = false; btn.textContent = '🎫 Alle in ein Ticket'; }
+    }
+  } catch(e) {
+    toast('❌ '+(e.message||e).slice(0,200), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🎫 Alle in ein Ticket'; }
   }
 }
 
@@ -7154,9 +7325,13 @@ function openAuftragDetail(recId) {
   }
   // Bericht erfassen / verknüpfen: zugewiesene Techniker + User mit Edit/View-All-Berechtigung (z.B. Admin/Verwalter)
   const canStartBericht = _isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all');
-  if (status !== 'abgeschlossen' && status !== 'abgerechnet' && canStartBericht) {
+  // v5.24: "+ Neuer Bericht" + "Bericht verknüpfen" auch bei abgeschlossen/abgerechnet
+  // (User darf nachträglich weitere Berichte zum Auftrag hinzufügen).
+  if (canStartBericht && status !== 'abgerechnet') {
     html += '<button class="btn" onclick="openBerichtPicker(\''+rec.id+'\')" title="Vorhandenen Bericht aus der Übersicht zuweisen (z.B. konvertierter Subunternehmer-Bericht)">📎 Bericht verknüpfen</button>';
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Neuer Bericht</button>';
+  }
+  if (status !== 'abgeschlossen' && status !== 'abgerechnet') {
     // v5.22: Auftrag fertigstellen → setzt Status + erzeugt FD-Ticket (idempotent)
     if (hasPermission('auftraege_edit')) {
       html += '<button class="btn prim" onclick="_aufCompleteWithFd(\''+rec.id+'\', this)" title="Auftrag auf Abgeschlossen setzen und Freshdesk-Ticket aus dem letzten Bericht erzeugen">✅ Auftrag fertigstellen</button>';
