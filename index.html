@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.13';
+const APP_VERSION = 'v5.14';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5704,6 +5704,17 @@ async function ensureLegacyFirmaFields() {
       { name:'archived',             type:'checkbox', options:{ icon:'check', color:'grayBright' }},
     ]);
   } catch(e) { console.warn('[Projekte] ensureTable:', e.message); }
+  // v5.14: Angebots-Prompt-Vorlagen
+  try {
+    await ensureTable('App_Angebot_Prompts', [
+      { name:'name',        type:'singleLineText' },
+      { name:'prompt_text', type:'multilineText'  },
+      { name:'typ',         type:'singleLineText' }, // reparatur | modernisierung | sonstiges
+      { name:'firma',       type:'singleLineText' },
+      { name:'erstellt_am', type:'singleLineText' },
+      { name:'archived',    type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+    ]);
+  } catch(e) { console.warn('[Angebot-Prompts] ensureTable:', e.message); }
   // Berichte ↔ Auftrag-Verknüpfung + Bilder
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
@@ -19733,12 +19744,20 @@ async function openAngebotWizard() {
   m.innerHTML =
     '<div style="background:var(--surf);max-width:640px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
-        '<span>📄 Neues Angebot — Original-PDF hochladen</span>'+
+        '<span id="ang-w-title">📄 Neues Angebot</span>'+
         '<button onclick="document.getElementById(\'ang-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
+      // v5.14: Mode-Toggle (Tabs)
+      '<div style="display:flex;gap:0;background:#F3F4F6;border-bottom:1px solid var(--bdr)">'+
+        '<button id="ang-w-tab-pdf"    type="button" onclick="_angWizardSetMode(\'pdf\')"    style="flex:1;padding:11px 14px;background:#fff;border:none;border-bottom:3px solid #2152A9;font-size:13px;font-weight:700;color:#2152A9;cursor:pointer">📄 Aus PDF</button>'+
+        '<button id="ang-w-tab-prompt" type="button" onclick="_angWizardSetMode(\'prompt\')" style="flex:1;padding:11px 14px;background:transparent;border:none;border-bottom:3px solid transparent;font-size:13px;font-weight:600;color:var(--txt2);cursor:pointer">✍️ Nur Prompt</button>'+
+      '</div>'+
       '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px;line-height:1.6">'+
-        '<div style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
+        '<div id="ang-w-hint-pdf" style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
           '💡 Lade das Original-Angebot (KONE, Schindler, OTIS, TK, …) als PDF hoch. Die KI extrahiert Anschreiben, Positionen mit Leistungsbeschreibung, Einzelpreise und Konditionen. Danach öffnet sich der Editor wo du deinen Verkaufspreis pro Position einträgst.'+
+        '</div>'+
+        '<div id="ang-w-hint-prompt" style="display:none;background:#F0FDF4;border-left:3px solid #10b981;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#065F46">'+
+          '✍️ Beschreibe das Angebot frei — die KI generiert daraus Anschreiben, Positionen, Leistungsbeschreibung und Preisvorschläge. <strong>Du kannst Prompts als Vorlagen speichern</strong> und immer wieder verwenden (z.B. „Standard-Modernisierung 13-Personen-Aufzug").'+
         '</div>'+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
           '<div>'+
@@ -19759,18 +19778,37 @@ async function openAngebotWizard() {
             '<input type="text" id="ang-w-anbieter-other" placeholder="z.B. Schindler" style="display:none;margin-top:6px;width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
           '</div>'+
         '</div>'+
-        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Quell-PDF</label>'+
-        '<div id="ang-w-drop" onclick="document.getElementById(\'ang-w-file\').click()" style="border:2px dashed var(--bdr);border-radius:10px;padding:30px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .15s" onmouseover="this.style.borderColor=\'#2152A9\';this.style.background=\'#EFF6FF\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.background=\'#fafafa\'">'+
-          '<div style="font-size:36px;margin-bottom:8px">📄</div>'+
-          '<div id="ang-w-droplbl" style="font-size:13px;color:var(--txt2)">Klick hier oder ziehe PDF hierher</div>'+
+        // ── MODE: AUS PDF ─────────────────────────────────────────────
+        '<div id="ang-w-mode-pdf">'+
+          '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Quell-PDF</label>'+
+          '<div id="ang-w-drop" onclick="document.getElementById(\'ang-w-file\').click()" style="border:2px dashed var(--bdr);border-radius:10px;padding:30px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .15s" onmouseover="this.style.borderColor=\'#2152A9\';this.style.background=\'#EFF6FF\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.background=\'#fafafa\'">'+
+            '<div style="font-size:36px;margin-bottom:8px">📄</div>'+
+            '<div id="ang-w-droplbl" style="font-size:13px;color:var(--txt2)">Klick hier oder ziehe PDF hierher</div>'+
+          '</div>'+
+          '<input type="file" id="ang-w-file" accept="application/pdf" style="display:none" onchange="_angWizardOnFile(event)">'+
+          '<div id="ang-w-info" style="margin-top:10px;font-size:11px;color:var(--txt3)"></div>'+
+          // Custom-Prompt für Sonderwünsche
+          '<div style="margin-top:14px">'+
+            '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">🤖 Zusätzliche KI-Anweisung <span style="color:var(--txt3);font-weight:normal">(optional)</span></label>'+
+            '<textarea id="ang-w-custom-prompt" rows="3" placeholder="z.B.&#10;• Berücksichtige nur Mängel mit Priorität A&#10;• Schreibe Maßnahmen aus Sicht der Aszendio&#10;• Falls Preis fehlt: 0 EUR setzen, ich trage später ein" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;color:#222"></textarea>'+
+            '<div id="ang-w-prompt-hint" style="font-size:11px;color:var(--txt3);margin-top:4px"></div>'+
+          '</div>'+
         '</div>'+
-        '<input type="file" id="ang-w-file" accept="application/pdf" style="display:none" onchange="_angWizardOnFile(event)">'+
-        '<div id="ang-w-info" style="margin-top:10px;font-size:11px;color:var(--txt3)"></div>'+
-        // Custom-Prompt für Sonderwünsche
-        '<div style="margin-top:14px">'+
-          '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">🤖 Zusätzliche KI-Anweisung <span style="color:var(--txt3);font-weight:normal">(optional)</span></label>'+
-          '<textarea id="ang-w-custom-prompt" rows="3" placeholder="z.B.&#10;• Berücksichtige nur Mängel mit Priorität A&#10;• Schreibe Maßnahmen aus Sicht der Aszendio&#10;• Falls Preis fehlt: 0 EUR setzen, ich trage später ein" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;color:#222"></textarea>'+
-          '<div id="ang-w-prompt-hint" style="font-size:11px;color:var(--txt3);margin-top:4px"></div>'+
+        // ── MODE: NUR PROMPT (v5.14) ────────────────────────────────
+        '<div id="ang-w-mode-prompt" style="display:none">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">'+
+            '<label style="font-weight:600;font-size:12px">📚 Vorlage laden</label>'+
+            '<button type="button" class="btn" onclick="openAngPromptVorlagenModal()" style="font-size:11px;padding:5px 10px">⚙ Vorlagen verwalten</button>'+
+          '</div>'+
+          '<select id="ang-w-promptv-sel" onchange="_angWizardLoadVorlage()" style="cursor:pointer;width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222;margin-bottom:14px">'+
+            '<option value="">— eigenen Prompt schreiben —</option>'+
+          '</select>'+
+          '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">✍️ Angebots-Beschreibung *</label>'+
+          '<textarea id="ang-w-promptonly" rows="12" placeholder="z.B.&#10;Modernisierung Aufzug A1 in Friedrichstraße 29.&#10;- Antrieb komplett ersetzen (neuer Frequenzumrichter)&#10;- Steuerung modernisieren (KONE-Steuerung → eigene)&#10;- Kabine renovieren: neue Tableau-Tasten, LED-Beleuchtung, Edelstahl-Spiegel&#10;- Türen: neue Antriebe&#10;Pauschalpreis ca. 80.000 EUR netto.&#10;Empfänger: Hausverwaltung Meier, Herr Schmidt.&#10;Anrede formell." style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;background:#fff;color:#222;min-height:200px"></textarea>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:6px">Beschreibe was angeboten werden soll. Die KI erstellt daraus eine Position pro Leistung + Anschreiben. Preise kannst du angeben (Pauschal oder pro Position) oder weglassen (KI schätzt grob, du korrigierst im Editor).</div>'+
+          '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
+            '<button type="button" class="btn" onclick="_angWizardSaveAsVorlage()" style="font-size:11px;padding:6px 12px">💾 Diesen Prompt als Vorlage speichern</button>'+
+          '</div>'+
         '</div>'+
       '</div>'+
       '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
@@ -19780,6 +19818,9 @@ async function openAngebotWizard() {
     '</div>';
   document.body.appendChild(m);
   m._file = null;
+  m._mode = 'pdf';
+  // v5.14: Vorlagen für Prompt-Modus laden (lazy)
+  _angPromptVorlagenLoad(true).then(() => _angWizardRefreshVorlagenSelect()).catch(() => {});
   // Drag&Drop
   const drop = document.getElementById('ang-w-drop');
   ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.background='#EFF6FF'; drop.style.borderColor='#2152A9'; }));
@@ -19831,7 +19872,9 @@ function _angWizardSetFile(file) {
 
 async function _angWizardGo() {
   const m = document.getElementById('ang-wizard');
-  if (!m || !m._file) return;
+  if (!m) return;
+  if (m._mode === 'prompt') return _angWizardGoFromPrompt();
+  if (!m._file) return;
   const typ = document.getElementById('ang-w-typ').value;
   // Anbieter ermitteln
   const sel = document.getElementById('ang-w-anbieter');
@@ -19866,6 +19909,374 @@ async function _angWizardGo() {
     toast('❌ KI-Extract: '+(e.message||e).slice(0,200),'err');
     go.disabled = false; go.textContent = '🚀 PDF analysieren';
   }
+}
+
+// ─── v5.14: Wizard-Mode-Toggle (PDF vs Nur Prompt) ─────────────────────
+function _angWizardSetMode(mode) {
+  const m = document.getElementById('ang-wizard');
+  if (!m) return;
+  m._mode = mode;
+  const tabPdf    = document.getElementById('ang-w-tab-pdf');
+  const tabPrompt = document.getElementById('ang-w-tab-prompt');
+  const paneA     = document.getElementById('ang-w-mode-pdf');
+  const paneB     = document.getElementById('ang-w-mode-prompt');
+  const hintA     = document.getElementById('ang-w-hint-pdf');
+  const hintB     = document.getElementById('ang-w-hint-prompt');
+  const go        = document.getElementById('ang-w-go');
+  const title     = document.getElementById('ang-w-title');
+  if (mode === 'prompt') {
+    if (tabPdf)    { tabPdf.style.background    = 'transparent'; tabPdf.style.color    = 'var(--txt2)'; tabPdf.style.borderBottomColor    = 'transparent'; tabPdf.style.fontWeight    = '600'; }
+    if (tabPrompt) { tabPrompt.style.background = '#fff';        tabPrompt.style.color = '#10b981';     tabPrompt.style.borderBottomColor = '#10b981';     tabPrompt.style.fontWeight = '700'; }
+    if (paneA) paneA.style.display = 'none';
+    if (paneB) paneB.style.display = '';
+    if (hintA) hintA.style.display = 'none';
+    if (hintB) hintB.style.display = '';
+    if (title) title.textContent = '✍️ Neues Angebot — Nur aus Prompt';
+    if (go)    { go.textContent = '🤖 Generieren'; go.disabled = false; go.style.opacity = '1'; }
+  } else {
+    if (tabPrompt) { tabPrompt.style.background = 'transparent'; tabPrompt.style.color = 'var(--txt2)'; tabPrompt.style.borderBottomColor = 'transparent'; tabPrompt.style.fontWeight = '600'; }
+    if (tabPdf)    { tabPdf.style.background    = '#fff';        tabPdf.style.color    = '#2152A9';    tabPdf.style.borderBottomColor    = '#2152A9';    tabPdf.style.fontWeight    = '700'; }
+    if (paneB) paneB.style.display = 'none';
+    if (paneA) paneA.style.display = '';
+    if (hintB) hintB.style.display = 'none';
+    if (hintA) hintA.style.display = '';
+    if (title) title.textContent = '📄 Neues Angebot — Original-PDF hochladen';
+    if (go)    {
+      go.textContent = '🚀 PDF analysieren';
+      const hasFile = !!m._file;
+      go.disabled = !hasFile;
+      go.style.opacity = hasFile ? '1' : '.5';
+    }
+  }
+}
+
+async function _angWizardGoFromPrompt() {
+  const m = document.getElementById('ang-wizard');
+  if (!m) return;
+  const typ = document.getElementById('ang-w-typ').value;
+  const promptText = (document.getElementById('ang-w-promptonly')?.value || '').trim();
+  if (!promptText) return toast('Bitte einen Prompt eingeben oder Vorlage laden','err');
+  if (promptText.length < 20) return toast('Prompt zu kurz — bitte beschreibe was angeboten werden soll','err');
+  // Anbieter aus PDF-Tab wird ignoriert; im Prompt-Modus ist „anbieter" der eigene Firmenname / „manuell"
+  const go = document.getElementById('ang-w-go');
+  go.disabled = true; go.textContent = '⏳ KI generiert…';
+  try {
+    const extracted = await _extractAngebotFromPrompt(promptText, typ);
+    console.log('[Angebote] aus Prompt generiert:', extracted);
+    m.remove();
+    openAngebotEditor({ extracted, typ, koneFile: null, matchedAnlage: null, anbieter: 'manuell' });
+  } catch(e) {
+    console.error('[Angebote] KI-Generate (Prompt):', e);
+    toast('❌ KI-Generate: '+(e.message||e).slice(0,200),'err');
+    go.disabled = false; go.textContent = '🤖 Generieren';
+  }
+}
+
+/* ── KI-Generierung: NUR aus User-Beschreibung (ohne PDF) v5.14 ──── */
+async function _extractAngebotFromPrompt(promptText, typ) {
+  if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
+  const firmaSlug = getCurrentFirmaSlug();
+  const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio Aufzugservice GmbH' };
+  const companyShort = (firmaSlug === 'aufzug' || firmaSlug === 'aufzugshandwerk') ? 'Aufzugshandwerk' : 'Aszendio';
+  const companyLong  = BR.company || 'Aszendio Aufzugservice GmbH';
+  const today = new Date().toISOString().slice(0,10);
+  const tool = {
+    name: 'generate_angebot',
+    description: 'Erzeugt ein vollständiges Angebot aus einer User-Beschreibung. Schreibt aus Sicht des Anbieters '+companyLong+'.',
+    input_schema: {
+      type: 'object',
+      required: ['positionen','summe_netto','ust_prozent','summe_brutto','anschreiben'],
+      properties: {
+        anbieter:            { type:'string', description:'Immer "'+companyShort+'" (Eigenangebot)' },
+        kone_angebot_num:    { type:'string', description:'Leer lassen — wird intern beim Speichern gesetzt' },
+        kone_angebot_datum:  { type:'string', description:'Heutiges Datum '+today },
+        equipmentnummer:     { type:'string', description:'Falls vom User erwähnt — Equipment-/Anlagennummer' },
+        seriennummer:        { type:'string', description:'Falls vom User erwähnt — Fabrik-/Seriennummer der Anlage' },
+        anlage_adresse:      { type:'string', description:'Falls vom User erwähnt — Standort-Adresse der Anlage' },
+        kunde_name:          { type:'string', description:'Falls vom User erwähnt — Empfänger/Kunde-Firmenname' },
+        kunde_adresse:       { type:'string', description:'Falls vom User erwähnt — Empfänger-Adresse' },
+        kontakt_name:        { type:'string', description:'Falls vom User erwähnt — Name des Ansprechpartners (ohne Anrede)' },
+        anschreiben:         { type:'string', description:'Professionelles formelles Anschreiben mit Anrede ("Sehr geehrte Damen und Herren," oder Name falls bekannt), Bezug zum Anliegen, Verweis auf die folgenden Positionen, Schlussformel. KEINE Unterschrift/Grüße — die kommen aus dem Briefpapier.' },
+        positionen: {
+          type: 'array',
+          description: 'Pro klar abgrenzbarer Leistung eine eigene Position.',
+          items: {
+            type: 'object',
+            required: ['nr','titel','einzelpreis_netto'],
+            properties: {
+              nr:                    { type:'integer' },
+              titel:                 { type:'string', description:'Klare Kurzbezeichnung der Leistung' },
+              leistungsbeschreibung: { type:'array', items:{ type:'string' }, description:'Bullet-Liste der Teilleistungen — fachlich präzise, kein Marketing-Sprech' },
+              menge:                 { type:'number', description:'Default 1' },
+              einzelpreis_netto:     { type:'number', description:'Netto-Einzelpreis in EUR. Wenn der User Preise nennt, exakt übernehmen. Wenn nur Pauschalpreis: gleichmäßig oder gewichtet aufteilen. Wenn keine Preise: realistisch schätzen aus deinem Branchenwissen für Aufzugstechnik in Deutschland.' },
+            },
+          },
+        },
+        ust_prozent:         { type:'number', description:'Default 19' },
+        summe_netto:         { type:'number' },
+        summe_brutto:        { type:'number' },
+        kond_lieferzeit:     { type:'string', description:'Realistische Lieferzeit für die genannten Leistungen (z.B. "Werktägl. Verfügbarkeit nach Auftragsvergabe ca. 6-8 Wochen")' },
+        kond_preisbasis:     { type:'string', description:'Standard: "Festpreis, gültig 60 Tage ab Angebotsdatum"' },
+        kond_zahlung:        { type:'string', description:'Bei Reparatur: 14 Tage netto. Bei Modernisierung: 30% bei Auftrag / 60% nach Anlieferung / 10% nach Abnahme.' },
+        kond_hinweise:       { type:'string', description:'Optional — Hinweise zu Mehrkosten, Bauseits-Leistungen etc.' },
+      },
+    },
+  };
+  const typLabel = ({ reparatur:'Reparatur', modernisierung:'Modernisierung', sonstiges:'Sonstige Leistung' })[typ] || 'Sonstige Leistung';
+  const prompt =
+    'Du bist Angebots-Assistent für '+companyLong+' (Aufzugstechnik). Aktueller Angebotstyp: '+typLabel+'. Heutiges Datum: '+today+'.\n\n'+
+    'Der User hat dir die Beschreibung des Angebots in eigenen Worten geliefert. Daraus erstellst du ein vollständiges Angebot — Anschreiben, Positionen mit Leistungsbeschreibung, Preise und Konditionen.\n\n'+
+    'REGELN:\n'+
+    '• Schreibe AUS SICHT der Anbieter-Firma '+companyShort+' an den im Prompt genannten Empfänger.\n'+
+    '• Wenn der Empfänger nicht klar benannt ist, lass kunde_name leer und nutze "Sehr geehrte Damen und Herren," im Anschreiben.\n'+
+    '• Anschreiben: 2-4 Sätze, formell, mit Bezug auf den Anlass (z.B. „nach Rücksprache mit Herrn Schmidt unterbreiten wir Ihnen das folgende Angebot").\n'+
+    '• Positionen: pro logischer Teilleistung eine eigene Position. Klare Titel + 2-5 Bullets in leistungsbeschreibung mit konkreten Arbeitsschritten.\n'+
+    '• Preise: wenn der User Zahlen nennt → exakt verwenden. Wenn nur Pauschal → gewichtet aufteilen. Wenn nichts → realistisch schätzen für deutsche Aufzugstechnik.\n'+
+    '• Konditionen: passend zum Angebotstyp wählen. Reparatur = 14 Tage netto. Modernisierung = 30/60/10-Schema.\n'+
+    '• Sprache: deutsch, professionell, präzise — kein Marketing.\n\n'+
+    'USER-BESCHREIBUNG:\n'+
+    promptText;
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': APP_KEYS.anthropicKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens: 8000,
+      tools:[tool],
+      tool_choice:{ type:'tool', name:'generate_angebot' },
+      messages:[{ role:'user', content:[
+        { type:'text', text: prompt },
+      ]}],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
+  }
+  const data = await resp.json();
+  const block = (data.content||[]).find(b => b.type === 'tool_use');
+  if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
+  if (!block.input.anbieter) block.input.anbieter = companyShort;
+  if (!block.input.kone_angebot_datum) block.input.kone_angebot_datum = today;
+  return block.input;
+}
+
+// ─── v5.14: Prompt-Vorlagen ──────────────────────────────────────────
+let _angPromptVorlagenCache = { firma:null, items:null, loadedAt:0 };
+
+async function _angPromptVorlagenLoad(useCache) {
+  const firmaSlug = getCurrentFirmaSlug();
+  if (useCache && _angPromptVorlagenCache.items && _angPromptVorlagenCache.firma === firmaSlug && (Date.now() - _angPromptVorlagenCache.loadedAt) < 60_000) {
+    return _angPromptVorlagenCache.items;
+  }
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebot_Prompts?pageSize=100&sort[0][field]=name&sort[0][direction]=asc';
+  try {
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) { _angPromptVorlagenCache = { firma:firmaSlug, items:[], loadedAt:Date.now() }; return []; }
+    const d = await r.json();
+    const items = (d.records||[]).filter(rec => rec.fields?.firma === firmaSlug && !rec.fields?.archived);
+    _angPromptVorlagenCache = { firma:firmaSlug, items, loadedAt:Date.now() };
+    return items;
+  } catch(_) {
+    _angPromptVorlagenCache = { firma:firmaSlug, items:[], loadedAt:Date.now() };
+    return [];
+  }
+}
+
+function _angWizardRefreshVorlagenSelect() {
+  const sel = document.getElementById('ang-w-promptv-sel');
+  if (!sel) return;
+  const items = _angPromptVorlagenCache.items || [];
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— eigenen Prompt schreiben —</option>' +
+    items.map(r => '<option value="'+escapeHtml(r.id)+'">'+escapeHtml((r.fields?.name||'(ohne Name)') + (r.fields?.typ ? ' · '+r.fields.typ : ''))+'</option>').join('');
+  if (current) sel.value = current;
+}
+
+function _angWizardLoadVorlage() {
+  const sel = document.getElementById('ang-w-promptv-sel');
+  if (!sel) return;
+  const recId = sel.value;
+  if (!recId) return;
+  const rec = (_angPromptVorlagenCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  const ta = document.getElementById('ang-w-promptonly');
+  if (!ta) return;
+  // Wenn bereits Text drin → fragen
+  if (ta.value.trim() && !confirm('Vorhandenen Text durch Vorlage „'+(rec.fields?.name||'')+'" überschreiben?')) return;
+  ta.value = rec.fields?.prompt_text || '';
+  // Typ ggf. mitsetzen
+  if (rec.fields?.typ) {
+    const typSel = document.getElementById('ang-w-typ');
+    if (typSel) typSel.value = rec.fields.typ;
+  }
+  toast('📚 Vorlage geladen','ok');
+}
+
+async function _angWizardSaveAsVorlage() {
+  const ta = document.getElementById('ang-w-promptonly');
+  const text = (ta?.value || '').trim();
+  if (!text || text.length < 20) return toast('Erst einen Prompt schreiben','err');
+  const typ = document.getElementById('ang-w-typ')?.value || 'sonstiges';
+  const name = prompt('Name für die Vorlage:', 'Standard-'+typ);
+  if (!name || !name.trim()) return;
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const fields = {
+      name: name.trim(),
+      prompt_text: text,
+      typ,
+      firma: getCurrentFirmaSlug(),
+      erstellt_am: new Date().toISOString().slice(0,10),
+    };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Prompts', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    toast('💾 Vorlage „'+name+'" gespeichert','ok');
+    await _angPromptVorlagenLoad(false);
+    _angWizardRefreshVorlagenSelect();
+    const sel = document.getElementById('ang-w-promptv-sel');
+    if (sel) sel.value = d.id;
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+  }
+}
+
+/* ── Vorlagen-Verwaltung Modal (CRUD) v5.14 ─────────────────────── */
+async function openAngPromptVorlagenModal() {
+  document.getElementById('ang-promptv-modal')?.remove();
+  await _angPromptVorlagenLoad(false);
+  const m = document.createElement('div');
+  m.id = 'ang-promptv-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:700px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#10b981;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>📚 Prompt-Vorlagen verwalten</span>'+
+      '<button onclick="document.getElementById(\'ang-promptv-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:14px 20px;display:flex;justify-content:flex-end">'+
+      '<button class="btn prim" onclick="_angPromptVorlageEdit(null)">+ Neue Vorlage</button>'+
+    '</div>'+
+    '<div id="ang-promptv-list" style="padding:0 20px 18px;flex:1;overflow-y:auto"></div>'+
+  '</div>';
+  document.body.appendChild(m);
+  _angRenderPromptVorlagenList();
+}
+
+function _angRenderPromptVorlagenList() {
+  const list = document.getElementById('ang-promptv-list');
+  if (!list) return;
+  const items = _angPromptVorlagenCache.items || [];
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Noch keine Vorlagen. <strong>+ Neue Vorlage</strong> oben oder direkt im Wizard <em>„💾 Diesen Prompt als Vorlage speichern"</em>.</div>';
+    return;
+  }
+  list.innerHTML = items.map(rec => {
+    const f = rec.fields || {};
+    const preview = (f.prompt_text || '').slice(0, 180).replace(/\s+/g,' ');
+    return '<div style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid #10b981;border-radius:8px;padding:12px 14px;margin-bottom:10px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:200px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(f.name||'(ohne Name)')+(f.typ?' <span style="color:var(--txt3);font-weight:500;font-size:11px">· '+escapeHtml(f.typ)+'</span>':'')+'</div>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:6px;white-space:pre-line">'+escapeHtml(preview)+(f.prompt_text && f.prompt_text.length>180?'…':'')+'</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:6px">'+
+          '<button class="btn" onclick="_angPromptVorlageEdit(\''+rec.id+'\')" style="font-size:11px;padding:4px 10px">✏️ Bearbeiten</button>'+
+          '<button class="btn" onclick="_angPromptVorlageDelete(\''+rec.id+'\')" style="font-size:11px;padding:4px 10px;color:var(--err);border-color:rgba(220,38,38,.3)">🗑</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+function _angPromptVorlageEdit(recId) {
+  const rec = recId ? (_angPromptVorlagenCache.items||[]).find(r => r.id === recId) : null;
+  const f = rec?.fields || {};
+  document.getElementById('ang-promptv-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-promptv-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11100;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:640px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#1A3353;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>'+(rec?'✏️ Vorlage bearbeiten':'+ Neue Vorlage')+'</span>'+
+      '<button onclick="document.getElementById(\'ang-promptv-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Name *</label>'+
+        '<input id="ang-pv-name" value="'+escapeHtml(f.name||'')+'" placeholder="z.B. Standard-Modernisierung 13-Pers." style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Angebotstyp (Default)</label>'+
+        '<select id="ang-pv-typ" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+          ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'"'+((f.typ||'sonstiges')===t.value?' selected':'')+'>'+t.label+'</option>').join('')+
+        '</select></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Prompt-Text *</label>'+
+        '<textarea id="ang-pv-text" rows="14" placeholder="Beschreibung was angeboten werden soll …" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;min-height:240px">'+escapeHtml(f.prompt_text||'')+'</textarea></div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'ang-promptv-editor\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" onclick="_angPromptVorlageSave(\''+(rec?.id||'')+'\', this)">💾 Speichern</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById('ang-pv-name')?.focus(), 80);
+}
+
+async function _angPromptVorlageSave(recId, btn) {
+  const name = document.getElementById('ang-pv-name')?.value.trim();
+  const text = document.getElementById('ang-pv-text')?.value.trim();
+  const typ  = document.getElementById('ang-pv-typ')?.value || 'sonstiges';
+  if (!name) return toast('Name ist Pflicht','err');
+  if (!text || text.length < 20) return toast('Prompt-Text ist zu kurz','err');
+  const fields = { name, prompt_text:text, typ, firma:getCurrentFirmaSlug() };
+  if (!recId) fields.erstellt_am = new Date().toISOString().slice(0,10);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebot_Prompts'+(recId?'/'+recId:'');
+    const r = await fetch(url, {
+      method: recId?'PATCH':'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    toast('💾 Gespeichert','ok');
+    document.getElementById('ang-promptv-editor')?.remove();
+    await _angPromptVorlagenLoad(false);
+    _angRenderPromptVorlagenList();
+    _angWizardRefreshVorlagenSelect();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
+}
+
+async function _angPromptVorlageDelete(recId) {
+  if (!confirm('Vorlage wirklich löschen?')) return;
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Prompts/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    toast('🗑 Gelöscht','ok');
+    await _angPromptVorlagenLoad(false);
+    _angRenderPromptVorlagenList();
+    _angWizardRefreshVorlagenSelect();
+  } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /* ── KI-Extraktion: PDF → strukturiertes Angebot via Tool-Use ────── */
