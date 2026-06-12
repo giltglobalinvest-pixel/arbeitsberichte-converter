@@ -2639,7 +2639,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.33';
+const APP_VERSION = 'v5.34';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7603,8 +7603,27 @@ const I18N = {
   try { I18N.cache = JSON.parse(localStorage.getItem('i18n.fa.cache') || '{}'); } catch(_){}
   const stored = localStorage.getItem('i18n.lang');
   if (stored === 'fa') {
-    // Async aktivieren nachdem DOM ready
-    setTimeout(() => { if (I18N.currentLang === 'de') toggleLanguage(); }, 100);
+    // v5.34: Reihenfolge so, dass beim Reload alle dynamisch nachgeladenen
+    // Views (Dashboard, Auftragsliste, ERP-Calls) erfasst werden:
+    //  1) Sofort RTL setzen damit das Layout vom ersten Frame stimmt.
+    //  2) Observer SOFORT starten — fängt alle DOM-Mutationen ab.
+    //  3) Mehrere applyAll-Sweeps mit wachsenden Delays (200ms, 1s, 2.5s, 5s)
+    //     damit late-mounted Inhalte spätestens dann übersetzt werden, auch
+    //     wenn der Observer wegen frischer fa.cache-Einträge nichts zu tun
+    //     hatte (er triggert nicht bei reiner Text-Node-Veränderung durch uns).
+    document.documentElement.setAttribute('dir','rtl');
+    setTimeout(() => {
+      I18N.currentLang = 'fa';
+      document.body.classList.add('lang-fa');
+      document.body.setAttribute('dir','rtl');
+      const lbl = document.getElementById('lang-toggle-label'); if (lbl) lbl.textContent = 'DE';
+      _i18nStartObserver();
+      _i18nApplyAll().catch(()=>{});
+      // Nachzügler-Sweeps für Inhalte, die erst durch async-Loads erscheinen
+      [1000, 2500, 5000, 10000].forEach(delay => {
+        setTimeout(() => { if (I18N.currentLang === 'fa') _i18nApplyAll().catch(()=>{}); }, delay);
+      });
+    }, 200);
   }
 })();
 
@@ -7659,6 +7678,8 @@ async function toggleLanguage() {
     localStorage.setItem('i18n.lang', 'fa');
     const lbl = document.getElementById('lang-toggle-label'); if (lbl) lbl.textContent = 'DE';
     toast('🌐 Übersetze App ins Persische — kann beim ersten Mal 10–30 s dauern …','');
+    // v5.34: Observer ZUERST starten — fängt alle Mutations während der API-Calls ab.
+    _i18nStartObserver();
     const startTs = Date.now();
     try {
       const stats = await _i18nApplyAll();
@@ -7674,7 +7695,8 @@ async function toggleLanguage() {
       toast('❌ Übersetzung: '+(e.message||e).slice(0,180),'err');
       console.error('[i18n] toggle:', e);
     }
-    _i18nStartObserver();
+    // v5.34: Nachzügler — Views die nach dem ersten Apply geladen wurden, abdecken.
+    [1500, 4000].forEach(d => setTimeout(() => { if (I18N.currentLang === 'fa') _i18nApplyAll().catch(()=>{}); }, d));
   } else {
     I18N.currentLang = 'de';
     document.body.classList.remove('lang-fa');
