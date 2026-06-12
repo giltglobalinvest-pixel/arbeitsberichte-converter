@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.14';
+const APP_VERSION = 'v5.15';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5704,6 +5704,11 @@ async function ensureLegacyFirmaFields() {
       { name:'archived',             type:'checkbox', options:{ icon:'check', color:'grayBright' }},
     ]);
   } catch(e) { console.warn('[Projekte] ensureTable:', e.message); }
+  // v5.13 → v5.15: Felder per ensureField nachrüsten falls Tabelle schon
+  // existiert (ensureTable überspringt dann das Schema komplett).
+  await ensureField('App_Verantwortliche', 'typ',                  'singleLineText');
+  await ensureField('App_Projekte',        'projekt_verantw_firma','singleLineText');
+  await ensureField('App_Projekte',        'projekt_verantw_typ',  'singleLineText');
   // v5.14: Angebots-Prompt-Vorlagen
   try {
     await ensureTable('App_Angebot_Prompts', [
@@ -30557,12 +30562,26 @@ async function _verantwSave(recId, btn) {
     if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const url = 'https://api.airtable.com/v0/'+baseId+'/App_Verantwortliche'+(recId?'/'+recId:'');
-    const r = await fetch(url, {
+    let r = await fetch(url, {
       method: recId ? 'PATCH' : 'POST',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
       body: JSON.stringify({ fields }),
     });
-    const d = await r.json();
+    let d = await r.json();
+    // v5.15: Falls Schema-Migration für 'typ' noch nicht durch (User hatte
+    // Tabelle vor v5.13 manuell angelegt) — Feld droppen, ensureField triggern, retry.
+    if (d.error && /unknown field name/i.test(d.error.message||'') && /typ/i.test(d.error.message||'')) {
+      console.warn('[Verantw] typ-Feld fehlt → ensureField + Retry');
+      try { await ensureField('App_Verantwortliche', 'typ', 'singleLineText'); } catch(_){}
+      const fields2 = { ...fields };
+      delete fields2.typ;
+      r = await fetch(url, {
+        method: recId ? 'PATCH' : 'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: fields2 }),
+      });
+      d = await r.json();
+    }
     if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
     toast('💾 Gespeichert','ok');
     document.getElementById('verantw-editor')?.remove();
@@ -30797,12 +30816,29 @@ async function _prjwSubmit(btn) {
       erstellt_von: APP_KEYS.user?.name || '',
     };
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte', {
+    let r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte', {
       method:'POST',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
       body: JSON.stringify({ fields }),
     });
-    const d = await r.json();
+    let d = await r.json();
+    // v5.15: Retry ohne v5.13-Neufelder falls Schema noch nicht migriert
+    if (d.error && /unknown field name/i.test(d.error.message||'')) {
+      console.warn('[Projekt] Field fehlt → ensureField + Retry:', d.error.message);
+      try {
+        await ensureField('App_Projekte', 'projekt_verantw_firma', 'singleLineText');
+        await ensureField('App_Projekte', 'projekt_verantw_typ',   'singleLineText');
+      } catch(_){}
+      const fields2 = { ...fields };
+      delete fields2.projekt_verantw_firma;
+      delete fields2.projekt_verantw_typ;
+      r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: fields2 }),
+      });
+      d = await r.json();
+    }
     if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
     toast('📅 Projekt PRJ-'+projektNum+' angelegt','ok');
     document.getElementById('projekt-wizard')?.remove();
