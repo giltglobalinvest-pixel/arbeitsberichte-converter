@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.22';
+const APP_VERSION = 'v5.23';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6413,6 +6413,10 @@ function renderAuftraegeList() {
   if (!isFirmaAll() && (!_aufBerichteByAuftrag.map || _aufBerichteByAuftrag.firma !== _firma)) {
     _aufLoadBerichteForList(_firma);
   }
+  // v5.23: Rechnungen aus dem ERP einmal pro Firma lazy nachladen
+  if (!isFirmaAll() && (!_aufInvoicesByAuftrag.map || _aufInvoicesByAuftrag.firma !== _firma)) {
+    _aufLoadInvoicesForList(_firma);
+  }
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
   // Cache nach hidden_invoiced ODER hidden_manual vorfiltern (außer Toggle ist aktiv)
   const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
@@ -6542,6 +6546,33 @@ function renderAuftraegeList() {
 // Auftrag schnell die FD-Tickets + bericht_num auflisten können.
 let _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
 
+// v5.23: Cache der ERP-Rechnungen pro Firma, indiziert nach Auftrags-ID
+// (ext_id) — so können wir die Rechnungsnummer direkt am Auftrag anzeigen
+// ohne dass "Rechnungen prüfen + ausblenden" vorher gelaufen sein muss.
+let _aufInvoicesByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+
+async function _aufLoadInvoicesForList(firmaSlug) {
+  if (_aufInvoicesByAuftrag.loading) return;
+  if (_aufInvoicesByAuftrag.map && _aufInvoicesByAuftrag.firma === firmaSlug && (Date.now() - _aufInvoicesByAuftrag.loadedAt) < 10*60_000) return;
+  if (!APP_KEYS.valtownProxyUrl) return; // kein ERP-Proxy → kein Lookup möglich
+  _aufInvoicesByAuftrag.loading = true;
+  try {
+    // Wenn die Rechnungen-View den Cache schon gefüllt hat: wiederverwenden
+    let list;
+    if (_rechnungenCache && _rechnungenCache.firma === firmaSlug && Array.isArray(_rechnungenCache.items) && _rechnungenCache.items.length) {
+      list = _rechnungenCache.items;
+    } else {
+      list = await _fetchErpRechnungen(firmaSlug);
+    }
+    const map = _indexRechnungenByAuftrag(list);
+    _aufInvoicesByAuftrag = { firma:firmaSlug, map, loadedAt:Date.now(), loading:false };
+    renderAuftraegeList();
+  } catch(e) {
+    console.warn('[Aufträge] Rechnungen-Lookup fehlgeschlagen:', e.message);
+    _aufInvoicesByAuftrag.loading = false;
+  }
+}
+
 async function _aufLoadBerichteForList(firmaSlug) {
   if (_aufBerichteByAuftrag.loading) return;
   if (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.firma === firmaSlug && (Date.now() - _aufBerichteByAuftrag.loadedAt) < 5*60_000) return;
@@ -6613,8 +6644,19 @@ function _auftragCardHtml(r) {
   const fdCountBadge = fdTickets.length > 1
     ? '<span style="font-size:10px;color:var(--txt3);margin-right:4px">'+fdTickets.length+'×</span>'
     : '';
-  const rechnungChip = f.invoice_num
-    ? '<span style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #FCD34D" title="Rechnung im ERP">📄 Rg. '+escapeHtml(String(f.invoice_num))+(f.invoice_date?' · '+escapeHtml(String(f.invoice_date).slice(0,10)):'')+'</span>'
+  // v5.23: Rechnung aus Live-ERP-Lookup bevorzugen, sonst aus dem Auftragsfeld.
+  // Live-Lookup keyed by f.ext_id (Aufzugshandwerk-ERP: id = Auftragsnummer).
+  let invNum = f.invoice_num || '';
+  let invDate = f.invoice_date || '';
+  if (!invNum && _aufInvoicesByAuftrag.map && f.ext_id) {
+    const inv = _aufInvoicesByAuftrag.map.get(String(f.ext_id));
+    if (inv) {
+      invNum  = inv.id || inv.rechnungsnummer || inv.nummer || '';
+      invDate = (inv.createdDate || inv.rechnungsdatum || inv.leistungszeitraum || '').slice(0,10);
+    }
+  }
+  const rechnungChip = invNum
+    ? '<span style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #FCD34D" title="Rechnung im ERP">📄 Rg. '+escapeHtml(String(invNum))+(invDate?' · '+escapeHtml(String(invDate)):'')+'</span>'
     : '';
   const extraMeta = (rechnungChip || linkChips)
     ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+rechnungChip+fdCountBadge+linkChips+'</div>'
