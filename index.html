@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.28';
+const APP_VERSION = 'v5.29';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5720,6 +5720,8 @@ async function ensureLegacyFirmaFields() {
   await ensureField('App_Verantwortliche', 'typ',                  'singleLineText');
   await ensureField('App_Projekte',        'projekt_verantw_firma','singleLineText');
   await ensureField('App_Projekte',        'projekt_verantw_typ',  'singleLineText');
+  // v5.29: Folge-Tickets pro Auftrag als JSON-Array [{id,url,subject,created_at}]
+  await ensureField('Auftraege',           'followup_tickets_json','multilineText');
   // v5.14: Angebots-Prompt-Vorlagen
   try {
     await ensureTable('App_Angebot_Prompts', [
@@ -6658,8 +6660,21 @@ function _auftragCardHtml(r) {
   const rechnungChip = invNum
     ? '<span style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #FCD34D" title="Rechnung im ERP">📄 Rg. '+escapeHtml(String(invNum))+(invDate?' · '+escapeHtml(String(invDate)):'')+'</span>'
     : '';
-  const extraMeta = (rechnungChip || linkChips)
-    ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+rechnungChip+fdCountBadge+linkChips+'</div>'
+  // v5.29: Folge-Tickets (weiterführende Arbeiten) — orange Pills mit FD-Link
+  let followupChips = '';
+  if (f.followup_tickets_json) {
+    try {
+      const arr = JSON.parse(f.followup_tickets_json);
+      if (Array.isArray(arr) && arr.length) {
+        followupChips = arr.map(t => t.url
+          ? '<a href="'+escapeHtml(t.url)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()" title="Folge-Ticket #'+t.id+' für weiterführende Arbeiten" style="background:#FFEDD5;color:#7c2d12;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #FDBA74;text-decoration:none;display:inline-flex;align-items:center;gap:3px">🎫 Folge #'+escapeHtml(String(t.id))+' ↗</a>'
+          : '<span style="background:#FFEDD5;color:#7c2d12;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #FDBA74">🎫 Folge #'+escapeHtml(String(t.id))+'</span>'
+        ).join('');
+      }
+    } catch(_){}
+  }
+  const extraMeta = (rechnungChip || linkChips || followupChips)
+    ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+rechnungChip+fdCountBadge+linkChips+followupChips+'</div>'
     : '';
   // Preis-Spalte (rechts) — nur wenn User canSeePrices() darf
   const showPrice = canSeePrices();
@@ -6713,6 +6728,25 @@ function _auftragCardHtml(r) {
 /* ──────────────────────────────────────────────────────────
    v5.22: Mehrere Berichte pro Auftrag — Liste im Detail-View
    ────────────────────────────────────────────────────────── */
+// v5.29: Folge-Tickets-Sektion (weiterführende Arbeiten) im Detail-View
+function _aufRenderFolgeTicketsSection(rec) {
+  const f = rec.fields || {};
+  let arr = [];
+  try { arr = JSON.parse(f.followup_tickets_json || '[]'); } catch(_){}
+  if (!Array.isArray(arr) || !arr.length) return '';
+  const fmtDt = s => { try { return new Date(s).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}); } catch(_) { return s||''; } };
+  const rows = arr.map(t => '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:#FFEDD5;border:1px solid #FDBA74;border-radius:6px;margin-bottom:6px;flex-wrap:wrap">'+
+    '<div style="flex:1;min-width:160px;font-size:13px">'+
+      (t.url
+        ? '<a href="'+escapeHtml(t.url)+'" target="_blank" rel="noopener" style="color:#7c2d12;font-weight:700;text-decoration:none">🎫 Folge-Ticket #'+escapeHtml(String(t.id))+' ↗</a>'
+        : '<span style="color:#7c2d12;font-weight:700">🎫 Folge-Ticket #'+escapeHtml(String(t.id))+'</span>')+
+      (t.subject?'<div style="font-size:11px;color:#92400E;margin-top:2px">'+escapeHtml(String(t.subject).slice(0,100))+'</div>':'')+
+      (t.created_at?'<div style="font-size:11px;color:var(--txt3);margin-top:2px">erstellt am '+escapeHtml(fmtDt(t.created_at))+'</div>':'')+
+    '</div>'+
+  '</div>').join('');
+  return '<div class="auf-section"><h3>🎫 Folge-Tickets (weiterführende Arbeiten) <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">'+arr.length+'</span></h3>'+rows+'</div>';
+}
+
 function _aufRenderBerichteSection(rec) {
   const f = rec.fields || {};
   const list = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[rec.id]) || [];
@@ -6741,10 +6775,7 @@ function _aufRenderBerichteSection(rec) {
     const pushBtn = (canPushFd && !b.fd_ticket_id)
       ? '<button class="btn" onclick="event.stopPropagation();_aufPushBerichtToFd(\''+rec.id+'\',\''+b.id+'\', this)" style="font-size:11px;padding:3px 9px;color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" title="Diesen Bericht als neues Freshdesk-Ticket pushen">🎫 Push</button>'
       : '';
-    // v5.26: 🎫 Folge-Ticket-Button pro Bericht (Modal mit Bildern/Audio/Video/KI)
-    const folgeBtn = canPushFd
-      ? '<button class="btn" onclick="event.stopPropagation();openFolgeTicketModal(\''+rec.id+'\',\''+b.id+'\')" style="font-size:11px;padding:3px 9px;color:#7c2d12;border-color:rgba(124,45,18,.45);background:#FEF3C7" title="Folge-Ticket für weiterführende Arbeiten erstellen">🎫 Folge-Ticket</button>'
-      : '';
+    // v5.29: Folge-Ticket-Button ist NICHT mehr per Bericht — er gehört zum Auftrag (Footer).
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;margin-bottom:6px;flex-wrap:wrap">'+
       '<div style="flex:1;min-width:160px;font-size:13px">'+
         '<a href="#" onclick="event.preventDefault();event.stopPropagation();viewAuftragsBericht(\''+b.id+'\')" style="color:var(--navy);font-weight:600;text-decoration:none">📄 Bericht Nr. '+escapeHtml(String(b.bericht_num||'?'))+'</a>'+
@@ -6753,7 +6784,6 @@ function _aufRenderBerichteSection(rec) {
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
         ticketChip+
         pushBtn+
-        folgeBtn+
         (hasPermission('auftraege_edit') ? '<button class="btn" onclick="event.stopPropagation();openBerichtForm(\''+rec.id+'\',\''+b.id+'\')" style="font-size:11px;padding:3px 9px">✏</button>' : '')+
         (canDelete ? '<button class="btn" onclick="event.stopPropagation();_aufDeleteBericht(\''+rec.id+'\',\''+b.id+'\','+(b.bericht_num||0)+')" style="font-size:11px;padding:3px 9px;color:var(--err);border-color:rgba(220,38,38,.3)" title="Bericht löschen">🗑</button>' : '')+
       '</div>'+
@@ -7048,6 +7078,57 @@ let _ftState = {
   speechSnapshot: '',
   createdTickets: [],
 };
+
+// v5.29: Folge-Tickets werden in Freshdesk auf eine feste Gruppe + Bearbeiter
+// gerouted. IDs werden beim ersten Submit per FD-API-Lookup ermittelt und gecacht.
+const FOLGETICKET_GROUP_NAME     = 'Sales';
+const FOLGETICKET_RESPONDER_NAME = 'Patrizio Fontanarosa';
+let _ftAssignmentCache = {}; // { firmaSlug → { group_id, responder_id, loadedAt } }
+
+async function _ftResolveAssignment(firmaSlug) {
+  const cached = _ftAssignmentCache[firmaSlug];
+  if (cached && (Date.now() - cached.loadedAt) < 60*60*1000) return cached;
+  const proxy = APP_KEYS.valtownProxyUrl;
+  if (!proxy) return { group_id:null, responder_id:null, loadedAt:Date.now() };
+  await erpEnsureSession();
+  const token = erpGetSessionToken();
+  const headers = { 'Authorization':'Bearer '+token };
+  let group_id = null, responder_id = null;
+  // Gruppe
+  try {
+    const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/admin/groups', { headers });
+    if (r.ok) {
+      const arr = await r.json();
+      if (Array.isArray(arr)) {
+        const g = arr.find(x => String(x.name||'').toLowerCase() === FOLGETICKET_GROUP_NAME.toLowerCase());
+        if (g) group_id = g.id;
+      }
+    } else {
+      console.warn('[FD-Lookup] groups HTTP '+r.status);
+    }
+  } catch(e) { console.warn('[FD-Lookup] groups:', e.message); }
+  // Bearbeiter (paginiert evtl., wir holen erste Seite)
+  try {
+    const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/agents?per_page=100', { headers });
+    if (r.ok) {
+      const arr = await r.json();
+      if (Array.isArray(arr)) {
+        const wantedLower = FOLGETICKET_RESPONDER_NAME.toLowerCase();
+        const a = arr.find(x => {
+          const n = String(x.contact?.name || x.name || '').toLowerCase();
+          return n === wantedLower || n.includes(wantedLower);
+        });
+        if (a) responder_id = a.id;
+      }
+    } else {
+      console.warn('[FD-Lookup] agents HTTP '+r.status);
+    }
+  } catch(e) { console.warn('[FD-Lookup] agents:', e.message); }
+  const res = { group_id, responder_id, loadedAt: Date.now() };
+  _ftAssignmentCache[firmaSlug] = res;
+  console.log('[FD-Lookup] '+firmaSlug+' → Group "'+FOLGETICKET_GROUP_NAME+'"='+group_id+', Responder "'+FOLGETICKET_RESPONDER_NAME+'"='+responder_id);
+  return res;
+}
 
 async function openFolgeTicketModal(auftragRecId, berichtRecId) {
   const auftragRec = _auftragCache.find(r => r.id === auftragRecId);
@@ -7427,6 +7508,10 @@ async function _ftSubmit(btn) {
     fd.append('priority', String(document.getElementById('ft-prio')?.value || '2'));
     fd.append('status', '2');
     fd.append('source', '2');
+    // v5.29: Assignment auf Gruppe "Sales" + Bearbeiter "Patrizio Fontanarosa"
+    const assignment = await _ftResolveAssignment(firmaSlug);
+    if (assignment.group_id)     fd.append('group_id',     String(assignment.group_id));
+    if (assignment.responder_id) fd.append('responder_id', String(assignment.responder_id));
     for (const img of _ftState.images) fd.append('attachments[]', img.blob, img.name);
     for (const aud of _ftState.audios) fd.append('attachments[]', aud.blob, aud.name);
     for (const vid of _ftState.videos) fd.append('attachments[]', vid.blob, vid.name);
@@ -7442,14 +7527,48 @@ async function _ftSubmit(btn) {
     }
     const ticketId = data?.id;
     const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
-    _ftState.createdTickets.push({ id: ticketId, url: ticketUrl, subject });
-    toast('🎫 Ticket #'+ticketId+' erstellt','ok');
+    const followup = { id: ticketId, url: ticketUrl, subject, created_at: new Date().toISOString() };
+    _ftState.createdTickets.push(followup);
+
+    // v5.29: Ticket-Referenz am Auftrag persistieren (followup_tickets_json).
+    // Damit erscheint sie sofort in der Aufträge-Liste + im Detail-View.
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      let existing = [];
+      try { existing = JSON.parse(auftragRec.fields.followup_tickets_json || '[]'); } catch(_){}
+      existing.push(followup);
+      const newJson = JSON.stringify(existing);
+      let pr = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+auftragRec.id, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields:{ followup_tickets_json: newJson }}),
+      });
+      let pd = await pr.json();
+      // Defensive: Feld evtl. noch nicht angelegt → ensureField + Retry
+      if (pd.error && /unknown field name/i.test(pd.error.message||'')) {
+        try { await ensureField('Auftraege','followup_tickets_json','multilineText'); } catch(_){}
+        pr = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+auftragRec.id, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ followup_tickets_json: newJson }}),
+        });
+        pd = await pr.json();
+      }
+      if (pd.error) console.warn('[FT-Persist] Airtable:', pd.error.message);
+      // Lokalen Cache aktualisieren, damit die Liste sofort die Pill zeigt
+      auftragRec.fields.followup_tickets_json = newJson;
+    } catch(persistErr) {
+      console.warn('[FT-Persist] failed:', persistErr.message);
+    }
+
+    toast('🎫 Ticket #'+ticketId+' erstellt'+(assignment.group_id||assignment.responder_id?' (Sales · Patrizio)':''),'ok');
 
     // Form zurücksetzen, Modal bleibt offen für weiteres Ticket
     _ftState.images = []; _ftState.audios = []; _ftState.videos = [];
     document.getElementById('ft-modal').innerHTML = _ftRenderBody();
-    // Optional Body-Render — Render-Helpers nochmal aufrufen
     _ftRenderImageGrid(); _ftRenderAudioList(); _ftRenderVideoList();
+    // Aufträge-Liste neu rendern damit die neue Pill erscheint
+    if (typeof renderAuftraegeList === 'function') renderAuftraegeList();
   } catch(e) {
     toast('❌ '+(e.message||e).slice(0,200), 'err');
     btn.disabled = false; btn.textContent = '🎫 Ticket erstellen';
@@ -7742,6 +7861,7 @@ function openAuftragDetail(recId) {
       <h3>Zugewiesene Techniker</h3>
       <div id="auf-detail-techniker">${_renderInlineTechnikerPicker(rec)}</div>
     </div>
+    ${_aufRenderFolgeTicketsSection(rec)}
     ${_aufRenderBerichteSection(rec)}
     ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
   `;
@@ -7771,6 +7891,10 @@ function openAuftragDetail(recId) {
     if (hasPermission('auftraege_edit')) {
       html += '<button class="btn prim" onclick="_aufCompleteWithFd(\''+rec.id+'\', this)" title="Auftrag auf Abgeschlossen setzen und Freshdesk-Ticket aus dem letzten Bericht erzeugen">✅ Auftrag fertigstellen</button>';
     }
+  }
+  // v5.29: Folge-Ticket-Button gehört zum Auftrag (nicht zum Bericht). Immer sichtbar wenn Edit-Permission + FD konfiguriert.
+  if (hasPermission('auftraege_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())) {
+    html += '<button class="btn" onclick="openFolgeTicketModal(\''+rec.id+'\', \'\')" style="color:#7c2d12;border-color:rgba(124,45,18,.45);background:#FEF3C7" title="Folge-Ticket für weiterführende Arbeiten anlegen (Bilder, Sprachnachricht, Video, KI-Diktat)">🎫 Folge-Ticket erstellen</button>';
   }
   if ((status === 'abgeschlossen' || status === 'abgerechnet') && f.bericht_id) {
     html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Ansehen</button>';
@@ -11229,13 +11353,8 @@ async function openBerichtForm(auftragId, berichtId) {
     </div>
   `;
 
-  // v5.26: Folge-Ticket-Card direkt nach dem Form
-  const folgeTicketCard = '<div class="card" style="background:#FEF3C7;border-color:#FCD34D">'+
-    '<div class="card-title" style="color:#7c2d12">🎫 Folge-Ticket für weiterführende Arbeiten</div>'+
-    '<div style="font-size:12px;color:#92400E;margin-bottom:10px;line-height:1.5">Wenn beim Auftrag weiterführende Arbeiten erforderlich sind, hier ein Ticket fürs Büro erstellen — mit Beschreibung, Bildern, Sprachnachricht und Video. Die KI hilft beim Formulieren.</div>'+
-    '<button type="button" class="btn" onclick="openFolgeTicketModal(\''+auftragId+'\',\''+(berichtId||'')+'\')" style="background:#7c2d12;color:#fff;border-color:#7c2d12;font-weight:600">🎫 Folge-Ticket erstellen</button>'+
-  '</div>';
-  document.getElementById('bf-body').innerHTML = infoCard + formHtml + folgeTicketCard + imageCard + signCards;
+  // v5.29: Folge-Ticket-Card NICHT mehr im Bericht-Form — der Trigger gehört ans Auftrag-Detail.
+  document.getElementById('bf-body').innerHTML = infoCard + formHtml + imageCard + signCards;
   _bfRenderImageGrid();
   // Save-Button-Text passend
   const saveBtn = document.getElementById('bf-save-btn');
