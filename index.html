@@ -2319,6 +2319,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <select id="auf-typ-filter" onchange="renderAuftraegeList()" title="Nach Angebots-Typ filtern (aus dem ERP-Angebot)" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
       <option value="">Alle Typen</option>
     </select>
+    <select id="auf-tech-filter" onchange="renderAuftraegeList()" title="Nach zugewiesenem Techniker filtern" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:240px">
+      <option value="">👥 Alle Techniker</option>
+    </select>
     <select id="auf-sort" onchange="_onAuftragSortChange()" title="Sortierung der Liste" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
       <option value="num_desc">Nr. neu → alt</option>
       <option value="num_asc">Nr. alt → neu</option>
@@ -2632,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.40';
+const APP_VERSION = 'v5.41';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6436,7 +6439,9 @@ function renderAuftraegeList() {
   const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
   // Dropdown-Optionen für Angebots-Typ aus dem (gesamten) Cache zusammensuchen
   _refreshAngebotTypFilter();
+  _refreshTechnikerFilter();
   const typFilter = (document.getElementById('auf-typ-filter')?.value || '').trim();
+  const techFilter = (document.getElementById('auf-tech-filter')?.value || '').trim();
   // Hidden-Counter für Toggle-Label-Hinweis (inkl. manuell ausgeblendete)
   const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced || r.fields.hidden_manual).length;
   const hiddenChk = document.getElementById('auf-show-hidden');
@@ -6490,6 +6495,23 @@ function renderAuftraegeList() {
     const hideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
     if (hideWartung) {
       filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
+    }
+    // v5.41: Techniker-Filter
+    if (techFilter) {
+      if (techFilter === '__none__') {
+        filtered = filtered.filter(r => {
+          const ks = r.fields.techniker_keys;
+          if (!ks) return true;
+          try { return !(JSON.parse(ks)||[]).length; } catch(_) { return !String(ks).trim(); }
+        });
+      } else {
+        filtered = filtered.filter(r => {
+          try {
+            const keys = JSON.parse(r.fields.techniker_keys || '[]');
+            return keys.includes(techFilter);
+          } catch(_) { return false; }
+        });
+      }
     }
   }
   // Sortierung explizit anwenden (filtered erbt vom Cache, daher konsistent neu sortieren)
@@ -10906,6 +10928,38 @@ function _refreshAngebotTypFilter() {
   if (noneCount > 0) opts.push('<option value="__none__">— ohne Typ ('+noneCount+')</option>');
   sel.innerHTML = opts.join('');
   // Auswahl wiederherstellen falls noch gültig
+  if (current && (current === '__none__' || counts.has(current))) sel.value = current;
+}
+
+/* v5.41: Techniker-Filter-Dropdown füllen — aus allen techniker_keys im Cache.
+   Pro Techniker steht der Anzeige-Name dahinter (aus techniker_namen rekonstruiert
+   oder per _techNamesByKeys), plus die Anzahl Aufträge in der aktuellen Firma. */
+function _refreshTechnikerFilter() {
+  const sel = document.getElementById('auf-tech-filter');
+  if (!sel) return;
+  const counts = new Map();   // key → count
+  const names  = new Map();   // key → displayName
+  let unassignedCount = 0;
+  for (const r of _auftragCache) {
+    let keys = [];
+    try { keys = JSON.parse(r.fields.techniker_keys || '[]'); } catch(_){}
+    if (!Array.isArray(keys) || !keys.length) { unassignedCount++; continue; }
+    // Namens-Mapping aus techniker_namen herauslesen (sind kommagetrennt)
+    const namen = String(r.fields.techniker_namen || '').split(',').map(s => s.trim()).filter(Boolean);
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      counts.set(k, (counts.get(k)||0) + 1);
+      if (!names.has(k)) names.set(k, namen[i] || _techNamesByKeys([k]) || k);
+    }
+  }
+  const current = sel.value;
+  const sortedKeys = Array.from(counts.keys()).sort((a,b) => (names.get(a)||'').localeCompare(names.get(b)||''));
+  const opts = ['<option value="">👥 Alle Techniker</option>'];
+  for (const k of sortedKeys) {
+    opts.push('<option value="'+escapeHtml(k)+'">'+escapeHtml(names.get(k)||k)+' ('+counts.get(k)+')</option>');
+  }
+  if (unassignedCount > 0) opts.push('<option value="__none__">— nicht zugewiesen ('+unassignedCount+')</option>');
+  sel.innerHTML = opts.join('');
   if (current && (current === '__none__' || counts.has(current))) sel.value = current;
 }
 
