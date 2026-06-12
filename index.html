@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.35';
+const APP_VERSION = 'v5.36';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11371,12 +11371,21 @@ async function openBerichtForm(auftragId, berichtId) {
   `;
 
   // v5.29: Folge-Ticket-Card NICHT mehr im Bericht-Form — der Trigger gehört ans Auftrag-Detail.
-  // v5.33: Übersetzungs-Card oben — Techniker schreibt auf Arabisch/Persisch, KI macht Deutsch fürs PDF.
+  // v5.33 / v5.36: Sprachhilfe-Card — zwei Buttons:
+  //   1) Formular ins Persische anzeigen (Labels + Auftrags-Info-Text)
+  //   2) Eigene Eingaben ins Deutsche übersetzen (für's PDF)
   const translateCard = `
     <div class="card" data-no-translate="true" style="background:#EFF6FF;border-color:#93C5FD">
-      <div class="card-title" style="color:#1E3A8A">🌐 Auf Arabisch oder Persisch geschrieben?</div>
-      <div style="font-size:12px;color:#1E40AF;line-height:1.5;margin-bottom:10px">Schreib die Berichts-Inhalte (Beschreibung, Sonstiges, …) ruhig in <strong>Arabisch</strong> oder <strong>Persisch</strong> — klick danach den Button, die KI übersetzt alle Textfelder ins Deutsche. Das PDF wird immer in Deutsch erzeugt.</div>
-      <button type="button" class="btn" onclick="_bfTranslateAllFields(this)" style="background:#2152A9;color:#fff;border-color:#2152A9;font-weight:600">🌐 Alle Felder ins Deutsche übersetzen</button>
+      <div class="card-title" style="color:#1E3A8A">🌐 Sprachhilfe — Persisch / Arabisch</div>
+      <div style="font-size:12px;color:#1E40AF;line-height:1.5;margin-bottom:10px">
+        <strong>1.</strong> Formular ins Persische übersetzen (Labels + Auftrags-Info werden persisch).<br>
+        <strong>2.</strong> Bericht in <strong>Persisch</strong> oder <strong>Arabisch</strong> tippen.<br>
+        <strong>3.</strong> Eingaben ins Deutsche übersetzen — das PDF wird immer auf Deutsch erzeugt.
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button type="button" class="btn" onclick="_bfToggleFormPersian(this)" style="background:#5b21b6;color:#fff;border-color:#5b21b6;font-weight:600">🇮🇷 Formular auf Persisch anzeigen</button>
+        <button type="button" class="btn" onclick="_bfTranslateAllFields(this)" style="background:#2152A9;color:#fff;border-color:#2152A9;font-weight:600">🇩🇪 Meine Eingaben ins Deutsche übersetzen</button>
+      </div>
     </div>
   `;
   document.getElementById('bf-body').innerHTML = infoCard + translateCard + formHtml + imageCard + signCards;
@@ -11761,6 +11770,140 @@ function _bfRemoveImage(idx) {
   if (idx < 0 || idx >= _bfImages.length) return;
   _bfImages.splice(idx, 1);
   _bfRenderImageGrid();
+}
+
+/**
+ * v5.36: Toggle — Formular-Anzeige Deutsch ↔ Persisch.
+ * Übersetzt alle Anzeige-Texte (Labels, Card-Titel, Auftrags-Info, Placeholder) ins
+ * Persische damit der persisch-sprachige Techniker das Formular versteht.
+ * Werte der <input>/<textarea>-Felder werden NICHT angetastet — die schreibt
+ * der Techniker selbst und werden später per anderem Button ins Deutsche
+ * übersetzt fürs PDF.
+ */
+let _bfFormIsPersian = false;
+async function _bfToggleFormPersian(btn) {
+  const root = document.getElementById('bf-body');
+  if (!root) return;
+  // Zurück auf Deutsch — Originale wiederherstellen
+  if (_bfFormIsPersian) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let n;
+    while (n = walker.nextNode()) {
+      if (n._origDe != null && n.nodeValue !== n._origDe) n.nodeValue = n._origDe;
+    }
+    for (const el of root.querySelectorAll('[placeholder]')) {
+      if (el.dataset.origPlaceholder) el.placeholder = el.dataset.origPlaceholder;
+    }
+    root.removeAttribute('dir');
+    _bfFormIsPersian = false;
+    btn.textContent = '🇮🇷 Formular auf Persisch anzeigen';
+    btn.style.background = '#5b21b6'; btn.style.borderColor = '#5b21b6';
+    toast('Zurück auf Deutsch','ok');
+    return;
+  }
+  // Auf Persisch übersetzen
+  if (!APP_KEYS.anthropicKey) return toast('Anthropic-API-Key fehlt','err');
+  // Text-Nodes sammeln (kein Input-Wert, kein no-translate)
+  const textNodes = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => {
+      const t = n.nodeValue?.trim();
+      if (!t || t.length < 2) return NodeFilter.FILTER_REJECT;
+      if (/^[\d\s.,:;_\-+=\/\\#@%§()|+]+$/.test(t)) return NodeFilter.FILTER_REJECT;
+      if (/^\d{4}-\d{2}-\d{2}/.test(t)) return NodeFilter.FILTER_REJECT;
+      const p = n.parentElement;
+      if (!p) return NodeFilter.FILTER_REJECT;
+      if (p.tagName === 'SCRIPT' || p.tagName === 'STYLE' || p.tagName === 'CODE') return NodeFilter.FILTER_REJECT;
+      if (p.closest('[data-no-translate]')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let nn;
+  while (nn = walker.nextNode()) textNodes.push(nn);
+  // Placeholders sammeln
+  const phEls = [...root.querySelectorAll('input[placeholder], textarea[placeholder]')]
+    .filter(el => el.placeholder.trim().length >= 2 && !el.closest('[data-no-translate]'));
+  // Items deduplizieren (gleiche Texte nur einmal übersetzen) — Map<text, [{kind,ref,attr}]>
+  const groups = new Map();
+  for (const tn of textNodes) {
+    if (tn._origDe == null) tn._origDe = tn.nodeValue;
+    const key = tn._origDe.trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ kind:'text', ref:tn });
+  }
+  for (const el of phEls) {
+    if (!el.dataset.origPlaceholder) el.dataset.origPlaceholder = el.placeholder;
+    const key = el.dataset.origPlaceholder.trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ kind:'attr', ref:el });
+  }
+  const uniqueTexts = [...groups.keys()];
+  if (!uniqueTexts.length) return toast('Nichts zu übersetzen','');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Übersetze '+uniqueTexts.length+' Texte …';
+  try {
+    const tool = {
+      name: 'submit_persian_translations',
+      description: 'Liefert persische Übersetzungen der gegebenen deutschen UI-Texte. Eigennamen, Zahlen, Daten unverändert. Reihenfolge muss exakt zur Eingabe passen.',
+      input_schema: {
+        type:'object', required:['translations'],
+        properties:{ translations:{ type:'array', items:{ type:'string' } } },
+      },
+    };
+    // In 40er-Chunks senden
+    const CHUNK = 40;
+    const all = [];
+    for (let i = 0; i < uniqueTexts.length; i += CHUNK) {
+      const slice = uniqueTexts.slice(i, i+CHUNK);
+      const numbered = slice.map((t, ix) => (ix+1)+'. '+t).join('\n');
+      const prompt =
+        'Übersetze die folgenden deutschen UI-Texte eines Aufzugstechniker-Arbeitsberichts-Formulars ins Persische (Farsi).\n\n'+
+        'Regeln:\n'+
+        '• Eigennamen, Firmen, Produktnamen unverändert (KONE, Schindler, OTIS, TK, Aszendio).\n'+
+        '• Zahlen, Datumsangaben, Maße unverändert.\n'+
+        '• Fachbegriffe Aufzugstechnik korrekt verwenden (Schacht=چاه آسانسور, Antrieb=موتور, Steuerung=کنترل، Notrufknopf=دکمه اضطراری).\n'+
+        '• Kurz und prägnant — Formulartexte, keine Fließtext-Übersetzung.\n\n'+
+        'Texte:\n'+numbered+'\n\nRufe submit_persian_translations mit den persischen Übersetzungen in derselben Reihenfolge auf.';
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method:'POST',
+        headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+        body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: 4000, tools:[tool], tool_choice:{ type:'tool', name:'submit_persian_translations' }, messages:[{ role:'user', content: prompt }] }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error?.message || ('API '+r.status));
+      const block = (data?.content||[]).find(b => b.type === 'tool_use');
+      const tr = block?.input?.translations;
+      if (!Array.isArray(tr)) throw new Error('Keine translations');
+      for (let k = 0; k < slice.length; k++) all.push({ src: slice[k], tgt: tr[k] || slice[k] });
+    }
+    // Anwenden auf alle Referenzen
+    let applied = 0;
+    for (const it of all) {
+      const refs = groups.get(it.src) || [];
+      for (const ref of refs) {
+        if (ref.kind === 'text') {
+          const tn = ref.ref;
+          tn.nodeValue = tn._origDe.replace(it.src, it.tgt);
+          applied++;
+        } else if (ref.kind === 'attr') {
+          ref.ref.placeholder = (ref.ref.dataset.origPlaceholder || '').replace(it.src, it.tgt);
+          applied++;
+        }
+      }
+    }
+    root.setAttribute('dir', 'rtl');
+    _bfFormIsPersian = true;
+    btn.textContent = '🇩🇪 Wieder auf Deutsch anzeigen';
+    btn.style.background = '#065F46'; btn.style.borderColor = '#065F46';
+    toast('✅ '+applied+' Texte auf Persisch — Bericht kann jetzt persisch geschrieben werden','ok');
+  } catch(e) {
+    toast('❌ '+(e.message||e).slice(0,180),'err');
+    console.error('[Form-Persian]', e);
+    btn.textContent = orig;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /**
