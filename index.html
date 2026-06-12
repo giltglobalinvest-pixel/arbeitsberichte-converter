@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.12';
+const APP_VERSION = 'v5.13';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -5671,6 +5671,7 @@ async function ensureLegacyFirmaFields() {
   try {
     await ensureTable('App_Verantwortliche', [
       { name:'name',        type:'singleLineText' },
+      { name:'typ',         type:'singleLineText' }, // 'intern' | 'extern' (v5.13)
       { name:'email',       type:'singleLineText' },
       { name:'telefon',     type:'singleLineText' },
       { name:'rolle',       type:'singleLineText' },
@@ -5689,6 +5690,8 @@ async function ensureLegacyFirmaFields() {
       { name:'beschreibung',         type:'multilineText'  },
       { name:'projekt_verantw_id',   type:'singleLineText' },
       { name:'projekt_verantw_name', type:'singleLineText' },
+      { name:'projekt_verantw_firma',type:'singleLineText' }, // v5.13: externe Firma des Verantwortlichen
+      { name:'projekt_verantw_typ',  type:'singleLineText' }, // v5.13: 'intern' | 'extern'
       { name:'anlage_id',            type:'singleLineText' },
       { name:'anlage_fabriknummer',  type:'singleLineText' },
       { name:'anlage_adresse',       type:'multilineText'  },
@@ -30025,7 +30028,7 @@ function _renderVerantwList() {
   const filtered = items.filter(r => {
     if (!q) return true;
     const f = r.fields || {};
-    const hay = [f.name, f.email, f.telefon, f.rolle, f.firma_extern].filter(Boolean).join(' ').toLowerCase();
+    const hay = [f.name, f.email, f.telefon, f.rolle, f.firma_extern, f.typ].filter(Boolean).join(' ').toLowerCase();
     return hay.includes(q);
   });
   const search = '<div style="margin-bottom:14px"><input id="verantw-search" type="text" placeholder="🔎 Suche (Name, Email, Tel, Rolle, Firma)" oninput="_renderVerantwList()" value="'+escapeHtml(document.getElementById('verantw-search')?.value || '')+'" style="width:100%;max-width:480px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>';
@@ -30035,13 +30038,22 @@ function _renderVerantwList() {
   }
   const html = filtered.map(r => {
     const f = r.fields || {};
-    return '<div onclick="openVerantwortlicheEditor(\''+r.id+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\'" onmouseout="this.style.borderColor=\'var(--bdr)\'">'+
-      '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(f.name||'(ohne Name)')+(f.rolle?' <span style="color:var(--txt3);font-weight:500;font-size:12px">· '+escapeHtml(f.rolle)+'</span>':'')+'</div>'+
-      '<div style="font-size:12px;color:var(--txt3);margin-top:4px">'+
-        (f.email?'📧 '+escapeHtml(f.email):'')+
-        (f.email && f.telefon?' · ':'')+
-        (f.telefon?'📞 '+escapeHtml(f.telefon):'')+
-        (f.firma_extern?' · 🏢 '+escapeHtml(f.firma_extern):'')+
+    const isExt = (f.typ||'extern') === 'extern';
+    const badge = isExt
+      ? '<span style="background:#EFF6FF;color:#2152A9;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">🤝 EXTERN</span>'
+      : '<span style="background:#ECFDF5;color:#10b981;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">🏢 INTERN</span>';
+    return '<div onclick="openVerantwortlicheEditor(\''+r.id+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(isExt?'#2152A9':'#10b981')+';border-radius:8px;padding:12px 16px;margin-bottom:8px;cursor:pointer" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\'" onmouseout="this.style.borderColor=\'var(--bdr)\'">'+
+      '<div style="display:flex;justify-content:space-between;align-items:start;gap:10px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:200px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">'+escapeHtml(f.name||'(ohne Name)')+(f.rolle?' <span style="color:var(--txt3);font-weight:500;font-size:12px">· '+escapeHtml(f.rolle)+'</span>':'')+'</div>'+
+          (f.firma_extern?'<div style="font-size:12px;color:var(--navy);font-weight:600;margin-top:3px">🏢 '+escapeHtml(f.firma_extern)+'</div>':'')+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:3px">'+
+            (f.email?'📧 '+escapeHtml(f.email):'')+
+            (f.email && f.telefon?' · ':'')+
+            (f.telefon?'📞 '+escapeHtml(f.telefon):'')+
+          '</div>'+
+        '</div>'+
+        '<div>'+badge+'</div>'+
       '</div>'+
     '</div>';
   }).join('');
@@ -30066,11 +30078,19 @@ function openVerantwortlicheEditor(recId) {
       '<button onclick="document.getElementById(\'verantw-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
     '</div>'+
     '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Typ *</label>'+
+        '<div style="display:flex;gap:8px">'+
+          '<label style="flex:1;display:flex;align-items:center;gap:6px;padding:9px 12px;border:2px solid '+((f.typ||'extern')==='extern'?'#2152A9':'var(--bdr)')+';border-radius:6px;cursor:pointer;background:'+((f.typ||'extern')==='extern'?'#EFF6FF':'#fff')+'"><input type="radio" name="verantw-typ" value="extern" '+((f.typ||'extern')==='extern'?'checked':'')+' onchange="_verantwToggleTyp()"> <span style="font-size:13px;font-weight:600;color:#2152A9">🤝 Extern</span></label>'+
+          '<label style="flex:1;display:flex;align-items:center;gap:6px;padding:9px 12px;border:2px solid '+(f.typ==='intern'?'#10b981':'var(--bdr)')+';border-radius:6px;cursor:pointer;background:'+(f.typ==='intern'?'#ECFDF5':'#fff')+'"><input type="radio" name="verantw-typ" value="intern" '+(f.typ==='intern'?'checked':'')+' onchange="_verantwToggleTyp()"> <span style="font-size:13px;font-weight:600;color:#10b981">🏢 Intern</span></label>'+
+        '</div>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Extern = Subunternehmer, Lieferant, Planungsbüro o.ä. · Intern = eigene Mitarbeiter</div>'+
+      '</div>'+
       _vfFld('Name *', 'verantw-fld-name', f.name, 'text', 'z.B. Stefan Müller')+
+      '<div id="verantw-fld-firma-wrap"><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px"><span id="verantw-fld-firma-lbl">Firma / Auftraggeber-Externer *</span></label>'+
+        '<input type="text" id="verantw-fld-firma_extern" value="'+escapeHtml(f.firma_extern||'')+'" placeholder="z.B. Schmitt Elektro GmbH, Planungsbüro Meier, GU XY" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      _vfFld('Rolle / Funktion', 'verantw-fld-rolle', f.rolle, 'text', 'z.B. Projektleiter, Bauleiter, Monteur, Elektriker')+
       _vfFld('E-Mail', 'verantw-fld-email', f.email, 'email', 'stefan.mueller@beispiel.de')+
       _vfFld('Telefon', 'verantw-fld-telefon', f.telefon, 'tel', '+49 711 1234567')+
-      _vfFld('Rolle / Funktion', 'verantw-fld-rolle', f.rolle, 'text', 'z.B. Projektleiter, Monteur, Elektriker')+
-      _vfFld('Externe Firma (falls Lieferant/Subunternehmer)', 'verantw-fld-firma_extern', f.firma_extern, 'text', 'z.B. Schmitt Elektro GmbH')+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Notizen</label>'+
         '<textarea id="verantw-fld-notizen" rows="3" placeholder="Optional" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(f.notizen||'')+'</textarea></div>'+
     '</div>'+
@@ -30084,15 +30104,39 @@ function openVerantwortlicheEditor(recId) {
   setTimeout(() => document.getElementById('verantw-fld-name')?.focus(), 100);
 }
 
+function _verantwToggleTyp() {
+  const typ = document.querySelector('input[name="verantw-typ"]:checked')?.value || 'extern';
+  // Re-color the wrappers
+  document.querySelectorAll('input[name="verantw-typ"]').forEach(r => {
+    const wrap = r.closest('label');
+    if (!wrap) return;
+    if (r.value === typ) {
+      wrap.style.borderColor = (typ==='extern' ? '#2152A9' : '#10b981');
+      wrap.style.background  = (typ==='extern' ? '#EFF6FF' : '#ECFDF5');
+    } else {
+      wrap.style.borderColor = 'var(--bdr)';
+      wrap.style.background  = '#fff';
+    }
+  });
+  const lbl = document.getElementById('verantw-fld-firma-lbl');
+  const inp = document.getElementById('verantw-fld-firma_extern');
+  if (lbl) lbl.textContent = (typ==='extern' ? 'Firma / Auftraggeber-Externer *' : 'Firma / Abteilung (optional)');
+  if (inp) inp.placeholder = (typ==='extern' ? 'z.B. Schmitt Elektro GmbH, Planungsbüro Meier, GU XY' : 'z.B. Aszendio · Technik');
+}
+
 async function _verantwSave(recId, btn) {
   const name = document.getElementById('verantw-fld-name')?.value.trim();
   if (!name) return toast('Name ist Pflicht','err');
+  const typ = document.querySelector('input[name="verantw-typ"]:checked')?.value || 'extern';
+  const firmaExtern = document.getElementById('verantw-fld-firma_extern')?.value.trim() || '';
+  if (typ === 'extern' && !firmaExtern) return toast('Bei "Extern" bitte Firma/Auftraggeber angeben','err');
   const fields = {
     name,
+    typ,
     email:        document.getElementById('verantw-fld-email')?.value.trim() || '',
     telefon:      document.getElementById('verantw-fld-telefon')?.value.trim() || '',
     rolle:        document.getElementById('verantw-fld-rolle')?.value.trim() || '',
-    firma_extern: document.getElementById('verantw-fld-firma_extern')?.value.trim() || '',
+    firma_extern: firmaExtern,
     notizen:      document.getElementById('verantw-fld-notizen')?.value.trim() || '',
     firma:        getCurrentFirmaSlug(),
   };
@@ -30210,7 +30254,7 @@ function _renderProjekteList() {
         '<div style="flex:1;min-width:240px">'+
           '<div style="font-weight:700;color:var(--navy);font-size:15px">'+(isArchived?'<span style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px">ARCHIV</span>':'')+'PRJ-'+escapeHtml(String(f.projekt_num||'?'))+' · '+escapeHtml(f.name||'(ohne Name)')+'</div>'+
           '<div style="font-size:12px;color:var(--txt3);margin-top:4px">'+escapeHtml(f.kunde_name||'')+(f.anlage_adresse?' · '+escapeHtml(f.anlage_adresse):'')+'</div>'+
-          (f.projekt_verantw_name?'<div style="font-size:11px;color:var(--txt3);margin-top:2px">👷 '+escapeHtml(f.projekt_verantw_name)+'</div>':'')+
+          (f.projekt_verantw_name?'<div style="font-size:11px;color:var(--txt3);margin-top:2px">'+((f.projekt_verantw_typ||'extern')==='extern'?'🤝':'🏢')+' '+escapeHtml(f.projekt_verantw_name)+(f.projekt_verantw_firma?' · <strong style="color:var(--navy)">'+escapeHtml(f.projekt_verantw_firma)+'</strong>':'')+'</div>':'')+
         '</div>'+
         '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
           '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+stat.label+'</span>'+
@@ -30241,12 +30285,26 @@ function openProjektWizard() {
     '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:14px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektname *</label>'+
         '<input id="prj-w-name" placeholder="z.B. Modernisierung Friedrichstr. 29" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
-      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektverantwortlicher *</label>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektverantwortlicher * <span style="color:var(--txt3);font-weight:500">(meist Externer: GU, Planungsbüro, Auftraggeber)</span></label>'+
         '<select id="prj-w-verantw" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
           '<option value="">— bitte wählen —</option>'+
-          (_verantwCache.items||[]).filter(r => !r.fields?.archived).map(r => '<option value="'+escapeHtml(r.id)+'">'+escapeHtml(r.fields?.name||'')+(r.fields?.rolle?' ('+escapeHtml(r.fields.rolle)+')':'')+'</option>').join('')+
+          (_verantwCache.items||[]).filter(r => !r.fields?.archived).sort((a,b) => {
+            // Externe zuerst, dann nach Firma+Name
+            const ta = (a.fields?.typ||'extern')==='extern' ? 0 : 1;
+            const tb = (b.fields?.typ||'extern')==='extern' ? 0 : 1;
+            if (ta !== tb) return ta - tb;
+            const fa = (a.fields?.firma_extern||'').toLowerCase();
+            const fb = (b.fields?.firma_extern||'').toLowerCase();
+            if (fa !== fb) return fa.localeCompare(fb);
+            return (a.fields?.name||'').localeCompare(b.fields?.name||'');
+          }).map(r => {
+            const t = (r.fields?.typ||'extern')==='extern' ? '🤝 ' : '🏢 ';
+            const fi = r.fields?.firma_extern ? ' · '+r.fields.firma_extern : '';
+            const ro = r.fields?.rolle ? ' ('+r.fields.rolle+')' : '';
+            return '<option value="'+escapeHtml(r.id)+'">'+escapeHtml(t+(r.fields?.name||'')+fi+ro)+'</option>';
+          }).join('')+
         '</select>'+
-        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Verantwortliche unter <a href="#" onclick="event.preventDefault();document.getElementById(\'projekt-wizard\').remove();switchView(\'verantw\')" style="color:var(--navy)">👷 Verantwortliche</a> verwalten</div>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Verantwortliche unter <a href="#" onclick="event.preventDefault();document.getElementById(\'projekt-wizard\').remove();switchView(\'verantw\')" style="color:var(--navy)">👷 Verantwortliche</a> verwalten · 🤝 = extern · 🏢 = intern</div>'+
       '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anlage *</label>'+
         '<input id="prj-w-anl-search" placeholder="🔎 Suche (Fabrik-Nr, Adresse, Kunde)" oninput="_prjwFilterAnl()" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-bottom:6px">'+
@@ -30315,6 +30373,8 @@ async function _prjwSubmit(btn) {
       beschreibung,
       projekt_verantw_id: verantwId,
       projekt_verantw_name: v?.fields?.name || '',
+      projekt_verantw_firma: v?.fields?.firma_extern || '',
+      projekt_verantw_typ:   v?.fields?.typ || 'extern',
       anlage_id: String(a?.id || ''),
       anlage_fabriknummer: a?.fabriknummer || '',
       anlage_adresse: a?.anzeigeAdresse || '',
@@ -30369,7 +30429,7 @@ function openProjektDetail(recId) {
       '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+'</div>'+
       '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+'</div>'+
       '<div style="grid-column:1/3"><strong>📍 Standort:</strong> '+escapeHtml(f.anlage_adresse||'')+'</div>'+
-      '<div><strong>👷 Projektverantwortlicher:</strong> '+escapeHtml(f.projekt_verantw_name||'?')+'</div>'+
+      '<div><strong>'+((f.projekt_verantw_typ||'extern')==='extern'?'🤝':'🏢')+' Projektverantwortlicher:</strong> '+escapeHtml(f.projekt_verantw_name||'?')+(f.projekt_verantw_firma?' · <span style="background:#EFF6FF;color:#2152A9;padding:1px 7px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.projekt_verantw_firma)+'</span>':'')+'</div>'+
       '<div><strong>Status:</strong> '+
         PROJEKT_STATUS.map(s => '<button onclick="_prjSetStatus(\''+recId+'\',\''+s.value+'\')" style="background:'+(f.status===s.value?s.color:'#fff')+';color:'+(f.status===s.value?'#fff':s.color)+';border:1px solid '+s.color+';padding:3px 8px;border-radius:99px;font-size:10px;font-weight:600;cursor:pointer;margin-right:3px">'+s.label+'</button>').join('')+
       '</div>'+
@@ -30402,6 +30462,9 @@ function _prjRenderPosTimeline(p, idx, recId) {
   const stat = POSITION_STATUS.find(s => s.value === (p.status||'offen')) || POSITION_STATUS[0];
   const v = (_verantwCache.items||[]).find(x => x.id === p.verantwortlicher_id);
   const vName = v?.fields?.name || p.verantwortlicher_name || '';
+  const vFirma = v?.fields?.firma_extern || p.verantwortlicher_firma || '';
+  const vTyp   = v?.fields?.typ || p.verantwortlicher_typ || (vFirma ? 'extern' : '');
+  const vIcon  = vTyp === 'intern' ? '🏢' : '🤝';
   const vKontakt = v?.fields ? [v.fields.email, v.fields.telefon].filter(Boolean).join(' · ') : '';
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   const fmtDt = d => d ? new Date(d).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'}) : '—';
@@ -30421,7 +30484,7 @@ function _prjRenderPosTimeline(p, idx, recId) {
             '<span>📅 Geplant: <strong style="color:var(--txt2)">'+fmtDt(p.geplant_am)+'</strong></span>'+
             '<span>✅ Erledigt: <strong style="color:var(--txt2)">'+fmtDt(p.erledigt_am)+'</strong></span>'+
           '</div>'+
-          (vName?'<div style="font-size:11px;color:var(--txt3);margin-top:4px">👷 <strong style="color:var(--txt2)">'+escapeHtml(vName)+'</strong>'+(vKontakt?' · '+escapeHtml(vKontakt):'')+'</div>':'')+
+          (vName?'<div style="font-size:11px;color:var(--txt3);margin-top:4px">'+vIcon+' <strong style="color:var(--txt2)">'+escapeHtml(vName)+'</strong>'+(vFirma?' · <span style="color:var(--navy);font-weight:600">'+escapeHtml(vFirma)+'</span>':'')+(vKontakt?' · '+escapeHtml(vKontakt):'')+'</div>':'')+
           (p.notizen?'<div style="font-size:11px;color:var(--txt2);margin-top:6px;padding:6px 8px;background:#F9FAFB;border-radius:4px;white-space:pre-line">'+escapeHtml(p.notizen)+'</div>':'')+
         '</div>'+
         '<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
@@ -30473,7 +30536,15 @@ function _prjOpenPosEditor(recId, idx, p) {
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Verantwortlicher</label>'+
         '<select id="pos-fld-verantw" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff">'+
           '<option value="">— keiner —</option>'+
-          verantw.map(r => '<option value="'+escapeHtml(r.id)+'"'+(r.id===p.verantwortlicher_id?' selected':'')+'>'+escapeHtml(r.fields?.name||'')+(r.fields?.rolle?' ('+escapeHtml(r.fields.rolle)+')':'')+(r.fields?.firma_extern?' · '+escapeHtml(r.fields.firma_extern):'')+'</option>').join('')+
+          verantw.slice().sort((a,b) => {
+            const ta = (a.fields?.typ||'extern')==='extern' ? 0 : 1;
+            const tb = (b.fields?.typ||'extern')==='extern' ? 0 : 1;
+            if (ta !== tb) return ta - tb;
+            return (a.fields?.firma_extern||'').localeCompare(b.fields?.firma_extern||'') || (a.fields?.name||'').localeCompare(b.fields?.name||'');
+          }).map(r => {
+            const t = (r.fields?.typ||'extern')==='extern' ? '🤝 ' : '🏢 ';
+            return '<option value="'+escapeHtml(r.id)+'"'+(r.id===p.verantwortlicher_id?' selected':'')+'>'+escapeHtml(t+(r.fields?.name||'')+(r.fields?.firma_extern?' · '+r.fields.firma_extern:'')+(r.fields?.rolle?' ('+r.fields.rolle+')':''))+'</option>';
+          }).join('')+
         '</select></div>'+
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
         '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Preis EK (€)</label>'+
@@ -30506,7 +30577,9 @@ async function _prjSavePos(recId, idx, btn) {
     geplant_am:  document.getElementById('pos-fld-geplant')?.value || '',
     erledigt_am: document.getElementById('pos-fld-erledigt')?.value || '',
     verantwortlicher_id: verantwId,
-    verantwortlicher_name: v?.fields?.name || '',
+    verantwortlicher_name:  v?.fields?.name || '',
+    verantwortlicher_firma: v?.fields?.firma_extern || '',
+    verantwortlicher_typ:   v?.fields?.typ || (v?.fields?.firma_extern ? 'extern' : ''),
     preis_ek: +(document.getElementById('pos-fld-preis')?.value) || 0,
     status: document.getElementById('pos-fld-status')?.value || 'offen',
     notizen: document.getElementById('pos-fld-notizen')?.value.trim() || '',
