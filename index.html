@@ -2632,7 +2632,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.39';
+const APP_VERSION = 'v5.40';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -32243,6 +32243,7 @@ function openProjektDetail(recId) {
       '</div>'+
       '<div style="display:flex;gap:6px">'+
         '<button class="btn" onclick="document.getElementById(\'projekt-detail\').remove()">Schließen</button>'+
+        '<button class="btn" onclick="_prjOpenStammEditor(\''+recId+'\')" style="color:#2152A9;border-color:rgba(33,82,169,.3)" title="Projektname, Verantwortlicher und Beschreibung bearbeiten">✏️ Bearbeiten</button>'+
         '<button class="btn" onclick="_prjOpenPresentation(\''+recId+'\')" style="color:#7c3aed;border-color:rgba(124,58,237,.3);background:#F5F3FF" title="Schöne Projekt-Übersicht als HTML + PDF-Export">🎨 Projekt-Ansicht</button>'+
         '<button class="btn" onclick="_prjSaveAsVorlage(\''+recId+'\')" style="color:#2152A9;border-color:rgba(33,82,169,.3)" title="Bausteine dieses Projekts als wiederverwendbare Vorlage speichern">💾 Als Vorlage</button>'+
         '<button class="btn" onclick="_prjSetArchived(\''+recId+'\','+(!f.archived)+')" style="color:#92400E;border-color:#F59E0B">'+(f.archived?'📂 Wiederherstellen':'📁 Archivieren')+'</button>'+
@@ -32504,6 +32505,123 @@ async function _prjLoadAllAttachmentsForProjekt(projektRecId) {
     }
     return map;
   } catch(_) { return {}; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.40: Projekt-Stammdaten nachträglich bearbeiten
+// (Name, Beschreibung, Projektverantwortlicher) — Anlage bleibt fest.
+// ═══════════════════════════════════════════════════════════════════════
+function _prjOpenStammEditor(recId) {
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Projekt nicht gefunden','err');
+  const f = rec.fields || {};
+  // Verantwortliche bei Bedarf nachladen (für Dropdown)
+  if (!_verantwCache.items) _loadVerantwortliche().then(() => _prjOpenStammEditor(recId)).catch(()=>{});
+  document.getElementById('prj-stamm-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'prj-stamm-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:10px';
+  const verantw = (_verantwCache.items||[]).filter(r => !r.fields?.archived);
+  m.innerHTML = '<div style="background:var(--surf);max-width:640px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>✏️ Projekt bearbeiten — PRJ-'+escapeHtml(String(f.projekt_num||'?'))+'</span>'+
+      '<button onclick="document.getElementById(\'prj-stamm-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:14px">'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektname *</label>'+
+        '<input id="prj-stamm-name" value="'+escapeHtml(f.name||'')+'" placeholder="z.B. Modernisierung Friedrichstr. 29" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Projektverantwortlicher * <span style="color:var(--txt3);font-weight:500">(meist Externer: GU, Planungsbüro, Auftraggeber)</span></label>'+
+        '<select id="prj-stamm-verantw" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+          '<option value="">— bitte wählen —</option>'+
+          verantw.slice().sort((a,b) => {
+            const ta = (a.fields?.typ||'extern')==='extern' ? 0 : 1;
+            const tb = (b.fields?.typ||'extern')==='extern' ? 0 : 1;
+            if (ta !== tb) return ta - tb;
+            return (a.fields?.firma_extern||'').localeCompare(b.fields?.firma_extern||'') || (a.fields?.name||'').localeCompare(b.fields?.name||'');
+          }).map(r => {
+            const t = (r.fields?.typ||'extern')==='extern' ? '🤝 ' : '🏢 ';
+            const fi = r.fields?.firma_extern ? ' · '+r.fields.firma_extern : '';
+            const ro = r.fields?.rolle ? ' ('+r.fields.rolle+')' : '';
+            return '<option value="'+escapeHtml(r.id)+'"'+(r.id===f.projekt_verantw_id?' selected':'')+'>'+escapeHtml(t+(r.fields?.name||'')+fi+ro)+'</option>';
+          }).join('')+
+        '</select>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Verantwortliche unter <a href="#" onclick="event.preventDefault();document.getElementById(\'prj-stamm-editor\').remove();switchView(\'verantw\')" style="color:var(--navy)">👷 Verantwortliche</a> anlegen/bearbeiten</div>'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Beschreibung</label>'+
+        '<textarea id="prj-stamm-beschreibung" rows="4" placeholder="Optional" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(f.beschreibung||'')+'</textarea></div>'+
+      // Read-only Info zu Anlage/Kunde
+      '<div style="background:#F9FAFB;border:1px solid var(--bdr);border-radius:8px;padding:10px 14px;font-size:11px;color:var(--txt3);line-height:1.6">'+
+        '<div style="font-weight:700;color:var(--txt2);margin-bottom:4px">📋 Festgelegt bei Projekterstellung (nicht änderbar)</div>'+
+        '<div>🏢 Kunde: <strong style="color:var(--txt2)">'+escapeHtml(f.kunde_name||'—')+'</strong></div>'+
+        '<div>📍 Standort: <strong style="color:var(--txt2)">'+escapeHtml(f.anlage_adresse||'—')+'</strong></div>'+
+        '<div>🔧 Fabriknummer: <strong style="color:var(--txt2)">'+escapeHtml(f.anlage_fabriknummer||'—')+'</strong></div>'+
+      '</div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'prj-stamm-editor\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" onclick="_prjSaveStammdaten(\''+recId+'\', this)">💾 Speichern</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById('prj-stamm-name')?.focus(), 100);
+}
+
+async function _prjSaveStammdaten(recId, btn) {
+  const rec = (_projektCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Projekt nicht gefunden','err');
+  const name = document.getElementById('prj-stamm-name')?.value.trim() || '';
+  const verantwId = document.getElementById('prj-stamm-verantw')?.value || '';
+  const beschreibung = document.getElementById('prj-stamm-beschreibung')?.value.trim() || '';
+  if (!name) return toast('Projektname ist Pflicht','err');
+  if (!verantwId) return toast('Projektverantwortlichen wählen','err');
+  const v = (_verantwCache.items||[]).find(x => x.id === verantwId);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  try {
+    if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const fields = {
+      name,
+      beschreibung,
+      projekt_verantw_id:    verantwId,
+      projekt_verantw_name:  v?.fields?.name || '',
+      projekt_verantw_firma: v?.fields?.firma_extern || '',
+      projekt_verantw_typ:   v?.fields?.typ || 'extern',
+    };
+    let r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    let d = await r.json();
+    // v5.15-Style Retry falls Schema-Felder noch fehlen
+    if (d.error && /unknown field name/i.test(d.error.message||'')) {
+      try {
+        await ensureField('App_Projekte','projekt_verantw_firma','singleLineText');
+        await ensureField('App_Projekte','projekt_verantw_typ','singleLineText');
+      } catch(_){}
+      const fields2 = { ...fields };
+      delete fields2.projekt_verantw_firma;
+      delete fields2.projekt_verantw_typ;
+      r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Projekte/'+recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: fields2 }),
+      });
+      d = await r.json();
+    }
+    if (d.error) throw new Error(d.error.message||'Airtable-Fehler');
+    // Lokalen Cache aktualisieren
+    Object.assign(rec.fields, fields);
+    toast('💾 Projekt-Stammdaten gespeichert','ok');
+    document.getElementById('prj-stamm-editor')?.remove();
+    // Detail neu rendern
+    openProjektDetail(recId);
+    // Liste auch aktualisieren
+    _renderProjekteList();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
 }
 
 async function _prjOpenPresentation(recId) {
