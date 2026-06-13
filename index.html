@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.51';
+const APP_VERSION = 'v5.52';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24282,6 +24282,85 @@ async function _fdLookupAssignment(firmaSlug, groupCandidates, responderCandidat
   return res;
 }
 
+/**
+ * v5.52: Holt offene/wartende Tickets eines Kunden (per Empfänger-Email) aus Freshdesk.
+ * Wird vom 🔎 Suchen-Button im Send-Modal aufgerufen — listet Tickets mit Nr/Betreff/Status,
+ * damit der User die richtige Anfrage zum Anhängen auswählen kann.
+ */
+async function _angFdSearchTicketsForEmail(firmaSlug, email) {
+  if (!email) return [];
+  const proxy = APP_KEYS.valtownProxyUrl;
+  if (!proxy) return [];
+  await erpEnsureSession();
+  const headers = { 'Authorization':'Bearer '+erpGetSessionToken() };
+  // Freshdesk akzeptiert email als Query — gibt alle Tickets dieser Email-Adresse.
+  const url = proxy+'/freshdesk/'+firmaSlug+'/api/v2/tickets?email='+encodeURIComponent(email)+'&per_page=30&order_by=updated_at&order_type=desc';
+  try {
+    const r = await fetch(url, { headers });
+    if (!r.ok) { console.warn('[FD-Tickets] HTTP', r.status); return []; }
+    const arr = await r.json();
+    if (!Array.isArray(arr)) return [];
+    // status: 2=Open, 3=Pending, 4=Resolved, 5=Closed
+    const STATUS = { 2:{lbl:'Offen', col:'#2152A9'}, 3:{lbl:'Wartend', col:'#F59E0B'}, 4:{lbl:'Gelöst', col:'#10B981'}, 5:{lbl:'Geschlossen', col:'#6B7280'} };
+    return arr.map(t => ({
+      id:      t.id,
+      subject: t.subject || '(kein Betreff)',
+      status:  t.status,
+      statusLabel: (STATUS[t.status]||{lbl:'?'}).lbl,
+      statusColor: (STATUS[t.status]||{col:'#6B7280'}).col,
+      updated: t.updated_at,
+    }));
+  } catch(e) {
+    console.warn('[FD-Tickets] fail:', e.message);
+    return [];
+  }
+}
+
+window._angsendSearchTickets = async function() {
+  const email = (document.getElementById('angsend-email')?.value || '').trim();
+  const firmaSlug = document.getElementById('angsend-firma-slug')?.value;
+  const container = document.getElementById('angsend-fd-ticket-results');
+  if (!container) return;
+  if (!email) { container.innerHTML = '<div style="color:#7F1D1D;font-size:11px;padding:8px">⚠ Bitte zuerst Empfänger-Email eintragen</div>'; return; }
+  container.innerHTML = '<div style="font-size:11px;color:var(--txt2);padding:8px">⏳ Suche Tickets für '+escapeHtml(email)+' …</div>';
+  const list = await _angFdSearchTicketsForEmail(firmaSlug, email);
+  if (!list.length) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--txt3);padding:8px;background:#F3F4F6;border-radius:4px">Keine Tickets gefunden für <strong>'+escapeHtml(email)+'</strong>. → Ticket-Nr manuell eintragen oder leer lassen (= neues Ticket erzeugen).</div>';
+    return;
+  }
+  container.innerHTML =
+    '<div style="font-size:11px;color:var(--txt2);padding:4px 0">'+list.length+' Ticket'+(list.length===1?'':'s')+' für '+escapeHtml(email)+' — auf eines klicken zum Auswählen:</div>'+
+    '<div style="max-height:200px;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px">'+
+      list.map(t =>
+        '<div onclick="_angsendPickTicket('+t.id+',\''+escapeHtml(t.subject).replace(/\'/g,'&#39;')+'\')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;gap:10px;align-items:center;font-size:12px" onmouseover="this.style.background=\'#F3F4F6\'" onmouseout="this.style.background=\'#fff\'">'+
+          '<span style="background:'+t.statusColor+';color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;flex-shrink:0">#'+t.id+' '+escapeHtml(t.statusLabel)+'</span>'+
+          '<span style="flex:1;color:var(--navy);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(t.subject)+'</span>'+
+        '</div>'
+      ).join('')+
+    '</div>';
+};
+
+window._angsendPickTicket = function(ticketId, subject) {
+  const inp = document.getElementById('angsend-fd-ticket-id');
+  const subj = document.getElementById('angsend-subject');
+  if (inp) inp.value = String(ticketId);
+  // Betreff aus Original-Anfrage übernehmen, mit "Re:" prefix wenn nicht da
+  if (subj && subject) {
+    const re = /^re:\s*/i.test(subject) ? subject : 'Re: '+subject;
+    subj.value = re;
+  }
+  const info = document.getElementById('angsend-fd-ticket-info');
+  if (info) info.innerHTML = '<div style="background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;padding:6px 10px;border-radius:6px;font-size:11px;margin-top:6px">✓ Antwortet auf Ticket #'+ticketId+' — kein neues Ticket wird erzeugt.</div>';
+  // Ergebnis-Liste schließen
+  const res = document.getElementById('angsend-fd-ticket-results');
+  if (res) res.innerHTML = '';
+};
+
+window._angsendClearTicket = function() {
+  const inp = document.getElementById('angsend-fd-ticket-id'); if (inp) inp.value = '';
+  const info = document.getElementById('angsend-fd-ticket-info'); if (info) info.innerHTML = '';
+};
+
 /** Übernimmt Picker-Auswahl, leert Cache und startet Send-Versuch neu. */
 window._angApplyFdPicker = function(firmaSlug, recId) {
   const g = document.getElementById('fd-picker-group');
@@ -24340,6 +24419,18 @@ function _angOpenSendModal(recId) {
       // v5.44: CC-Empfänger (frei, optional, mehrere mit Komma getrennt)
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">CC <span style="color:var(--txt3);font-weight:500">(optional, mehrere mit Komma trennen)</span></label>'+
         '<input id="angsend-cc" type="text" value="'+escapeHtml(localStorage.getItem('angsend_cc_'+firmaSlug)||'')+'" placeholder="z.B. kollege@firma.de, kunde-buchhaltung@firma.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      // v5.52: Auf bestehende FD-Anfrage antworten statt neues Ticket
+      '<input type="hidden" id="angsend-firma-slug" value="'+escapeHtml(firmaSlug)+'">'+
+      '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:10px 14px">'+
+        '<label style="font-size:11px;font-weight:700;color:#065F46;display:block;margin-bottom:4px">🎫 Auf bestehendes FD-Ticket antworten <span style="color:var(--txt3);font-weight:500">(optional — leer = neues Ticket erzeugen)</span></label>'+
+        '<div style="display:flex;gap:6px;align-items:center">'+
+          '<input id="angsend-fd-ticket-id" type="number" placeholder="Ticket-Nr (z.B. 12345)" style="flex:1;padding:8px 10px;border:1px solid #6EE7B7;border-radius:6px;font-size:13px;background:#fff">'+
+          '<button type="button" class="btn" onclick="_angsendSearchTickets()" style="font-size:12px;padding:6px 12px;color:#065F46;border-color:#6EE7B7;background:#fff">🔎 Suchen</button>'+
+          '<button type="button" class="btn" onclick="_angsendClearTicket()" style="font-size:12px;padding:6px 12px" title="Ticket-Auswahl zurücksetzen">↺</button>'+
+        '</div>'+
+        '<div id="angsend-fd-ticket-info"></div>'+
+        '<div id="angsend-fd-ticket-results" style="margin-top:6px"></div>'+
+      '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Betreff *</label>'+
         '<input id="angsend-subject" value="'+escapeHtml(defaultSubject)+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Nachricht *</label>'+
@@ -24426,6 +24517,9 @@ async function _angSendCustomerEmail(recId, btn) {
   const body = (document.getElementById('angsend-body')?.value || '').trim();
   const testMode = !!document.getElementById('angsend-testmode')?.checked;
   const testEmail = (document.getElementById('angsend-test-email')?.value || '').trim();
+  // v5.52: Optionale FD-Ticket-Nr — wenn gesetzt, wird auf dieses Ticket geantwortet
+  //        statt ein neues per outbound_email zu erzeugen.
+  const replyTicketId = parseInt((document.getElementById('angsend-fd-ticket-id')?.value || '').trim(), 10) || null;
   const EMAIL_RE = /^[\w._%+-]+@[\w.-]+\.\w+$/;
 
   // v5.44: Bei Test-Modus den Empfänger überschreiben + Betreff prefix + CC ignorieren
@@ -24490,6 +24584,84 @@ async function _angSendCustomerEmail(recId, btn) {
     setProgress(5, '📥 Lade PDF aus Airtable …');
     // 1) PDF als Blob holen
     const pdfBlob = await (await fetch(appPdf.url)).blob();
+    // v5.52: Reply-Pfad — auf bestehendes Ticket antworten, ohne neues anzulegen
+    if (replyTicketId) {
+      // Test-Modus + Reply: macht keinen Sinn (würde an die Original-Anfrage-Email gehen).
+      // Wir warnen und brechen ab.
+      if (testMode) {
+        showError('Test-Modus inkompatibel mit Reply',
+          ['Wenn auf ein bestehendes Ticket geantwortet wird, geht die Mail an den Original-Anfragesteller.',
+           'Test-Modus (an dich selbst) funktioniert nur bei „neues Ticket".',
+           'Entweder: Ticket-Nr leeren ODER Test-Modus aus.']);
+        return;
+      }
+      setProgress(35, '✍️ Lade Agent-Signatur …');
+      let agentSignature = '';
+      try {
+        const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/agents/me', {
+          headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
+        });
+        if (meR.ok) {
+          const me = await meR.json();
+          agentSignature = String(me?.signature || me?.signature_html || me?.contact?.signature || '').trim();
+        }
+      } catch(e) { console.warn('[Angebot-Send] /agents/me:', e.message); }
+      setProgress(55, '📧 Antworte auf Ticket #'+replyTicketId+' …');
+      let bodyHtml = '<p>'+escapeHtml(body).replace(/\n/g,'<br>')+'</p>';
+      if (agentSignature) bodyHtml += '<br><br>'+agentSignature;
+      const fdReply = new FormData();
+      fdReply.append('body', bodyHtml);
+      for (const cc of ccEmails) fdReply.append('cc_emails[]', cc);
+      fdReply.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
+      await erpEnsureSession();
+      const replyUrl = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+replyTicketId+'/reply';
+      const rR = await fetch(replyUrl, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fdReply });
+      const tR = await rR.text();
+      let dR; try { dR = tR ? JSON.parse(tR) : null; } catch(_){ dR = { _raw:tR }; }
+      if (!rR.ok) {
+        const lines = ['HTTP '+rR.status+(dR?.description?' · '+dR.description:'')];
+        if (Array.isArray(dR?.errors) && dR.errors.length) {
+          for (const e of dR.errors) lines.push('• ['+(e.field||'?')+'] '+(e.message||e.code||'?'));
+        } else if (tR) lines.push(tR.slice(0,400));
+        console.error('[Angebot-Send] FD reply', dR || tR);
+        showError('Freshdesk lehnt die Antwort ab', lines);
+        return;
+      }
+      setProgress(85, '💾 Speichere Ticket-Verknüpfung …');
+      // Bestehendes Ticket → wir speichern die Reply als Verknüpfung
+      try {
+        await ensureField('App_Angebote','fd_send_ticket_id','number',  { precision:0 });
+        await ensureField('App_Angebote','fd_send_ticket_url','singleLineText');
+        await ensureField('App_Angebote','fd_send_at',        'singleLineText');
+        await ensureField('App_Angebote','fd_send_email',     'singleLineText');
+      } catch(_){}
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(replyTicketId)) || '';
+      const persistFields = {
+        fd_send_ticket_id:  replyTicketId,
+        fd_send_ticket_url: ticketUrl,
+        fd_send_at:         new Date().toISOString(),
+        fd_send_email:      email,
+        status:             'gesendet',
+      };
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields: persistFields }),
+        });
+      } catch(e) { console.warn('[Angebot-Send] persist:', e.message); }
+      setProgress(100, '✅ Antwort gesendet — Ticket #'+replyTicketId);
+      const ccInfo = ccEmails.length ? ' (CC: '+ccEmails.length+')' : '';
+      toast('💬 Angebot als Reply an Ticket #'+replyTicketId+' geschickt'+ccInfo,'ok');
+      await new Promise(r => setTimeout(r, 700));
+      document.getElementById('ang-send-modal')?.remove();
+      _angeboteCache.firma = null;
+      await renderAngeboteView({force:true});
+      document.getElementById('ang-detail')?.remove();
+      openAngebotDetail(recId);
+      return;
+    }
     setProgress(20, '🔍 Suche Freshdesk-Zuweisung (Gruppe + Bearbeiter) …');
     // 2) Group + Responder per Lookup — probiert Fallback-Liste, akzeptiert Override
     const assignment = await _fdLookupAssignment(firmaSlug, ANGEBOT_FD_GROUP_CANDIDATES, ANGEBOT_FD_RESPONDER_CANDIDATES);
