@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.45';
+const APP_VERSION = 'v5.46';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24187,17 +24187,56 @@ async function _angSendCustomerEmail(recId, btn) {
   // CC-Wert für nächstes Mal merken (firma-spezifisch)
   if (!testMode) localStorage.setItem('angsend_cc_'+firmaSlug, ccRaw);
 
-  const origLabel = btn?.textContent || '📧 Senden';
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ Lade PDF …'; }
+  // v5.46: Progress-UI im Modal-Footer einblenden + sichtbarer Status pro Schritt
+  const modal = document.getElementById('ang-send-modal');
+  const footer = modal?.querySelector('div[style*="background:var(--bg)"]');
+  const origFooterHtml = footer?.innerHTML || '';
+  const setProgress = (pct, msg) => {
+    if (!footer) return;
+    footer.innerHTML =
+      '<div style="width:100%;display:flex;flex-direction:column;gap:8px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:center;font-size:13px;color:var(--txt2)">'+
+          '<span>'+escapeHtml(msg)+'</span>'+
+          '<span style="font-weight:700;color:#2152A9">'+pct+' %</span>'+
+        '</div>'+
+        '<div style="background:#E5E7EB;height:8px;border-radius:99px;overflow:hidden">'+
+          '<div style="background:linear-gradient(90deg,#2152A9 0%,#3B82F6 100%);height:100%;width:'+pct+'%;transition:width .3s ease;border-radius:99px"></div>'+
+        '</div>'+
+      '</div>';
+  };
+  const showError = (title, detailLines) => {
+    if (!footer) return;
+    const list = (Array.isArray(detailLines)?detailLines:[String(detailLines||'')]).map(l => '<div>'+escapeHtml(String(l))+'</div>').join('');
+    footer.innerHTML =
+      '<div style="width:100%;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;padding:12px 14px;font-size:12px;color:#7F1D1D;display:flex;flex-direction:column;gap:6px">'+
+        '<div style="font-weight:700">❌ '+escapeHtml(title)+'</div>'+
+        '<div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.5;max-height:140px;overflow-y:auto;background:#fff;padding:8px 10px;border-radius:4px;border:1px solid #FCA5A5">'+list+'</div>'+
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'+
+          '<button class="btn" onclick="document.getElementById(\'ang-send-modal\').remove()">Schließen</button>'+
+          '<button class="btn prim" onclick="_angSendCustomerEmail(\''+recId+'\', this)">↻ Nochmal versuchen</button>'+
+        '</div>'+
+      '</div>';
+  };
+
   try {
+    setProgress(5, '📥 Lade PDF aus Airtable …');
     // 1) PDF als Blob holen
     const pdfBlob = await (await fetch(appPdf.url)).blob();
-    if (btn) btn.textContent = '🔍 Suche FD-Zuweisung …';
+    setProgress(20, '🔍 Suche Freshdesk-Zuweisung (Gruppe + Bearbeiter) …');
     // 2) Group + Responder per Lookup
     const assignment = await _fdLookupAssignment(firmaSlug, ANGEBOT_FD_GROUP_NAME, ANGEBOT_FD_RESPONDER_NAME);
+    // v5.46: Pre-Flight-Check — fail-fast wenn Group fehlt (Hauptursache von HTTP 400 bei outbound_email)
+    const lookupProblems = [];
+    if (!assignment.group_id)     lookupProblems.push('• Gruppe „'+ANGEBOT_FD_GROUP_NAME+'" NICHT in Freshdesk gefunden — bitte in Freshdesk-Admin → Gruppen anlegen oder Namen prüfen.');
+    if (!assignment.responder_id) lookupProblems.push('• Bearbeiter „'+ANGEBOT_FD_RESPONDER_NAME+'" NICHT gefunden — Agent muss in Freshdesk existieren und der Gruppe zugewiesen sein.');
+    if (lookupProblems.length) {
+      showError('Freshdesk-Zuweisung unvollständig', lookupProblems.concat(['', 'Freshdesk lehnt outbound_email ohne gültige group_id/responder_id mit HTTP 400 ab.']));
+      return;
+    }
+    setProgress(35, '📨 Lade E-Mail-Konfiguration (Signatur + Absender) …');
     // 3) email_config_id ermitteln (für Signatur + Absender)
-    if (btn) btn.textContent = '📨 Lade E-Mail-Konfiguration …';
     let emailConfigId = null;
+    let configError = '';
     try {
       const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/email_configs', {
         headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
@@ -24207,10 +24246,24 @@ async function _angSendCustomerEmail(recId, btn) {
         if (Array.isArray(arr) && arr.length) {
           const primary = arr.find(c => c.primary_role) || arr.find(c => c.active) || arr[0];
           emailConfigId = primary.id;
+        } else {
+          configError = 'Keine Mail-Konfigurationen in Freshdesk vorhanden';
         }
+      } else {
+        configError = 'HTTP '+r.status+' beim Lesen der email_configs';
       }
-    } catch(e) { console.warn('[Angebot-Send] email_configs:', e.message); }
-    if (btn) btn.textContent = '📧 Sende E-Mail …';
+    } catch(e) { configError = e.message; }
+    if (!emailConfigId) {
+      console.warn('[Angebot-Send] email_config:', configError);
+      showError('Keine E-Mail-Konfiguration in Freshdesk', [
+        '• '+(configError||'Unbekannter Fehler'),
+        '',
+        'outbound_email braucht eine gültige email_config_id (= „Versand-E-Mail-Adresse" in Freshdesk-Admin → E-Mail).',
+        'Bitte in Freshdesk eine Support-E-Mail einrichten / aktivieren.',
+      ]);
+      return;
+    }
+    setProgress(55, '📧 Sende E-Mail an '+email+' …');
     // 4) Outbound-E-Mail an Kunde — Ticket bleibt offen
     const description = '<p>'+escapeHtml(body).replace(/\n/g,'<br>')+'</p>';
     const fd = new FormData();
@@ -24219,10 +24272,9 @@ async function _angSendCustomerEmail(recId, btn) {
     fd.append('description', description);
     fd.append('status', '2');       // 2 = Open
     fd.append('priority', '1');     // 1 = Low
-    if (emailConfigId)              fd.append('email_config_id', String(emailConfigId));
-    if (assignment.group_id)        fd.append('group_id',        String(assignment.group_id));
-    if (assignment.responder_id)    fd.append('responder_id',    String(assignment.responder_id));
-    // v5.44: CC-Empfänger (nur außerhalb Test-Modus)
+    fd.append('email_config_id', String(emailConfigId));
+    fd.append('group_id',        String(assignment.group_id));
+    fd.append('responder_id',    String(assignment.responder_id));
     for (const cc of ccEmails) fd.append('cc_emails[]', cc);
     fd.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
     await erpEnsureSession();
@@ -24231,9 +24283,20 @@ async function _angSendCustomerEmail(recId, btn) {
     const text = await res.text();
     let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
     if (!res.ok) {
-      const errMsg = data?.errors ? data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'')).join('; ') : ('HTTP '+res.status);
-      throw new Error(errMsg);
+      // v5.46: Detaillierte FD-Fehler-Ausgabe (errors[] mit field/code/message) im Modal
+      const lines = ['HTTP '+res.status+(data?.description?' · '+data.description:'')];
+      if (Array.isArray(data?.errors) && data.errors.length) {
+        for (const e of data.errors) {
+          lines.push('• ['+(e.field||'?')+'] '+(e.message||e.code||'?')+(e.code?' ('+e.code+')':''));
+        }
+      } else if (text) {
+        lines.push(text.slice(0,400));
+      }
+      console.error('[Angebot-Send] FD outbound_email', data || text);
+      showError('Freshdesk lehnt den Versand ab', lines);
+      return;
     }
+    setProgress(80, '💾 Speichere Ticket-Verknüpfung …');
     const ticketId = data?.id;
     const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
     // 5) Persistieren am Angebot
@@ -24260,8 +24323,11 @@ async function _angSendCustomerEmail(recId, btn) {
         body: JSON.stringify({ fields: persistFields }),
       });
     } catch(e) { console.warn('[Angebot-Send] persist:', e.message); }
+    setProgress(100, '✅ E-Mail versendet — Ticket #'+ticketId);
     const ccInfo = ccEmails.length ? ' (CC: '+ccEmails.length+')' : '';
     toast((testMode?'🧪 TEST · ':'📧 ')+'Angebot an '+email+' gesendet'+ccInfo+' — Ticket #'+ticketId, testMode ? 'warn' : 'ok');
+    // Modal kurz auf 100% zeigen, dann schließen + neu rendern
+    await new Promise(r => setTimeout(r, 700));
     document.getElementById('ang-send-modal')?.remove();
     _angeboteCache.firma = null;
     await renderAngeboteView({force:true});
@@ -24269,8 +24335,10 @@ async function _angSendCustomerEmail(recId, btn) {
     openAngebotDetail(recId);
   } catch(e) {
     console.error('[Angebot-Send]', e);
+    // v5.46: Persistente Fehler-Box im Modal statt flüchtigem Toast
+    const stack = e?.stack ? e.stack.split('\n').slice(0,3) : [];
+    showError('Versand abgebrochen', [String(e?.message||e), ...stack]);
     toast('❌ '+(e.message||e).slice(0,200),'err');
-    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
   }
 }
 
