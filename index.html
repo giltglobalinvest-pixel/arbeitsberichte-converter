@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.47';
+const APP_VERSION = 'v5.48';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24355,7 +24355,9 @@ async function _angSendCustomerEmail(recId, btn) {
     fd.append('priority', '1');     // 1 = Low
     fd.append('email_config_id', String(emailConfigId));
     fd.append('group_id',        String(assignment.group_id));
-    fd.append('responder_id',    String(assignment.responder_id));
+    // v5.48: KEIN responder_id hier — outbound_email lehnt das Feld ab
+    // ("Unexpected/invalid field in request"). Bearbeiter setzen wir
+    // nach erfolgreichem POST per PUT /tickets/<id>.
     for (const cc of ccEmails) fd.append('cc_emails[]', cc);
     fd.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
     await erpEnsureSession();
@@ -24377,9 +24379,22 @@ async function _angSendCustomerEmail(recId, btn) {
       showError('Freshdesk lehnt den Versand ab', lines);
       return;
     }
-    setProgress(80, '💾 Speichere Ticket-Verknüpfung …');
     const ticketId = data?.id;
     const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
+    // v5.48: responder_id nach erfolgreichem outbound_email per PUT zuweisen
+    if (ticketId && assignment.responder_id) {
+      setProgress(75, '👤 Weise Ticket dem Bearbeiter zu …');
+      try {
+        const putUrl = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+ticketId;
+        const putRes = await fetch(putUrl, {
+          method:'PUT',
+          headers:{ 'Authorization':'Bearer '+erpGetSessionToken(), 'Content-Type':'application/json' },
+          body: JSON.stringify({ responder_id: assignment.responder_id }),
+        });
+        if (!putRes.ok) console.warn('[Angebot-Send] PUT responder_id:', putRes.status, await putRes.text());
+      } catch(e) { console.warn('[Angebot-Send] responder-assign:', e.message); }
+    }
+    setProgress(85, '💾 Speichere Ticket-Verknüpfung …');
     // 5) Persistieren am Angebot
     try {
       await ensureField('App_Angebote','fd_send_ticket_id','number',  { precision:0 });
