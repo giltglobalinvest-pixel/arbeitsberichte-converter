@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.43';
+const APP_VERSION = 'v5.44';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24064,11 +24064,26 @@ function _angOpenSendModal(recId) {
       '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Empfänger-E-Mail *</label>'+
         '<input id="angsend-email" type="email" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      // v5.44: CC-Empfänger (frei, optional, mehrere mit Komma getrennt)
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">CC <span style="color:var(--txt3);font-weight:500">(optional, mehrere mit Komma trennen)</span></label>'+
+        '<input id="angsend-cc" type="text" value="'+escapeHtml(localStorage.getItem('angsend_cc_'+firmaSlug)||'')+'" placeholder="z.B. kollege@firma.de, kunde-buchhaltung@firma.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Betreff *</label>'+
         '<input id="angsend-subject" value="'+escapeHtml(defaultSubject)+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Nachricht *</label>'+
         '<textarea id="angsend-body" rows="8" style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;resize:vertical">'+escapeHtml(defaultBody)+'</textarea>'+
         '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Die Freshdesk-Signatur wird automatisch unter den Text gesetzt — bitte keine Unterschrift manuell anhängen.</div>'+
+      '</div>'+
+      // v5.44: Test-Modus — Versand an eigene E-Mail statt an Kunde
+      '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px">'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#7c2d12;cursor:pointer">'+
+          '<input type="checkbox" id="angsend-testmode" '+(localStorage.getItem('angsend_testmode')==='1'?'checked':'')+' onchange="_angsendToggleTestMode()" style="width:16px;height:16px">'+
+          '<span>🧪 Test-Modus — an mich statt an Kunde senden</span>'+
+        '</label>'+
+        '<div id="angsend-test-wrap" style="margin-top:10px;'+(localStorage.getItem('angsend_testmode')==='1'?'':'display:none')+'">'+
+          '<label style="font-size:11px;font-weight:700;color:#7c2d12;display:block;margin-bottom:4px">Meine Test-E-Mail *</label>'+
+          '<input id="angsend-test-email" type="email" value="'+escapeHtml(localStorage.getItem('angsend_test_email')||(APP_KEYS.user?.email||''))+'" placeholder="ich@firma.de" style="width:100%;padding:9px 12px;border:1px solid #FCD34D;border-radius:6px;font-size:13px;background:#FFFBEB">'+
+          '<div style="font-size:11px;color:#92400E;margin-top:6px;line-height:1.5">⚠ Bei aktivem Test-Modus geht die E-Mail an deine Adresse, NICHT an den Kunden. Empfänger- und CC-Felder oben werden ignoriert. Betreff bekommt „[TEST]"-Präfix.</div>'+
+        '</div>'+
       '</div>'+
     '</div>'+
     '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
@@ -24080,11 +24095,40 @@ function _angOpenSendModal(recId) {
   setTimeout(() => document.getElementById(defaultEmail ? 'angsend-subject' : 'angsend-email')?.focus(), 100);
 }
 
+// v5.44: Test-Modus-Toggle ein-/ausklappen + persistieren
+function _angsendToggleTestMode() {
+  const cb = document.getElementById('angsend-testmode');
+  const wrap = document.getElementById('angsend-test-wrap');
+  if (cb && wrap) {
+    wrap.style.display = cb.checked ? '' : 'none';
+    localStorage.setItem('angsend_testmode', cb.checked ? '1' : '0');
+  }
+}
+
 async function _angSendCustomerEmail(recId, btn) {
-  const email = (document.getElementById('angsend-email')?.value || '').trim();
-  const subject = (document.getElementById('angsend-subject')?.value || '').trim();
+  let email = (document.getElementById('angsend-email')?.value || '').trim();
+  const ccRaw = (document.getElementById('angsend-cc')?.value || '').trim();
+  let subject = (document.getElementById('angsend-subject')?.value || '').trim();
   const body = (document.getElementById('angsend-body')?.value || '').trim();
-  if (!email || !/^[\w._%+-]+@[\w.-]+\.\w+$/.test(email)) return toast('Bitte gültige Empfänger-E-Mail eingeben','err');
+  const testMode = !!document.getElementById('angsend-testmode')?.checked;
+  const testEmail = (document.getElementById('angsend-test-email')?.value || '').trim();
+  const EMAIL_RE = /^[\w._%+-]+@[\w.-]+\.\w+$/;
+
+  // v5.44: Bei Test-Modus den Empfänger überschreiben + Betreff prefix + CC ignorieren
+  let ccEmails = [];
+  if (testMode) {
+    if (!testEmail || !EMAIL_RE.test(testEmail)) return toast('Bitte gültige Test-E-Mail eingeben','err');
+    email = testEmail;
+    if (!/^\[TEST\]/i.test(subject)) subject = '[TEST] ' + subject;
+    localStorage.setItem('angsend_test_email', testEmail);
+  } else {
+    if (!email || !EMAIL_RE.test(email)) return toast('Bitte gültige Empfänger-E-Mail eingeben','err');
+    // CC parsen (komma, semikolon, leerzeichen)
+    ccEmails = ccRaw.split(/[,;\s]+/).map(s => s.trim()).filter(Boolean);
+    const invalid = ccEmails.filter(e => !EMAIL_RE.test(e));
+    if (invalid.length) return toast('Ungültige CC-Adresse(n): '+invalid.join(', '),'err');
+    if (ccEmails.length > 50) return toast('Zu viele CC-Empfänger (max 50)','err');
+  }
   if (!subject) return toast('Betreff ist Pflicht','err');
   if (!body || body.length < 20) return toast('Nachricht zu kurz','err');
 
@@ -24094,6 +24138,8 @@ async function _angSendCustomerEmail(recId, btn) {
   const firmaSlug = f.firma || getCurrentFirmaSlug();
   const appPdf = f.app_pdf?.[0];
   if (!appPdf) return toast('Kein PDF zum Anhängen','err');
+  // CC-Wert für nächstes Mal merken (firma-spezifisch)
+  if (!testMode) localStorage.setItem('angsend_cc_'+firmaSlug, ccRaw);
 
   const origLabel = btn?.textContent || '📧 Senden';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Lade PDF …'; }
@@ -24130,6 +24176,8 @@ async function _angSendCustomerEmail(recId, btn) {
     if (emailConfigId)              fd.append('email_config_id', String(emailConfigId));
     if (assignment.group_id)        fd.append('group_id',        String(assignment.group_id));
     if (assignment.responder_id)    fd.append('responder_id',    String(assignment.responder_id));
+    // v5.44: CC-Empfänger (nur außerhalb Test-Modus)
+    for (const cc of ccEmails) fd.append('cc_emails[]', cc);
     fd.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
     await erpEnsureSession();
     const url = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email';
@@ -24150,20 +24198,24 @@ async function _angSendCustomerEmail(recId, btn) {
       await ensureField('App_Angebote','fd_send_email',     'singleLineText');
     } catch(_){}
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    // v5.44: Im Test-Modus den Status NICHT auf 'gesendet' setzen — sonst denkt
+    // der User das Angebot wurde wirklich an den Kunden geschickt.
+    const persistFields = {
+      fd_send_ticket_id:  ticketId || null,
+      fd_send_ticket_url: ticketUrl,
+      fd_send_at:         new Date().toISOString(),
+      fd_send_email:      email,
+    };
+    if (!testMode) persistFields.status = 'gesendet';
     try {
       await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
         method:'PATCH',
         headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-        body: JSON.stringify({ fields:{
-          fd_send_ticket_id:  ticketId || null,
-          fd_send_ticket_url: ticketUrl,
-          fd_send_at:         new Date().toISOString(),
-          fd_send_email:      email,
-          status:             'gesendet',
-        }}),
+        body: JSON.stringify({ fields: persistFields }),
       });
     } catch(e) { console.warn('[Angebot-Send] persist:', e.message); }
-    toast('📧 Angebot an '+email+' gesendet — Ticket #'+ticketId,'ok');
+    const ccInfo = ccEmails.length ? ' (CC: '+ccEmails.length+')' : '';
+    toast((testMode?'🧪 TEST · ':'📧 ')+'Angebot an '+email+' gesendet'+ccInfo+' — Ticket #'+ticketId, testMode ? 'warn' : 'ok');
     document.getElementById('ang-send-modal')?.remove();
     _angeboteCache.firma = null;
     await renderAngeboteView({force:true});
