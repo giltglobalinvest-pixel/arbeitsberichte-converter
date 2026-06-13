@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.42';
+const APP_VERSION = 'v5.43';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23390,6 +23390,9 @@ function openAngebotDetail(recId) {
         (f.archived
           ? '<button class="btn" onclick="_angSetArchived(\''+recId+'\', false, this)" style="color:#92400E;border-color:#F59E0B" title="Aus dem Archiv zurückholen">📂 Wiederherstellen</button>'
           : '<button class="btn" onclick="_angSetArchived(\''+recId+'\', true, this)" title="Archivieren — bleibt in DB, wird in der Liste ausgeblendet">📁 Archivieren</button>')+
+        (freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
+          ? '<button class="btn" onclick="_angOpenSendModal(\''+recId+'\')" style="color:#2152A9;border-color:rgba(33,82,169,.45);background:#EFF6FF" title="Angebot per Freshdesk-E-Mail an Kunde senden">📧 An Kunde senden</button>'
+          : '')+
         '<button class="btn" onclick="_angPushToErp(\''+recId+'\', this)" style="background:#10B981;color:#fff;border-color:#10B981" title="'+(f.erp_angebot_id ? 'Erneut ins ERP pushen' : 'Als Pauschal-Angebot ins ERP pushen')+'">📤 '+(f.erp_angebot_id ? 'Erneut ins ERP' : 'Ins ERP pushen')+'</button>'+
         '<button class="btn prim" onclick="openAngebotEditor({editMode:true,recId:\''+recId+'\'})" title="Angebot ändern + PDF neu generieren">✏️ Bearbeiten</button>'+
       '</div>'+
@@ -23969,6 +23972,207 @@ async function _angRegeneratePdf(recId, btn) {
     toast('❌ '+e.message,'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🔄 Neu generieren'; }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v5.43: Angebot direkt an Kunde senden — Freshdesk Outbound-E-Mail.
+// Gruppe "Angebotsbearbeitung" + Bearbeiter "Patrizio Fontanarosa" werden
+// per Lookup (Cache 1h) zugewiesen. Signatur kommt aus Freshdesk durch
+// die Verwendung von /outbound_email mit email_config_id.
+// ═══════════════════════════════════════════════════════════════════════
+const ANGEBOT_FD_GROUP_NAME     = 'Angebotsbearbeitung';
+const ANGEBOT_FD_RESPONDER_NAME = 'Patrizio Fontanarosa';
+const _fdAssignmentGenericCache = {}; // key = firmaSlug+'|'+group+'|'+responder → {ids, ts}
+
+/** Generischer FD-Lookup: Group-ID + Responder-ID per Namen ermitteln, 1h gecached. */
+async function _fdLookupAssignment(firmaSlug, groupName, responderName) {
+  const cacheKey = firmaSlug + '|' + groupName + '|' + responderName;
+  const cached = _fdAssignmentGenericCache[cacheKey];
+  if (cached && (Date.now() - cached.loadedAt) < 60*60*1000) return cached;
+  const proxy = APP_KEYS.valtownProxyUrl;
+  if (!proxy) return { group_id:null, responder_id:null, loadedAt:Date.now() };
+  await erpEnsureSession();
+  const headers = { 'Authorization':'Bearer '+erpGetSessionToken() };
+  let group_id = null, responder_id = null;
+  try {
+    const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/admin/groups', { headers });
+    if (r.ok) {
+      const arr = await r.json();
+      if (Array.isArray(arr)) {
+        const g = arr.find(x => String(x.name||'').toLowerCase() === groupName.toLowerCase());
+        if (g) group_id = g.id;
+      }
+    }
+  } catch(e) { console.warn('[FD-Lookup] groups:', e.message); }
+  try {
+    const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/agents?per_page=100', { headers });
+    if (r.ok) {
+      const arr = await r.json();
+      if (Array.isArray(arr)) {
+        const wantedLower = responderName.toLowerCase();
+        const a = arr.find(x => {
+          const n = String(x.contact?.name || x.name || '').toLowerCase();
+          return n === wantedLower || n.includes(wantedLower);
+        });
+        if (a) responder_id = a.id;
+      }
+    }
+  } catch(e) { console.warn('[FD-Lookup] agents:', e.message); }
+  const res = { group_id, responder_id, loadedAt: Date.now() };
+  _fdAssignmentGenericCache[cacheKey] = res;
+  console.log('[FD-Lookup] '+firmaSlug+' · "'+groupName+'"='+group_id+' · "'+responderName+'"='+responder_id);
+  return res;
+}
+
+function _angOpenSendModal(recId) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Angebot nicht gefunden','err');
+  const f = rec.fields;
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk nicht konfiguriert','err');
+  const appPdf = f.app_pdf?.[0];
+  if (!appPdf) return toast('Noch kein PDF erzeugt — bitte erst „Neu generieren"','err');
+
+  // Empfänger-Vorbelegung aus verfügbaren Feldern
+  const defaultEmail = String(f.kontakt_email || f.kunde_email || '').trim();
+  const angNum = f.app_angebot_num || '?';
+  const standort = String(f.anlage_adresse || '').split(/[,\n]/)[0] || '';
+  const defaultSubject = 'Angebot ANG-'+angNum+(standort ? ' · '+standort : '');
+  const kontaktName = String(f.kontakt_name || '').replace(/^(Sehr geehrter? (Herr|Frau)\s+)/i,'').trim();
+  const anrede = kontaktName ? ('Sehr geehrte/r '+kontaktName+',') : 'Sehr geehrte Damen und Herren,';
+  const defaultBody = anrede+'\n\nanbei erhalten Sie unser Angebot ANG-'+angNum+(standort ? ' zu '+standort : '')+'.\n\nFür Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nMit freundlichen Grüßen';
+
+  document.getElementById('ang-send-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-send-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:640px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>📧 Angebot ANG-'+escapeHtml(String(angNum))+' an Kunde senden</span>'+
+      '<button onclick="document.getElementById(\'ang-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:14px">'+
+      // Info-Banner
+      '<div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px 14px;font-size:12px;color:#1E3A8A;line-height:1.6">'+
+        '<div>📋 <strong>Versand via Freshdesk:</strong></div>'+
+        '<div>• Ticket-Status: <strong>Offen</strong></div>'+
+        '<div>• Gruppe: <strong>'+ANGEBOT_FD_GROUP_NAME+'</strong></div>'+
+        '<div>• Bearbeiter: <strong>'+ANGEBOT_FD_RESPONDER_NAME+'</strong></div>'+
+        '<div>• Signatur: <strong>aus Freshdesk-Account</strong></div>'+
+        '<div>• PDF: <strong>'+escapeHtml(appPdf.filename || 'Angebot.pdf')+'</strong> ('+Math.round((appPdf.size||0)/1024)+' KB)</div>'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Empfänger-E-Mail *</label>'+
+        '<input id="angsend-email" type="email" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Betreff *</label>'+
+        '<input id="angsend-subject" value="'+escapeHtml(defaultSubject)+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Nachricht *</label>'+
+        '<textarea id="angsend-body" rows="8" style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;resize:vertical">'+escapeHtml(defaultBody)+'</textarea>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Die Freshdesk-Signatur wird automatisch unter den Text gesetzt — bitte keine Unterschrift manuell anhängen.</div>'+
+      '</div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+      '<button class="btn" onclick="document.getElementById(\'ang-send-modal\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" onclick="_angSendCustomerEmail(\''+recId+'\', this)">📧 Senden</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById(defaultEmail ? 'angsend-subject' : 'angsend-email')?.focus(), 100);
+}
+
+async function _angSendCustomerEmail(recId, btn) {
+  const email = (document.getElementById('angsend-email')?.value || '').trim();
+  const subject = (document.getElementById('angsend-subject')?.value || '').trim();
+  const body = (document.getElementById('angsend-body')?.value || '').trim();
+  if (!email || !/^[\w._%+-]+@[\w.-]+\.\w+$/.test(email)) return toast('Bitte gültige Empfänger-E-Mail eingeben','err');
+  if (!subject) return toast('Betreff ist Pflicht','err');
+  if (!body || body.length < 20) return toast('Nachricht zu kurz','err');
+
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Record nicht gefunden','err');
+  const f = rec.fields;
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const appPdf = f.app_pdf?.[0];
+  if (!appPdf) return toast('Kein PDF zum Anhängen','err');
+
+  const origLabel = btn?.textContent || '📧 Senden';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Lade PDF …'; }
+  try {
+    // 1) PDF als Blob holen
+    const pdfBlob = await (await fetch(appPdf.url)).blob();
+    if (btn) btn.textContent = '🔍 Suche FD-Zuweisung …';
+    // 2) Group + Responder per Lookup
+    const assignment = await _fdLookupAssignment(firmaSlug, ANGEBOT_FD_GROUP_NAME, ANGEBOT_FD_RESPONDER_NAME);
+    // 3) email_config_id ermitteln (für Signatur + Absender)
+    if (btn) btn.textContent = '📨 Lade E-Mail-Konfiguration …';
+    let emailConfigId = null;
+    try {
+      const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/email_configs', {
+        headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
+      });
+      if (r.ok) {
+        const arr = await r.json();
+        if (Array.isArray(arr) && arr.length) {
+          const primary = arr.find(c => c.primary_role) || arr.find(c => c.active) || arr[0];
+          emailConfigId = primary.id;
+        }
+      }
+    } catch(e) { console.warn('[Angebot-Send] email_configs:', e.message); }
+    if (btn) btn.textContent = '📧 Sende E-Mail …';
+    // 4) Outbound-E-Mail an Kunde — Ticket bleibt offen
+    const description = '<p>'+escapeHtml(body).replace(/\n/g,'<br>')+'</p>';
+    const fd = new FormData();
+    fd.append('email', email);
+    fd.append('subject', subject);
+    fd.append('description', description);
+    fd.append('status', '2');       // 2 = Open
+    fd.append('priority', '1');     // 1 = Low
+    if (emailConfigId)              fd.append('email_config_id', String(emailConfigId));
+    if (assignment.group_id)        fd.append('group_id',        String(assignment.group_id));
+    if (assignment.responder_id)    fd.append('responder_id',    String(assignment.responder_id));
+    fd.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
+    await erpEnsureSession();
+    const url = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email';
+    const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+    const text = await res.text();
+    let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
+    if (!res.ok) {
+      const errMsg = data?.errors ? data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'')).join('; ') : ('HTTP '+res.status);
+      throw new Error(errMsg);
+    }
+    const ticketId = data?.id;
+    const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
+    // 5) Persistieren am Angebot
+    try {
+      await ensureField('App_Angebote','fd_send_ticket_id','number',  { precision:0 });
+      await ensureField('App_Angebote','fd_send_ticket_url','singleLineText');
+      await ensureField('App_Angebote','fd_send_at',        'singleLineText');
+      await ensureField('App_Angebote','fd_send_email',     'singleLineText');
+    } catch(_){}
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    try {
+      await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields:{
+          fd_send_ticket_id:  ticketId || null,
+          fd_send_ticket_url: ticketUrl,
+          fd_send_at:         new Date().toISOString(),
+          fd_send_email:      email,
+          status:             'gesendet',
+        }}),
+      });
+    } catch(e) { console.warn('[Angebot-Send] persist:', e.message); }
+    toast('📧 Angebot an '+email+' gesendet — Ticket #'+ticketId,'ok');
+    document.getElementById('ang-send-modal')?.remove();
+    _angeboteCache.firma = null;
+    await renderAngeboteView({force:true});
+    document.getElementById('ang-detail')?.remove();
+    openAngebotDetail(recId);
+  } catch(e) {
+    console.error('[Angebot-Send]', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = origLabel; }
   }
 }
 
