@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.52';
+const APP_VERSION = 'v5.53';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24317,11 +24317,41 @@ async function _angFdSearchTicketsForEmail(firmaSlug, email) {
 }
 
 window._angsendSearchTickets = async function() {
-  const email = (document.getElementById('angsend-email')?.value || '').trim();
   const firmaSlug = document.getElementById('angsend-firma-slug')?.value;
   const container = document.getElementById('angsend-fd-ticket-results');
   if (!container) return;
-  if (!email) { container.innerHTML = '<div style="color:#7F1D1D;font-size:11px;padding:8px">⚠ Bitte zuerst Empfänger-Email eintragen</div>'; return; }
+  // v5.53: Wenn konkrete Ticket-Nr eingegeben → direkter Lookup statt Email-Filter.
+  //        Email-Filter würde Ticket #2204 nicht finden wenn dessen Requester eine
+  //        andere Email hat als das aktuell eingetippte Empfänger-Feld.
+  const directId = parseInt((document.getElementById('angsend-fd-ticket-id')?.value || '').trim(), 10);
+  if (directId) {
+    container.innerHTML = '<div style="font-size:11px;color:var(--txt2);padding:8px">⏳ Lade Ticket #'+directId+' …</div>';
+    try {
+      const proxy = APP_KEYS.valtownProxyUrl;
+      await erpEnsureSession();
+      const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+directId+'?include=requester', {
+        headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
+      });
+      if (!r.ok) {
+        container.innerHTML = '<div style="background:#FEE2E2;border:1px solid #FCA5A5;color:#7F1D1D;padding:8px 12px;border-radius:6px;font-size:11px">❌ Ticket #'+directId+' nicht gefunden (HTTP '+r.status+').<br>Bitte Nr prüfen oder Feld leeren um nach Empfänger-Email zu suchen.</div>';
+        return;
+      }
+      const t = await r.json();
+      const STATUS = { 2:{lbl:'Offen', col:'#2152A9'}, 3:{lbl:'Wartend', col:'#F59E0B'}, 4:{lbl:'Gelöst', col:'#10B981'}, 5:{lbl:'Geschlossen', col:'#6B7280'} };
+      const stLbl = (STATUS[t.status]||{lbl:'?'}).lbl;
+      const stCol = (STATUS[t.status]||{col:'#6B7280'}).col;
+      const requesterEmail = t.requester?.email || t.email || '?';
+      const requesterName  = t.requester?.name  || '';
+      // Direkt übernehmen
+      _angsendPickTicket(t.id, t.subject || '(kein Betreff)', requesterEmail, requesterName, stLbl, stCol);
+    } catch(e) {
+      container.innerHTML = '<div style="background:#FEE2E2;border:1px solid #FCA5A5;color:#7F1D1D;padding:8px 12px;border-radius:6px;font-size:11px">❌ Ticket-Lookup fehlgeschlagen: '+escapeHtml(e.message||'')+'</div>';
+    }
+    return;
+  }
+  // Fallback: Email-Filter (wenn keine konkrete Nr eingegeben)
+  const email = (document.getElementById('angsend-email')?.value || '').trim();
+  if (!email) { container.innerHTML = '<div style="color:#7F1D1D;font-size:11px;padding:8px">⚠ Bitte Ticket-Nr eintragen oder Empfänger-Email setzen</div>'; return; }
   container.innerHTML = '<div style="font-size:11px;color:var(--txt2);padding:8px">⏳ Suche Tickets für '+escapeHtml(email)+' …</div>';
   const list = await _angFdSearchTicketsForEmail(firmaSlug, email);
   if (!list.length) {
@@ -24332,7 +24362,7 @@ window._angsendSearchTickets = async function() {
     '<div style="font-size:11px;color:var(--txt2);padding:4px 0">'+list.length+' Ticket'+(list.length===1?'':'s')+' für '+escapeHtml(email)+' — auf eines klicken zum Auswählen:</div>'+
     '<div style="max-height:200px;overflow-y:auto;border:1px solid var(--bdr);border-radius:6px">'+
       list.map(t =>
-        '<div onclick="_angsendPickTicket('+t.id+',\''+escapeHtml(t.subject).replace(/\'/g,'&#39;')+'\')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;gap:10px;align-items:center;font-size:12px" onmouseover="this.style.background=\'#F3F4F6\'" onmouseout="this.style.background=\'#fff\'">'+
+        '<div onclick="_angsendPickTicket('+t.id+',\''+escapeHtml(t.subject).replace(/\'/g,'&#39;')+'\',\''+escapeHtml(email).replace(/\'/g,'&#39;')+'\',\'\',\''+escapeHtml(t.statusLabel)+'\',\''+t.statusColor+'\')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;display:flex;gap:10px;align-items:center;font-size:12px" onmouseover="this.style.background=\'#F3F4F6\'" onmouseout="this.style.background=\'#fff\'">'+
           '<span style="background:'+t.statusColor+';color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;flex-shrink:0">#'+t.id+' '+escapeHtml(t.statusLabel)+'</span>'+
           '<span style="flex:1;color:var(--navy);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(t.subject)+'</span>'+
         '</div>'
@@ -24340,7 +24370,7 @@ window._angsendSearchTickets = async function() {
     '</div>';
 };
 
-window._angsendPickTicket = function(ticketId, subject) {
+window._angsendPickTicket = function(ticketId, subject, requesterEmail, requesterName, statusLabel, statusColor) {
   const inp = document.getElementById('angsend-fd-ticket-id');
   const subj = document.getElementById('angsend-subject');
   if (inp) inp.value = String(ticketId);
@@ -24349,8 +24379,18 @@ window._angsendPickTicket = function(ticketId, subject) {
     const re = /^re:\s*/i.test(subject) ? subject : 'Re: '+subject;
     subj.value = re;
   }
+  // v5.53: Klar zeigen wer die Reply kriegt — Original-Requester aus Ticket,
+  //        NICHT die Empfänger-Email aus dem Modal-Feld!
   const info = document.getElementById('angsend-fd-ticket-info');
-  if (info) info.innerHTML = '<div style="background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;padding:6px 10px;border-radius:6px;font-size:11px;margin-top:6px">✓ Antwortet auf Ticket #'+ticketId+' — kein neues Ticket wird erzeugt.</div>';
+  if (info) {
+    const stChip = statusLabel ? '<span style="background:'+(statusColor||'#6B7280')+';color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;margin-left:4px">'+escapeHtml(statusLabel)+'</span>' : '';
+    info.innerHTML =
+      '<div style="background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;padding:8px 10px;border-radius:6px;font-size:12px;margin-top:6px">'+
+        '<div style="font-weight:700;margin-bottom:2px">✓ Antwortet auf Ticket #'+ticketId+stChip+'</div>'+
+        '<div style="font-size:11px;color:#047857">📝 '+escapeHtml(subject||'')+'</div>'+
+        '<div style="font-size:11px;margin-top:4px;padding-top:4px;border-top:1px dashed #6EE7B7"><strong>📨 Reply geht an:</strong> '+escapeHtml((requesterName?requesterName+' <':'')+(requesterEmail||'?')+(requesterName?'>':''))+' <span style="color:#065F46">(Original-Requester aus Ticket, NICHT das Empfänger-Feld oben!)</span></div>'+
+      '</div>';
+  }
   // Ergebnis-Liste schließen
   const res = document.getElementById('angsend-fd-ticket-results');
   if (res) res.innerHTML = '';
