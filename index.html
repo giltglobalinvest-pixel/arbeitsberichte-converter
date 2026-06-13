@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.49';
+const APP_VERSION = 'v5.50';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20686,7 +20686,10 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'kontakt_name',            type:'singleLineText' },
   // Inhalt
   { name:'anschreiben',             type:'multilineText'  },
+  // v5.50: Abrechnungs-Modus — 'pauschal' (Default) oder 'aufwand'
+  { name:'abrechnung_modus',        type:'singleLineText' },
   { name:'positionen_json',         type:'multilineText'  },  // [{nr, titel, leistung[], ep_kone, vp, menge}]
+  { name:'stundensaetze_json',      type:'multilineText'  },  // [{nr, name, satz, einheit, hinweis}]
   { name:'ust_prozent',             type:'number',       options:{ precision:0 } },
   { name:'summe_netto_kone',        type:'number',       options:{ precision:2 } },
   { name:'summe_netto_vp',          type:'number',       options:{ precision:2 } },
@@ -20715,6 +20718,20 @@ let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _angeboteTableEnsured = false;
 
 const ANGEBOT_VP_DEFAULT_MARGE = 1.20;  // Anbieter-EK × 1.20 → VP-Vorschlag
+
+// v5.50: Default-Stundensätze für "Nach Aufwand"-Angebote — werden geladen
+//        wenn der User zum ersten Mal auf den Aufwand-Modus wechselt.
+const ANGEBOT_DEFAULT_STUNDENSAETZE = [
+  { nr:1, name:'Servicetechniker',        satz:85,  einheit:'€/h',     hinweis:'pro angefangene Stunde, Mindestabrechnung 1 h' },
+  { nr:2, name:'Monteur',                 satz:75,  einheit:'€/h',     hinweis:'pro angefangene Stunde' },
+  { nr:3, name:'Anfahrt',                 satz:50,  einheit:'Pauschal',hinweis:'innerhalb 30 km vom Betriebssitz' },
+  { nr:4, name:'Material',                satz:20,  einheit:'% Aufschlag', hinweis:'auf Selbstkosten lt. Nachweis' },
+];
+
+const ANGEBOT_ABRECHNUNG_OPTIONS = [
+  { value:'pauschal', label:'💰 Pauschalpreis',   color:'#2152A9', hint:'Klassisches Angebot mit Positionen, Summe + USt.' },
+  { value:'aufwand',  label:'⏱ Nach Aufwand',     color:'#9333EA', hint:'Stundensätze ohne Endpreis — Abrechnung nach Nachweis.' },
+];
 
 // Anbieter die ich (Claude) bereits anhand echter PDFs verifiziert habe.
 // Wenn du neue Anbieter testest, hier ergänzen, damit sie im Dropdown
@@ -21009,7 +21026,7 @@ function _renderAngeboteList() {
         '<div style="flex:1;min-width:0">'+
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">'+
             '<div style="flex:1;min-width:200px">'+
-              '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(isArchived?'<span title="Archiviert" style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">📁 ARCHIV</span>':'')+'ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
+              '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(isArchived?'<span title="Archiviert" style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">📁 ARCHIV</span>':'')+(f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+'ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
               '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+'</div>'+
             '</div>'+
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
@@ -21858,12 +21875,16 @@ async function openAngebotEditor(ctx) {
     const f = rec.fields || {};
     let pos = [];
     try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    let stdSaetze = [];
+    try { stdSaetze = JSON.parse(f.stundensaetze_json||'[]'); } catch(_){}
     ctx = {
       editMode: true,
       recId: ctx.recId,
       extracted: {
         kone_angebot_num:   f.kone_angebot_num   || '',
         kone_angebot_datum: f.kone_angebot_datum || '',
+        abrechnung:         f.abrechnung_modus || 'pauschal',
+        stundensaetze:      stdSaetze,
         positionen:         pos.map(p => ({
           nr: p.nr, titel: p.titel, leistungsbeschreibung: p.leistungsbeschreibung,
           menge: p.menge, einzelpreis_netto: p.ep_kone,
@@ -21910,6 +21931,15 @@ async function openAngebotEditor(ctx) {
     koneFile: ctx.koneFile,
     matchedAnlage: ctx.matchedAnlage || null,
     bearbeiter: ctx._bearbeiter || APP_KEYS.user?.name || '',
+    // v5.50: Abrechnungs-Modus + Stundensätze
+    abrechnung: ctx.extracted?.abrechnung || 'pauschal',
+    stundensaetze: Array.isArray(ctx.extracted?.stundensaetze) ? ctx.extracted.stundensaetze.map(s => ({
+      nr:      +s.nr || 0,
+      name:    String(s.name||''),
+      satz:    +s.satz || 0,
+      einheit: String(s.einheit||'€/h'),
+      hinweis: String(s.hinweis||''),
+    })) : [],
     positionen: (ctx.extracted.positionen||[]).map(p => ({
       nr: p.nr || 0,
       titel: p.titel || '',
@@ -22213,17 +22243,22 @@ function _angEditorRender() {
     '<div style="margin-bottom:14px"><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anschreiben</label>'+
       '<textarea id="ang-fld-anschreiben" rows="4" oninput="_angEditorSet(\'anschreiben\',this.value)" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.anschreiben)+'</textarea>'+
     '</div>'+
-    // Positionen
-    '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
-      '<span style="font-size:11px;color:var(--txt3)">'+(_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')+'</span>'+
-    '</div>'+
-    '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px">'+
-      E.positionen.map((p, i) => _angRenderPositionRow(p, i, E)).join('')+
-    '</div>'+
-    // Summary — eigener Container, damit wir ihn bei VP-Tippen live aktualisieren können
-    '<div id="ang-summary-box" style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
-      _angRenderSummaryBoxHtml(E)+
-    '</div>'+
+    // v5.50: Abrechnungs-Modus Toggle
+    _angRenderAbrechnungToggle(E)+
+    // Modus-abhängiger Block: Pauschal → Positionen + Summary | Aufwand → Stundensätze
+    (E.abrechnung === 'aufwand' ? _angRenderStundensaetzeBlock(E) :
+      // Positionen
+      '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
+        '<span style="font-size:11px;color:var(--txt3)">'+(_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')+'</span>'+
+      '</div>'+
+      '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px">'+
+        E.positionen.map((p, i) => _angRenderPositionRow(p, i, E)).join('')+
+      '</div>'+
+      // Summary — eigener Container, damit wir ihn bei VP-Tippen live aktualisieren können
+      '<div id="ang-summary-box" style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:14px 16px;margin-bottom:14px">'+
+        _angRenderSummaryBoxHtml(E)+
+      '</div>'
+    )+
     // Konditionen — mit Speichern-Button für Firma-Defaults
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:0 0 8px">'+
       '<h3 style="margin:0;font-size:14px;color:var(--navy)">📜 Konditionen</h3>'+
@@ -22881,6 +22916,108 @@ function _angRenderPositionRow(p, i, E) {
   '</div>';
 }
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v5.50: Abrechnungs-Modus Toggle + Stundensatz-Liste (Nach-Aufwand-Angebot)
+ * ═══════════════════════════════════════════════════════════════════════ */
+function _angRenderAbrechnungToggle(E) {
+  const opts = ANGEBOT_ABRECHNUNG_OPTIONS;
+  const current = E.abrechnung || 'pauschal';
+  const hint = (opts.find(o => o.value === current) || opts[0]).hint;
+  return '<div style="background:#F9FAFB;border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+      '<div style="font-size:11px;color:var(--txt3);font-weight:700;text-transform:uppercase;letter-spacing:.5px">Abrechnung</div>'+
+      '<div style="font-size:11px;color:var(--txt2)">'+escapeHtml(hint)+'</div>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+      opts.map(o => {
+        const active = current === o.value;
+        return '<button type="button" onclick="_angSetAbrechnung(\''+o.value+'\')" style="flex:1;min-width:160px;padding:9px 14px;border:2px solid '+(active?o.color:'var(--bdr)')+';border-radius:8px;background:'+(active?o.color:'#fff')+';color:'+(active?'#fff':'var(--txt2)')+';font-weight:'+(active?'700':'500')+';font-size:13px;cursor:pointer;text-align:left">'+
+          escapeHtml(o.label)+
+        '</button>';
+      }).join('')+
+    '</div>'+
+  '</div>';
+}
+
+window._angSetAbrechnung = function(mode) {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const E = m._state;
+  if (E.abrechnung === mode) return;
+  // Wechsel zu Aufwand: leere Liste → Defaults einsetzen
+  if (mode === 'aufwand' && (!E.stundensaetze || E.stundensaetze.length === 0)) {
+    E.stundensaetze = ANGEBOT_DEFAULT_STUNDENSAETZE.map(s => Object.assign({}, s));
+  }
+  E.abrechnung = mode;
+  _angEditorRender();
+};
+
+function _angRenderStundensaetzeBlock(E) {
+  const rows = (E.stundensaetze || []).map((s, i) => _angRenderStundensatzRow(s, i)).join('');
+  return '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<h3 style="margin:0;font-size:14px;color:var(--navy)">⏱ Stundensätze ('+(E.stundensaetze||[]).length+')</h3>'+
+      '<span style="font-size:11px;color:var(--txt3)">Auch Anfahrt, Material, Pauschalen als eigene Zeile.</span>'+
+      '<div style="margin-left:auto;display:flex;gap:6px">'+
+        '<button type="button" class="btn" style="font-size:11px;padding:5px 10px" onclick="_angLoadStandardStundensaetze()" title="Standard-Liste Servicetechniker/Monteur/Anfahrt/Material laden">📥 Standard laden</button>'+
+        '<button type="button" class="btn prim" style="font-size:11px;padding:5px 10px" onclick="_angAddStundensatz()">⊕ Zeile</button>'+
+      '</div>'+
+    '</div>'+
+    '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:8px">'+
+      (rows || '<div style="padding:24px 14px;text-align:center;color:var(--txt3);font-size:13px">Noch keine Stundensätze — auf „📥 Standard laden" oder „⊕ Zeile" klicken.</div>')+
+    '</div>'+
+    '<div style="background:#F3E8FF;border:1px solid #C4B5FD;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#5B21B6;line-height:1.5">'+
+      'ℹ️ <strong>Aufwand-Modus</strong>: Im PDF erscheinen nur die Stundensätze (kein Endpreis, keine USt-Summe). Hinweistext „Abrechnung nach tatsächlichem Aufwand" wird automatisch eingefügt. <strong>ERP-Push ist für Aufwand-Angebote nicht verfügbar</strong> — das ERP unterstützt nur Pauschalpreis-Angebote.'+
+    '</div>';
+}
+
+function _angRenderStundensatzRow(s, i) {
+  const bg = i%2 ? '#FAFBFD' : '#fff';
+  return '<div style="padding:10px 12px;border-bottom:1px solid var(--bdr);background:'+bg+'">'+
+    '<div style="display:grid;grid-template-columns:32px 1.6fr 1fr 1fr 2fr 32px;gap:8px;align-items:start">'+
+      '<div style="background:#9333EA;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;margin-top:14px">'+(s.nr||(i+1))+'</div>'+
+      '<div><label style="font-size:10px;color:var(--txt3);display:block;margin-bottom:2px">Bezeichnung *</label>'+
+        '<input value="'+escapeHtml(s.name||'')+'" oninput="_angSetStdsatz('+i+',\'name\',this.value)" placeholder="z.B. Servicetechniker" style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;background:#fff;color:#222"></div>'+
+      '<div><label style="font-size:10px;color:#5B21B6;font-weight:700;display:block;margin-bottom:2px">Satz</label>'+
+        '<input type="number" step="0.01" min="0" value="'+(s.satz||'')+'" oninput="_angSetStdsatz('+i+',\'satz\',this.value)" style="width:100%;padding:6px 8px;border:1px solid #C4B5FD;border-radius:4px;font-size:13px;font-weight:600;color:#5B21B6;text-align:right;background:#F5F3FF"></div>'+
+      '<div><label style="font-size:10px;color:var(--txt3);display:block;margin-bottom:2px">Einheit</label>'+
+        '<input value="'+escapeHtml(s.einheit||'€/h')+'" oninput="_angSetStdsatz('+i+',\'einheit\',this.value)" placeholder="€/h" style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;background:#fff;color:#222"></div>'+
+      '<div><label style="font-size:10px;color:var(--txt3);display:block;margin-bottom:2px">Hinweis (optional)</label>'+
+        '<input value="'+escapeHtml(s.hinweis||'')+'" oninput="_angSetStdsatz('+i+',\'hinweis\',this.value)" placeholder="z.B. innerhalb 30 km" style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;background:#fff;color:#222"></div>'+
+      '<div style="display:flex;align-items:center;justify-content:center;height:100%">'+
+        '<button onclick="_angDelStundensatz('+i+')" title="Zeile löschen" style="background:transparent;color:var(--txt3);border:1px solid var(--bdr);border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:14px;padding:0">🗑</button>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+}
+
+window._angSetStdsatz = function(i, key, v) {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const list = m._state.stundensaetze || [];
+  if (!list[i]) return;
+  list[i][key] = (key === 'satz') ? (+v || 0) : String(v);
+};
+
+window._angAddStundensatz = function() {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const list = m._state.stundensaetze = (m._state.stundensaetze || []);
+  const nextNr = list.reduce((mx, s) => Math.max(mx, +s.nr||0), 0) + 1;
+  list.push({ nr:nextNr, name:'', satz:0, einheit:'€/h', hinweis:'' });
+  _angEditorRender();
+};
+
+window._angDelStundensatz = function(i) {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const list = m._state.stundensaetze || [];
+  list.splice(i, 1);
+  list.forEach((s, idx) => { s.nr = idx+1; });
+  _angEditorRender();
+};
+
+window._angLoadStandardStundensaetze = function() {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  m._state.stundensaetze = ANGEBOT_DEFAULT_STUNDENSAETZE.map(s => Object.assign({}, s));
+  _angEditorRender();
+};
+
 function _angTogglePosHidden(i) {
   const m = document.getElementById('ang-editor');
   if (!m || !m._state || !m._state.positionen[i]) return;
@@ -22922,7 +23059,13 @@ async function _angEditorSave() {
   if (!E.anlage_id) return toast('Bitte zuerst eine Anlage wählen','err');
   if (!E.kunde_name) return toast('Endkunde fehlt — bitte Anlage neu wählen','err');
   if (!E.kontakt_id) return toast('Bitte einen Kontakt (Empfänger im ERP) wählen','err');
-  if (!E.positionen.length) return toast('Keine Positionen vorhanden','err');
+  // v5.50: Im Pauschal-Modus brauchen wir Positionen, im Aufwand-Modus Stundensätze
+  if (E.abrechnung === 'aufwand') {
+    if (!E.stundensaetze || !E.stundensaetze.length) return toast('Keine Stundensätze — bitte mindestens einen Satz eintragen','err');
+    if (E.stundensaetze.some(s => !s.name || !s.name.trim())) return toast('Jeder Stundensatz braucht eine Bezeichnung','err');
+  } else {
+    if (!E.positionen.length) return toast('Keine Positionen vorhanden','err');
+  }
   const btn = document.getElementById('ang-ed-save');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
   try {
@@ -22940,11 +23083,15 @@ async function _angEditorSave() {
       angebotNum = await _angebotGetNextNumber(baseId, firmaSlug);
     }
     // Summen finalisieren — ausgeblendete (hidden) Positionen ignorieren
+    // v5.50: Im Aufwand-Modus sind alle Summen 0 (keine Endpreis-Schätzung)
+    const isAufwand = E.abrechnung === 'aufwand';
     let sumKone = 0, sumVp = 0;
-    for (const p of E.positionen) {
-      if (p.hidden) continue;
-      sumKone += (+p.ep_kone||0) * (+p.menge||1);
-      sumVp   += (+p.vp||0)      * (+p.menge||1);
+    if (!isAufwand) {
+      for (const p of E.positionen) {
+        if (p.hidden) continue;
+        sumKone += (+p.ep_kone||0) * (+p.menge||1);
+        sumVp   += (+p.vp||0)      * (+p.menge||1);
+      }
     }
     const ust = +E.ust_prozent || 19;
     const sumBrutto = sumVp * (1 + ust/100);
@@ -22966,7 +23113,10 @@ async function _angEditorSave() {
       kontakt_id: E.kontakt_id || '',
       kontakt_name: E.kontakt_name || '',
       anschreiben: E.anschreiben || '',
-      positionen_json: JSON.stringify(E.positionen),
+      // v5.50: Abrechnungs-Modus + Stundensätze
+      abrechnung_modus: E.abrechnung || 'pauschal',
+      stundensaetze_json: isAufwand ? JSON.stringify(E.stundensaetze||[]) : '',
+      positionen_json: isAufwand ? '[]' : JSON.stringify(E.positionen),
       ust_prozent: ust,
       summe_netto_kone: Math.round(sumKone*100)/100,
       summe_netto_vp: Math.round(sumVp*100)/100,
@@ -23025,7 +23175,8 @@ async function _angEditorSave() {
     // So ist die Anfrage-ID bereits gespeichert, wenn später der Push aufgerufen wird.
     // Fehler hier blockieren NICHT die App-Angebot-Speicherung.
     let anfrageInfo = null, anfrageErr = null;
-    if (!E.editMode) {
+    // v5.50: Bei Aufwand-Angeboten KEINE ERP-Anfrage anlegen (ERP versteht nur Pauschal-Schema)
+    if (!E.editMode && !isAufwand) {
       if (btn) btn.textContent = '⏳ ERP-Anfrage anlegen…';
       try {
         const recForAnfrage = { id: recId, fields };
@@ -23196,6 +23347,55 @@ async function _buildAngebotPdf(rec) {
     });
     y += 4;
   }
+  // v5.50: Abrechnungs-Modus — Aufwand bekommt eigene Tabelle ohne Summen
+  const isAufwand = (rec.abrechnung_modus === 'aufwand');
+  if (isAufwand) {
+    // STUNDENSATZ-TABELLE — kein Endpreis, nur die Sätze
+    if (y > 230) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    doc.setFillColor(247,249,252); doc.rect(ml, y, cw, 7.5, 'F');
+    doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
+    const colNrA = 8, colNameA = 60, colSatzA = 28, colEinhA = 28, colHinwA = cw - colNrA - colNameA - colSatzA - colEinhA;
+    doc.text('NR.', ml+2, y+5);
+    doc.text('LEISTUNG', ml+colNrA+2, y+5);
+    doc.text('SATZ', ml+colNrA+colNameA+colSatzA-2, y+5, { align:'right' });
+    doc.text('EINHEIT', ml+colNrA+colNameA+colSatzA+2, y+5);
+    doc.text('HINWEIS', ml+colNrA+colNameA+colSatzA+colEinhA+2, y+5);
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.line(ml, y+7.5, mr, y+7.5);
+    y += 8;
+    let saetze = [];
+    try { saetze = JSON.parse(rec.stundensaetze_json||'[]'); } catch(_){}
+    saetze.forEach((s, idx) => {
+      const nameLines = doc.splitTextToSize(_sanPdf(s.name||''), colNameA-4);
+      const hinwLines = doc.splitTextToSize(_sanPdf(s.hinweis||''), colHinwA-4);
+      const rowH = Math.max(7, nameLines.length*4.5, hinwLines.length*4) + 3;
+      if (y + rowH > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+      if (idx%2 === 0) { doc.setFillColor(248,250,252); doc.rect(ml, y, cw, rowH, 'F'); }
+      doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+      doc.text(String(s.nr||(idx+1)), ml+2, y+5);
+      doc.setFont('helvetica','bold');
+      nameLines.forEach((l, li) => doc.text(l, ml+colNrA+2, y+5+li*4.5));
+      doc.setFont('helvetica','normal'); doc.setTextColor(...NAVY); doc.setFontSize(10);
+      const satzTxt = (+s.satz||0) ? fmtEUR(s.satz) : String(s.satz||'');
+      doc.text(satzTxt, ml+colNrA+colNameA+colSatzA-2, y+5, { align:'right' });
+      doc.setFontSize(9); doc.setTextColor(...GREY);
+      doc.text(_sanPdf(s.einheit||''), ml+colNrA+colNameA+colSatzA+2, y+5);
+      doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+      hinwLines.forEach((l, li) => doc.text(l, ml+colNrA+colNameA+colSatzA+colEinhA+2, y+5+li*4));
+      y += rowH;
+      doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
+    });
+    // HINWEIS-BOX statt Summen-Block
+    y += 6;
+    if (y + 22 > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    doc.setFillColor(243,232,255); doc.setDrawColor(147,51,234); doc.setLineWidth(0.4);
+    doc.roundedRect(ml, y, cw, 18, 2, 2, 'FD');
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(91,33,182);
+    doc.text(_sanPdf('Abrechnung nach tatsächlichem Aufwand'), ml+4, y+6);
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY);
+    const hintLines = doc.splitTextToSize(_sanPdf('Die oben genannten Sätze sind verbindlich. Der tatsächlich angefallene Aufwand wird im Stundenrapport detailliert nachgewiesen. Material wird gegen Vorlage der Lieferschein-/Rechnungsbelege berechnet. Alle Preise zzgl. gesetzl. USt.'), cw-8);
+    hintLines.forEach((l, i) => doc.text(l, ml+4, y+11+i*4));
+    y += 24;
+  } else {
   // POSITIONS-TABELLE — subtiler Header mit dünner Accent-Linie unten statt Vollfarbe
   if (y > 230) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
   doc.setFillColor(247,249,252); doc.rect(ml, y, cw, 7.5, 'F');
@@ -23266,6 +23466,7 @@ async function _buildAngebotPdf(rec) {
   doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
   doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
   y += 10;
+  } // ende Pauschal-Block (v5.50)
   // v5.19: EINE einheitliche Konditionen-Sektion (boxed) — keine doppelte
   // inline-Render mehr. Per-Record kond_* werden in _appendAngebotsKonditionen
   // gegen die Firma-Defaults gemergt.
@@ -23357,12 +23558,15 @@ function openAngebotDetail(recId) {
         (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 ERP-Angebot:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
-        (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
-          '<div><div style="font-size:11px;color:var(--txt3)">Netto KONE (EK)</div><div style="font-weight:600">'+fmt(f.summe_netto_kone)+' €</div></div>'+
-          '<div><div style="font-size:11px;color:var(--txt3)">Netto VP</div><div style="font-weight:700;font-size:15px">'+fmt(f.summe_netto_vp)+' €</div></div>'+
-          '<div><div style="font-size:11px;color:var(--txt3)">Marge</div><div style="font-weight:600">'+fmt((f.summe_netto_vp||0)-(f.summe_netto_kone||0))+' €</div></div>'+
-          '<div style="margin-left:auto"><div style="font-size:11px;color:var(--txt3)">Brutto VP</div><div style="font-weight:700;font-size:16px">'+fmt(f.summe_brutto_vp)+' €</div></div>'+
-        '</div>' : '')+
+        // v5.50: Bei Aufwand-Modus statt Summen-Block einen lila Hinweis
+        (f.abrechnung_modus === 'aufwand'
+          ? '<div style="background:#F3E8FF;border:2px solid #9333EA;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#5B21B6"><span style="font-size:22px">⏱</span><div><div style="font-weight:700">Abrechnung nach tatsächlichem Aufwand</div><div style="font-size:11px;color:#7C3AED">Kein Endpreis — Verrechnung nach Stundennachweis. Siehe Stundensätze unten.</div></div></div>'
+          : (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
+            '<div><div style="font-size:11px;color:var(--txt3)">Netto KONE (EK)</div><div style="font-weight:600">'+fmt(f.summe_netto_kone)+' €</div></div>'+
+            '<div><div style="font-size:11px;color:var(--txt3)">Netto VP</div><div style="font-weight:700;font-size:15px">'+fmt(f.summe_netto_vp)+' €</div></div>'+
+            '<div><div style="font-size:11px;color:var(--txt3)">Marge</div><div style="font-weight:600">'+fmt((f.summe_netto_vp||0)-(f.summe_netto_kone||0))+' €</div></div>'+
+            '<div style="margin-left:auto"><div style="font-size:11px;color:var(--txt3)">Brutto VP</div><div style="font-weight:700;font-size:16px">'+fmt(f.summe_brutto_vp)+' €</div></div>'+
+          '</div>' : ''))+
         // PDF-Buttons
         '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+
           (appPdf ? '<a href="'+escapeHtml(appPdf.url)+'" target="_blank" rel="noopener" class="btn prim" style="text-decoration:none">📄 PDF öffnen</a>' : '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)">📄 PDF erzeugen</button>')+
@@ -23375,19 +23579,33 @@ function openAngebotDetail(recId) {
             '<button onclick="_angSetStatus(\''+recId+'\',\''+s.value+'\')" style="background:'+(f.status===s.value?s.color:'#fff')+';color:'+(f.status===s.value?'#fff':s.color)+';border:1px solid '+s.color+';padding:4px 10px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;margin-right:4px">'+escapeHtml(s.label)+'</button>'
           ).join('')+
         '</div>'+
-        // Positionen
-        '<h3 style="margin:14px 0 8px;font-size:13px;color:var(--navy)">📋 Positionen</h3>'+
-        (() => {
-          let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
-          return positionen.map(p =>
-            '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:12px">'+
-              '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(p.titel||'')+'</div>'+
-              (Array.isArray(p.leistungsbeschreibung) && p.leistungsbeschreibung.length ?
-                '<div style="color:var(--txt2);margin:4px 0 6px;line-height:1.5">'+p.leistungsbeschreibung.map(l => '• '+escapeHtml(l)).join('<br>')+'</div>' : '')+
-              (canSeePrices() ? '<div style="display:flex;gap:14px;font-size:11px;color:var(--txt3)"><span>EK '+fmt(p.ep_kone)+' €</span><span>VP <strong style="color:#9A3412">'+fmt(p.vp)+' €</strong></span><span>Menge '+(p.menge||1)+'</span><span style="margin-left:auto"><strong>Gesamt '+fmt((+p.vp||0)*(+p.menge||1))+' €</strong></span></div>' : '')+
-            '</div>'
-          ).join('');
-        })()+
+        // v5.50: Bei Aufwand → Stundensätze, sonst → Positionen
+        (f.abrechnung_modus === 'aufwand'
+          ? '<h3 style="margin:14px 0 8px;font-size:13px;color:var(--navy)">⏱ Stundensätze</h3>'+
+            (() => {
+              let saetze = []; try { saetze = JSON.parse(f.stundensaetze_json||'[]'); } catch(_){}
+              if (!saetze.length) return '<div style="padding:14px;color:var(--txt3);font-size:12px;text-align:center">Keine Stundensätze hinterlegt</div>';
+              return saetze.map(s =>
+                '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:6px;font-size:12px;display:flex;gap:14px;align-items:center;flex-wrap:wrap">'+
+                  '<span style="background:#9333EA;color:#fff;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:11px;flex-shrink:0">'+(s.nr||'?')+'</span>'+
+                  '<span style="font-weight:600;color:var(--navy);min-width:140px">'+escapeHtml(s.name||'')+'</span>'+
+                  '<span style="color:#5B21B6;font-weight:700;font-size:13px">'+(((+s.satz||0)?fmt(s.satz):escapeHtml(String(s.satz||'')))+' '+escapeHtml(s.einheit||''))+'</span>'+
+                  (s.hinweis ? '<span style="font-size:11px;color:var(--txt3);margin-left:auto">'+escapeHtml(s.hinweis)+'</span>' : '')+
+                '</div>'
+              ).join('');
+            })()
+          : '<h3 style="margin:14px 0 8px;font-size:13px;color:var(--navy)">📋 Positionen</h3>'+
+            (() => {
+              let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+              return positionen.map(p =>
+                '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px;font-size:12px">'+
+                  '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(p.titel||'')+'</div>'+
+                  (Array.isArray(p.leistungsbeschreibung) && p.leistungsbeschreibung.length ?
+                    '<div style="color:var(--txt2);margin:4px 0 6px;line-height:1.5">'+p.leistungsbeschreibung.map(l => '• '+escapeHtml(l)).join('<br>')+'</div>' : '')+
+                  (canSeePrices() ? '<div style="display:flex;gap:14px;font-size:11px;color:var(--txt3)"><span>EK '+fmt(p.ep_kone)+' €</span><span>VP <strong style="color:#9A3412">'+fmt(p.vp)+' €</strong></span><span>Menge '+(p.menge||1)+'</span><span style="margin-left:auto"><strong>Gesamt '+fmt((+p.vp||0)*(+p.menge||1))+' €</strong></span></div>' : '')+
+                '</div>'
+              ).join('');
+            })())+
       '</div>'+
       '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'ang-detail\').remove()">Schließen</button>'+
@@ -23398,7 +23616,9 @@ function openAngebotDetail(recId) {
         (freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
           ? '<button class="btn" onclick="_angOpenSendModal(\''+recId+'\')" style="color:#2152A9;border-color:rgba(33,82,169,.45);background:#EFF6FF" title="Angebot per Freshdesk-E-Mail an Kunde senden">📧 An Kunde senden</button>'
           : '')+
-        '<button class="btn" onclick="_angPushToErp(\''+recId+'\', this)" style="background:#10B981;color:#fff;border-color:#10B981" title="'+(f.erp_angebot_id ? 'Erneut ins ERP pushen' : 'Als Pauschal-Angebot ins ERP pushen')+'">📤 '+(f.erp_angebot_id ? 'Erneut ins ERP' : 'Ins ERP pushen')+'</button>'+
+        (f.abrechnung_modus === 'aufwand'
+          ? '<button class="btn" disabled style="background:#E5E7EB;color:#6B7280;border-color:#D1D5DB;cursor:not-allowed" title="ERP-Push ist für Aufwand-Angebote nicht verfügbar — das ERP unterstützt nur Pauschalpreis-Angebote">📤 ERP-Push (nicht für Aufwand)</button>'
+          : '<button class="btn" onclick="_angPushToErp(\''+recId+'\', this)" style="background:#10B981;color:#fff;border-color:#10B981" title="'+(f.erp_angebot_id ? 'Erneut ins ERP pushen' : 'Als Pauschal-Angebot ins ERP pushen')+'">📤 '+(f.erp_angebot_id ? 'Erneut ins ERP' : 'Ins ERP pushen')+'</button>')+
         '<button class="btn prim" onclick="openAngebotEditor({editMode:true,recId:\''+recId+'\'})" title="Angebot ändern + PDF neu generieren">✏️ Bearbeiten</button>'+
       '</div>'+
     '</div>';
