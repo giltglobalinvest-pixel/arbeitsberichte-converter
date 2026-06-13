@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.44';
+const APP_VERSION = 'v5.45';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22788,14 +22788,19 @@ function _angSelectKontakt(kontaktId) {
   // ("Sehr geehrter Herr"). Im PDF wird "z.Hd. Herr Karl-Heinz Dürnsteiner" geschrieben.
   const anrede = String(k.anrede || '').replace(/^Sehr\s+geehrte[rn]?\s*/i, '').trim();
   m._state.kontakt_name = [anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim() || ('Kontakt '+k.id);
+  // v5.45: E-Mail + Telefon des Kontakts mitspeichern (fuer Senden + Anzeige)
+  m._state.kontakt_email = String(k.email || k.mail || k.emailAdresse || k.email1 || '').trim();
+  m._state.kontakt_telefon = String(k.telefon || k.tel || k.mobil || k.handy || '').trim();
   _angEditorRender();
 }
 
 function _angClearKontakt() {
   const m = document.getElementById('ang-editor');
   if (!m || !m._state) return;
-  m._state.kontakt_id   = '';
-  m._state.kontakt_name = '';
+  m._state.kontakt_id      = '';
+  m._state.kontakt_name    = '';
+  m._state.kontakt_email   = '';
+  m._state.kontakt_telefon = '';
   _angEditorRender();
 }
 
@@ -24093,6 +24098,47 @@ function _angOpenSendModal(recId) {
   '</div>';
   document.body.appendChild(m);
   setTimeout(() => document.getElementById(defaultEmail ? 'angsend-subject' : 'angsend-email')?.focus(), 100);
+  // v5.45: Wenn keine Empfaenger-Email vorhanden ist, aus dem ERP nachladen
+  // ueber die Kontakt-ID. Schreibt sie auch zurueck ans Angebot-Record damit
+  // sie beim naechsten Send sofort da ist.
+  if (!defaultEmail && f.kontakt_id) _angSendFetchKontaktEmail(recId, f.kontakt_id, firmaSlug);
+}
+
+async function _angSendFetchKontaktEmail(recId, kontaktId, firmaSlug) {
+  const inp = document.getElementById('angsend-email');
+  if (!inp) return;
+  const origPlaceholder = inp.placeholder;
+  inp.placeholder = '⏳ Lade aus ERP …';
+  try {
+    const k = await erpFetch('/aufzug/'+firmaSlug+'/api/kontakte/'+kontaktId);
+    // ERP-Kontakt liefert je nach Version: email, mail, emailAdresse, email1 …
+    const email = String(
+      k?.email || k?.mail || k?.emailAdresse || k?.email1 ||
+      k?.mainEmail || k?.kontaktEmail || ''
+    ).trim();
+    if (!email) {
+      inp.placeholder = 'kunde@beispiel.de (im ERP-Kontakt keine E-Mail)';
+      return;
+    }
+    if (!inp.value.trim()) {
+      inp.value = email;
+      inp.placeholder = origPlaceholder;
+      // Zurueck ans Angebot-Record schreiben damit naechste Sendung sofort vorbelegt ist
+      try {
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+          method:'PATCH',
+          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ kontakt_email: email }}),
+        });
+        const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+        if (rec?.fields) rec.fields.kontakt_email = email;
+      } catch(e) { console.warn('[Angebot-Send] persist kontakt_email:', e.message); }
+    }
+  } catch(e) {
+    console.warn('[Angebot-Send] ERP-Kontakt-Lookup:', e.message);
+    inp.placeholder = 'kunde@beispiel.de (ERP-Lookup fehlgeschlagen)';
+  }
 }
 
 // v5.44: Test-Modus-Toggle ein-/ausklappen + persistieren
