@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.53';
+const APP_VERSION = 'v5.54';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24371,6 +24371,11 @@ window._angsendSearchTickets = async function() {
 };
 
 window._angsendPickTicket = function(ticketId, subject, requesterEmail, requesterName, statusLabel, statusColor) {
+  // v5.54: Test-Modus + Reply geht nicht zusammen
+  if (document.getElementById('angsend-testmode')?.checked) {
+    toast('🧪 Test-Modus aktiv — Reply auf bestehendes Ticket nicht möglich. Erst Test-Modus aus.','warn');
+    return;
+  }
   const inp = document.getElementById('angsend-fd-ticket-id');
   const subj = document.getElementById('angsend-subject');
   if (inp) inp.value = String(ticketId);
@@ -24379,16 +24384,30 @@ window._angsendPickTicket = function(ticketId, subject, requesterEmail, requeste
     const re = /^re:\s*/i.test(subject) ? subject : 'Re: '+subject;
     subj.value = re;
   }
-  // v5.53: Klar zeigen wer die Reply kriegt — Original-Requester aus Ticket,
-  //        NICHT die Empfänger-Email aus dem Modal-Feld!
+  // v5.54: Empfänger-Email deaktivieren — bei Ticket-Reply geht's an Original-Requester
+  const emailInp = document.getElementById('angsend-email');
+  if (emailInp) {
+    emailInp.disabled = true;
+    emailInp.style.opacity = '0.5';
+    emailInp.style.background = '#F3F4F6';
+    emailInp.style.cursor = 'not-allowed';
+    emailInp.title = 'Bei Ticket-Reply geht die Mail an den Original-Requester. Dieses Feld wird ignoriert. ↺ klicken um Empfänger wieder editierbar zu machen.';
+  }
+  // FD-Ticket-URL (für klickbare Bestätigungsbox)
+  const firmaSlug = document.getElementById('angsend-firma-slug')?.value;
+  const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId)) || '';
   const info = document.getElementById('angsend-fd-ticket-info');
   if (info) {
     const stChip = statusLabel ? '<span style="background:'+(statusColor||'#6B7280')+';color:#fff;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;margin-left:4px">'+escapeHtml(statusLabel)+'</span>' : '';
+    // v5.54: Bestätigungsbox klickbar — öffnet das FD-Ticket in neuem Tab
+    const clickAttrs = ticketUrl
+      ? 'onclick="window.open(\''+ticketUrl+'\',\'_blank\',\'noopener\')" style="cursor:pointer;background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;padding:8px 10px;border-radius:6px;font-size:12px;margin-top:6px;transition:background .15s" onmouseover="this.style.background=\'#D1FAE5\'" onmouseout="this.style.background=\'#ECFDF5\'" title="In Freshdesk öffnen ↗"'
+      : 'style="background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;padding:8px 10px;border-radius:6px;font-size:12px;margin-top:6px"';
     info.innerHTML =
-      '<div style="background:#ECFDF5;border:1px solid #6EE7B7;color:#065F46;padding:8px 10px;border-radius:6px;font-size:12px;margin-top:6px">'+
-        '<div style="font-weight:700;margin-bottom:2px">✓ Antwortet auf Ticket #'+ticketId+stChip+'</div>'+
+      '<div '+clickAttrs+'>'+
+        '<div style="font-weight:700;margin-bottom:2px">✓ Antwortet auf Ticket #'+ticketId+stChip+(ticketUrl?' <span style="float:right;font-size:10px;color:#047857">in FD öffnen ↗</span>':'')+'</div>'+
         '<div style="font-size:11px;color:#047857">📝 '+escapeHtml(subject||'')+'</div>'+
-        '<div style="font-size:11px;margin-top:4px;padding-top:4px;border-top:1px dashed #6EE7B7"><strong>📨 Reply geht an:</strong> '+escapeHtml((requesterName?requesterName+' <':'')+(requesterEmail||'?')+(requesterName?'>':''))+' <span style="color:#065F46">(Original-Requester aus Ticket, NICHT das Empfänger-Feld oben!)</span></div>'+
+        '<div style="font-size:11px;margin-top:4px;padding-top:4px;border-top:1px dashed #6EE7B7"><strong>📨 Reply geht an:</strong> '+escapeHtml((requesterName?requesterName+' <':'')+(requesterEmail||'?')+(requesterName?'>':''))+' <span style="color:#065F46">(Original-Requester aus Ticket — Empfänger-Feld oben ist deaktiviert.)</span></div>'+
       '</div>';
   }
   // Ergebnis-Liste schließen
@@ -24399,6 +24418,16 @@ window._angsendPickTicket = function(ticketId, subject, requesterEmail, requeste
 window._angsendClearTicket = function() {
   const inp = document.getElementById('angsend-fd-ticket-id'); if (inp) inp.value = '';
   const info = document.getElementById('angsend-fd-ticket-info'); if (info) info.innerHTML = '';
+  const res = document.getElementById('angsend-fd-ticket-results'); if (res) res.innerHTML = '';
+  // v5.54: Empfänger-Email wieder editierbar
+  const emailInp = document.getElementById('angsend-email');
+  if (emailInp) {
+    emailInp.disabled = false;
+    emailInp.style.opacity = '';
+    emailInp.style.background = '';
+    emailInp.style.cursor = '';
+    emailInp.title = '';
+  }
 };
 
 /** Übernimmt Picker-Auswahl, leert Cache und startet Send-Versuch neu. */
@@ -24497,6 +24526,8 @@ function _angOpenSendModal(recId) {
   '</div>';
   document.body.appendChild(m);
   setTimeout(() => document.getElementById(defaultEmail ? 'angsend-subject' : 'angsend-email')?.focus(), 100);
+  // v5.54: Initial-Sync der Test-Modus-UI (Ticket-Sektion sperren falls Test-Modus aus localStorage aktiviert ist)
+  setTimeout(() => _angsendToggleTestMode(), 50);
   // v5.45: Wenn keine Empfaenger-Email vorhanden ist, aus dem ERP nachladen
   // ueber die Kontakt-ID. Schreibt sie auch zurueck ans Angebot-Record damit
   // sie beim naechsten Send sofort da ist.
@@ -24541,12 +24572,47 @@ async function _angSendFetchKontaktEmail(recId, kontaktId, firmaSlug) {
 }
 
 // v5.44: Test-Modus-Toggle ein-/ausklappen + persistieren
+// v5.54: Außerdem Ticket-Reply-Sektion deaktivieren bei aktivem Test-Modus
 function _angsendToggleTestMode() {
   const cb = document.getElementById('angsend-testmode');
   const wrap = document.getElementById('angsend-test-wrap');
   if (cb && wrap) {
     wrap.style.display = cb.checked ? '' : 'none';
     localStorage.setItem('angsend_testmode', cb.checked ? '1' : '0');
+  }
+  const isTest = !!cb?.checked;
+  const ticketInp     = document.getElementById('angsend-fd-ticket-id');
+  const ticketSearch  = document.querySelector('[onclick="_angsendSearchTickets()"]');
+  const ticketClear   = document.querySelector('[onclick="_angsendClearTicket()"]');
+  const ticketInfo    = document.getElementById('angsend-fd-ticket-info');
+  const ticketResults = document.getElementById('angsend-fd-ticket-results');
+  // Container für gesamte Ticket-Box (grüne umgebende Box)
+  const ticketBox = ticketInp?.closest('div[style*="F0FDF4"]');
+  if (isTest) {
+    // Bestehende Ticket-Auswahl entfernen + Empfänger reaktivieren
+    if (ticketInp)     ticketInp.value = '';
+    if (ticketResults) ticketResults.innerHTML = '';
+    const emailInp = document.getElementById('angsend-email');
+    if (emailInp) {
+      emailInp.disabled = false;
+      emailInp.style.opacity = '';
+      emailInp.style.background = '';
+      emailInp.style.cursor = '';
+      emailInp.title = '';
+    }
+    // Inputs/Buttons deaktivieren
+    if (ticketInp)    { ticketInp.disabled    = true; ticketInp.style.background = '#F3F4F6'; ticketInp.style.cursor = 'not-allowed'; }
+    if (ticketSearch) { ticketSearch.disabled = true; ticketSearch.style.opacity = '0.4'; ticketSearch.style.pointerEvents = 'none'; }
+    if (ticketClear)  { ticketClear.disabled  = true; ticketClear.style.opacity  = '0.4'; ticketClear.style.pointerEvents = 'none'; }
+    if (ticketBox)    { ticketBox.style.opacity = '0.6'; }
+    // Hinweis warum gesperrt
+    if (ticketInfo) ticketInfo.innerHTML = '<div style="background:#FEF3C7;border:1px solid #FCD34D;color:#7c2d12;padding:6px 10px;border-radius:6px;font-size:11px;margin-top:6px">⚠ Im Test-Modus immer NEUES Ticket — Reply auf bestehendes Ticket würde an den Original-Kunden gehen.</div>';
+  } else {
+    if (ticketInp)    { ticketInp.disabled    = false; ticketInp.style.background = ''; ticketInp.style.cursor = ''; }
+    if (ticketSearch) { ticketSearch.disabled = false; ticketSearch.style.opacity = ''; ticketSearch.style.pointerEvents = ''; }
+    if (ticketClear)  { ticketClear.disabled  = false; ticketClear.style.opacity  = ''; ticketClear.style.pointerEvents = ''; }
+    if (ticketBox)    { ticketBox.style.opacity = ''; }
+    if (ticketInfo)   ticketInfo.innerHTML = '';
   }
 }
 
