@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.55';
+const APP_VERSION = 'v5.56';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24485,7 +24485,7 @@ function _angOpenSendModal(recId) {
         '<div>• PDF: <strong>'+escapeHtml(appPdf.filename || 'Angebot.pdf')+'</strong> ('+Math.round((appPdf.size||0)/1024)+' KB)</div>'+
       '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Empfänger-E-Mail *</label>'+
-        '<input id="angsend-email" type="email" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+        '<input id="angsend-email" type="email" data-default-email="'+escapeHtml(defaultEmail)+'" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
       // v5.44: CC-Empfänger (frei, optional, mehrere mit Komma getrennt)
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">CC <span style="color:var(--txt3);font-weight:500">(optional, mehrere mit Komma trennen)</span></label>'+
         '<input id="angsend-cc" type="text" value="'+escapeHtml(localStorage.getItem('angsend_cc_'+firmaSlug)||'')+'" placeholder="z.B. kollege@firma.de, kunde-buchhaltung@firma.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
@@ -24515,7 +24515,7 @@ function _angOpenSendModal(recId) {
         '</label>'+
         '<div id="angsend-test-wrap" style="margin-top:10px;'+(localStorage.getItem('angsend_testmode')==='1'?'':'display:none')+'">'+
           '<label style="font-size:11px;font-weight:700;color:#7c2d12;display:block;margin-bottom:4px">Meine Test-E-Mail *</label>'+
-          '<input id="angsend-test-email" type="email" value="'+escapeHtml(localStorage.getItem('angsend_test_email')||(APP_KEYS.user?.email||''))+'" placeholder="ich@firma.de" style="width:100%;padding:9px 12px;border:1px solid #FCD34D;border-radius:6px;font-size:13px;background:#FFFBEB">'+
+          '<input id="angsend-test-email" type="email" oninput="_angsendSyncTestEmail(this.value)" value="'+escapeHtml(localStorage.getItem('angsend_test_email')||(APP_KEYS.user?.email||''))+'" placeholder="ich@firma.de" style="width:100%;padding:9px 12px;border:1px solid #FCD34D;border-radius:6px;font-size:13px;background:#FFFBEB">'+
           '<div style="font-size:11px;color:#92400E;margin-top:6px;line-height:1.5">⚠ Bei aktivem Test-Modus geht die E-Mail an deine Adresse, NICHT an den Kunden. Empfänger- und CC-Felder oben werden ignoriert. Betreff bekommt „[TEST]"-Präfix.</div>'+
         '</div>'+
       '</div>'+
@@ -24587,17 +24587,23 @@ function _angsendToggleTestMode() {
   const ticketClear   = document.querySelector('[onclick="_angsendClearTicket()"]');
   const ticketInfo    = document.getElementById('angsend-fd-ticket-info');
   const ticketResults = document.getElementById('angsend-fd-ticket-results');
+  // v5.56: Empfänger-Email synchron zum Test-Modus halten — sonst wirkt's inkonsistent
+  // wenn z.B. "Kunde@firma.de" oben steht aber die Mail an die Test-Email geht.
+  const emailInp = document.getElementById('angsend-email');
   if (isTest) {
-    // Bestehende Ticket-Auswahl entfernen + Empfänger reaktivieren
+    // Bestehende Ticket-Auswahl entfernen
     if (ticketInp)     ticketInp.value = '';
     if (ticketResults) ticketResults.innerHTML = '';
-    const emailInp = document.getElementById('angsend-email');
+    // Empfänger-Feld mit Test-Email befüllen + sperren
+    const testEmailInp = document.getElementById('angsend-test-email');
+    const testEmailVal = (testEmailInp?.value || '').trim();
     if (emailInp) {
-      emailInp.disabled = false;
-      emailInp.style.opacity = '';
-      emailInp.style.background = '';
-      emailInp.style.cursor = '';
-      emailInp.title = '';
+      emailInp.value = testEmailVal;
+      emailInp.disabled = true;
+      emailInp.style.opacity = '0.75';
+      emailInp.style.background = '#FEF3C7';
+      emailInp.style.cursor = 'not-allowed';
+      emailInp.title = '🧪 Test-Modus aktiv — Empfänger automatisch deine Test-E-Mail. Ändern in der gelben Test-Box unten.';
     }
     // v5.55: NICHT die ganze Box ausblenden — nur die Eingabe-Elemente sperren.
     // Sonst wirkt die Bestätigungsbox bei späterer Aktivierung auch ausgebleicht.
@@ -24611,8 +24617,28 @@ function _angsendToggleTestMode() {
     if (ticketSearch) { ticketSearch.disabled = false; ticketSearch.style.opacity = ''; ticketSearch.style.pointerEvents = ''; }
     if (ticketClear)  { ticketClear.disabled  = false; ticketClear.style.opacity  = ''; ticketClear.style.pointerEvents = ''; }
     if (ticketInfo)   ticketInfo.innerHTML = '';
+    // v5.56: Empfänger-Email auf den ursprünglichen Default zurücksetzen + reaktivieren
+    if (emailInp) {
+      emailInp.value = emailInp.getAttribute('data-default-email') || '';
+      emailInp.disabled = false;
+      emailInp.style.opacity = '';
+      emailInp.style.background = '';
+      emailInp.style.cursor = '';
+      emailInp.title = '';
+    }
   }
 }
+
+/** v5.56: Test-Email-Input ist Source-of-Truth wenn Test-Modus aktiv —
+ *  jeder Tipper synct die Empfänger-Anzeige oben + persistiert. */
+window._angsendSyncTestEmail = function(v) {
+  const val = String(v||'').trim();
+  localStorage.setItem('angsend_test_email', val);
+  if (document.getElementById('angsend-testmode')?.checked) {
+    const emailInp = document.getElementById('angsend-email');
+    if (emailInp) emailInp.value = val;
+  }
+};
 
 async function _angSendCustomerEmail(recId, btn) {
   let email = (document.getElementById('angsend-email')?.value || '').trim();
