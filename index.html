@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.46';
+const APP_VERSION = 'v5.47';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23986,27 +23986,50 @@ async function _angRegeneratePdf(recId, btn) {
 // per Lookup (Cache 1h) zugewiesen. Signatur kommt aus Freshdesk durch
 // die Verwendung von /outbound_email mit email_config_id.
 // ═══════════════════════════════════════════════════════════════════════
-const ANGEBOT_FD_GROUP_NAME     = 'Angebotsbearbeitung';
-const ANGEBOT_FD_RESPONDER_NAME = 'Patrizio Fontanarosa';
-const _fdAssignmentGenericCache = {}; // key = firmaSlug+'|'+group+'|'+responder → {ids, ts}
+// v5.47: Fallback-Listen — jede FD-Instanz hat andere Gruppen-Namen.
+//        User-Override pro Firma via localStorage:
+//          fd_group_id_<slug>  =  ausgewählte Gruppe-ID
+//          fd_agent_id_<slug>  =  ausgewählter Agent-ID
+const ANGEBOT_FD_GROUP_CANDIDATES     = ['Angebotsbearbeitung','Angebote','Sales','Vertrieb'];
+const ANGEBOT_FD_RESPONDER_CANDIDATES = ['Patrizio Fontanarosa','Patrizio'];
+const _fdAssignmentGenericCache = {}; // key = firmaSlug → {ids, lists, ts}
 
-/** Generischer FD-Lookup: Group-ID + Responder-ID per Namen ermitteln, 1h gecached. */
-async function _fdLookupAssignment(firmaSlug, groupName, responderName) {
-  const cacheKey = firmaSlug + '|' + groupName + '|' + responderName;
+/** FD-Lookup: probiert Kandidaten-Namen, akzeptiert localStorage-Override,
+ *  liefert IMMER die komplette Listen mit, damit die UI einen Picker zeigen kann. */
+async function _fdLookupAssignment(firmaSlug, groupCandidates, responderCandidates) {
+  const groupList     = Array.isArray(groupCandidates)     ? groupCandidates     : [groupCandidates];
+  const responderList = Array.isArray(responderCandidates) ? responderCandidates : [responderCandidates];
+  // Override aus localStorage
+  const overrideGroup = parseInt(localStorage.getItem('fd_group_id_'+firmaSlug)||'0',10) || null;
+  const overrideAgent = parseInt(localStorage.getItem('fd_agent_id_'+firmaSlug)||'0',10) || null;
+  // Cache nur ohne Override
+  const cacheKey = firmaSlug;
   const cached = _fdAssignmentGenericCache[cacheKey];
-  if (cached && (Date.now() - cached.loadedAt) < 60*60*1000) return cached;
+  if (cached && (Date.now() - cached.loadedAt) < 60*60*1000 && !overrideGroup && !overrideAgent) return cached;
   const proxy = APP_KEYS.valtownProxyUrl;
-  if (!proxy) return { group_id:null, responder_id:null, loadedAt:Date.now() };
+  const empty = { group_id:null, responder_id:null, availableGroups:[], availableAgents:[], loadedAt:Date.now() };
+  if (!proxy) return empty;
   await erpEnsureSession();
   const headers = { 'Authorization':'Bearer '+erpGetSessionToken() };
   let group_id = null, responder_id = null;
+  let availableGroups = [], availableAgents = [];
   try {
     const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/admin/groups', { headers });
     if (r.ok) {
       const arr = await r.json();
       if (Array.isArray(arr)) {
-        const g = arr.find(x => String(x.name||'').toLowerCase() === groupName.toLowerCase());
-        if (g) group_id = g.id;
+        availableGroups = arr.map(x => ({ id:x.id, name:x.name||('Gruppe '+x.id) }));
+        if (overrideGroup) {
+          const g = arr.find(x => x.id === overrideGroup);
+          if (g) group_id = g.id;
+        }
+        if (!group_id) {
+          for (const cand of groupList) {
+            const candL = String(cand).toLowerCase();
+            const g = arr.find(x => String(x.name||'').toLowerCase() === candL);
+            if (g) { group_id = g.id; break; }
+          }
+        }
       }
     }
   } catch(e) { console.warn('[FD-Lookup] groups:', e.message); }
@@ -24015,20 +24038,45 @@ async function _fdLookupAssignment(firmaSlug, groupName, responderName) {
     if (r.ok) {
       const arr = await r.json();
       if (Array.isArray(arr)) {
-        const wantedLower = responderName.toLowerCase();
-        const a = arr.find(x => {
-          const n = String(x.contact?.name || x.name || '').toLowerCase();
-          return n === wantedLower || n.includes(wantedLower);
-        });
-        if (a) responder_id = a.id;
+        availableAgents = arr.map(x => ({ id:x.id, name:(x.contact?.name || x.name || ('Agent '+x.id)) }));
+        if (overrideAgent) {
+          const a = arr.find(x => x.id === overrideAgent);
+          if (a) responder_id = a.id;
+        }
+        if (!responder_id) {
+          for (const cand of responderList) {
+            const candL = String(cand).toLowerCase();
+            const a = arr.find(x => {
+              const n = String(x.contact?.name || x.name || '').toLowerCase();
+              return n === candL || n.includes(candL);
+            });
+            if (a) { responder_id = a.id; break; }
+          }
+        }
       }
     }
   } catch(e) { console.warn('[FD-Lookup] agents:', e.message); }
-  const res = { group_id, responder_id, loadedAt: Date.now() };
+  const res = { group_id, responder_id, availableGroups, availableAgents, loadedAt: Date.now() };
   _fdAssignmentGenericCache[cacheKey] = res;
-  console.log('[FD-Lookup] '+firmaSlug+' · "'+groupName+'"='+group_id+' · "'+responderName+'"='+responder_id);
+  console.log('[FD-Lookup] '+firmaSlug+' · group='+group_id+(overrideGroup?' (override)':'')+' · responder='+responder_id+(overrideAgent?' (override)':'')+' · '+availableGroups.length+'grp / '+availableAgents.length+'ag verfügbar');
   return res;
 }
+
+/** Übernimmt Picker-Auswahl, leert Cache und startet Send-Versuch neu. */
+window._angApplyFdPicker = function(firmaSlug, recId) {
+  const g = document.getElementById('fd-picker-group');
+  const a = document.getElementById('fd-picker-agent');
+  if (g && !g.value) return toast('Bitte Gruppe wählen','warn');
+  if (a && !a.value) return toast('Bitte Bearbeiter wählen','warn');
+  if (g && g.value) localStorage.setItem('fd_group_id_'+firmaSlug, g.value);
+  if (a && a.value) localStorage.setItem('fd_agent_id_'+firmaSlug, a.value);
+  // Cache leeren — sonst greift erneut der alte Match-Versuch
+  for (const k of Object.keys(_fdAssignmentGenericCache)) {
+    if (k === firmaSlug) delete _fdAssignmentGenericCache[k];
+  }
+  toast('✓ FD-Zuweisung gespeichert — sende erneut','ok');
+  _angSendCustomerEmail(recId);
+};
 
 function _angOpenSendModal(recId) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
@@ -24062,8 +24110,8 @@ function _angOpenSendModal(recId) {
       '<div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px 14px;font-size:12px;color:#1E3A8A;line-height:1.6">'+
         '<div>📋 <strong>Versand via Freshdesk:</strong></div>'+
         '<div>• Ticket-Status: <strong>Offen</strong></div>'+
-        '<div>• Gruppe: <strong>'+ANGEBOT_FD_GROUP_NAME+'</strong></div>'+
-        '<div>• Bearbeiter: <strong>'+ANGEBOT_FD_RESPONDER_NAME+'</strong></div>'+
+        '<div>• Gruppe: <strong>'+(localStorage.getItem('fd_group_id_'+firmaSlug)?'gespeicherte Auswahl':ANGEBOT_FD_GROUP_CANDIDATES.join(' / '))+'</strong></div>'+
+        '<div>• Bearbeiter: <strong>'+(localStorage.getItem('fd_agent_id_'+firmaSlug)?'gespeicherte Auswahl':ANGEBOT_FD_RESPONDER_CANDIDATES[0])+'</strong></div>'+
         '<div>• Signatur: <strong>aus Freshdesk-Account</strong></div>'+
         '<div>• PDF: <strong>'+escapeHtml(appPdf.filename || 'Angebot.pdf')+'</strong> ('+Math.round((appPdf.size||0)/1024)+' KB)</div>'+
       '</div>'+
@@ -24223,14 +24271,47 @@ async function _angSendCustomerEmail(recId, btn) {
     // 1) PDF als Blob holen
     const pdfBlob = await (await fetch(appPdf.url)).blob();
     setProgress(20, '🔍 Suche Freshdesk-Zuweisung (Gruppe + Bearbeiter) …');
-    // 2) Group + Responder per Lookup
-    const assignment = await _fdLookupAssignment(firmaSlug, ANGEBOT_FD_GROUP_NAME, ANGEBOT_FD_RESPONDER_NAME);
-    // v5.46: Pre-Flight-Check — fail-fast wenn Group fehlt (Hauptursache von HTTP 400 bei outbound_email)
-    const lookupProblems = [];
-    if (!assignment.group_id)     lookupProblems.push('• Gruppe „'+ANGEBOT_FD_GROUP_NAME+'" NICHT in Freshdesk gefunden — bitte in Freshdesk-Admin → Gruppen anlegen oder Namen prüfen.');
-    if (!assignment.responder_id) lookupProblems.push('• Bearbeiter „'+ANGEBOT_FD_RESPONDER_NAME+'" NICHT gefunden — Agent muss in Freshdesk existieren und der Gruppe zugewiesen sein.');
-    if (lookupProblems.length) {
-      showError('Freshdesk-Zuweisung unvollständig', lookupProblems.concat(['', 'Freshdesk lehnt outbound_email ohne gültige group_id/responder_id mit HTTP 400 ab.']));
+    // 2) Group + Responder per Lookup — probiert Fallback-Liste, akzeptiert Override
+    const assignment = await _fdLookupAssignment(firmaSlug, ANGEBOT_FD_GROUP_CANDIDATES, ANGEBOT_FD_RESPONDER_CANDIDATES);
+    // v5.47: Wenn etwas fehlt → Picker mit verfügbaren FD-Gruppen/Agents anbieten statt nur Fehler
+    if (!assignment.group_id || !assignment.responder_id) {
+      if (!footer) { toast('FD-Zuweisung fehlt — Picker kann nicht angezeigt werden','err'); return; }
+      const needGroup = !assignment.group_id;
+      const needAgent = !assignment.responder_id;
+      const grps = assignment.availableGroups || [];
+      const agts = assignment.availableAgents || [];
+      const mkSel = (id, items, ph) =>
+        '<select id="'+id+'" style="width:100%;padding:8px 10px;border:1px solid #FDE68A;border-radius:6px;background:#fff;font-size:13px;color:#1F2937">'+
+          '<option value="">— '+escapeHtml(ph)+' —</option>'+
+          items.map(x => '<option value="'+x.id+'">'+escapeHtml(x.name)+(x.name?'':' (#'+x.id+')')+'</option>').join('')+
+        '</select>';
+      const explainGrp = needGroup ? ('Gruppe „'+ANGEBOT_FD_GROUP_CANDIDATES.join('"/„')+'" NICHT in Freshdesk gefunden.') : '';
+      const explainAgt = needAgent ? ('Bearbeiter „'+ANGEBOT_FD_RESPONDER_CANDIDATES[0]+'" NICHT gefunden.') : '';
+      footer.innerHTML =
+        '<div style="width:100%;background:#FEF3C7;border:1px solid #FDE68A;border-radius:8px;padding:14px 16px;font-size:12px;color:#78350F;display:flex;flex-direction:column;gap:10px">'+
+          '<div style="font-weight:700;font-size:13px">⚠️ Freshdesk-Zuweisung wählen</div>'+
+          '<div style="font-size:11px;line-height:1.5">'+
+            (explainGrp ? escapeHtml(explainGrp)+'<br>' : '')+
+            (explainAgt ? escapeHtml(explainAgt)+'<br>' : '')+
+            'Die Auswahl wird pro Firma gespeichert und beim nächsten Versand automatisch verwendet.'+
+          '</div>'+
+          (needGroup
+            ? '<label style="display:flex;flex-direction:column;gap:4px"><span style="font-weight:600;font-size:11px">📁 Gruppe ('+grps.length+' verfügbar)</span>'+
+                (grps.length ? mkSel('fd-picker-group', grps, 'Gruppe wählen') :
+                  '<div style="color:#7F1D1D;font-size:11px;padding:8px;background:#FEE2E2;border-radius:4px">Keine Gruppen in Freshdesk vorhanden — bitte in FD-Admin anlegen.</div>')+
+              '</label>'
+            : '<div style="font-size:11px;color:#065F46">✓ Gruppe automatisch: <strong>'+escapeHtml((grps.find(x=>x.id===assignment.group_id)||{}).name||('#'+assignment.group_id))+'</strong></div>')+
+          (needAgent
+            ? '<label style="display:flex;flex-direction:column;gap:4px"><span style="font-weight:600;font-size:11px">👤 Bearbeiter ('+agts.length+' verfügbar)</span>'+
+                (agts.length ? mkSel('fd-picker-agent', agts, 'Bearbeiter wählen') :
+                  '<div style="color:#7F1D1D;font-size:11px;padding:8px;background:#FEE2E2;border-radius:4px">Keine Agents in Freshdesk vorhanden.</div>')+
+              '</label>'
+            : '<div style="font-size:11px;color:#065F46">✓ Bearbeiter automatisch: <strong>'+escapeHtml((agts.find(x=>x.id===assignment.responder_id)||{}).name||('#'+assignment.responder_id))+'</strong></div>')+
+          '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">'+
+            '<button class="btn" onclick="document.getElementById(\'ang-send-modal\').remove()">Abbrechen</button>'+
+            '<button class="btn prim" onclick="_angApplyFdPicker(\''+firmaSlug+'\', \''+recId+'\')">💾 Speichern &amp; Senden</button>'+
+          '</div>'+
+        '</div>';
       return;
     }
     setProgress(35, '📨 Lade E-Mail-Konfiguration (Signatur + Absender) …');
