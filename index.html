@@ -2520,6 +2520,11 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   </div>
   <div class="bf-body" id="bf-body"></div>
   <div class="bf-foot">
+    <!-- v5.57: Layout-Switch (nur für Reparatur/Installation-Berichte sichtbar) -->
+    <label id="bf-layout-toggle-wrap" style="display:none;align-items:center;gap:6px;font-size:11px;color:var(--txt2);margin-right:auto;cursor:pointer;padding:4px 8px;background:var(--bg);border-radius:6px" title="Klassisches Layout = das alte Design mit grauen Block-Zellen. Modern = neues Design mit konsistentem 2-Spalten-Grid.">
+      <input type="checkbox" id="bf-layout-classic" onchange="_bfLayoutToggle(this.checked)" style="width:14px;height:14px;margin:0">
+      <span>📋 Klassisches Layout</span>
+    </label>
     <button class="btn" onclick="closeBerichtForm()">Abbrechen</button>
     <button class="btn succ" id="bf-save-btn" onclick="saveBerichtFromForm()">💾 Abschließen &amp; PDF</button>
   </div>
@@ -2635,7 +2640,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.56';
+const APP_VERSION = 'v5.57';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3587,7 +3592,143 @@ function pdfHeader(doc,titleLine1,titleLine2,logoB64,logoW,logoH,ml,mr) {
 /* ════════════════════════════════════════════════════════════
    PDF GENERATORS
    ════════════════════════════════════════════════════════════ */
+/* ────────────────────────────────────────────────────────────────────
+ * v5.57: Modernes Bericht-Layout für Reparatur/Installation-Berichte.
+ * Toggle: localStorage 'pdf_bericht_arbeit_layout' = 'modern' (default) | 'classic'.
+ * pdfArbeit / pdfAufzugA sind Wrapper, alte Versionen heißen *Classic.
+ * Bestehende PDFs in Airtable bleiben unverändert — erst bei „Neu generieren"
+ * oder neuem Bericht greift das aktuell gewählte Layout.
+ * ──────────────────────────────────────────────────────────────────── */
+function _bfBerichtArbeitLayout() {
+  return String(localStorage.getItem('pdf_bericht_arbeit_layout')||'').toLowerCase() === 'classic' ? 'classic' : 'modern';
+}
+
 function pdfArbeit(d,num,sigs) {
+  return _bfBerichtArbeitLayout() === 'classic'
+    ? pdfArbeitClassic(d,num,sigs)
+    : pdfArbeitModern(d,num,sigs);
+}
+
+function pdfAufzugA(d,num,sigs) {
+  return _bfBerichtArbeitLayout() === 'classic'
+    ? pdfAufzugAClassic(d,num,sigs)
+    : pdfAufzugAModern(d,num,sigs);
+}
+
+/* Gemeinsamer Body — Layout ist firmen-unabhängig, nur Header + Akzentfarbe variieren. */
+function _pdfArbeitModernBody(doc, d, num, sigs, header, theme) {
+  const ml=14, mr=196, cw=182, H=297;
+  const p=pH(doc);
+  const NAVY = theme.NAVY, ACCENT = theme.ACCENT;
+  const GREY=[55,65,81], GREY_L=[120,130,145], GREY_X=[229,231,235];
+  const GAP = 8, cwHalf = (cw - GAP) / 2;
+  let y = header(doc, ml, mr);
+  y += 2;
+  // META — Datum + Auftragsnummer prominent
+  p.ft(7.5,false,GREY_L);
+  doc.text('BERICHT VOM', ml, y);
+  doc.text('AUFTRAGSNUMMER', mr, y, {align:'right'});
+  y += 4.5;
+  p.ft(11,true,NAVY);
+  doc.text(_sanPdf(d.datum||'—'), ml, y);
+  doc.text(_sanPdf(d.auftragsnummer||'—'), mr, y, {align:'right'});
+  y += 6;
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.line(ml,y,mr,y); y += 6;
+  // Field-Helper: Label klein in Caps grau OBEN, Wert drunter — KEINE Block-Zellen, einheitliches Grid
+  function field(x, w, label, value, maxLines) {
+    maxLines = maxLines || 1;
+    p.ft(7.5,false,GREY_L);
+    doc.text(_sanPdf(String(label).toUpperCase()), x, y);
+    p.ft(10,false,GREY);
+    const lines = doc.splitTextToSize(_sanPdf(String(value||'—')), w-2).slice(0, maxLines);
+    doc.text(lines, x, y+4.5);
+    return lines.length;
+  }
+  // SECTION — Standort + Durchgeführt (2-Spalten gleich breit)
+  const sec1 = Math.max(
+    field(ml,           cwHalf, 'Standort der Anlage', d.standort, 3),
+    field(ml+cwHalf+GAP, cwHalf, 'Durchgeführt von',     d.durchgefuehrt_von, 2)
+  );
+  y += 4 + sec1*4.5 + 4;
+  doc.setDrawColor(...GREY_X); doc.line(ml,y-2,mr,y-2); y += 2;
+  // SECTION — Zustand bei Ankunft (volle Breite, mehrzeilig erlaubt)
+  const sec2 = field(ml, cw, 'War der Aufzug bei Ankunft an der Anlage in Betrieb?', d.aufzug_ankunft_in_betrieb, 2);
+  y += 4 + sec2*4.5 + 4;
+  doc.setDrawColor(...GREY_X); doc.line(ml,y-2,mr,y-2); y += 2;
+  // SECTION — Anlagendaten (Fabriknummer volle Breite, dann 2-Spalten)
+  field(ml, cw, 'Fabriknummer', d.fabriknummer, 1);
+  y += 4 + 4.5 + 3;
+  field(ml,           cwHalf, 'Arbeitszeit vor Ort', d.arbeitszeit, 1);
+  field(ml+cwHalf+GAP, cwHalf, 'Anzahl Monteure',     d.anzahl_monteure, 1);
+  y += 4 + 4.5 + 4;
+  doc.setDrawColor(...GREY_X); doc.line(ml,y-2,mr,y-2); y += 2;
+  // SECTION — Zustandsbericht bei Verlassen (Section-Titel + 2-Spalten + volle Zeile)
+  p.ft(8,true,NAVY);
+  doc.text('ZUSTANDSBERICHT BEI VERLASSEN DER ANLAGE', ml, y);
+  y += 5.5;
+  field(ml,           cwHalf, 'Ist der Aufzug in Betrieb?',           d.aufzug_verlassen_in_betrieb, 1);
+  field(ml+cwHalf+GAP, cwHalf, 'Weiterführende Arbeiten erforderlich?', d.weitere_arbeiten, 1);
+  y += 4 + 4.5 + 3;
+  field(ml, cw, 'Wurde der Auftrag vollständig erfüllt?', d.auftrag_vollstaendig, 1);
+  y += 4 + 4.5 + 4;
+  doc.setDrawColor(...GREY_X); doc.line(ml,y-2,mr,y-2); y += 2;
+  // SECTION — Beschreibung (Section-Titel + Box mit Border)
+  p.ft(8,true,NAVY);
+  doc.text('BESCHREIBUNG DURCHGEFÜHRTER ARBEITEN', ml, y);
+  y += 3.5;
+  const beschH = sigs ? 28 : 45;
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.rect(ml, y, cw, beschH, 'S');
+  p.ft(10,false,GREY);
+  const beschLines = doc.splitTextToSize(_sanPdf(d.beschreibung||''), cw-4);
+  const beschMax = Math.floor((beschH-3)/4.5);
+  beschLines.slice(0, beschMax).forEach((l,i) => doc.text(l, ml+2.5, y+5+i*4.5));
+  y += beschH + 5;
+  // SECTION — Sonstiges
+  p.ft(8,true,NAVY);
+  doc.text('SONSTIGES', ml, y);
+  y += 3.5;
+  const sonstH = sigs ? 12 : 38;
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.rect(ml, y, cw, sonstH, 'S');
+  p.ft(10,false,GREY);
+  const sonstLines = doc.splitTextToSize(_sanPdf(d.sonstiges||''), cw-4);
+  const sonstMax = Math.floor((sonstH-3)/4.5);
+  sonstLines.slice(0, sonstMax).forEach((l,i) => doc.text(l, ml+2.5, y+5+i*4.5));
+  y += sonstH + 5;
+  if (sigs) y = addSignaturesInline(doc, ml, cw, y, sigs);
+  // FOOTER — wie Classic
+  p.bd(); doc.setLineWidth(0.2); doc.line(ml,H-14,mr,H-14);
+  p.ft(8.5,false,[100,100,100]); doc.text('Arbeitsnachweis', ml, H-9);
+  p.ft(8,false,[160,160,160]);   doc.text('Bericht-Nr. '+num, mr, H-9, {align:'right'});
+  return doc;
+}
+
+function pdfArbeitModern(d,num,sigs) {
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'mm',format:'a4'});
+  return _pdfArbeitModernBody(doc, d, num, sigs,
+    (doc, ml, mr) => pdfHeader(doc,'Installationsbericht','Aufzug',LOGO_B64,48,9.3,ml,mr),
+    { NAVY:[26,51,83], ACCENT:[33,82,169] }
+  );
+}
+
+function pdfAufzugAModern(d,num,sigs) {
+  const{jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'mm',format:'a4'});
+  return _pdfArbeitModernBody(doc, d, num, sigs,
+    (doc, ml, mr) => {
+      // Aufzugshandwerk-Header (dunkelgrau wie Classic — Branding bewahren)
+      const p=pH(doc); let y=14;
+      p.ft(22,true,[40,40,40]); doc.text('Installationsbericht',ml,y); y+=7;
+      p.ft(12,true,[40,40,40]); doc.text('Aufzug',ml,y);
+      try { doc.addImage('data:image/png;base64,'+AUFZUG_LOGO_B64,'PNG',148,9,48,9.8); } catch(e){}
+      y+=5; doc.setDrawColor(160,160,160); doc.setLineWidth(0.3); doc.line(ml,y,mr,y); y+=6;
+      return y;
+    },
+    { NAVY:[40,40,40], ACCENT:[80,80,80] }
+  );
+}
+
+function pdfArbeitClassic(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   y=pdfHeader(doc,'Installationsbericht','Aufzug',LOGO_B64,48,9.3,ml,mr);
@@ -3639,7 +3780,7 @@ function pdfWartung(d,num,sigs) {
   return doc;
 }
 
-function pdfAufzugA(d,num,sigs) {
+function pdfAufzugAClassic(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   p.ft(22,true,[40,40,40]);doc.text('Installationsbericht',ml,y);y+=7;p.ft(12,true,[40,40,40]);doc.text('Aufzug',ml,y);
@@ -11470,7 +11611,27 @@ async function openBerichtForm(auftragId, berichtId) {
 
   document.getElementById('bf-view').classList.add('show');
   document.body.classList.add('has-modal');
+  // v5.57: Layout-Toggle nur bei Reparatur/Installation-Vorlagen einblenden
+  _bfInitLayoutToggle(tmpl);
 }
+
+/** v5.57: Layout-Switch initialisieren (sichtbar nur bei Reparatur/Installation) */
+function _bfInitLayoutToggle(tmpl) {
+  const wrap = document.getElementById('bf-layout-toggle-wrap');
+  const cb   = document.getElementById('bf-layout-classic');
+  if (!wrap || !cb) return;
+  // Nur Reparatur/Installation hat das neue Layout — bei Wartung gibt's noch keins
+  const isArbeit = tmpl && (tmpl.pdf === pdfArbeit || tmpl.pdf === pdfAufzugA);
+  wrap.style.display = isArbeit ? 'inline-flex' : 'none';
+  if (isArbeit) {
+    cb.checked = (typeof _bfBerichtArbeitLayout === 'function' && _bfBerichtArbeitLayout() === 'classic');
+  }
+}
+
+window._bfLayoutToggle = function(useClassic) {
+  localStorage.setItem('pdf_bericht_arbeit_layout', useClassic ? 'classic' : 'modern');
+  toast(useClassic ? '📋 Klassisches Layout aktiv — beim Speichern wird das alte Design genutzt.' : '✨ Modernes Layout aktiv — beim Speichern wird das neue Design genutzt.', 'ok');
+};
 
 function closeBerichtForm() {
   if (_sigTechnikerPad) { _sigTechnikerPad.destroy(); _sigTechnikerPad = null; }
