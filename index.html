@@ -2520,11 +2520,6 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   </div>
   <div class="bf-body" id="bf-body"></div>
   <div class="bf-foot">
-    <!-- v5.57: Layout-Switch (nur für Reparatur/Installation-Berichte sichtbar) -->
-    <label id="bf-layout-toggle-wrap" style="display:none;align-items:center;gap:6px;font-size:11px;color:var(--txt2);margin-right:auto;cursor:pointer;padding:4px 8px;background:var(--bg);border-radius:6px" title="Klassisches Layout = das alte Design mit grauen Block-Zellen. Modern = neues Design mit konsistentem 2-Spalten-Grid.">
-      <input type="checkbox" id="bf-layout-classic" onchange="_bfLayoutToggle(this.checked)" style="width:14px;height:14px;margin:0">
-      <span>📋 Klassisches Layout</span>
-    </label>
     <button class="btn" onclick="closeBerichtForm()">Abbrechen</button>
     <button class="btn succ" id="bf-save-btn" onclick="saveBerichtFromForm()">💾 Abschließen &amp; PDF</button>
   </div>
@@ -2640,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.57';
+const APP_VERSION = 'v5.58';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3602,6 +3597,14 @@ function pdfHeader(doc,titleLine1,titleLine2,logoB64,logoW,logoH,ml,mr) {
 function _bfBerichtArbeitLayout() {
   return String(localStorage.getItem('pdf_bericht_arbeit_layout')||'').toLowerCase() === 'classic' ? 'classic' : 'modern';
 }
+
+window._setPdfBerichtLayout = function(layout) {
+  const v = (layout === 'classic') ? 'classic' : 'modern';
+  localStorage.setItem('pdf_bericht_arbeit_layout', v);
+  toast(v === 'modern' ? '✨ Modernes Layout aktiviert — beim nächsten Speichern wird das neue Design genutzt.' : '📋 Klassisches Layout aktiviert — beim nächsten Speichern wird das alte Design genutzt.', 'ok');
+  // Firmen-View neu zeichnen damit der aktive Button hervorgehoben ist
+  if (typeof renderFirmaView === 'function') renderFirmaView();
+};
 
 function pdfArbeit(d,num,sigs) {
   return _bfBerichtArbeitLayout() === 'classic'
@@ -6080,7 +6083,24 @@ async function renderFirmaView() {
   try {
     await loadFirmen();
     const rows = _firmenCache.map(f => firmaRowHtml(f)).join('');
+    // v5.58: Admin-Toggle für PDF-Layout der Reparatur/Installation-Berichte
+    const layoutActive = (typeof _bfBerichtArbeitLayout === 'function') ? _bfBerichtArbeitLayout() : 'modern';
+    const isModern = layoutActive !== 'classic';
     list.innerHTML = `
+      <div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:16px 20px;margin-bottom:18px">
+        <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="flex:1;min-width:280px">
+            <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px">📄 PDF-Layout — Reparatur/Installation-Berichte</div>
+            <div style="font-size:11px;color:var(--txt2);line-height:1.5">
+              Steuert das Layout der Bericht-PDFs (Aszendio + Aufzugshandwerk). Bestehende PDFs in Airtable bleiben unverändert — der Wechsel greift nur bei <strong>neu erstellten oder bearbeiteten</strong> Berichten.
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;background:var(--bg);padding:4px;border-radius:8px;border:1px solid var(--bdr)">
+            <button onclick="_setPdfBerichtLayout('modern')" style="padding:8px 14px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;background:${isModern?'#2152A9':'transparent'};color:${isModern?'#fff':'var(--txt2)'};transition:all .15s" title="Konsistentes 2-Spalten-Grid, Labels über den Werten, dezente Trennlinien">✨ Modern</button>
+            <button onclick="_setPdfBerichtLayout('classic')" style="padding:8px 14px;border:none;border-radius:6px;cursor:pointer;font-size:12px;font-weight:600;background:${!isModern?'#6B7280':'transparent'};color:${!isModern?'#fff':'var(--txt2)'};transition:all .15s" title="Das alte Design mit grauen Block-Zellen">📋 Klassisch</button>
+          </div>
+        </div>
+      </div>
       <table class="firma-tbl">
         <thead><tr>
           <th>Icon</th><th>Name</th><th>Slug</th><th>Kalkulator-Typ</th><th>Bericht-Start</th><th>Auftrag-Start</th><th title="Start-Nummer des Angebote-Konverters (ANG-X)">Angebot-Start</th><th>ERP-Tenant</th><th title="URL-Prefix zum Auftrag im ERP — Auftragsnummer wird automatisch angehängt">ERP-Auftrag-URL</th><th title="Mailchimp API-Key, endet mit -us12 o.ä.">📧 Mailchimp-Key</th><th title="Mailchimp Audience-/List-ID">📧 Audience-ID</th><th>Aktiv</th><th></th>
@@ -11611,27 +11631,7 @@ async function openBerichtForm(auftragId, berichtId) {
 
   document.getElementById('bf-view').classList.add('show');
   document.body.classList.add('has-modal');
-  // v5.57: Layout-Toggle nur bei Reparatur/Installation-Vorlagen einblenden
-  _bfInitLayoutToggle(tmpl);
 }
-
-/** v5.57: Layout-Switch initialisieren (sichtbar nur bei Reparatur/Installation) */
-function _bfInitLayoutToggle(tmpl) {
-  const wrap = document.getElementById('bf-layout-toggle-wrap');
-  const cb   = document.getElementById('bf-layout-classic');
-  if (!wrap || !cb) return;
-  // Nur Reparatur/Installation hat das neue Layout — bei Wartung gibt's noch keins
-  const isArbeit = tmpl && (tmpl.pdf === pdfArbeit || tmpl.pdf === pdfAufzugA);
-  wrap.style.display = isArbeit ? 'inline-flex' : 'none';
-  if (isArbeit) {
-    cb.checked = (typeof _bfBerichtArbeitLayout === 'function' && _bfBerichtArbeitLayout() === 'classic');
-  }
-}
-
-window._bfLayoutToggle = function(useClassic) {
-  localStorage.setItem('pdf_bericht_arbeit_layout', useClassic ? 'classic' : 'modern');
-  toast(useClassic ? '📋 Klassisches Layout aktiv — beim Speichern wird das alte Design genutzt.' : '✨ Modernes Layout aktiv — beim Speichern wird das neue Design genutzt.', 'ok');
-};
 
 function closeBerichtForm() {
   if (_sigTechnikerPad) { _sigTechnikerPad.destroy(); _sigTechnikerPad = null; }
