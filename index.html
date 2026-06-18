@@ -1912,6 +1912,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="wv-flt-sammel" checked onchange="_renderWartungsvertraegeList()"> 📦 Sammel</label>
       <span style="color:var(--txt3);font-size:11px">|</span>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Nur ERP-Verträge mit verknüpftem MITANGEBOT-Auftrag (bestätigt)"><input type="checkbox" id="wv-flt-mit-auftrag" onchange="_renderWartungsvertraegeList()"> 🛠 Nur mit Auftrag</label>
+      <span style="color:var(--txt3);font-size:11px">|</span>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="Archivierte App-Verträge mit anzeigen (ausgegraut). Archiv ändert nichts am ERP."><input type="checkbox" id="wv-flt-archived" onchange="_renderWartungsvertraegeList()"> 📦 Archiv anzeigen</label>
     </div>
   </div>
   <div class="firma-body" id="wv-list" style="padding:20px"></div>
@@ -2635,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.77';
+const APP_VERSION = 'v5.78';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15643,6 +15645,9 @@ async function _ensureVertraegeTable() {
     await ensureField('Vertraege', 'vorlage_id',     'singleLineText');  // Verknüpfung zur Vertragsvorlage
     await ensureField('Vertraege', 'pdf_modus',      'singleLineText');  // 'platzhalter' | 'ki'
     await ensureField('Vertraege', 'vertrag_text',   'multilineText');   // generierter Markdown — für Korrektur ohne KI-Neuwurf
+    // v5.78: Archivierung
+    await ensureField('Vertraege', 'archived',       'checkbox', { color:'grayBright', icon:'check' });
+    await ensureField('Vertraege', 'archived_at',    'singleLineText');
   } catch(e) { console.warn('[Vertraege] Tabellen-Setup:', e.message); }
 }
 
@@ -16609,6 +16614,7 @@ function _buildWartungsvertraegeViewItems() {
       _src: 'app',
       _id: r.id,
       _legacy: isLegacy,
+      _archived: !!f.archived,
       firma: f.firma,
       nummer: f.vertragsnummer || '(Legacy)',
       titel: f.titel || '',
@@ -16659,7 +16665,10 @@ function _renderWartungsvertraegeList() {
   const showEinzel = document.getElementById('wv-flt-einzel')?.checked !== false;
   const showSammel = document.getElementById('wv-flt-sammel')?.checked !== false;
   const onlyMitAuftrag = document.getElementById('wv-flt-mit-auftrag')?.checked === true;
+  const showArchived   = document.getElementById('wv-flt-archived')?.checked === true;
   let items = _buildWartungsvertraegeViewItems();
+  // v5.78: Archiv-Filter — standardmäßig archivierte ausblenden
+  if (!showArchived) items = items.filter(it => !it._archived);
   // Quelle-Filter (App = nicht-legacy, Legacy = legacy, ERP = ERP)
   items = items.filter(it => {
     if (it._src==='erp') return showErp;
@@ -16709,10 +16718,12 @@ function _renderWartungsvertraegeList() {
     const clickHandler = it._src==='erp'
       ? '_openErpVertragDetail(\''+escapeHtml(it._id)+'\')'
       : '_openWartungsvertragDetail(\''+escapeHtml(it._id)+'\')';
-    return '<div onclick="'+clickHandler+'" style="background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._src==='erp'?'#3730A3':'#10b981')+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
+    const archBadge = it._archived ? '<span style="background:#6b7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600" title="Archiviert — über Detail-Ansicht wiederherstellen">📦 archiviert</span>' : '';
+    const archStyle = it._archived ? 'opacity:.55;' : '';
+    return '<div onclick="'+clickHandler+'" style="'+archStyle+'background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._archived?'#6b7280':(it._src==='erp'?'#3730A3':'#10b981'))+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
       '<div style="flex:1;min-width:240px">'+
         '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'+
-          srcBadge+typBadge+statBadge+auftragBadge+
+          srcBadge+typBadge+statBadge+auftragBadge+archBadge+
           '<strong style="font-family:monospace;color:var(--navy)">'+escapeHtml(it.nummer)+'</strong>'+
         '</div>'+
         '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(it.kunde_name||'(ohne Kunde)')+(it.kunde_nummer?' <span style="font-weight:400;color:var(--txt3)">· Kd-Nr. '+escapeHtml(it.kunde_nummer)+'</span>':'')+'</div>'+
@@ -28463,13 +28474,21 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
 function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName, vertragsnummer) {
   const old = document.getElementById('app-vt-pdf-modal'); if (old) old.remove();
   const url = (typeof pdfBlobOrUrl === 'string') ? pdfBlobOrUrl : URL.createObjectURL(pdfBlobOrUrl);
+  // v5.78: Archiv-Status für Header + Button-Variante
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  const isArchived = !!(rec && rec.fields && rec.fields.archived);
+  const headerBg = isArchived ? '#6b7280' : '#10b981';
+  const headerLabel = isArchived ? '📦 ARCHIVIERT · Wartungsvertrag · ' : '📄 Wartungsvertrag · ';
+  const archiveBtn = isArchived
+    ? '<button class="btn" style="background:#dcfce7;border-color:#86efac;color:#166534" onclick="_unarchiveAppVertrag(\''+escapeHtml(recId)+'\')" title="Vertrag wieder in die aktive Liste holen">↺ Wiederherstellen</button>'
+    : '<button class="btn" style="background:#f3f4f6;border-color:#d1d5db;color:#374151" onclick="_archiveAppVertrag(\''+escapeHtml(recId)+'\')" title="Vertrag archivieren — bleibt erhalten, wird aber aus der Standardliste ausgeblendet">📦 Archivieren</button>';
   const modal = document.createElement('div');
   modal.id = 'app-vt-pdf-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10300;display:flex;align-items:center;justify-content:center;padding:12px';
   modal.innerHTML =
     '<div style="background:var(--surf,#fff);max-width:1000px;width:100%;height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.6)">'+
-      '<div style="padding:14px 18px;background:#10b981;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'+
-        '<span>📄 Wartungsvertrag · '+escapeHtml(kundeName||'')+'</span>'+
+      '<div style="padding:14px 18px;background:'+headerBg+';color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">'+
+        '<span>'+headerLabel+escapeHtml(kundeName||'')+'</span>'+
         '<button onclick="document.getElementById(\'app-vt-pdf-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div id="app-vt-pdf-canvas-wrap" style="flex:1;background:#525252;overflow-y:auto;overflow-x:hidden;padding:8px"></div>'+
@@ -28477,6 +28496,7 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName, vertragsnummer) {
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="document.getElementById(\'app-vt-pdf-modal\').remove()">Schließen</button>'+
           '<a class="btn" href="'+url+'" download="'+escapeHtml(_wvPdfFilename(vertragsnummer, kundeName))+'" style="text-decoration:none">📥 Herunterladen</a>'+
+          archiveBtn+
         '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="_editAppVertragRaw(\''+escapeHtml(recId)+'\')" title="Konditionen ändern / Anlagen verwalten">⚙ Konditionen</button>'+
@@ -28487,6 +28507,56 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName, vertragsnummer) {
     '</div>';
   document.body.appendChild(modal);
   _renderPdfIntoContainer(pdfBlobOrUrl instanceof Blob ? pdfBlobOrUrl : url, document.getElementById('app-vt-pdf-canvas-wrap'));
+}
+
+/** v5.78: Vertrag archivieren — setzt archived=true + archived_at, schließt das Detail-Modal,
+ *  refresht die Liste. Funktioniert nur für App-Verträge (Airtable-Datensatz). */
+async function _archiveAppVertrag(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  if (!confirm('Vertrag '+(f.vertragsnummer||'')+' archivieren?\n\nDer Vertrag wird aus der Standardliste ausgeblendet, bleibt aber erhalten. Über den Filter "📦 Archiv anzeigen" findest du ihn wieder.')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const resp = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertraege/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ archived:true, archived_at:new Date().toISOString() }}),
+    });
+    const d = await resp.json();
+    if (d.error) throw new Error(d.error.message||'PATCH');
+    // Cache aktualisieren — kein Full-Reload nötig
+    if (rec.fields) { rec.fields.archived = true; rec.fields.archived_at = new Date().toISOString(); }
+    toast('📦 Vertrag archiviert.','ok');
+    document.getElementById('app-vt-pdf-modal')?.remove();
+    _renderWartungsvertraegeList();
+  } catch(e) {
+    console.error('archiveVertrag:', e);
+    toast('❌ '+(e.message||'Fehler').slice(0,200),'err');
+  }
+}
+
+/** v5.78: Archivierten Vertrag wieder aktiv setzen. */
+async function _unarchiveAppVertrag(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const resp = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertraege/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ archived:false, archived_at:'' }}),
+    });
+    const d = await resp.json();
+    if (d.error) throw new Error(d.error.message||'PATCH');
+    if (rec.fields) { rec.fields.archived = false; rec.fields.archived_at = ''; }
+    toast('↺ Vertrag wiederhergestellt.','ok');
+    document.getElementById('app-vt-pdf-modal')?.remove();
+    _renderWartungsvertraegeList();
+  } catch(e) {
+    console.error('unarchiveVertrag:', e);
+    toast('❌ '+(e.message||'Fehler').slice(0,200),'err');
+  }
 }
 
 /* Korrigieren: nur den bestehenden Vertragstext anpassen — KI politiert,
