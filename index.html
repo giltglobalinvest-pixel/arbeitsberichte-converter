@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.85';
+const APP_VERSION = 'v5.86';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28699,8 +28699,17 @@ function _wvOpenSendModal(recId) {
   if (!pdfMeta) return toast('Noch kein PDF erzeugt — bitte erst „🔄 Komplett neu".','err');
 
   const defaultEmail = String(f.kontakt_email || '').trim();
+  // v5.86: Vollständigen Standort (Straße + Hausnr + PLZ + Ort) — nur "Deutschland"/"Germany" wegfiltern
   const standort = (() => {
-    try { const a = JSON.parse(f.anlagen_json||'[]'); return a[0]?.adresse ? String(a[0].adresse).split(/[,\n]/)[0] : ''; } catch(_){ return ''; }
+    try {
+      const a = JSON.parse(f.anlagen_json||'[]');
+      if (!a[0]?.adresse) return '';
+      return String(a[0].adresse)
+        .split(/[,\n]/)
+        .map(s => s.trim())
+        .filter(s => s && !/^(deutschland|germany)$/i.test(s))
+        .join(', ');
+    } catch(_) { return ''; }
   })();
   const defaultSubject = 'Wartungsvertrag '+(f.vertragsnummer||'') + (standort ? ' · '+standort : '');
   const kontaktName = String(f.kontakt_name||'').replace(/^(Sehr geehrter? (Herr|Frau)\s+)/i,'').trim();
