@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.80';
+const APP_VERSION = 'v5.81';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28301,8 +28301,9 @@ async function _nwvSubmit() {
       const pl = pls.find(p => String(p.fields.firma||'') === firmaSlug && String(p.fields.kunde_nummer||'') === String(kunde.kundennummer||''));
       if (pl) preislisteId = pl.id;
     } catch(_){}
-    // v5.80: Standard-Ansprechpartner via ERP-Kontakte-Endpoint laden — einmalig, dann ins Payload
-    const resolvedKontakt = await _nwvResolveKontaktForKunde(firmaSlug, kunde);
+    // v5.80/81: Standard-Ansprechpartner + Postanschrift (Google-Maps-adresseId) einmal auflösen
+    const resolvedKontakt  = await _nwvResolveKontaktForKunde(firmaSlug, kunde);
+    const resolvedAdresse  = await _nwvResolveKundeAdresse(firmaSlug, kunde, chosenAnlagen);
     const payload = {
       preisliste_id: preislisteId,
       firma: firmaSlug,
@@ -28321,8 +28322,8 @@ async function _nwvSubmit() {
       kunde_id: String(kunde.id||''),
       kunde_nummer: String(kunde.kundennummer||''),
       kunde_name: kunde.firmenname || '',
-      // v5.79/80: Adresse (mit Anlagen-Fallback) + Standard-Kontakt aus ERP mitspeichern
-      kunde_adresse:    _nwvResolveKundeAdresse(kunde, chosenAnlagen),
+      // v5.79/80/81: Adresse (Google-Maps + Anlagen-Fallback) + Standard-Kontakt aus ERP mitspeichern
+      kunde_adresse:    resolvedAdresse,
       kontakt_name:     resolvedKontakt.name,
       kontakt_email:    resolvedKontakt.email,
       kontakt_telefon:  resolvedKontakt.telefon,
@@ -28384,6 +28385,13 @@ async function _nwvSubmit() {
 
 /* Erzeugt einen PDF-Blob für den Wizard. Wiederverwendet die gleiche Logik wie
    _nwvShowPreview, aber gibt nur den Blob zurück (kein UI-Modal). */
+/** v5.81: Normalisiert die ERP-Anrede — "Sehr geehrter Herr Müller" → "Herr Müller",
+ *  "Sehr geehrte Frau …" → "Frau …". Briefanreden in Anrede-Feldern sind im ERP üblich
+ *  aber im Vertrag-Header unpassend. */
+function _nwvNormalizeAnrede(anrede) {
+  return String(anrede || '').replace(/^Sehr geehrte[rn]?\s+/i, '').trim();
+}
+
 /** v5.80: Lädt Kontakte für einen Kunden (mit Cache) und gibt den Standard-Kontakt
  *  als {name, email, telefon} zurück. Fallback auf ersten Kontakt, sonst leere Werte. */
 async function _nwvResolveKontaktForKunde(firmaSlug, kunde) {
@@ -28410,7 +28418,8 @@ async function _nwvResolveKontaktForKunde(firmaSlug, kunde) {
       k.hauptansprechpartner || k.isPrimary || k.primary
     );
     const std = kontakte.find(isStandard) || kontakte[0];
-    const name = [std.anrede, std.vorname, std.nachname].filter(Boolean).join(' ').trim();
+    // v5.81: Briefanrede "Sehr geehrter/e" entfernen — Vertrag-Header braucht nur "Herr/Frau …"
+    const name = [_nwvNormalizeAnrede(std.anrede), std.vorname, std.nachname].filter(Boolean).join(' ').trim();
     return {
       name:    name || fallback.name,
       email:   std.email   || fallback.email,
@@ -28422,11 +28431,21 @@ async function _nwvResolveKontaktForKunde(firmaSlug, kunde) {
   }
 }
 
-/** v5.80: Baut die Kunde-Adresse mehrzeilig. Fällt zurück auf Adresse der ersten
- *  gewählten Anlage, wenn der Kunde im ERP keine eigene Adresse hat. */
-function _nwvResolveKundeAdresse(kunde, chosenAnlagen) {
+/** v5.80/81: Baut die Kunde-Adresse mehrzeilig. Reihenfolge:
+ *  (1) Flache kunde.strasse/plz/ort wenn vorhanden,
+ *  (2) ERP-adresseId via Google-Maps-Endpoint auflösen (echte Postanschrift der Hausverwaltung),
+ *  (3) Fallback auf Adresse der ersten gewählten Anlage. */
+async function _nwvResolveKundeAdresse(firmaSlug, kunde, chosenAnlagen) {
   const direkt = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
   if (direkt.trim()) return direkt;
+  // ERP-Kunden haben oft NUR eine adresseId (Google-Places-Style) — via Aufzug-ERP-Proxy auflösen
+  const adId = kunde.adresseId || (kunde.defaultrechnungsempfaenger && kunde.defaultrechnungsempfaenger.adresseId) || '';
+  if (adId) {
+    try {
+      const resolved = await _angResolveAdresseId(firmaSlug, adId);
+      if (resolved && resolved.trim()) return resolved;
+    } catch(e) { console.warn('[NWV] adresseId konnte nicht aufgeloest werden:', e.message); }
+  }
   const a0 = (chosenAnlagen||[])[0];
   return (a0 && a0.adresse) ? String(a0.adresse) : '';
 }
@@ -28437,10 +28456,10 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
     (a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+
     (a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')
   );
-  // v5.80: Kontakt aus ERP-Kontakte-Endpoint laden, Adresse mit Anlagen-Fallback
+  // v5.80/81: Kontakt aus ERP-Kontakte-Endpoint, Adresse via Google-Maps-Endpoint
   const firmaSlug = (opts && opts.firmaSlug) || getCurrentFirmaSlug();
   const kontakt = await _nwvResolveKontaktForKunde(firmaSlug, kunde);
-  const adresse = _nwvResolveKundeAdresse(kunde, chosenAnlagen);
+  const adresse = await _nwvResolveKundeAdresse(firmaSlug, kunde, chosenAnlagen);
   const vars = {
     kunde_name:         kunde.firmenname || '',
     kunde_nummer:       String(kunde.kundennummer||''),
