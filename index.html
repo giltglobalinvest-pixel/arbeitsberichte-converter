@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.76';
+const APP_VERSION = 'v5.77';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13926,6 +13926,8 @@ const WV_WIZARD_TEMPLATE =
   'Vertragsnummer: {{vertragsnummer}}\n'+
   'Vertragsbeginn: {{vertragsbeginn}}\n\n'+
   '---\n\n'+
+  '{{vertrag_uebersicht}}\n\n'+
+  '---\n\n'+
   '## § 1 Vertragsgegenstand\n\n'+
   'Gegenstand dieses Vertrags ist die regelmäßige Wartung und Instandhaltung der nachfolgend aufgeführten Aufzugsanlage(n) gemäß den anerkannten Regeln der Technik, insbesondere DIN EN 81-20/50 sowie der Betriebssicherheitsverordnung (BetrSichV).\n\n'+
   '**Vertragsgegenständliche Anlagen ({{aufzug_anzahl}}):**\n\n'+
@@ -14906,6 +14908,39 @@ window._wvWizardSave = function(vorlageId) {
   try { localStorage.setItem('wv_wizard_'+vorlageId, JSON.stringify(state)); } catch(_){}
 };
 
+/** v5.77: Baut den Transparenz-Block (Vertragsumfang im Überblick) aus den Wizard-Antworten. */
+function _wvWizardBuildUebersicht(ans) {
+  const wartungstypLabel = ans.wartungstyp === 'voll' ? 'Vollwartung (Verschleißteile inklusive)' : 'Systemwartung (Reparaturen separat nach Aufwand)';
+  const jahresPreis = parseFloat(String(ans.jahrespreis_netto||'').replace(',','.')) || 0;
+  const turnusLabel = ans.abrechnungs_turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich';
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' EUR';
+  const ja  = 'enthalten';
+  const nein = 'NICHT enthalten';
+  const lines = [
+    '## Vertragsumfang im Überblick',
+    '',
+    '*Folgende Leistungen wurden zwischen den Vertragsparteien vereinbart:*',
+    '',
+    '- **Wartungstyp:** ' + wartungstypLabel,
+    '- **Wartungen pro Jahr:** ' + String(ans.anzahl_wartungen||'2'),
+    '- **Notruf und GSM-Service:** ' + (ans.notruf_gsm ? ja : nein),
+    '- **Montage Notrufgerät:** ' + (ans.notrufgeraet_montage ? ja : nein),
+    '- **ZÜS-Organisation, Durchführung und Begleitung:** ' + (ans.zues_komplett ? ja : nein),
+    '- **Vertragsbeginn:** ' + (ans.vertragsbeginn || ''),
+    '- **Laufzeit:** ' + String(ans.laufzeit_jahre||'1') + ' Jahr(e)',
+    '- **Abrechnungsturnus:** ' + turnusLabel,
+    '- **Jahrespreis netto:** ' + (jahresPreis > 0 ? eur(jahresPreis) : '— wird separat vereinbart —'),
+  ];
+  return lines.join('\n');
+}
+
+/** v5.77: Nummeriert alle "## § N " Header im Text fortlaufend ab 1 durch,
+ *  damit nach dem Weglassen optionaler Sections (Notruf/ZÜS/…) keine Lücken bleiben. */
+function _wvWizardRenumberParagraphs(text) {
+  let n = 0;
+  return String(text).replace(/^(##\s+§)\s+\d+\s+/gm, (_m, prefix) => prefix + ' ' + (++n) + ' ');
+}
+
 /** v5.72: Aus den Wizard-Antworten + Template den finalen Vertragstext bauen.
  *  customTemplate ist optional — sonst Fallback auf WV_WIZARD_TEMPLATE.
  *  Vor _ersetzePlatzhalter aufrufen. */
@@ -14924,9 +14959,10 @@ function _wvWizardBuildText(customTemplate) {
   const notrufGsmSec      = ans.notruf_gsm           ? WV_WIZARD_SNIPPETS.notruf_gsm           : '';
   const notrufMontageSec  = ans.notrufgeraet_montage ? WV_WIZARD_SNIPPETS.notrufgeraet_montage : '';
   const zuesSec           = ans.zues_komplett        ? WV_WIZARD_SNIPPETS.zues_komplett        : '';
+  const uebersicht        = _wvWizardBuildUebersicht(ans);
   const tpl = (customTemplate && String(customTemplate).trim()) ? String(customTemplate) : WV_WIZARD_TEMPLATE;
   // Template-Substitution (nur die Wizard-Vars hier — Basis-Vars werden danach von _ersetzePlatzhalter ersetzt)
-  return tpl
+  let out = tpl
     .replace(/\{\{anzahl_wartungen\}\}/g,         String(ans.anzahl_wartungen||'2'))
     .replace(/\{\{wartungstyp_label\}\}/g,        wartungstypLabel)
     .replace(/\{\{wartungstyp_beschreibung\}\}/g, wartungstypBesch)
@@ -14934,7 +14970,11 @@ function _wvWizardBuildText(customTemplate) {
     .replace(/\{\{notrufgeraet_montage_section\}\}/g, notrufMontageSec)
     .replace(/\{\{zues_section\}\}/g,             zuesSec)
     .replace(/\{\{vertragsbeginn\}\}/g,           String(ans.vertragsbeginn||''))
-    .replace(/\{\{laufzeit_jahre\}\}/g,           String(ans.laufzeit_jahre||'1'));
+    .replace(/\{\{laufzeit_jahre\}\}/g,           String(ans.laufzeit_jahre||'1'))
+    .replace(/\{\{vertrag_uebersicht\}\}/g,       uebersicht);
+  // §-Nummerierung durchziehen (1..N), damit nach weggelassenen optionalen Sections keine Lücken bleiben
+  out = _wvWizardRenumberParagraphs(out);
+  return out;
 }
 
 /** v5.74: Überschreibt Preis- und Turnus-Vars mit den Wizard-Antworten,
