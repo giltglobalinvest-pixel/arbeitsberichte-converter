@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.69';
+const APP_VERSION = 'v5.70';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7716,8 +7716,13 @@ async function _ftSubmit(btn) {
     if (_ftState.videos.length)  cnts.push('🎬 '+_ftState.videos.length+' Video(s)');
     if (cnts.length) lines.push('<p style="color:#7c2d12"><strong>Anhänge:</strong> '+cnts.join(' · ')+'</p>');
 
+    // v5.70: Pre-Flight — Requester-Email muss konfiguriert sein
+    const requesterEmail = APP_KEYS.freshdeskRequesterEmails?.[firmaSlug];
+    if (!requesterEmail) {
+      throw new Error('Keine Freshdesk-Requester-Email für Firma "'+firmaSlug+'" konfiguriert. Bitte in Admin → Firmen-Verwaltung hinterlegen.');
+    }
     const fd = new FormData();
-    fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
+    fd.append('email', requesterEmail);
     fd.append('subject', subject);
     fd.append('description', lines.join(''));
     fd.append('priority', String(document.getElementById('ft-prio')?.value || '2'));
@@ -7737,7 +7742,31 @@ async function _ftSubmit(btn) {
     const respText = await res.text();
     let data; try { data = respText ? JSON.parse(respText) : null; } catch(_) { data = { _raw: respText }; }
     if (!res.ok) {
-      const errMsg = data?.errors ? data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'')).join('; ') : ('HTTP '+res.status);
+      // v5.70: Detaillierte FD-Errors aus upstream_body_excerpt extrahieren
+      // (val.town-Proxy wickelt die FD-Antwort dort hinein statt sie 1:1 weiterzureichen).
+      let errMsg = 'HTTP '+res.status;
+      if (data?.errors && Array.isArray(data.errors)) {
+        errMsg = data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; ');
+      } else if (data?.upstream_body_excerpt) {
+        try {
+          const upstream = JSON.parse(data.upstream_body_excerpt);
+          if (Array.isArray(upstream.errors)) {
+            errMsg = upstream.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; ');
+          } else if (upstream.description) {
+            errMsg = upstream.description;
+          }
+        } catch(_) {
+          errMsg = data.upstream_body_excerpt.slice(0, 300);
+        }
+      } else if (data?.error) {
+        errMsg = String(data.error);
+      }
+      // Diagnose-Hilfen anhängen wenn Group/Responder nicht gefunden wurden
+      const hints = [];
+      if (!assignment.group_id)     hints.push('Gruppe „'+FOLGETICKET_GROUP_NAME+'" nicht in Freshdesk gefunden');
+      if (!assignment.responder_id) hints.push('Bearbeiter „'+FOLGETICKET_RESPONDER_NAME+'" nicht gefunden');
+      if (hints.length) errMsg += ' — Hinweis: '+hints.join(' · ')+' (in FD-Admin anlegen oder Namen prüfen)';
+      console.error('[Folge-Ticket] FD POST /tickets fehlgeschlagen:', { status:res.status, data, assignment, firma:firmaSlug });
       throw new Error(errMsg);
     }
     const ticketId = data?.id;
