@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.75';
+const APP_VERSION = 'v5.76';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13998,6 +13998,7 @@ async function renderVertragsvorlagenView() {
         '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap">'+
           '<button class="btn" style="background:#EEF2FF;border-color:#A5B4FC;color:#3730A3" onclick="_previewVorlageFromList(\''+r.id+'\')" title="Vorschau-PDF mit Dummy-Daten">👁 Vorschau</button>'+
           '<button class="btn" onclick="openVorlageEditor(\''+r.id+'\')">✏ Bearbeiten</button>'+
+          '<button class="btn" style="background:#FEF3C7;border-color:#FCD34D;color:#92400e" onclick="_duplicateVorlage(\''+r.id+'\')" title="Vorlage als Kopie anlegen (inkl. Text, Prompt, Wizard-Mode, Referenz-PDF)">📋 Duplizieren</button>'+
           '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteVorlage(\''+r.id+'\')">🗑</button>'+
         '</div>'+
       '</div>';
@@ -14636,6 +14637,56 @@ async function deleteVorlage(recId) {
   if (!confirm('Vorlage wirklich löschen?')) return;
   try { await atDelete('Vertragsvorlagen', recId); toast('🗑 Vorlage gelöscht.','warn'); renderVertragsvorlagenView(); }
   catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/** v5.76: Vorlage duplizieren — kopiert alle relevanten Felder inkl. Quell-PDF.
+ *  Die Kopie ist initial 'aktiv=false', damit nicht zwei aktive Vorlagen pro Typ existieren. */
+async function _duplicateVorlage(recId) {
+  if (!confirm('Vorlage als Kopie anlegen?\n\nText, Prompt, Wizard-Modus und Referenz-PDF werden kopiert. Die Kopie ist initial inaktiv — Name + " (Kopie)".')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    toast('📋 lade Vorlage…','');
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertragsvorlagen/'+recId, {
+      headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Lade');
+    const src = d.fields || {};
+    const copyFields = {
+      firma:           src.firma || getCurrentFirmaSlug(),
+      typ:             src.typ || 'sammel',
+      name:            (src.name||'Vorlage') + ' (Kopie)',
+      vorlage_text:    src.vorlage_text || '',
+      ki_prompt:       src.ki_prompt || '',
+      ki_prompt_extra: src.ki_prompt_extra || '',
+      wizard_mode:     src.wizard_mode || '',
+      sections_json:   src.sections_json || '',
+      aktiv:           false,
+      created:         new Date().toISOString(),
+      updated:         new Date().toISOString(),
+    };
+    toast('💾 speichere Kopie…','');
+    const newRec = await atWrite('Vertragsvorlagen', copyFields);
+    if (!newRec || !newRec.id) throw new Error('Kopie konnte nicht angelegt werden.');
+    // Quell-PDF mitkopieren (falls vorhanden)
+    const pdfMeta = src.quell_pdf && src.quell_pdf[0];
+    if (pdfMeta && pdfMeta.url) {
+      try {
+        toast('📄 kopiere Referenz-PDF…','');
+        const blob = await (await fetch(pdfMeta.url)).blob();
+        try { await ensureField('Vertragsvorlagen', 'quell_pdf', 'multipleAttachments'); } catch(_){}
+        await atBlobUpload(newRec.id, 'quell_pdf', blob, pdfMeta.filename||'referenz.pdf', 'application/pdf');
+      } catch(pdfErr) {
+        console.warn('[duplicateVorlage] PDF-Kopie fehlgeschlagen:', pdfErr);
+        toast('⚠ Kopie angelegt, aber Referenz-PDF konnte nicht kopiert werden.','warn');
+      }
+    }
+    toast('✅ Vorlage dupliziert — Kopie ist inaktiv. Bearbeite + aktiviere sie nach Bedarf.','ok');
+    renderVertragsvorlagenView();
+  } catch(e) {
+    console.error('duplicateVorlage:', e);
+    toast('❌ '+(e.message||'Fehler beim Duplizieren').slice(0,250),'err');
+  }
 }
 
 /* ── Vertrag generieren: Vorlage wählen → Platzhalter ersetzen → KI-Politur → PDF ── */
