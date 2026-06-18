@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.82';
+const APP_VERSION = 'v5.83';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16668,6 +16668,8 @@ function _buildWartungsvertraegeViewItems() {
       kunde_name: kundeName,
       kunde_nummer: kundeNr,
       anlagen_count: anlagen.length,
+      // v5.83: Anlagen-Liste für Vorschau in der Kachel
+      anlagen_list: anlagen.map(a => ({ adresse: a.adresse || '', fabriknummer: a.fabriknummer || '' })),
       start: f.start_datum || '',
       created: f.created || '',
       preisliste_id: f.preisliste_id || ''
@@ -16676,6 +16678,10 @@ function _buildWartungsvertraegeViewItems() {
   // ERP-Verträge
   if (!all && _erpVertraegeCache.firma === firmaSlug) {
     for (const e of (_erpVertraegeCache.items||[])) {
+      const erpAnlagen = Array.isArray(e.anlagen) ? e.anlagen.map(a => ({
+        adresse: a.adresse || _buildAnlageAdresse(a) || '',
+        fabriknummer: a.fabriknummer || a.fabriknr || a.fabrikNr || '',
+      })) : [];
       items.push({
         _src: 'erp',
         _id: 'erp-'+(e.id||e.vertragsId||Math.random()),
@@ -16688,7 +16694,8 @@ function _buildWartungsvertraegeViewItems() {
         status: e.status || 'aktiv',
         kunde_name: (e.kunde && (e.kunde.firmenname || e.kunde.name)) || e.kundenname || '',
         kunde_nummer: (e.kunde && e.kunde.kundennummer) || e.kundennummer || '',
-        anlagen_count: Array.isArray(e.anlagen) ? e.anlagen.length : (e.anlagenAnzahl||0),
+        anlagen_count: erpAnlagen.length || (e.anlagenAnzahl||0),
+        anlagen_list: erpAnlagen,
         start: e.startDatum || e.start || '',
         created: e.created || e.erstelltAm || '',
         erp_url: e._erpUrl || '',
@@ -16765,7 +16772,26 @@ function _renderWartungsvertraegeList() {
       : '_openWartungsvertragDetail(\''+escapeHtml(it._id)+'\')';
     const archBadge = it._archived ? '<span style="background:#6b7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600" title="Archiviert — über Detail-Ansicht wiederherstellen">📦 archiviert</span>' : '';
     const archStyle = it._archived ? 'opacity:.55;' : '';
-    return '<div onclick="'+clickHandler+'" style="'+archStyle+'background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._archived?'#6b7280':(it._src==='erp'?'#3730A3':'#10b981'))+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:center;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
+    // v5.83: Anlagen-Liste in der Kachel — bis 3 Stück zeigen, Rest als "+N weitere"
+    const anlagenList = Array.isArray(it.anlagen_list) ? it.anlagen_list : [];
+    const MAX_SHOWN = 3;
+    const anlagenHtml = anlagenList.length
+      ? '<div style="margin-top:6px;display:grid;gap:2px">' +
+        anlagenList.slice(0, MAX_SHOWN).map(a => {
+          const adr = String(a.adresse||'').trim();
+          const fab = String(a.fabriknummer||'').trim();
+          if (!adr && !fab) return '';
+          return '<div style="font-size:11px;color:var(--txt2);line-height:1.4">'+
+            '<span style="color:var(--txt3)">🛗</span> '+escapeHtml(adr||'(ohne Adresse)')+
+            (fab ? ' <span style="color:var(--txt3);font-family:monospace">· Fabr.-Nr. '+escapeHtml(fab)+'</span>' : '')+
+          '</div>';
+        }).join('') +
+        (anlagenList.length > MAX_SHOWN
+          ? '<div style="font-size:10px;color:var(--txt3);margin-top:2px">+ '+(anlagenList.length-MAX_SHOWN)+' weitere</div>'
+          : '') +
+      '</div>'
+      : '';
+    return '<div onclick="'+clickHandler+'" style="'+archStyle+'background:var(--surf);border:1px solid var(--bdr);border-left:4px solid '+(it._archived?'#6b7280':(it._src==='erp'?'#3730A3':'#10b981'))+';border-radius:8px;padding:12px 16px;cursor:pointer;display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;transition:all .15s" onmouseover="this.style.boxShadow=\'0 4px 12px rgba(0,0,0,.08)\'" onmouseout="this.style.boxShadow=\'none\'">'+
       '<div style="flex:1;min-width:240px">'+
         '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:4px">'+
           srcBadge+typBadge+statBadge+auftragBadge+archBadge+
@@ -16773,6 +16799,7 @@ function _renderWartungsvertraegeList() {
         '</div>'+
         '<div style="font-size:13px;color:var(--navy);font-weight:600">'+escapeHtml(it.kunde_name||'(ohne Kunde)')+(it.kunde_nummer?' <span style="font-weight:400;color:var(--txt3)">· Kd-Nr. '+escapeHtml(it.kunde_nummer)+'</span>':'')+'</div>'+
         (it.titel ? '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml(it.titel)+'</div>' : '')+
+        anlagenHtml+
       '</div>'+
       '<div style="font-size:11px;color:var(--txt2);text-align:right">'+
         '<div>🛗 '+(it.anlagen_count||0)+' Anlagen</div>'+
