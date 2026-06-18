@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.83';
+const APP_VERSION = 'v5.84';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16801,7 +16801,15 @@ function _renderWartungsvertraegeList() {
         (it.titel ? '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml(it.titel)+'</div>' : '')+
         anlagenHtml+
       '</div>'+
-      '<div style="font-size:11px;color:var(--txt2);text-align:right">'+
+      '<div style="font-size:11px;color:var(--txt2);text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:4px">'+
+        // v5.84: Archivieren-Icon direkt in der Kachel (nur App-Verträge — ERP ist read-only)
+        (it._src==='app' && !it._legacy
+          ? (it._archived
+              ? '<button onclick="event.stopPropagation();_unarchiveAppVertrag(\''+escapeHtml(it._id)+'\')" title="Vertrag wiederherstellen" style="background:transparent;border:1px solid #d1d5db;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:13px;color:#10b981;padding:0">↺</button>'
+              : '<button onclick="event.stopPropagation();_archiveAppVertrag(\''+escapeHtml(it._id)+'\')" title="Vertrag archivieren" style="background:transparent;border:1px solid #d1d5db;border-radius:6px;width:26px;height:26px;cursor:pointer;font-size:13px;color:#6b7280;padding:0" onmouseover="this.style.background=\'#f3f4f6\'" onmouseout="this.style.background=\'transparent\'">📦</button>'
+            )
+          : ''
+        )+
         '<div>🛗 '+(it.anlagen_count||0)+' Anlagen</div>'+
         (it.start ? '<div style="color:var(--txt3)">Start: '+escapeHtml(String(it.start).slice(0,10))+'</div>' : '')+
       '</div>'+
