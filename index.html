@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.84';
+const APP_VERSION = 'v5.85';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28673,6 +28673,7 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName, vertragsnummer) {
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="document.getElementById(\'app-vt-pdf-modal\').remove()">Schließen</button>'+
           '<a class="btn" href="'+url+'" download="'+escapeHtml(_wvPdfFilename(vertragsnummer, kundeName))+'" style="text-decoration:none">📥 Herunterladen</a>'+
+          '<button class="btn" style="background:#ECFDF5;border-color:#6EE7B7;color:#065F46" onclick="_wvOpenSendModal(\''+escapeHtml(recId)+'\')" title="Per Freshdesk-E-Mail an Kunde senden">📧 Senden</button>'+
           archiveBtn+
         '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
@@ -28684,6 +28685,204 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName, vertragsnummer) {
     '</div>';
   document.body.appendChild(modal);
   _renderPdfIntoContainer(pdfBlobOrUrl instanceof Blob ? pdfBlobOrUrl : url, document.getElementById('app-vt-pdf-canvas-wrap'));
+}
+
+/** v5.85: Wartungsvertrag per Freshdesk versenden — schlanker Send-Modal nach Angebot-Vorbild.
+ *  Liest Empfänger aus dem Vertrag-Record (kontakt_email), unterstützt Test-Modus + Reply-Ticket. */
+function _wvOpenSendModal(recId) {
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für „'+firmaSlug+'" nicht konfiguriert.','err');
+  const pdfMeta = f.vertrag_pdf && f.vertrag_pdf[0];
+  if (!pdfMeta) return toast('Noch kein PDF erzeugt — bitte erst „🔄 Komplett neu".','err');
+
+  const defaultEmail = String(f.kontakt_email || '').trim();
+  const standort = (() => {
+    try { const a = JSON.parse(f.anlagen_json||'[]'); return a[0]?.adresse ? String(a[0].adresse).split(/[,\n]/)[0] : ''; } catch(_){ return ''; }
+  })();
+  const defaultSubject = 'Wartungsvertrag '+(f.vertragsnummer||'') + (standort ? ' · '+standort : '');
+  const kontaktName = String(f.kontakt_name||'').replace(/^(Sehr geehrter? (Herr|Frau)\s+)/i,'').trim();
+  const anrede = kontaktName ? ('Sehr geehrte/r '+kontaktName+',') : 'Sehr geehrte Damen und Herren,';
+  const defaultBody = anrede+'\n\nanbei erhalten Sie den Wartungsvertrag '+(f.vertragsnummer||'')+
+    (standort ? ' für die Anlage '+standort : '')+'.\n\n'+
+    'Bitte prüfen Sie den Vertrag und senden uns das unterschriebene Exemplar zurück. Für Rückfragen stehen wir gerne zur Verfügung.\n\nMit freundlichen Grüßen';
+
+  document.getElementById('wv-send-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'wv-send-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:10px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:640px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 20px;background:#10b981;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>📧 Wartungsvertrag '+escapeHtml(f.vertragsnummer||'')+' an Kunde senden</span>'+
+      '<button onclick="document.getElementById(\'wv-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:14px">'+
+      '<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;padding:10px 14px;font-size:12px;color:#065F46;line-height:1.6">'+
+        '<div>📋 <strong>Versand via Freshdesk:</strong></div>'+
+        '<div>• PDF: <strong>'+escapeHtml(pdfMeta.filename||'Wartungsvertrag.pdf')+'</strong> ('+Math.round((pdfMeta.size||0)/1024)+' KB)</div>'+
+        '<div>• Signatur: aus deinem Freshdesk-Profil</div>'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Empfänger-E-Mail *</label>'+
+        '<input id="wvsend-email" type="email" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">CC <span style="color:var(--txt3);font-weight:500">(optional, mehrere mit Komma)</span></label>'+
+        '<input id="wvsend-cc" type="text" value="'+escapeHtml(localStorage.getItem('wvsend_cc_'+firmaSlug)||'')+'" placeholder="z.B. buchhaltung@firma.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:8px;padding:10px 14px">'+
+        '<label style="font-size:11px;font-weight:700;color:#065F46;display:block;margin-bottom:4px">🎫 Auf bestehendes FD-Ticket antworten <span style="color:var(--txt3);font-weight:500">(optional)</span></label>'+
+        '<input id="wvsend-fd-ticket-id" type="number" placeholder="Ticket-Nr (leer = neues Ticket)" style="width:100%;padding:8px 10px;border:1px solid #6EE7B7;border-radius:6px;font-size:13px;background:#fff">'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Betreff *</label>'+
+        '<input id="wvsend-subject" value="'+escapeHtml(defaultSubject)+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Nachricht *</label>'+
+        '<textarea id="wvsend-body" rows="8" style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;resize:vertical">'+escapeHtml(defaultBody)+'</textarea>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Signatur wird automatisch aus deinem Freshdesk-Profil angehängt.</div>'+
+      '</div>'+
+      '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px 14px">'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#7c2d12;cursor:pointer">'+
+          '<input type="checkbox" id="wvsend-testmode" '+(localStorage.getItem('angsend_testmode')==='1'?'checked':'')+' style="width:16px;height:16px"> 🧪 Test-Modus — an mich senden'+
+        '</label>'+
+        '<input id="wvsend-test-email" type="email" value="'+escapeHtml(localStorage.getItem('angsend_test_email')||(APP_KEYS.user?.email||''))+'" placeholder="ich@firma.de" style="margin-top:8px;width:100%;padding:9px 12px;border:1px solid #FCD34D;border-radius:6px;font-size:13px;background:#FFFBEB">'+
+      '</div>'+
+    '</div>'+
+    '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap" id="wv-send-footer">'+
+      '<button class="btn" onclick="document.getElementById(\'wv-send-modal\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" style="background:#10b981;border-color:#10b981" onclick="_wvSendVertragEmail(\''+escapeHtml(recId)+'\', this)">📧 Senden</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById(defaultEmail ? 'wvsend-subject' : 'wvsend-email')?.focus(), 100);
+}
+
+/** v5.85: Submit-Logik für den Wartungsvertrag-Send. Nutzt Angebot-Send-Pattern:
+ *  PDF runterladen → entweder neues Ticket (outbound_email) oder Reply auf existierendes Ticket. */
+async function _wvSendVertragEmail(recId, btn) {
+  let email   = (document.getElementById('wvsend-email')?.value||'').trim();
+  const ccRaw = (document.getElementById('wvsend-cc')?.value||'').trim();
+  let subject = (document.getElementById('wvsend-subject')?.value||'').trim();
+  const body  = (document.getElementById('wvsend-body')?.value||'').trim();
+  const testMode = !!document.getElementById('wvsend-testmode')?.checked;
+  const testEmail = (document.getElementById('wvsend-test-email')?.value||'').trim();
+  const replyTicketId = parseInt((document.getElementById('wvsend-fd-ticket-id')?.value||'').trim(), 10) || null;
+  const EMAIL_RE = /^[\w._%+-]+@[\w.-]+\.\w+$/;
+
+  let ccEmails = [];
+  if (testMode) {
+    if (!testEmail || !EMAIL_RE.test(testEmail)) return toast('Bitte gültige Test-E-Mail eingeben.','err');
+    email = testEmail;
+    if (!/^\[TEST\]/i.test(subject)) subject = '[TEST] '+subject;
+    localStorage.setItem('angsend_test_email', testEmail);
+    localStorage.setItem('angsend_testmode', '1');
+  } else {
+    if (!email || !EMAIL_RE.test(email)) return toast('Bitte gültige Empfänger-E-Mail eingeben.','err');
+    ccEmails = ccRaw.split(/[,;\s]+/).map(s=>s.trim()).filter(Boolean);
+    const invalid = ccEmails.filter(e => !EMAIL_RE.test(e));
+    if (invalid.length) return toast('Ungültige CC-Adresse(n): '+invalid.join(', '),'err');
+    localStorage.setItem('angsend_testmode', '0');
+  }
+  if (!subject) return toast('Betreff ist Pflicht.','err');
+  if (!body || body.length < 20) return toast('Nachricht zu kurz.','err');
+
+  const rec = (_wartungsvertraegeCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Vertrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const pdfMeta = f.vertrag_pdf && f.vertrag_pdf[0];
+  if (!pdfMeta) return toast('Kein PDF zum Anhängen.','err');
+  if (!testMode) localStorage.setItem('wvsend_cc_'+firmaSlug, ccRaw);
+
+  const footer = document.getElementById('wv-send-footer');
+  const origFooterHtml = footer ? footer.innerHTML : '';
+  const setProgress = (pct, msg) => {
+    if (!footer) return;
+    footer.innerHTML = '<div style="width:100%"><div style="display:flex;justify-content:space-between;font-size:13px;color:var(--txt2);margin-bottom:6px"><span>'+escapeHtml(msg)+'</span><span style="font-weight:700;color:#10b981">'+pct+' %</span></div><div style="background:#E5E7EB;height:8px;border-radius:99px;overflow:hidden"><div style="background:#10b981;height:100%;width:'+pct+'%;transition:width .3s"></div></div></div>';
+  };
+  const onErr = (title, detail) => {
+    if (!footer) return;
+    footer.innerHTML = '<div style="width:100%;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:8px;padding:12px 14px;font-size:12px;color:#7F1D1D"><div style="font-weight:700;margin-bottom:6px">❌ '+escapeHtml(title)+'</div><div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;background:#fff;padding:8px 10px;border-radius:4px">'+escapeHtml(String(detail||'').slice(0,500))+'</div><div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px"><button class="btn" onclick="document.getElementById(\'wv-send-modal\').remove()">Schließen</button></div></div>';
+  };
+
+  try {
+    setProgress(10, '📥 Lade PDF aus Airtable…');
+    const pdfBlob = await (await fetch(pdfMeta.url)).blob();
+    await erpEnsureSession();
+
+    // Agent-Signatur holen
+    setProgress(30, '✍️ Lade Agent-Signatur…');
+    let agentSignature = '';
+    try {
+      const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
+      if (meR.ok) {
+        const me = await meR.json();
+        agentSignature = String(me?.signature || me?.signature_html || me?.contact?.signature || '').trim();
+      }
+    } catch(e) { console.warn('[WV-Send] agents/me:', e.message); }
+
+    let bodyHtml = '<p>'+escapeHtml(body).replace(/\n/g,'<br>')+'</p>';
+    if (agentSignature) bodyHtml += '<br><br>'+agentSignature;
+
+    // Reply-Pfad
+    if (replyTicketId) {
+      if (testMode) { onErr('Test-Modus + Reply inkompatibel','Bei Reply geht die Mail an den Original-Anfragesteller — Test-Modus aus oder Ticket-Nr leeren.'); return; }
+      setProgress(60, '📧 Antworte auf Ticket #'+replyTicketId+'…');
+      const fdReply = new FormData();
+      fdReply.append('body', bodyHtml);
+      for (const cc of ccEmails) fdReply.append('cc_emails[]', cc);
+      fdReply.append('attachments[]', pdfBlob, pdfMeta.filename||'Wartungsvertrag.pdf');
+      const rR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+replyTicketId+'/reply', {
+        method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fdReply
+      });
+      if (!rR.ok) {
+        const tR = await rR.text();
+        let dR; try { dR = JSON.parse(tR); } catch(_){ dR = {_raw:tR}; }
+        const detail = dR?.upstream_body_excerpt || dR?.description || dR?._raw || ('HTTP '+rR.status);
+        onErr('Reply fehlgeschlagen', detail); return;
+      }
+      setProgress(100, '✅ Antwort gesendet.');
+      toast('✅ Antwort auf Ticket #'+replyTicketId+' gesendet.','ok');
+      setTimeout(() => document.getElementById('wv-send-modal')?.remove(), 800);
+      return;
+    }
+
+    // Neues Ticket via outbound_email
+    setProgress(60, '🎫 Erstelle Ticket via outbound_email…');
+    const groupId = localStorage.getItem('fd_group_id_'+firmaSlug);
+    const agentId = localStorage.getItem('fd_agent_id_'+firmaSlug);
+    const fd = new FormData();
+    fd.append('email', email);
+    fd.append('subject', subject);
+    fd.append('description', bodyHtml);
+    fd.append('status', '2'); fd.append('priority', '1');
+    for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+    if (groupId) fd.append('group_id', String(groupId));
+    if (agentId) fd.append('email_config_id', String(agentId));
+    fd.append('attachments[]', pdfBlob, pdfMeta.filename||'Wartungsvertrag.pdf');
+    const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email', {
+      method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd
+    });
+    const txt = await r.text();
+    let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = {_raw:txt}; }
+    if (!r.ok) {
+      const detail = d?.upstream_body_excerpt || (Array.isArray(d?.errors) ? d.errors.map(e=>'['+e.field+'] '+e.message).join('; ') : d?.description || d?._raw) || ('HTTP '+r.status);
+      onErr('Versand fehlgeschlagen', detail); return;
+    }
+    const ticketId = d?.id || '?';
+    // Optional: responder_id setzen via PUT (manche FD-Setups akzeptieren das nicht im POST)
+    if (agentId && ticketId !== '?') {
+      try {
+        await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+ticketId, {
+          method:'PUT', headers:{ 'Authorization':'Bearer '+erpGetSessionToken(), 'Content-Type':'application/json' },
+          body: JSON.stringify({ responder_id: +agentId })
+        });
+      } catch(e) { console.warn('[WV-Send] responder_id PUT:', e.message); }
+    }
+    setProgress(100, '✅ Ticket #'+ticketId+' erstellt.');
+    toast('✅ Ticket #'+ticketId+' erstellt — Vertrag versendet.','ok');
+    setTimeout(() => document.getElementById('wv-send-modal')?.remove(), 800);
+  } catch(e) {
+    console.error('[WV-Send]', e);
+    onErr('Fehler beim Versand', e.message||e);
+  }
 }
 
 /** v5.78: Vertrag archivieren — setzt archived=true + archived_at, schließt das Detail-Modal,
