@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.66';
+const APP_VERSION = 'v5.67';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13441,6 +13441,182 @@ Unterschrift Auftragnehmer ({{firma_name}})
 
 Gib NUR die fertige Markdown-Vorlage zurück. Keine Erklärung, keine Bemerkungen.`;
 
+/* ════════════════════════════════════════════════════════════════════
+ * v5.67: SECTIONS-EXTRAKTION
+ *   - Liest ein Referenz-PDF (z.B. KONE-Wartungsvertrag) EINMAL und teilt
+ *     den Inhalt in Pflicht- + Optional-Abschnitte auf.
+ *   - Wird beim Vorlage-Speichern automatisch ausgeführt wenn ein neues
+ *     PDF hochgeladen wurde UND noch keine sections_json hinterlegt ist.
+ *   - Spätere Vertragsgenerierung pickt nur die ausgewählten Sections
+ *     zusammen — kein KI-Call mehr, dauert Sekunden statt 30+.
+ * ════════════════════════════════════════════════════════════════════ */
+const SECTIONS_EXTRACT_SYSTEM_PROMPT =
+  'Du analysierst Wartungsverträge (z.B. KONE, Schindler, ThyssenKrupp) und teilst sie in wiederverwendbare Abschnitte auf, '+
+  'die später per Checkbox-System (Pflicht vs. Optional) zu eigenständigen Aszendio-/Aufzugshandwerk-Verträgen kombiniert werden.\n\n'+
+  'REGELN:\n'+
+  '• Klare Trennung: PFLICHT = ohne diese funktioniert kein Vertrag (Vertragsparteien, Vertragsgegenstand, Wartungsumfang, Vergütung, Laufzeit, Haftung, Schlussbestimmungen, Unterschriften). OPTIONAL = kann je nach Kunde/Vorgang dazukommen (Notrufaufschaltung, Sondereinsätze nach Aufwand, Materialklausel, SLAs, TÜV-Begleitung, Predictive Maintenance, höhere Gewalt, Mitwirkungspflichten etc.).\n'+
+  '• Wortlaute UMSCHREIBEN — keine 1:1-Übernahme aus dem Referenz-PDF (Urheberrecht). Formelle deutsche Geschäftssprache, BGB-konform.\n'+
+  '• KEINE Markennamen, Produktnamen, Deckblätter, Marketing-Floskeln ("Dedicated to People Flow", "KONE Care", "Schindler 5500" etc.) — neutral und generisch formulieren.\n'+
+  '• KEINE konkreten €-Beträge / Stundensätze im Vertragstext — neutral: "nach tatsächlichem Aufwand auf Basis der jeweils gültigen Verrechnungssätze".\n'+
+  '• KEINE Verweise auf Anlagen/Beilagen ("siehe Anlage 1") — alles inline.\n'+
+  '• Markdown-Format: ## für Paragraphen-Überschrift (z.B. "## § 1 Vertragsgegenstand"). Innerhalb Aufzählungen mit - oder nummeriert.\n'+
+  '• Platzhalter wo Daten variabel sind: {{kunde_name}}, {{kunde_adresse}}, {{aufzug_liste}}, {{aufzug_anzahl}}, {{vertragsnummer}}, {{datum_heute}}, {{start_datum}}, {{laufzeit_monate}}, {{wartungen_pro_jahr}}, {{abrechnung_typ}}, {{abrechnung_turnus}}, {{jahresumsatz}}, {{turnus_betrag}}, {{firma_name}}.\n'+
+  '• Bei OPTIONALEN Abschnitten: default = true nur wenn sie in den meisten Standardverträgen sinnvoll sind (Materialklausel, Sondereinsätze nach Aufwand). Eher randständige (Predictive Maintenance, Schadensfreiheit etc.) default = false.';
+
+/** v5.67: Render-Helper für die Vorschau der extrahierten Sections im Editor. */
+function _vlgRenderSectionsPreview(sectionsJson) {
+  let s = null;
+  try { s = sectionsJson ? JSON.parse(sectionsJson) : null; } catch(_){}
+  if (!s || (!Array.isArray(s.pflicht) && !Array.isArray(s.optional))) {
+    return '<div style="background:#F3F4F6;border:1px dashed var(--bdr);border-radius:6px;padding:10px 14px;font-size:11px;color:var(--txt3);text-align:center">Noch keine Abschnitte extrahiert. PDF hochladen und „🧩 Abschnitte extrahieren" klicken.</div>';
+  }
+  const pCount = (s.pflicht||[]).length;
+  const oCount = (s.optional||[]).length;
+  const oDefault = (s.optional||[]).filter(x => x.default).length;
+  const list = (arr, color) => (arr||[]).map(x =>
+    '<div style="padding:4px 8px;background:#fff;border:1px solid var(--bdr);border-radius:4px;font-size:11px;display:flex;align-items:center;gap:6px">'+
+      (x.default !== undefined ? '<input type="checkbox" disabled '+(x.default?'checked':'')+' style="margin:0;pointer-events:none">' : '<span style="color:'+color+';font-weight:700">●</span>')+
+      '<span style="color:var(--txt2);font-weight:600">'+escapeHtml(x.label || x.titel || x.key || '?')+'</span>'+
+      (x.titel && x.titel !== x.label ? '<span style="color:var(--txt3);font-size:10px">'+escapeHtml(String(x.titel).replace(/^##\s*/,''))+'</span>' : '')+
+    '</div>'
+  ).join('');
+  return '<div style="background:#F5F3FF;border:1px solid #C4B5FD;border-radius:8px;padding:10px 12px">'+
+    '<div style="display:flex;gap:14px;font-size:11px;color:#5B21B6;font-weight:700;margin-bottom:8px;flex-wrap:wrap">'+
+      '<span>✓ '+pCount+' Pflicht-Abschnitt'+(pCount===1?'':'e')+'</span>'+
+      '<span>☐ '+oCount+' optional'+(oDefault ? ' ('+oDefault+' vorausgewählt)' : '')+'</span>'+
+    '</div>'+
+    (pCount ? '<div style="font-size:10px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Pflicht</div><div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">'+list(s.pflicht,'#9333EA')+'</div>' : '')+
+    (oCount ? '<div style="font-size:10px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Optional</div><div style="display:flex;flex-wrap:wrap;gap:4px">'+list(s.optional,'#A78BFA')+'</div>' : '')+
+  '</div>';
+}
+
+/** v5.67: Click-Handler — lädt PDF und extrahiert. */
+window._vlgExtractSectionsClick = async function(recId) {
+  const m = document.getElementById('vlg-editor'); if (!m) return;
+  // Quelle: vorhandenes Airtable-PDF (bei bestehender Vorlage) oder gerade hochgeladene Datei
+  let pdfFile = null;
+  const pdfBox = m.querySelector('[style*="ECFDF5"]');
+  const upload = document.getElementById('vlg-pdf-upload');
+  if (upload && upload.files && upload.files[0]) {
+    pdfFile = upload.files[0];
+  } else if (recId) {
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertragsvorlagen/'+recId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
+      const d = await r.json();
+      const att = d.fields?.quell_pdf?.[0];
+      if (att && att.url) {
+        const r2 = await fetch(att.url);
+        const blob = await r2.blob();
+        pdfFile = new File([blob], att.filename || 'referenz.pdf', { type:'application/pdf' });
+      }
+    } catch(e) { return toast('PDF konnte nicht geladen werden: '+e.message,'err'); }
+  }
+  if (!pdfFile) return toast('Kein Referenz-PDF vorhanden — bitte erst hochladen','err');
+  const btns = m.querySelectorAll('button');
+  const target = Array.from(btns).find(b => b.textContent.includes('Abschnitte extrahieren'));
+  if (target) { target.disabled = true; target.textContent = '⏳ KI analysiert …'; }
+  try {
+    const sections = await _vlgExtractSections(pdfFile);
+    // In den Editor-State zwischenspeichern für Save
+    m._sectionsJson = JSON.stringify(sections);
+    const preview = document.getElementById('vlg-sections-preview');
+    if (preview) preview.innerHTML = _vlgRenderSectionsPreview(m._sectionsJson);
+    toast('✅ '+(sections.pflicht?.length||0)+' Pflicht- und '+(sections.optional?.length||0)+' optionale Abschnitte extrahiert','ok');
+  } catch(e) {
+    console.error('[Sections-Extract]', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+  } finally {
+    if (target) { target.disabled = false; target.textContent = '🧩 Abschnitte extrahieren'; }
+  }
+};
+
+async function _vlgExtractSections(pdfFile) {
+  if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key — bitte Admin kontaktieren.');
+  // PDF als Base64
+  const b64 = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1]);
+    fr.onerror = () => rej(new Error('PDF konnte nicht gelesen werden'));
+    fr.readAsDataURL(pdfFile);
+  });
+  const tool = {
+    name: 'extract_vertrag_sections',
+    description: 'Teilt den Wartungsvertrag in Pflicht- und Optional-Abschnitte mit umformulierten Texten.',
+    input_schema: {
+      type:'object',
+      required:['pflicht','optional'],
+      properties:{
+        pflicht: {
+          type:'array',
+          description:'Abschnitte die in jedem Vertrag erscheinen müssen, in der Reihenfolge wie sie im PDF stehen.',
+          items:{
+            type:'object',
+            required:['key','titel','text'],
+            properties:{
+              key:   { type:'string', description:'kurzer slug, z.B. "parteien", "para1_gegenstand", "para2_wartung"' },
+              titel: { type:'string', description:'Markdown-Überschrift mit ##, z.B. "## § 1 Vertragsgegenstand"' },
+              text:  { type:'string', description:'Markdown-Text des Abschnitts inkl. Platzhalter {{...}}. KEINE Überschrift — die steht in titel.' },
+            },
+          },
+        },
+        optional: {
+          type:'array',
+          description:'Optionale Abschnitte die per Checkbox dazugeschaltet werden können.',
+          items:{
+            type:'object',
+            required:['key','label','titel','text','default'],
+            properties:{
+              key:     { type:'string', description:'slug, z.B. "notruf", "sondereinsatz", "material"' },
+              label:   { type:'string', description:'kurze Checkbox-Beschriftung, z.B. "Notrufaufschaltung 24/7"' },
+              titel:   { type:'string', description:'Markdown-Überschrift mit ##' },
+              text:    { type:'string', description:'Markdown-Text inkl. Platzhalter' },
+              default: { type:'boolean', description:'true = Checkbox vorausgewählt, false = standardmäßig aus' },
+            },
+          },
+        },
+      },
+    },
+  };
+  const userMsg =
+    SECTIONS_EXTRACT_SYSTEM_PROMPT+'\n\n'+
+    'Analysiere den anhängenden Wartungsvertrag und liefere die Abschnitte via Tool-Call.';
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': APP_KEYS.anthropicKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens: 16000,
+      tools:[tool],
+      tool_choice:{ type:'tool', name:'extract_vertrag_sections' },
+      messages:[{ role:'user', content:[
+        { type:'document', source:{ type:'base64', media_type:'application/pdf', data:b64 }},
+        { type:'text', text: userMsg },
+      ]}],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
+  }
+  const data = await resp.json();
+  if (data.stop_reason === 'max_tokens') {
+    throw new Error('KI-Antwort abgeschnitten — Vertrag zu lang. Probiere ein kürzeres Referenz-PDF.');
+  }
+  const block = (data.content||[]).find(b => b.type === 'tool_use');
+  if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
+  const s = block.input;
+  if (!Array.isArray(s.pflicht) || !Array.isArray(s.optional)) {
+    throw new Error('Ungültige Sections-Struktur erhalten');
+  }
+  return s;
+}
+
 async function _ensureVorlagenTable() {
   // ensureTable ist idempotent (legt nur an wenn nicht da)
   await ensureTable('Vertragsvorlagen', [
@@ -13454,10 +13630,14 @@ async function _ensureVorlagenTable() {
     { name:'aktiv',         type:'checkbox', options:{ icon:'check', color:'greenBright' } },
     { name:'created',       type:'singleLineText' },
     { name:'updated',       type:'singleLineText' },
+    // v5.67: Extrahierte Abschnitte (Pflicht + Optional) als JSON.
+    // Wird einmal beim PDF-Upload via KI extrahiert und dann ohne KI für Generierung zusammengebaut.
+    { name:'sections_json', type:'multilineText' },
   ]);
   // Falls Tabelle existierte aber Feld fehlt → einzeln nachziehen
   try { await ensureField('Vertragsvorlagen', 'quell_pdf', 'multipleAttachments'); } catch(_){}
   try { await ensureField('Vertragsvorlagen', 'ki_prompt_extra', 'multilineText'); } catch(_){}
+  try { await ensureField('Vertragsvorlagen', 'sections_json', 'multilineText'); } catch(_){}
 }
 
 async function renderVertragsvorlagenView() {
@@ -13563,6 +13743,14 @@ async function openVorlageEditor(recId) {
           '<button class="btn prim" style="background:#10b981;border-color:#10b981;font-size:11px;padding:6px 14px" onclick="_generateVorlageFromPDF('+(recId?'\''+recId+'\'':'null')+')" title="KI generiert aus dem Referenz-PDF eine wiederverwendbare Markdown-Vorlage mit Platzhaltern (statt konkreter Werte). Läuft EINMAL — spätere Verträge brauchen dann keine KI mehr.">🤖 Aus PDF generieren</button>'+
           '<button class="btn" style="background:#FEF3C7;border-color:#FCD34D;color:#92400e;font-size:11px;padding:6px 14px" onclick="_openCorrectVorlage()" title="Nur Text-Korrekturen anwenden (KI politiert den vorhandenen Markdown-Text, ohne das PDF erneut zu analysieren).">✏ Korrigieren</button>'+
           '<span style="font-size:10px;color:var(--txt3)">Generieren = komplett neu aus PDF · Korrigieren = nur Text politieren</span>'+
+        '</div>'+
+        // v5.67: Sections-Block (Pflicht + Optional) für Checkbox-System bei Generierung
+        '<h4 style="margin:18px 0 4px;font-size:13px;color:var(--navy)">🧩 Abschnitte für Checkbox-System <span style="font-weight:400;color:var(--txt3);font-size:11px">— wird beim PDF-Upload automatisch extrahiert</span></h4>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-bottom:6px;line-height:1.5">Die KI teilt das Referenz-PDF in Pflicht- + Optional-Abschnitte. Spätere Vertragsgenerierung pickt nur die ausgewählten Sections — ohne erneuten KI-Call.</div>'+
+        '<div id="vlg-sections-preview" style="margin-bottom:8px">'+_vlgRenderSectionsPreview(data.sections_json)+'</div>'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'+
+          '<button class="btn prim" style="background:#9333EA;border-color:#9333EA;font-size:11px;padding:6px 14px" onclick="_vlgExtractSectionsClick('+(recId?'\''+recId+'\'':'null')+')" title="KI analysiert das Referenz-PDF und extrahiert Pflicht-/Optional-Abschnitte für das Checkbox-System">🧩 Abschnitte extrahieren</button>'+
+          '<span style="font-size:10px;color:var(--txt3)">Läuft EINMAL pro PDF — danach steht die Section-Liste fest</span>'+
         '</div>'+
         '<h4 style="margin:14px 0 4px;font-size:13px;color:var(--navy)">🤖 KI-Prompt</h4>'+
         '<div style="font-size:11px;color:var(--txt3);margin-bottom:6px">Mit PDF: Anweisung, wie der neue Vertrag aus der Referenz erstellt werden soll. Ohne PDF: Politur-Anweisung nach Platzhalter-Ersetzung.</div>'+
@@ -14036,6 +14224,9 @@ function _insertPlatzhalter(key) {
 async function _saveVorlage(recId) {
   const pdfInput = document.getElementById('vlg-pdf-upload');
   const pdfFile  = pdfInput && pdfInput.files && pdfInput.files[0];
+  // v5.67: sections_json aus Editor-State (gesetzt durch _vlgExtractSectionsClick)
+  const editorEl = document.getElementById('vlg-editor');
+  const sectionsJsonFromExtract = editorEl?._sectionsJson || '';
   const fields = {
     firma:           document.getElementById('vlg-firma').value,
     typ:             document.getElementById('vlg-typ').value,
@@ -14046,6 +14237,7 @@ async function _saveVorlage(recId) {
     aktiv:           document.getElementById('vlg-aktiv').checked,
     updated:         new Date().toISOString(),
   };
+  if (sectionsJsonFromExtract) fields.sections_json = sectionsJsonFromExtract;
   if (!fields.name) return toast('Bitte Name eintragen.','err');
   // Vorlage darf entweder Text ODER PDF haben (nicht beides leer)
   // Wir prüfen das erst nach dem PDF-Upload (sonst können wir nicht wissen ob ein bestehendes PDF da ist)
