@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.67';
+const APP_VERSION = 'v5.68';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13490,6 +13490,156 @@ function _vlgRenderSectionsPreview(sectionsJson) {
   '</div>';
 }
 
+/** v5.68: Standard-Wartungsvertrag-Abschnitte als Startvorlage.
+ *  Aszendio/Aufzugshandwerk-konform, mit Platzhaltern, BGB-orientiert.
+ *  Admin kann nach Einfügen alles im JSON-Editor anpassen. */
+const VLG_STARTER_SECTIONS = {
+  pflicht: [
+    { key:'parteien', titel:'## Vertragsparteien', text:
+      '**Auftraggeber:**\n{{kunde_name}}\n{{kunde_adresse}}\n\n'+
+      '**Auftragnehmer:**\n{{firma_name}}\n\n'+
+      'Vertragsdatum: {{datum_heute}}\nVertragsnummer: {{vertragsnummer}}' },
+    { key:'para1_gegenstand', titel:'## § 1 Vertragsgegenstand', text:
+      'Gegenstand dieses Vertrags ist die regelmäßige Wartung und Instandhaltung der nachfolgend aufgeführten Aufzugsanlagen ({{aufzug_anzahl}} Anlage(n)) gemäß den anerkannten Regeln der Technik, insbesondere DIN EN 81-20/50 sowie der Betriebssicherheitsverordnung (BetrSichV).\n\n'+
+      '**Vertragsgegenständliche Anlagen:**\n{{aufzug_liste}}' },
+    { key:'para2_wartung', titel:'## § 2 Wartungsumfang', text:
+      'Der Auftragnehmer führt {{wartungen_pro_jahr}} planmäßige Wartung(en) pro Jahr durch. Die Wartung umfasst:\n\n'+
+      '- Sicht- und Funktionsprüfung aller sicherheitsrelevanten Bauteile\n'+
+      '- Schmierung und Pflege beweglicher Komponenten\n'+
+      '- Kontrolle der Steuerung, Fangvorrichtung, Türverriegelung und Notbeleuchtung\n'+
+      '- Prüfung der Bremsen, Seile/Riemen und Aufhängungen\n'+
+      '- Reinigung der Schachtgrube von wartungsbedingten Rückständen\n'+
+      '- Dokumentation der Wartung im Wartungsbuch der Anlage\n\n'+
+      'Verbrauchsmaterial in geringem Umfang (Schmierstoffe, Reinigungsmittel) ist im Wartungsentgelt enthalten.' },
+    { key:'para3_verguetung', titel:'## § 3 Vergütung', text:
+      'Das Wartungsentgelt beträgt insgesamt {{jahresumsatz}} (Abrechnung: {{abrechnung_typ}}, Turnus: {{abrechnung_turnus}}, Rate: {{turnus_betrag}}).\n\n'+
+      'Alle Preise verstehen sich netto zzgl. der jeweils gültigen gesetzlichen Umsatzsteuer.\n\n'+
+      'Das Wartungsentgelt wird jährlich zum Jahreswechsel an die Entwicklung des Verbraucherpreisindex (Statistisches Bundesamt) angepasst. Maßgeblich ist die prozentuale Veränderung gegenüber dem Vorjahr.\n\n'+
+      'Rechnungen sind innerhalb von 14 Tagen nach Zugang ohne Abzug zur Zahlung fällig.' },
+    { key:'para4_laufzeit', titel:'## § 4 Laufzeit und Kündigung', text:
+      'Der Vertrag beginnt am {{start_datum}} und hat eine Laufzeit von {{laufzeit_monate}} Monaten.\n\n'+
+      'Er verlängert sich um jeweils zwölf (12) Monate, wenn er nicht spätestens drei (3) Monate vor Ablauf schriftlich gekündigt wird.\n\n'+
+      'Das Recht zur außerordentlichen Kündigung aus wichtigem Grund bleibt unberührt. Ein wichtiger Grund liegt insbesondere bei wiederholtem Zahlungsverzug oder grober Pflichtverletzung vor.' },
+    { key:'para5_haftung', titel:'## § 5 Haftung', text:
+      'Der Auftragnehmer haftet für Schäden aus Vorsatz und grober Fahrlässigkeit unbeschränkt.\n\n'+
+      'Für Schäden aus leichter Fahrlässigkeit haftet der Auftragnehmer nur bei Verletzung wesentlicher Vertragspflichten (Kardinalpflichten), und auch dann begrenzt auf den vertragstypischen, vorhersehbaren Schaden.\n\n'+
+      'Die Haftung für mittelbare Schäden, entgangenen Gewinn und Folgeschäden ist im Rahmen der gesetzlichen Möglichkeiten ausgeschlossen.\n\n'+
+      'Der Auftragnehmer unterhält eine angemessene Betriebs- und Berufshaftpflichtversicherung.' },
+    { key:'para6_schluss', titel:'## § 6 Schlussbestimmungen', text:
+      'Änderungen und Ergänzungen dieses Vertrags bedürfen der Schriftform. Das gilt auch für die Aufhebung des Schriftformerfordernisses.\n\n'+
+      'Sollten einzelne Bestimmungen unwirksam sein, bleibt die Wirksamkeit des Vertrags im Übrigen unberührt. An die Stelle der unwirksamen Bestimmung tritt eine Regelung, die dem wirtschaftlich Gewollten am nächsten kommt.\n\n'+
+      'Es gilt deutsches Recht unter Ausschluss des UN-Kaufrechts. Gerichtsstand ist, soweit gesetzlich zulässig, der Sitz des Auftragnehmers.' },
+    { key:'unterschriften', titel:'## Unterschriften', text:
+      'Ort, Datum:\n[[SIGLINE]]\nUnterschrift Auftraggeber ({{kunde_name}})\n\n'+
+      'Ort, Datum:\n[[SIGLINE]]\nUnterschrift Auftragnehmer ({{firma_name}})' },
+  ],
+  optional: [
+    { key:'mitwirkung', label:'Mitwirkungspflichten des Auftraggebers', default:true,
+      titel:'## § X Mitwirkungspflichten des Auftraggebers', text:
+      'Der Auftraggeber stellt sicher, dass:\n\n'+
+      '- der Zugang zu allen Anlagenteilen (Maschinenraum, Schacht, Triebwerk) zu vereinbarten Wartungsterminen frei ist\n'+
+      '- die Stromversorgung der Anlage während der Wartung verfügbar bleibt\n'+
+      '- bauliche Veränderungen, die die Anlage betreffen, dem Auftragnehmer rechtzeitig angezeigt werden\n'+
+      '- gemeldete Störungen und sicherheitsrelevante Auffälligkeiten unverzüglich an den Auftragnehmer übermittelt werden' },
+    { key:'sondereinsatz', label:'Sondereinsätze nach Aufwand', default:true,
+      titel:'## § X Reparaturen und Sondereinsätze', text:
+      'Über den Wartungsumfang hinausgehende Leistungen — insbesondere Reparaturen, Störungseinsätze, Befreiungen aus dem Aufzug außerhalb der Wartungstermine, Beseitigung von Schäden durch Vandalismus oder Drittverschulden — sind nicht im Wartungsentgelt enthalten.\n\n'+
+      'Diese Leistungen werden nach tatsächlichem Aufwand auf Basis der jeweils gültigen Verrechnungssätze des Auftragnehmers abgerechnet. Material wird zu Selbstkostenpreisen zuzüglich des handelsüblichen Aufschlags berechnet.' },
+    { key:'material', label:'Materialklausel (Eigentum / ausgebaute Teile)', default:true,
+      titel:'## § X Material', text:
+      'Verbautes oder geliefertes Material bleibt bis zur vollständigen Bezahlung Eigentum des Auftragnehmers.\n\n'+
+      'Defektes oder ausgebautes Material geht mit dem Ausbau in das Eigentum des Auftragnehmers über bzw. wird durch diesen fachgerecht entsorgt. Eine gesonderte Vergütung für den Materialwert findet nicht statt.' },
+    { key:'notruf', label:'Notrufaufschaltung 24/7', default:false,
+      titel:'## § X Notrufaufschaltung', text:
+      'Auf Wunsch des Auftraggebers übernimmt der Auftragnehmer die Aufschaltung des Notrufgeräts auf eine 24/7-besetzte Leitstelle. Eingehende Notrufe werden entgegengenommen und im Bedarfsfall an einen Bereitschaftsdienst zur Befreiung weitergeleitet.\n\n'+
+      'Die Kosten für die Aufschaltung und den laufenden Betrieb der Leitstelle sind im Wartungsentgelt nicht enthalten und werden gesondert vereinbart.' },
+    { key:'sla', label:'Reaktionszeiten / Verfügbarkeits-SLA', default:false,
+      titel:'## § X Reaktionszeiten', text:
+      'Bei gemeldeten Personeneinschlüssen rückt der Auftragnehmer rund um die Uhr binnen 30 Minuten nach Meldung aus.\n\n'+
+      'Bei sicherheitsrelevanten Störungen ohne Personeneinschluss erfolgt der Einsatz innerhalb der üblichen Servicezeiten (Mo–Fr 7:00–17:00 Uhr) binnen vier (4) Arbeitsstunden nach Meldung.\n\n'+
+      'Bei sonstigen Störungen erfolgt der Einsatz innerhalb von zwei (2) Werktagen.' },
+    { key:'tuev', label:'TÜV-Hauptprüfung — Beistellung', default:false,
+      titel:'## § X TÜV-Hauptprüfung / ZÜS-Prüfung', text:
+      'Die nach BetrSichV vorgeschriebenen wiederkehrenden Prüfungen durch eine zugelassene Überwachungsstelle (ZÜS) sind vom Auftraggeber zu beauftragen und zu vergüten.\n\n'+
+      'Der Auftragnehmer stellt auf Wunsch einen sachkundigen Mitarbeiter zur Begleitung der Prüfung sowie zur Beseitigung kleinerer, prüfungsrelevanter Mängel vor Ort bei. Diese Leistung wird nach tatsächlichem Aufwand abgerechnet.' },
+    { key:'hoehere_gewalt', label:'Höhere Gewalt', default:false,
+      titel:'## § X Höhere Gewalt', text:
+      'Ereignisse höherer Gewalt — insbesondere Naturkatastrophen, Streiks, hoheitliche Anordnungen, Pandemien oder Lieferengpässe, die der Auftragnehmer nicht zu vertreten hat — entbinden den Auftragnehmer für die Dauer und im Umfang ihrer Auswirkung von seinen Leistungspflichten.\n\n'+
+      'Beide Parteien werden sich unverzüglich gegenseitig informieren und gemeinsam nach einer wirtschaftlich zumutbaren Lösung suchen.' },
+    { key:'vandalismus', label:'Vandalismus / Schadensausschluss', default:false,
+      titel:'## § X Ausgeschlossene Leistungen', text:
+      'Vom Wartungsumfang ausgeschlossen sind Schäden, die durch unsachgemäße Bedienung, Vandalismus, Brand, Wasser, Überspannung, Tierbefall oder sonstige äußere Einwirkungen entstehen.\n\n'+
+      'Die Wiederherstellung der Betriebsbereitschaft in diesen Fällen erfolgt nach gesonderter Beauftragung und wird nach tatsächlichem Aufwand abgerechnet.' },
+    { key:'monitoring', label:'Anlagenmonitoring / Predictive Maintenance', default:false,
+      titel:'## § X Anlagenmonitoring', text:
+      'Auf Wunsch installiert der Auftragnehmer eine Telematikeinheit, die ausgewählte Betriebsdaten der Anlage erfasst und in einer Cloud-Plattform auswertet. Anhand der Daten können sich abzeichnende Verschleißerscheinungen frühzeitig erkannt und vorausschauend behoben werden.\n\n'+
+      'Die Kosten für Installation, Datenübertragung und Plattformnutzung sind im Wartungsentgelt nicht enthalten und werden gesondert vereinbart.' },
+    { key:'datenschutz', label:'Datenschutz', default:false,
+      titel:'## § X Datenschutz', text:
+      'Soweit personenbezogene Daten verarbeitet werden, halten sich beide Parteien an die Vorschriften der DSGVO und des BDSG. Eine Auftragsverarbeitung im Sinne von Art. 28 DSGVO findet nicht statt, soweit dies nicht gesondert vereinbart wird.' },
+  ],
+};
+
+window._vlgInsertStarterSections = function() {
+  const m = document.getElementById('vlg-editor'); if (!m) return;
+  const json = JSON.stringify(VLG_STARTER_SECTIONS, null, 2);
+  if (m._sectionsJson && !confirm('Bereits Abschnitte hinterlegt. Mit Startvorlage überschreiben?')) return;
+  m._sectionsJson = json;
+  const preview = document.getElementById('vlg-sections-preview');
+  if (preview) preview.innerHTML = _vlgRenderSectionsPreview(json);
+  toast('⭐ Startvorlage eingefügt: '+VLG_STARTER_SECTIONS.pflicht.length+' Pflicht- + '+VLG_STARTER_SECTIONS.optional.length+' optionale Abschnitte. Über „📝 JSON manuell einfügen" anpassen.','ok');
+};
+
+window._vlgOpenManualSectionsModal = function() {
+  const m = document.getElementById('vlg-editor'); if (!m) return;
+  const old = document.getElementById('vlg-sec-modal'); if (old) old.remove();
+  const currentJson = m._sectionsJson || '';
+  const dlg = document.createElement('div');
+  dlg.id = 'vlg-sec-modal';
+  dlg.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:11000;display:flex;align-items:center;justify-content:center;padding:14px';
+  dlg.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:900px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#9333EA;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>📝 Sections-JSON einfügen</span>'+
+        '<button onclick="document.getElementById(\'vlg-sec-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto">'+
+        '<div style="background:#F5F3FF;border:1px solid #C4B5FD;border-radius:6px;padding:10px 14px;font-size:11px;color:#5B21B6;margin-bottom:10px;line-height:1.5">'+
+          '<strong>Format:</strong> JSON-Objekt mit <code>pflicht</code> + <code>optional</code> Arrays. Jeder Eintrag braucht <code>key, titel, text</code>; bei optional zusätzlich <code>label, default</code> (true/false).'+
+        '</div>'+
+        '<textarea id="vlg-sec-json" spellcheck="false" placeholder=\'{"pflicht":[...], "optional":[...]}\' style="width:100%;min-height:420px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;line-height:1.5">'+escapeHtml(currentJson)+'</textarea>'+
+        '<div id="vlg-sec-err" style="color:#7F1D1D;font-size:11px;margin-top:6px"></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'vlg-sec-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" onclick="_vlgApplyManualSectionsJson()">💾 Übernehmen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(dlg);
+};
+
+window._vlgApplyManualSectionsJson = function() {
+  const ta = document.getElementById('vlg-sec-json');
+  const errEl = document.getElementById('vlg-sec-err');
+  if (errEl) errEl.textContent = '';
+  const raw = (ta?.value || '').trim();
+  if (!raw) { if (errEl) errEl.textContent = 'Leeres JSON.'; return; }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch(e) { if (errEl) errEl.textContent = 'Kein gültiges JSON: '+e.message; return; }
+  const pflicht  = Array.isArray(parsed.pflicht)  ? parsed.pflicht  : [];
+  const optional = Array.isArray(parsed.optional) ? parsed.optional : [];
+  if (pflicht.length === 0 && optional.length === 0) {
+    if (errEl) errEl.textContent = 'Weder pflicht noch optional gefüllt.'; return;
+  }
+  const m = document.getElementById('vlg-editor'); if (!m) return;
+  m._sectionsJson = JSON.stringify({ pflicht, optional });
+  const preview = document.getElementById('vlg-sections-preview');
+  if (preview) preview.innerHTML = _vlgRenderSectionsPreview(m._sectionsJson);
+  document.getElementById('vlg-sec-modal')?.remove();
+  toast('✅ '+pflicht.length+' Pflicht- + '+optional.length+' optionale Abschnitte übernommen','ok');
+};
+
 /** v5.67: Click-Handler — lädt PDF und extrahiert. */
 window._vlgExtractSectionsClick = async function(recId) {
   const m = document.getElementById('vlg-editor'); if (!m) return;
@@ -13611,10 +13761,18 @@ async function _vlgExtractSections(pdfFile) {
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
   const s = block.input;
-  if (!Array.isArray(s.pflicht) || !Array.isArray(s.optional)) {
-    throw new Error('Ungültige Sections-Struktur erhalten');
+  // v5.68: defensiv parsen — wenn die KI eines der Arrays gar nicht zurückgibt,
+  // akzeptieren wir leer (statt komplett zu scheitern). Nur wenn BEIDE fehlen → Fehler.
+  console.log('[Sections-Extract] Raw KI-Response:', s);
+  const pflicht = Array.isArray(s.pflicht) ? s.pflicht :
+                  Array.isArray(s.required) ? s.required :
+                  Array.isArray(s.mandatory) ? s.mandatory : [];
+  const optional = Array.isArray(s.optional) ? s.optional :
+                   Array.isArray(s.optionalSections) ? s.optionalSections : [];
+  if (pflicht.length === 0 && optional.length === 0) {
+    throw new Error('KI hat keine Abschnitte zurückgegeben (siehe Console-Log für Details). Versuche „📝 JSON manuell einfügen".');
   }
-  return s;
+  return { pflicht, optional };
 }
 
 async function _ensureVorlagenTable() {
@@ -13750,8 +13908,10 @@ async function openVorlageEditor(recId) {
         '<div id="vlg-sections-preview" style="margin-bottom:8px">'+_vlgRenderSectionsPreview(data.sections_json)+'</div>'+
         '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">'+
           '<button class="btn prim" style="background:#9333EA;border-color:#9333EA;font-size:11px;padding:6px 14px" onclick="_vlgExtractSectionsClick('+(recId?'\''+recId+'\'':'null')+')" title="KI analysiert das Referenz-PDF und extrahiert Pflicht-/Optional-Abschnitte für das Checkbox-System">🧩 Abschnitte extrahieren</button>'+
-          '<span style="font-size:10px;color:var(--txt3)">Läuft EINMAL pro PDF — danach steht die Section-Liste fest</span>'+
+          '<button class="btn" style="font-size:11px;padding:6px 14px" onclick="_vlgOpenManualSectionsModal()" title="Sections-JSON direkt einfügen (Fallback wenn KI-Extraktion scheitert)">📝 JSON manuell einfügen</button>'+
+          '<button class="btn" style="font-size:11px;padding:6px 14px" onclick="_vlgInsertStarterSections()" title="Standard-Wartungsvertrag-Abschnitte (Aszendio/Aufzugshandwerk) als Startvorlage einfügen — kannst du im JSON-Editor noch anpassen">⭐ Startvorlage einfügen</button>'+
         '</div>'+
+        '<div style="font-size:10px;color:var(--txt3);margin-bottom:6px">KI = aus Referenz-PDF · Manuell = JSON pasten · Startvorlage = von uns vorbereitete Standard-Sections</div>'+
         '<h4 style="margin:14px 0 4px;font-size:13px;color:var(--navy)">🤖 KI-Prompt</h4>'+
         '<div style="font-size:11px;color:var(--txt3);margin-bottom:6px">Mit PDF: Anweisung, wie der neue Vertrag aus der Referenz erstellt werden soll. Ohne PDF: Politur-Anweisung nach Platzhalter-Ersetzung.</div>'+
         '<textarea id="vlg-prompt" style="width:100%;min-height:120px;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:12px;line-height:1.5">'+escapeHtml(data.ki_prompt||'')+'</textarea>'+
