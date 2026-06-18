@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.65';
+const APP_VERSION = 'v5.66';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14109,11 +14109,16 @@ async function openVertragGenerator(vertragId, preislisteId) {
     const vR = await fetch('https://api.airtable.com/v0/'+baseId+'/Vertraege/'+vertragId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
     vRec = await vR.json(); if (vRec.error) throw new Error(vRec.error.message);
     vRec.id = vertragId;
-    const pR = await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+preislisteId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
-    plRec = await pR.json(); if (plRec.error) throw new Error(plRec.error.message);
-    plRec.id = preislisteId;
+    // v5.66: App-Verträge haben keine Preisliste — nur fetchen wenn die ID da ist
+    if (preislisteId) {
+      const pR = await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+preislisteId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
+      plRec = await pR.json(); if (plRec.error) throw new Error(plRec.error.message);
+      plRec.id = preislisteId;
+    } else {
+      plRec = { fields:{} };
+    }
   } catch(e) { return toast('❌ '+e.message,'err'); }
-  const firmaSlug = vRec.fields.firma || plRec.fields.firma || getCurrentFirmaSlug();
+  const firmaSlug = (vRec.fields && vRec.fields.firma) || (plRec.fields && plRec.fields.firma) || getCurrentFirmaSlug();
   const typ = vRec.fields.abrechnung_typ || 'sammel';
 
   // Passende Vorlagen suchen (Firma + Typ, aktiv)
@@ -14379,7 +14384,10 @@ async function _acceptVertragPreview() {
 }
 
 function _buildVertragVars(vRec, plRec) {
-  const vf = vRec.fields, pf = plRec.fields;
+  // v5.66: App-Verträge haben keine Preisliste-Verknüpfung → plRec ist {} und
+  // plRec.fields undefined. Defensiv lesen + auf Vertrag-Record-Felder fallback.
+  const vf = (vRec && vRec.fields) || {};
+  const pf = (plRec && plRec.fields) || {};
   let plData = null; try { plData = JSON.parse(pf.data_json||'null'); } catch(_){}
   let anlagen = []; try { anlagen = JSON.parse(vf.anlagen_json||'[]'); } catch(_){}
   const wpa = +vf.wartungen_pro_jahr || 4;
@@ -14393,13 +14401,16 @@ function _buildVertragVars(vRec, plRec) {
   const turnusBetrag = vf.abrechnung_turnus === 'quartal' ? total/4 : total;
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
   return {
-    kunde_name:         pf.kunde_name || pf.empfaenger_name || '',
-    kunde_nummer:       pf.kunde_nummer || '',
-    kunde_adresse:      pf.empfaenger_adresse || '',
+    // v5.66: bei App-Verträgen kommen Kundendaten aus dem Vertrag-Record (vf),
+    // bei Legacy-Verträgen aus der verknüpften Preisliste (pf).
+    kunde_name:         pf.kunde_name || pf.empfaenger_name || vf.kunde_name || '',
+    kunde_nummer:       pf.kunde_nummer || vf.kunde_nummer || '',
+    kunde_adresse:      pf.empfaenger_adresse || vf.kunde_adresse || '',
     kontakt_name:       pf.kontakt_name || '',
     kontakt_email:      pf.kontakt_email || '',
     kontakt_telefon:    pf.kontakt_telefon || '',
-    vertrag_titel:      vf.titel || 'Wartungsvertrag',
+    // v5.65: Titel im PDF immer schlicht "Wartungsvertrag"
+    vertrag_titel:      'Wartungsvertrag',
     abrechnung_typ:     vf.abrechnung_typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
     abrechnung_turnus:  vf.abrechnung_turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
     wartungen_pro_jahr: String(wpa),
@@ -14411,6 +14422,8 @@ function _buildVertragVars(vRec, plRec) {
     gueltig_bis:        pf.gueltig_bis || '',
     datum_heute:        new Date().toLocaleDateString('de-DE'),
     firma_name:         'Aszendio Aufzugservice GmbH',
+    // v5.66: Vertragsnummer (App-Verträge) für PDF-Dateinamen
+    vertragsnummer:     vf.vertragsnummer || '',
   };
 }
 
