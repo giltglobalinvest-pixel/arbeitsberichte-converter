@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.64';
+const APP_VERSION = 'v5.65';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13372,7 +13372,13 @@ Ort, Datum:
 [[SIGLINE]]
 Unterschrift Auftragnehmer (Aszendio Aufzugservice GmbH)
 
-10. STUNDENSÄTZE / EXTRAARBEITEN: Erwähne Stundensätze (Reparaturen, Störungen, Sondereinsätze) NUR, wenn der Referenzvertrag sie explizit auflistet UND die ZUSÄTZLICHEN HINWEISE das nicht ausschließen. Wenn der Referenzvertrag keine Stundensätze nennt → schreibe auch keine. Wenn die ZUSÄTZLICHEN HINWEISE sagen "keine Stundensätze anzeigen" o.ä. → unbedingt weglassen, auch wenn die JSON-Daten einen Wert haben.
+10. STUNDENSÄTZE / EXTRAARBEITEN: NIEMALS konkrete €-Beträge für Stundensätze, Verrechnungssätze, Anfahrtspauschalen oder ähnliches im Vertragstext nennen — auch wenn der Referenzvertrag oder die JSON-Daten welche enthalten. Stattdessen NEUTRAL formulieren: "Über den Wartungsumfang hinausgehende Leistungen (Reparaturen, Sondereinsätze, Störungseinsätze) werden nach tatsächlichem Aufwand auf Basis der jeweils gültigen Verrechnungssätze des Auftragnehmers abgerechnet." So bleibt der Vertrag preisstabil über Jahre und die Sätze können separat aktualisiert werden.
+
+10a. AUFTRAGGEBER-BLOCK: Im Vertrag MUSS die vollständige Anschrift des Auftraggebers stehen — Firmenname (kunde_name) + Straße + PLZ + Ort (alles aus kunde_adresse, das ist bereits mehrzeilig formatiert). Format z.B.:
+   **Auftraggeber:**
+   {{kunde_name}}
+   {{kunde_adresse}}
+   Niemals nur den Firmennamen ohne Anschrift schreiben.
 
 11. WARTUNGSFREQUENZ / ANZAHL: Erwähne die konkrete Anzahl der Wartungen pro Jahr ({{wartungen_pro_jahr}}) NUR, wenn der Referenzvertrag sie explizit angibt. Wenn die Referenz nur "regelmäßige Wartungen" oder "Wartungen nach Bedarf" o.ä. sagt → schreibe das auch so, ohne konkrete Zahl. Wenn die Referenz GAR NICHTS zur Frequenz sagt → im neuen Vertrag ebenfalls weglassen, auch wenn die JSON-Daten einen Wert wie "4" enthalten.
 
@@ -14357,7 +14363,7 @@ async function _acceptVertragPreview() {
       headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
       body: JSON.stringify({ fields: { vertrag_pdf: [] }})
     });
-    const fname = 'Wartungsvertrag-'+(ctx.vars.kunde_name||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+    const fname = _wvPdfFilename(ctx.vars?.vertragsnummer, ctx.vars?.kunde_name);
     await atBlobUpload(ctx.vertragId, 'vertrag_pdf', ctx.pdfBlob, fname, 'application/pdf');
     // Lokaler Download
     const dl = URL.createObjectURL(ctx.pdfBlob);
@@ -14424,6 +14430,14 @@ async function _callClaudeText(prompt, opts) {
   const data = await resp.json();
   // Stop-Reason mitgeben, damit Caller Truncation erkennen kann
   return { text: data.content[0].text, stopReason: data.stop_reason || null };
+}
+
+/** v5.65: Einheitlicher Dateiname für Wartungsvertrag-PDFs.
+ *  Format: Wartungsvertrag-WV-2025-001-Mustermann_GmbH.pdf */
+function _wvPdfFilename(vertragsnummer, kundenname) {
+  const num = vertragsnummer ? String(vertragsnummer).replace(/[^\w-]/g,'_')+'-' : '';
+  const knd = (kundenname||'Kunde').replace(/[^\w-]/g,'_').slice(0,40);
+  return 'Wartungsvertrag-'+num+knd+'.pdf';
 }
 
 async function _buildVertragPDFBlob(text, vars) {
@@ -15802,7 +15816,7 @@ async function _openWartungsvertragDetail(recId) {
   // Hat das Vertrag-PDF-Feld einen Attachment? → PDF zeigen
   const att = Array.isArray(f.vertrag_pdf) && f.vertrag_pdf[0];
   if (att && att.url) {
-    _showAppVertragPDF(recId, att.url, f.kunde_name || '');
+    _showAppVertragPDF(recId, att.url, f.kunde_name || '', f.vertragsnummer || '');
     return;
   }
   // Kein PDF → altes Detail-Modal als Fallback
@@ -27289,7 +27303,9 @@ async function _nwvSubmit() {
     const payload = {
       preisliste_id: preislisteId,
       firma: firmaSlug,
-      titel: titel || ('Wartungsvertrag '+(typ==='einzel'?'Einzel':'Sammel')+' · '+(kunde.firmenname||'')),
+      // v5.65: in der DB für die Listen-Identifikation weiterhin mit Kundenname,
+      // aber OHNE "Einzel/Sammel"-Suffix — der Abrechnungs-Typ steht eh in abrechnung_typ.
+      titel: titel || ('Wartungsvertrag · '+(kunde.firmenname||'')),
       abrechnung_typ: typ,
       abrechnung_turnus: turnus,
       wartungen_pro_jahr: wpa,
@@ -27326,7 +27342,7 @@ async function _nwvSubmit() {
         generatedText = result && result.text || '';
         if (pdfBlob) {
           if (btn) btn.textContent = '☁ speichere PDF…';
-          const fname = 'Wartungsvertrag-'+(kunde.firmenname||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+          const fname = _wvPdfFilename(nummer, kunde.firmenname);
           await atBlobUpload(rec.id, 'vertrag_pdf', pdfBlob, fname, 'application/pdf');
           // Markdown-Text auch persistieren — für spätere Korrektur ohne KI-Neuwurf
           if (generatedText) {
@@ -27350,7 +27366,7 @@ async function _nwvSubmit() {
     modal.remove();
     await renderWartungsvertraegeView({ force:true });
     // Wenn PDF erfolgreich generiert → direkt im Viewer öffnen
-    if (pdfBlob) _showAppVertragPDF(rec.id, pdfBlob, kunde.firmenname || '');
+    if (pdfBlob) _showAppVertragPDF(rec.id, pdfBlob, kunde.firmenname || '', nummer);
   } catch(e) {
     console.error('createVertrag:', e);
     toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
@@ -27369,11 +27385,14 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
   const vars = {
     kunde_name:         kunde.firmenname || '',
     kunde_nummer:       String(kunde.kundennummer||''),
-    kunde_adresse:      [kunde.strasse, kunde.plz, kunde.ort].filter(Boolean).join(', '),
+    // v5.65: Adresse als mehrzeiliger Block (Straße / PLZ Ort) — die KI versteht das
+    // klarer als kommagetrennt und schreibt sie damit vollständig in den Auftraggeber-Abschnitt.
+    kunde_adresse:      [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n'),
     kontakt_name:       '',
     kontakt_email:      kunde.email || '',
     kontakt_telefon:    kunde.telefon || '',
-    vertrag_titel:      opts.titel || ('Wartungsvertrag '+(opts.typ==='einzel'?'Einzel':'Sammel')+' · '+(kunde.firmenname||'')),
+    // v5.65: Titel im PDF immer schlicht "Wartungsvertrag" — egal ob Einzel- oder Sammelvertrag
+    vertrag_titel:      'Wartungsvertrag',
     abrechnung_typ:     opts.typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
     abrechnung_turnus:  opts.turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
     wartungen_pro_jahr: String(opts.wpa),
@@ -27437,7 +27456,7 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
 }
 
 /* App-Vertrag-PDF-Viewer: rendert PDF mit pdf.js als Multi-Page-Canvas (Mobile-tauglich). */
-function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
+function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName, vertragsnummer) {
   const old = document.getElementById('app-vt-pdf-modal'); if (old) old.remove();
   const url = (typeof pdfBlobOrUrl === 'string') ? pdfBlobOrUrl : URL.createObjectURL(pdfBlobOrUrl);
   const modal = document.createElement('div');
@@ -27453,7 +27472,7 @@ function _showAppVertragPDF(recId, pdfBlobOrUrl, kundeName) {
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap;flex-shrink:0">'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="document.getElementById(\'app-vt-pdf-modal\').remove()">Schließen</button>'+
-          '<a class="btn" href="'+url+'" download="Wartungsvertrag.pdf" style="text-decoration:none">📥 Herunterladen</a>'+
+          '<a class="btn" href="'+url+'" download="'+escapeHtml(_wvPdfFilename(vertragsnummer, kundeName))+'" style="text-decoration:none">📥 Herunterladen</a>'+
         '</div>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
           '<button class="btn" onclick="_editAppVertragRaw(\''+escapeHtml(recId)+'\')" title="Konditionen ändern / Anlagen verwalten">⚙ Konditionen</button>'+
@@ -27511,7 +27530,7 @@ function _showAppVertragPDFFromCache(recId) {
   if (!rec) return;
   const f = rec.fields || {};
   const att = Array.isArray(f.vertrag_pdf) && f.vertrag_pdf[0];
-  if (att && att.url) _showAppVertragPDF(recId, att.url, f.kunde_name || '');
+  if (att && att.url) _showAppVertragPDF(recId, att.url, f.kunde_name || '', f.vertragsnummer || '');
 }
 
 async function _applyCorrection(recId) {
@@ -27565,7 +27584,7 @@ async function _applyCorrection(recId) {
       firma_name: 'Aszendio Aufzugservice GmbH',
     };
     const pdfBlob = await _buildVertragPDFBlob(corrected, vars);
-    const fname = 'Wartungsvertrag-'+(f.kunde_name||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
+    const fname = _wvPdfFilename(f.vertragsnummer, f.kunde_name);
     // Erst PDF-Attachment leeren, dann neuen Blob hochladen
     const baseIdT = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     await fetch('https://api.airtable.com/v0/'+baseIdT+'/Vertraege/'+recId, {
@@ -27579,7 +27598,7 @@ async function _applyCorrection(recId) {
     modal.remove();
     // Cache invalidieren + PDF anzeigen
     await renderWartungsvertraegeView({ force:true });
-    _showAppVertragPDF(recId, pdfBlob, f.kunde_name || '');
+    _showAppVertragPDF(recId, pdfBlob, f.kunde_name || '', f.vertragsnummer || '');
   } catch(e) {
     _closeVorlagenWorking();
     if (e.name === 'AbortError') {
