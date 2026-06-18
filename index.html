@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.61';
+const APP_VERSION = 'v5.62';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23559,7 +23559,7 @@ async function _buildAngebotPdf(rec) {
       const nameLines = doc.splitTextToSize(_sanPdf(s.name||''), colNameA-4);
       const hinwLines = doc.splitTextToSize(_sanPdf(s.hinweis||''), colHinwA-4);
       const rowH = Math.max(7, nameLines.length*4.5, hinwLines.length*4) + 3;
-      if (y + rowH > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+      if (y + rowH > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
       if (idx%2 === 0) { doc.setFillColor(248,250,252); doc.rect(ml, y, cw, rowH, 'F'); }
       doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
       doc.text(String(s.nr||(idx+1)), ml+2, y+5);
@@ -23577,7 +23577,7 @@ async function _buildAngebotPdf(rec) {
     });
     // HINWEIS-BOX statt Summen-Block
     y += 6;
-    if (y + 22 > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    if (y + 22 > 268) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
     doc.setFillColor(243,232,255); doc.setDrawColor(147,51,234); doc.setLineWidth(0.4);
     doc.roundedRect(ml, y, cw, 18, 2, 2, 'FD');
     doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(91,33,182);
@@ -23613,7 +23613,7 @@ async function _buildAngebotPdf(rec) {
       for (const x of ls) leistungLines.push(x);
     }
     const rowH = Math.max(8, titelLines.length*5 + leistungLines.length*4 + 4);
-    if (y + rowH > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    if (y + rowH > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
     if (idx%2 === 0) { doc.setFillColor(248,250,252); doc.rect(ml, y, cw, rowH, 'F'); }
     doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(10);
     doc.text(String(p.nr||(idx+1)), ml+2, y+5);
@@ -23633,6 +23633,10 @@ async function _buildAngebotPdf(rec) {
     doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
   });
   // SUMMEN — rechtsbündig, dezente Linien-Hierarchie
+  // v5.62: Summen-Block braucht ~30mm Höhe (Netto + USt + Brutto-Linie + Brutto-Text).
+  // Wenn nicht mehr genug Platz vor der Footer-Zone (y=275), neue Seite — sonst
+  // überlappt der Gesamtbruttopreis mit dem Footer.
+  if (y + 32 > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
   y += 4;
   const ust = +rec.ust_prozent || 19;
   const ustBetrag = sumNetto * ust/100;
