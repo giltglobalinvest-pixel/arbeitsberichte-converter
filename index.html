@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.79';
+const APP_VERSION = 'v5.80';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28301,6 +28301,8 @@ async function _nwvSubmit() {
       const pl = pls.find(p => String(p.fields.firma||'') === firmaSlug && String(p.fields.kunde_nummer||'') === String(kunde.kundennummer||''));
       if (pl) preislisteId = pl.id;
     } catch(_){}
+    // v5.80: Standard-Ansprechpartner via ERP-Kontakte-Endpoint laden — einmalig, dann ins Payload
+    const resolvedKontakt = await _nwvResolveKontaktForKunde(firmaSlug, kunde);
     const payload = {
       preisliste_id: preislisteId,
       firma: firmaSlug,
@@ -28319,11 +28321,11 @@ async function _nwvSubmit() {
       kunde_id: String(kunde.id||''),
       kunde_nummer: String(kunde.kundennummer||''),
       kunde_name: kunde.firmenname || '',
-      // v5.79: Adresse + Kontakt mitspeichern — sonst beim Re-Generieren leer
-      kunde_adresse:    [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n'),
-      kontakt_name:     kunde.ansprechpartner || kunde.kontakt_name || '',
-      kontakt_email:    kunde.email || '',
-      kontakt_telefon:  kunde.telefon || '',
+      // v5.79/80: Adresse (mit Anlagen-Fallback) + Standard-Kontakt aus ERP mitspeichern
+      kunde_adresse:    _nwvResolveKundeAdresse(kunde, chosenAnlagen),
+      kontakt_name:     resolvedKontakt.name,
+      kontakt_email:    resolvedKontakt.email,
+      kontakt_telefon:  resolvedKontakt.telefon,
       start_datum: start,
       laufzeit_monate: laufzeit,
       vorlage_id: vorlageId,
@@ -28382,21 +28384,72 @@ async function _nwvSubmit() {
 
 /* Erzeugt einen PDF-Blob für den Wizard. Wiederverwendet die gleiche Logik wie
    _nwvShowPreview, aber gibt nur den Blob zurück (kein UI-Modal). */
+/** v5.80: Lädt Kontakte für einen Kunden (mit Cache) und gibt den Standard-Kontakt
+ *  als {name, email, telefon} zurück. Fallback auf ersten Kontakt, sonst leere Werte. */
+async function _nwvResolveKontaktForKunde(firmaSlug, kunde) {
+  const kdNr = kunde && (kunde.kundennummer || kunde.id);
+  const fallback = {
+    name: kunde.ansprechpartner || kunde.kontakt_name || '',
+    email: kunde.email || '',
+    telefon: kunde.telefon || '',
+  };
+  if (!kdNr) return fallback;
+  try {
+    let kontakte;
+    if (_kontakteCache && _kontakteCache.has && _kontakteCache.has(String(kdNr))) {
+      kontakte = _kontakteCache.get(String(kdNr));
+    } else {
+      kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kdNr)+'/Kontakte');
+      if (!Array.isArray(kontakte)) kontakte = (kontakte && (kontakte.content || kontakte.items || kontakte.data)) || [];
+      if (_kontakteCache && _kontakteCache.set) _kontakteCache.set(String(kdNr), kontakte);
+    }
+    if (!Array.isArray(kontakte) || !kontakte.length) return fallback;
+    const isStandard = k => !!(
+      k.istStandardansprechpartner || k.istStandardAnsprechpartner ||
+      k.isStandard || k.standard || k.isDefault || k.default ||
+      k.hauptansprechpartner || k.isPrimary || k.primary
+    );
+    const std = kontakte.find(isStandard) || kontakte[0];
+    const name = [std.anrede, std.vorname, std.nachname].filter(Boolean).join(' ').trim();
+    return {
+      name:    name || fallback.name,
+      email:   std.email   || fallback.email,
+      telefon: std.telefon || std.mobile || fallback.telefon,
+    };
+  } catch(e) {
+    console.warn('[NWV] Kontakt-Load fehlgeschlagen:', e.message);
+    return fallback;
+  }
+}
+
+/** v5.80: Baut die Kunde-Adresse mehrzeilig. Fällt zurück auf Adresse der ersten
+ *  gewählten Anlage, wenn der Kunde im ERP keine eigene Adresse hat. */
+function _nwvResolveKundeAdresse(kunde, chosenAnlagen) {
+  const direkt = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  if (direkt.trim()) return direkt;
+  const a0 = (chosenAnlagen||[])[0];
+  return (a0 && a0.adresse) ? String(a0.adresse) : '';
+}
+
 async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, opts) {
   const aufzugZeilen = chosenAnlagen.map((a, i) =>
     (i+1)+'. '+(a.adresse||'?')+
     (a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+
     (a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')
   );
+  // v5.80: Kontakt aus ERP-Kontakte-Endpoint laden, Adresse mit Anlagen-Fallback
+  const firmaSlug = (opts && opts.firmaSlug) || getCurrentFirmaSlug();
+  const kontakt = await _nwvResolveKontaktForKunde(firmaSlug, kunde);
+  const adresse = _nwvResolveKundeAdresse(kunde, chosenAnlagen);
   const vars = {
     kunde_name:         kunde.firmenname || '',
     kunde_nummer:       String(kunde.kundennummer||''),
-    // v5.65: Adresse als mehrzeiliger Block (Straße / PLZ Ort) — die KI versteht das
-    // klarer als kommagetrennt und schreibt sie damit vollständig in den Auftraggeber-Abschnitt.
-    kunde_adresse:      [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n'),
-    kontakt_name:       '',
-    kontakt_email:      kunde.email || '',
-    kontakt_telefon:    kunde.telefon || '',
+    // v5.65: Adresse als mehrzeiliger Block (Straße / PLZ Ort).
+    // v5.80: Fallback auf Anlagen-Adresse wenn Kunde im ERP keine eigene Anschrift hat.
+    kunde_adresse:      adresse,
+    kontakt_name:       kontakt.name,
+    kontakt_email:      kontakt.email,
+    kontakt_telefon:    kontakt.telefon,
     // v5.65: Titel im PDF immer schlicht "Wartungsvertrag" — egal ob Einzel- oder Sammelvertrag
     vertrag_titel:      'Wartungsvertrag',
     abrechnung_typ:     opts.typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
