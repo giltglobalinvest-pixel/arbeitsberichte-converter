@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.73';
+const APP_VERSION = 'v5.74';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13891,6 +13891,11 @@ const WV_WIZARD_STEPS = [
   { key:'zues_komplett',        label:'ZÜS-Organisation, Durchführung und Begleitung (ZÜS komplett)', type:'checkbox', default:false },
   { key:'vertragsbeginn',       label:'Vertragsbeginn', type:'date' },
   { key:'laufzeit_jahre',       label:'Laufzeit in Jahren', type:'select', options:['1','2','3','5','10'], default:'1' },
+  { key:'jahrespreis_netto',    label:'Jahrespreis netto (€) — Gesamtwartungsentgelt pro Jahr', type:'number', default:'', placeholder:'z.B. 1440.00', step:'0.01' },
+  { key:'abrechnungs_turnus',   label:'Abrechnungsturnus', type:'radio', options:[
+      { value:'jaehrlich', label:'Jährlich — eine Rechnung pro Jahr' },
+      { value:'quartal',   label:'Quartalsweise — vier Rechnungen pro Jahr' },
+    ], default:'jaehrlich' },
 ];
 
 const WV_WIZARD_SNIPPETS = {
@@ -14820,6 +14825,10 @@ function _wvWizardRenderUI(vorlageId) {
       '</label>';
     } else if (s.type === 'date') {
       ctl = '<input type="date" data-key="'+s.key+'" value="'+escapeHtml(String(v||today))+'" onchange="_wvWizardSave(\''+vorlageId+'\')" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">';
+    } else if (s.type === 'number') {
+      ctl = '<input type="number" data-key="'+s.key+'" value="'+escapeHtml(String(v||''))+'" placeholder="'+escapeHtml(s.placeholder||'')+'"'+
+        (s.step?' step="'+escapeHtml(s.step)+'"':'')+(s.min!=null?' min="'+escapeHtml(String(s.min))+'"':'')+
+        ' onchange="_wvWizardSave(\''+vorlageId+'\')" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">';
     }
     return '<div style="margin-bottom:10px">'+
       '<div style="font-weight:600;font-size:12px;color:var(--navy);margin-bottom:4px">'+nr+' '+escapeHtml(s.label)+'</div>'+
@@ -14874,6 +14883,28 @@ function _wvWizardBuildText(customTemplate) {
     .replace(/\{\{laufzeit_jahre\}\}/g,           String(ans.laufzeit_jahre||'1'));
 }
 
+/** v5.74: Überschreibt Preis- und Turnus-Vars mit den Wizard-Antworten,
+ *  bevor _ersetzePlatzhalter läuft. Beide Wizard-Aufrufer (vt-gen + nwv) nutzen ihn. */
+function _wvWizardApplyToVars(vars) {
+  const ans = {};
+  document.querySelectorAll('#wv-wizard-inputs [data-key]').forEach(el => {
+    const k = el.dataset.key;
+    if (el.type === 'checkbox') ans[k] = el.checked;
+    else if (el.type === 'radio') { if (el.checked) ans[k] = el.value; }
+    else ans[k] = el.value;
+  });
+  const jahresPreis = parseFloat(String(ans.jahrespreis_netto||'').replace(',','.')) || 0;
+  const turnus = ans.abrechnungs_turnus === 'quartal' ? 'quartal' : 'jaehrlich';
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  if (jahresPreis > 0) {
+    vars.jahresumsatz  = eur(jahresPreis) + ' netto';
+    vars.turnus_betrag = eur(turnus === 'quartal' ? jahresPreis/4 : jahresPreis) + ' netto';
+  }
+  vars.abrechnung_turnus = turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich';
+  if (ans.anzahl_wartungen) vars.wartungen_pro_jahr = String(ans.anzahl_wartungen);
+  return vars;
+}
+
 /** v5.73: Beim Aktivieren der Wizard-Checkbox im Vorlagen-Editor — falls Textfeld leer,
  *  Standard-Template laden, damit der User es sieht und editieren kann. */
 function _vlgToggleWizardWartung() {
@@ -14920,6 +14951,8 @@ async function _generateVertragNow(vertragId, preislisteId) {
       if (btn) btn.textContent = '✨ baue Wartungsvertrag aus Wizard…';
       // Aus Wizard-Antworten + Template (custom oder default) den Vertragstext bauen
       text = _wvWizardBuildText(vData.fields.vorlage_text);
+      // v5.74: Wizard-Preise (jahresumsatz, turnus_betrag, abrechnung_turnus) in vars schreiben
+      _wvWizardApplyToVars(vars);
       // Platzhalter aus den Vertragsdaten (kunde_name, aufzug_liste etc.) ersetzen
       text = _ersetzePlatzhalter(text, vars);
       // Optional KI-Politur wenn Vorgangs-Hinweise gefüllt
@@ -28104,7 +28137,7 @@ async function _nwvSubmit() {
   if (isWizard) {
     const wAns = _nwvReadWizardAnswers();
     wpa      = +wAns.anzahl_wartungen || 2;
-    turnus   = 'jaehrlich';
+    turnus   = wAns.abrechnungs_turnus === 'quartal' ? 'quartal' : 'jaehrlich';
     start    = wAns.vertragsbeginn || new Date().toISOString().slice(0,10);
     laufzeit = (+wAns.laufzeit_jahre || 1) * 12;
   } else {
@@ -28264,6 +28297,8 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
   // v5.73: Wizard-Modus hat höchsten Vorrang — Text aus Wizard-Antworten + Template bauen
   if (vorlage.fields.wizard_mode === 'wartung') {
     finalText = _wvWizardBuildText(tpl);
+    // v5.74: Wizard-Preise/Turnus in vars schreiben, BEVOR Platzhalter ersetzt werden
+    _wvWizardApplyToVars(vars);
     finalText = _ersetzePlatzhalter(finalText, vars);
     if (vorgangExtra && APP_KEYS.anthropicKey) {
       try {
@@ -28531,7 +28566,7 @@ async function _nwvShowPreview() {
   if (isWizard) {
     const wAns = _nwvReadWizardAnswers();
     wpa      = +wAns.anzahl_wartungen || 2;
-    turnus   = 'jaehrlich';
+    turnus   = wAns.abrechnungs_turnus === 'quartal' ? 'quartal' : 'jaehrlich';
     start    = wAns.vertragsbeginn || new Date().toISOString().slice(0,10);
     laufzeit = (+wAns.laufzeit_jahre || 1) * 12;
   } else {
