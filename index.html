@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.72';
+const APP_VERSION = 'v5.73';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14045,13 +14045,16 @@ async function openVorlageEditor(recId) {
             '</select></div>'+
         '</div>'+
         '<div style="margin-bottom:8px"><label style="cursor:pointer"><input id="vlg-aktiv" type="checkbox" '+(data.aktiv!==false?'checked':'')+'> als aktive Vorlage markieren</label></div>'+
-        // v5.72: Wartungsvertrag-Wizard-Modus — fixe Schritte + hartkodiertes Template
+        // v5.72: Wartungsvertrag-Wizard-Modus — fixe Schritte + editierbares Template
         '<div style="margin-bottom:10px;padding:10px 12px;background:'+(data.wizard_mode==='wartung'?'#ECFDF5':'#F9FAFB')+';border:1px solid '+(data.wizard_mode==='wartung'?'#6EE7B7':'var(--bdr)')+';border-radius:8px">'+
           '<label style="cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:600;font-size:12px;color:'+(data.wizard_mode==='wartung'?'#065F46':'var(--navy)')+'">'+
-            '<input id="vlg-wizard-wartung" type="checkbox" '+(data.wizard_mode==='wartung'?'checked':'')+'> ✨ Wartungsvertrag-Wizard-Modus aktivieren'+
+            '<input id="vlg-wizard-wartung" type="checkbox" '+(data.wizard_mode==='wartung'?'checked':'')+' onchange="_vlgToggleWizardWartung()"> ✨ Wartungsvertrag-Wizard-Modus aktivieren'+
           '</label>'+
           '<div style="font-size:11px;color:var(--txt3);margin-top:4px;line-height:1.5">'+
-            'Wenn aktiv: beim „Vertrag generieren" erscheint ein 7-Schritte-Wizard (Wartungen/Jahr, Wartungstyp, Notruf, ZÜS-Begleitung, Vertragsbeginn, Laufzeit). Der Vertrag wird aus einem festen Markdown-Template + Wizard-Eingaben gebaut — <strong>kein KI-Call</strong>, keine PDF-Referenz nötig. Template + Schritte sind in der App hartkodiert (kein Editieren hier).'+
+            'Wenn aktiv: beim „Vertrag generieren" UND beim „Neuer Wartungsvertrag"-Wizard erscheinen 7 Wizard-Schritte (Wartungen/Jahr, Wartungstyp, Notruf, ZÜS-Begleitung, Vertragsbeginn, Laufzeit). Der Vertrag wird aus dem Markdown-Template unten + Wizard-Eingaben gebaut — <strong>kein KI-Call</strong>, keine PDF-Referenz nötig. <strong>Das Template unten ist editierbar</strong> — die Wizard-Platzhalter (<code style="font-family:monospace">{{anzahl_wartungen}}</code>, <code style="font-family:monospace">{{wartungstyp_label/beschreibung}}</code>, <code style="font-family:monospace">{{notruf_gsm_section}}</code>, <code style="font-family:monospace">{{notrufgeraet_montage_section}}</code>, <code style="font-family:monospace">{{zues_section}}</code>, <code style="font-family:monospace">{{vertragsbeginn}}</code>, <code style="font-family:monospace">{{laufzeit_jahre}}</code>) bleiben — alles andere ändert die Wirkung pro Vorlage.'+
+          '</div>'+
+          '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">'+
+            '<button class="btn" type="button" style="font-size:11px;padding:4px 10px" onclick="_vlgLoadWizardDefault()" title="Lädt das Standard-Wartungsvertrag-Template (überschreibt den aktuellen Vertragstext nach Rückfrage)">↻ Standard-Template laden</button>'+
           '</div>'+
         '</div>'+
         '<h4 style="margin:12px 0 4px;font-size:13px;color:var(--navy)">📄 Vergleichsvertrag (PDF) <span style="font-weight:400;color:var(--txt3);font-size:11px">— optional, aber empfohlen</span></h4>'+
@@ -14840,9 +14843,10 @@ window._wvWizardSave = function(vorlageId) {
   try { localStorage.setItem('wv_wizard_'+vorlageId, JSON.stringify(state)); } catch(_){}
 };
 
-/** v5.72: Aus den Wizard-Antworten + WV_WIZARD_TEMPLATE den finalen
- *  Vertragstext zusammenbauen (vor _ersetzePlatzhalter). */
-function _wvWizardBuildText() {
+/** v5.72: Aus den Wizard-Antworten + Template den finalen Vertragstext bauen.
+ *  customTemplate ist optional — sonst Fallback auf WV_WIZARD_TEMPLATE.
+ *  Vor _ersetzePlatzhalter aufrufen. */
+function _wvWizardBuildText(customTemplate) {
   // State aus DOM lesen
   const ans = {};
   document.querySelectorAll('#wv-wizard-inputs [data-key]').forEach(el => {
@@ -14857,8 +14861,9 @@ function _wvWizardBuildText() {
   const notrufGsmSec      = ans.notruf_gsm           ? WV_WIZARD_SNIPPETS.notruf_gsm           : '';
   const notrufMontageSec  = ans.notrufgeraet_montage ? WV_WIZARD_SNIPPETS.notrufgeraet_montage : '';
   const zuesSec           = ans.zues_komplett        ? WV_WIZARD_SNIPPETS.zues_komplett        : '';
+  const tpl = (customTemplate && String(customTemplate).trim()) ? String(customTemplate) : WV_WIZARD_TEMPLATE;
   // Template-Substitution (nur die Wizard-Vars hier — Basis-Vars werden danach von _ersetzePlatzhalter ersetzt)
-  return WV_WIZARD_TEMPLATE
+  return tpl
     .replace(/\{\{anzahl_wartungen\}\}/g,         String(ans.anzahl_wartungen||'2'))
     .replace(/\{\{wartungstyp_label\}\}/g,        wartungstypLabel)
     .replace(/\{\{wartungstyp_beschreibung\}\}/g, wartungstypBesch)
@@ -14867,6 +14872,27 @@ function _wvWizardBuildText() {
     .replace(/\{\{zues_section\}\}/g,             zuesSec)
     .replace(/\{\{vertragsbeginn\}\}/g,           String(ans.vertragsbeginn||''))
     .replace(/\{\{laufzeit_jahre\}\}/g,           String(ans.laufzeit_jahre||'1'));
+}
+
+/** v5.73: Beim Aktivieren der Wizard-Checkbox im Vorlagen-Editor — falls Textfeld leer,
+ *  Standard-Template laden, damit der User es sieht und editieren kann. */
+function _vlgToggleWizardWartung() {
+  const cb = document.getElementById('vlg-wizard-wartung');
+  const ta = document.getElementById('vlg-text');
+  if (!cb || !ta) return;
+  if (cb.checked && !ta.value.trim()) {
+    ta.value = WV_WIZARD_TEMPLATE;
+    toast('✨ Standard-Wartungsvertrags-Template geladen — du kannst es jetzt editieren.','ok');
+  }
+}
+
+/** v5.73: „Standard-Template laden" — überschreibt vorhandenen Text nach Rückfrage. */
+function _vlgLoadWizardDefault() {
+  const ta = document.getElementById('vlg-text');
+  if (!ta) return;
+  if (ta.value.trim() && !confirm('Aktuelles Template überschreiben?\n\nDer Vertragstext wird durch das Standard-Wartungsvertrag-Template ersetzt.')) return;
+  ta.value = WV_WIZARD_TEMPLATE;
+  toast('✨ Standard-Template geladen.','ok');
 }
 
 async function _generateVertragNow(vertragId, preislisteId) {
@@ -14892,8 +14918,8 @@ async function _generateVertragNow(vertragId, preislisteId) {
     // v5.72: Wartungsvertrag-Wizard-Modus hat höchsten Vorrang — fixe Schritte, kein KI
     if (vData.fields?.wizard_mode === 'wartung') {
       if (btn) btn.textContent = '✨ baue Wartungsvertrag aus Wizard…';
-      // Aus Wizard-Antworten + Template den Vertragstext bauen
-      text = _wvWizardBuildText();
+      // Aus Wizard-Antworten + Template (custom oder default) den Vertragstext bauen
+      text = _wvWizardBuildText(vData.fields.vorlage_text);
       // Platzhalter aus den Vertragsdaten (kunde_name, aufzug_liste etc.) ersetzen
       text = _ersetzePlatzhalter(text, vars);
       // Optional KI-Politur wenn Vorgangs-Hinweise gefüllt
@@ -27738,8 +27764,13 @@ async function openNeuerVertragWizard() {
           '</select>'+
           '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Vorlagen werden nach gewähltem Typ (Einzel/Sammel) gefiltert. Falls keine vorhanden: Admin → 📑 Vertragsvorlagen.</div>'+
         '</div>'+
+        // Wizard-Container (nur sichtbar wenn Vorlage Wizard-Modus hat)
+        '<div id="nwv-wizard-section" style="margin-bottom:14px;display:none">'+
+          '<div style="font-weight:600;margin-bottom:6px">5. Wartungsvertrag-Wizard <span style="font-weight:400;color:var(--txt3);font-size:11px">— ersetzt PDF-Modus + Konditionen</span></div>'+
+          '<div id="nwv-wizard-mount"></div>'+
+        '</div>'+
         // PDF-Modus
-        '<div style="margin-bottom:14px">'+
+        '<div id="nwv-pdfmode-section" style="margin-bottom:14px">'+
           '<div style="font-weight:600;margin-bottom:6px">5. PDF-Erzeugung</div>'+
           '<div style="display:flex;gap:8px">'+
             '<label style="flex:1;display:flex;align-items:center;gap:6px;padding:8px 10px;background:var(--bg);border:2px solid #10b981;border-radius:6px;cursor:pointer" id="nwv-pdf-platz-lbl">'+
@@ -27751,7 +27782,7 @@ async function openNeuerVertragWizard() {
           '</div>'+
         '</div>'+
         // Konditionen
-        '<div style="margin-bottom:14px">'+
+        '<div id="nwv-konditionen-section" style="margin-bottom:14px">'+
           '<div style="font-weight:600;margin-bottom:6px">6. Konditionen</div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
             '<div><strong>Wartungen / Jahr</strong><br><input id="nwv-wpa" type="number" value="4" min="0" max="12" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
@@ -27824,9 +27855,27 @@ function _nwvUpdateVorlagen() {
 function _nwvSyncPdfModeWithVorlage() {
   const modal = document.getElementById('nwv-modal');
   const sel   = document.getElementById('nwv-vorlage');
-  if (!modal || !sel || !sel.value) return;
-  const v = (modal._vorlagen||[]).find(x => x.id === sel.value);
-  if (!v) return;
+  if (!modal || !sel) return;
+  // v5.73: Wizard-Section / Konditionen je nach Vorlage ein-/ausblenden
+  const wizSec    = document.getElementById('nwv-wizard-section');
+  const pdfSec    = document.getElementById('nwv-pdfmode-section');
+  const kondSec   = document.getElementById('nwv-konditionen-section');
+  const wizMount  = document.getElementById('nwv-wizard-mount');
+  const v = sel.value ? (modal._vorlagen||[]).find(x => x.id === sel.value) : null;
+  const isWizard = !!(v && v.fields && v.fields.wizard_mode === 'wartung');
+  if (isWizard) {
+    if (wizSec)  wizSec.style.display  = '';
+    if (pdfSec)  pdfSec.style.display  = 'none';
+    if (kondSec) kondSec.style.display = 'none';
+    if (wizMount) wizMount.innerHTML = _wvWizardRenderUI(v.id);
+    return;
+  } else {
+    if (wizSec)  wizSec.style.display  = 'none';
+    if (pdfSec)  pdfSec.style.display  = '';
+    if (kondSec) kondSec.style.display = '';
+    if (wizMount) wizMount.innerHTML = '';
+  }
+  if (!sel.value || !v) return;
   const hasText = !!(v.fields.vorlage_text && v.fields.vorlage_text.trim());
   const hasPdf  = !!(v.fields.quell_pdf && v.fields.quell_pdf[0]);
   const radioPlatz = document.querySelector('input[name="nwv-pdf"][value="platzhalter"]');
@@ -28026,6 +28075,18 @@ function _nwvToggleAnlage(id) {
   _nwvOnTypChange();
 }
 
+/** v5.73: Liest die Wizard-Antworten aus dem aktuell gemounteten #wv-wizard-inputs (NWV-Modal). */
+function _nwvReadWizardAnswers() {
+  const ans = {};
+  document.querySelectorAll('#wv-wizard-inputs [data-key]').forEach(el => {
+    const k = el.dataset.key;
+    if (el.type === 'checkbox') ans[k] = el.checked;
+    else if (el.type === 'radio') { if (el.checked) ans[k] = el.value; }
+    else ans[k] = el.value;
+  });
+  return ans;
+}
+
 async function _nwvSubmit() {
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
@@ -28036,10 +28097,22 @@ async function _nwvSubmit() {
   const kundeId = kundeFromCache ? (kundeFromCache.id || kundeFromCache.kundennummer || '') : '';
   const vorlageId = document.getElementById('nwv-vorlage')?.value || '';
   const pdfModus = document.querySelector('input[name="nwv-pdf"]:checked')?.value || 'platzhalter';
-  const wpa = +document.getElementById('nwv-wpa').value || 4;
-  const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
-  const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
-  const laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
+  // v5.73: Wizard-Mode? Dann Wizard-Werte in die DB-Felder übernehmen
+  const vorlageRec = (modal._vorlagen||[]).find(v => v.id === vorlageId);
+  const isWizard   = !!(vorlageRec && vorlageRec.fields && vorlageRec.fields.wizard_mode === 'wartung');
+  let wpa, turnus, start, laufzeit;
+  if (isWizard) {
+    const wAns = _nwvReadWizardAnswers();
+    wpa      = +wAns.anzahl_wartungen || 2;
+    turnus   = 'jaehrlich';
+    start    = wAns.vertragsbeginn || new Date().toISOString().slice(0,10);
+    laufzeit = (+wAns.laufzeit_jahre || 1) * 12;
+  } else {
+    wpa      = +document.getElementById('nwv-wpa').value || 4;
+    turnus   = document.getElementById('nwv-turnus').value || 'jaehrlich';
+    start    = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
+    laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
+  }
   const titel = (document.getElementById('nwv-titel').value || '').trim();
   const vorgangExtra = (document.getElementById('nwv-vorgang-extra')?.value || '').trim();
   const sel = modal._selectedAnlagen || [];
@@ -28188,6 +28261,33 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
   const vorgangExtra = (opts.vorgangExtra||'').trim();
   const vorlageExtra = (vorlage.fields.ki_prompt_extra||'').trim();
   let finalText = '';
+  // v5.73: Wizard-Modus hat höchsten Vorrang — Text aus Wizard-Antworten + Template bauen
+  if (vorlage.fields.wizard_mode === 'wartung') {
+    finalText = _wvWizardBuildText(tpl);
+    finalText = _ersetzePlatzhalter(finalText, vars);
+    if (vorgangExtra && APP_KEYS.anthropicKey) {
+      try {
+        const politurPrompt =
+          'Du erhältst einen Wartungsvertragstext (Markdown) und konkrete Anweisungen für diesen einzelnen Vorgang. '+
+          'Setze die Anweisungen behutsam um — Paragraphen-Reihenfolge, Wortlaut und Struktur grundsätzlich beibehalten. '+
+          'KEINE Markennamen, keine Verweise auf Anlagen/Anhänge. Antworte NUR mit dem überarbeiteten Markdown, ohne Erklärung, ohne Code-Fences.\n\n'+
+          'ANWEISUNGEN DIESES VORGANGS:\n'+vorgangExtra+
+          '\n\n--- VERTRAGSTEXT ---\n'+finalText;
+        const resp = await fetch('https://api.anthropic.com/v1/messages', {
+          method:'POST',
+          headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+          body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:6000, messages:[{ role:'user', content: politurPrompt }] }),
+        });
+        if (resp.ok) {
+          let polished = (await resp.json()).content[0].text;
+          polished = polished.replace(/^```(?:markdown|md)?\n?/, '').replace(/\n?```\s*$/, '').trim();
+          if (polished) finalText = polished;
+        }
+      } catch(e) { console.warn('[NWV-Wizard-Politur] fehlgeschlagen:', e.message); }
+    }
+    const pdfBlob = await _buildVertragPDFBlob(finalText, vars);
+    return { pdfBlob, text: finalText, vars };
+  }
   if (pdfModus === 'ki' && pdfMeta && APP_KEYS.anthropicKey) {
     // KI-Modus: voller Prompt mit Vorlage-Extra + Vorgangs-Extra
     const pdfResp = await fetch(pdfMeta.url);
@@ -28424,10 +28524,22 @@ async function _nwvShowPreview() {
   const kunde = (_kundenCache.items||[])[kundeIdx];
   const vorlageId = document.getElementById('nwv-vorlage')?.value || '';
   const pdfModus = document.querySelector('input[name="nwv-pdf"]:checked')?.value || 'platzhalter';
-  const wpa = +document.getElementById('nwv-wpa').value || 4;
-  const turnus = document.getElementById('nwv-turnus').value || 'jaehrlich';
-  const start = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
-  const laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
+  // v5.73: Wizard-Mode in der Vorschau ebenfalls berücksichtigen
+  const vorlageRec = (modal._vorlagen||[]).find(v => v.id === vorlageId);
+  const isWizard   = !!(vorlageRec && vorlageRec.fields && vorlageRec.fields.wizard_mode === 'wartung');
+  let wpa, turnus, start, laufzeit;
+  if (isWizard) {
+    const wAns = _nwvReadWizardAnswers();
+    wpa      = +wAns.anzahl_wartungen || 2;
+    turnus   = 'jaehrlich';
+    start    = wAns.vertragsbeginn || new Date().toISOString().slice(0,10);
+    laufzeit = (+wAns.laufzeit_jahre || 1) * 12;
+  } else {
+    wpa      = +document.getElementById('nwv-wpa').value || 4;
+    turnus   = document.getElementById('nwv-turnus').value || 'jaehrlich';
+    start    = document.getElementById('nwv-start').value || new Date().toISOString().slice(0,10);
+    laufzeit = +document.getElementById('nwv-laufzeit').value || 12;
+  }
   const titel = (document.getElementById('nwv-titel').value || '').trim();
   const vorgangExtra = (document.getElementById('nwv-vorgang-extra')?.value || '').trim();
   const sel = modal._selectedAnlagen || [];
