@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.78';
+const APP_VERSION = 'v5.79';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15317,15 +15317,25 @@ function _buildVertragVars(vRec, plRec) {
   });
   const turnusBetrag = vf.abrechnung_turnus === 'quartal' ? total/4 : total;
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  // v5.79: Wenn auf dem Vertrag-Record Adresse/Kontakt fehlen (alt-angelegte App-Verträge),
+  // versuche sie aus dem ERP-Kunden-Cache anhand der Kundennummer nachzuholen.
+  let kundeErp = null;
+  if (vf.kunde_nummer && (!vf.kunde_adresse || !vf.kontakt_email || !vf.kontakt_telefon)) {
+    const knr = String(vf.kunde_nummer);
+    kundeErp = (_kundenCache.items||[]).find(k => String(k.kundennummer||'') === knr) || null;
+  }
+  const fallbackAdresse = kundeErp
+    ? [kundeErp.strasse, [kundeErp.plz, kundeErp.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n')
+    : '';
   return {
     // v5.66: bei App-Verträgen kommen Kundendaten aus dem Vertrag-Record (vf),
     // bei Legacy-Verträgen aus der verknüpften Preisliste (pf).
     kunde_name:         pf.kunde_name || pf.empfaenger_name || vf.kunde_name || '',
     kunde_nummer:       pf.kunde_nummer || vf.kunde_nummer || '',
-    kunde_adresse:      pf.empfaenger_adresse || vf.kunde_adresse || '',
-    kontakt_name:       pf.kontakt_name || '',
-    kontakt_email:      pf.kontakt_email || '',
-    kontakt_telefon:    pf.kontakt_telefon || '',
+    kunde_adresse:      pf.empfaenger_adresse || vf.kunde_adresse || fallbackAdresse || '',
+    kontakt_name:       pf.kontakt_name || vf.kontakt_name || (kundeErp && (kundeErp.ansprechpartner || kundeErp.kontakt_name)) || '',
+    kontakt_email:      pf.kontakt_email || vf.kontakt_email || (kundeErp && kundeErp.email) || '',
+    kontakt_telefon:    pf.kontakt_telefon || vf.kontakt_telefon || (kundeErp && kundeErp.telefon) || '',
     // v5.65: Titel im PDF immer schlicht "Wartungsvertrag"
     vertrag_titel:      'Wartungsvertrag',
     abrechnung_typ:     vf.abrechnung_typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
@@ -15648,6 +15658,11 @@ async function _ensureVertraegeTable() {
     // v5.78: Archivierung
     await ensureField('Vertraege', 'archived',       'checkbox', { color:'grayBright', icon:'check' });
     await ensureField('Vertraege', 'archived_at',    'singleLineText');
+    // v5.79: Adresse + Kontakt mitspeichern — sonst leer beim Re-Generieren
+    await ensureField('Vertraege', 'kunde_adresse',  'multilineText');
+    await ensureField('Vertraege', 'kontakt_name',   'singleLineText');
+    await ensureField('Vertraege', 'kontakt_email',  'singleLineText');
+    await ensureField('Vertraege', 'kontakt_telefon','singleLineText');
   } catch(e) { console.warn('[Vertraege] Tabellen-Setup:', e.message); }
 }
 
@@ -28304,6 +28319,11 @@ async function _nwvSubmit() {
       kunde_id: String(kunde.id||''),
       kunde_nummer: String(kunde.kundennummer||''),
       kunde_name: kunde.firmenname || '',
+      // v5.79: Adresse + Kontakt mitspeichern — sonst beim Re-Generieren leer
+      kunde_adresse:    [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n'),
+      kontakt_name:     kunde.ansprechpartner || kunde.kontakt_name || '',
+      kontakt_email:    kunde.email || '',
+      kontakt_telefon:  kunde.telefon || '',
       start_datum: start,
       laufzeit_monate: laufzeit,
       vorlage_id: vorlageId,
