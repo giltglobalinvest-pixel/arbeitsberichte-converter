@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.70';
+const APP_VERSION = 'v5.71';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7045,6 +7045,35 @@ async function _aufDeleteBericht(auftragRecId, berichtRecId, berichtNum) {
   }
 }
 
+/** v5.71: ↺ Wieder öffnen — setzt einen versehentlich abgeschlossenen Auftrag
+ *  zurück auf „offen". Nur erlaubt mit auftraege_edit-Permission. */
+async function _aufReopenStatus(auftragRecId, btn) {
+  const rec = _auftragCache.find(r => r.id === auftragRecId);
+  if (!rec) return;
+  if (!confirm('Auftrag wieder auf „Offen" setzen?\n\nDas verknüpfte Freshdesk-Ticket (falls vorhanden) bleibt bestehen und wird nicht gelöscht. Den Button „✅ Auftrag fertigstellen" siehst du danach wieder.')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ öffne wieder…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+auftragRecId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ status:'offen', completed_at:'' }}),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message);
+    rec.fields.status = 'offen';
+    rec.fields.completed_at = '';
+    toast('↺ Auftrag wieder geöffnet — „Fertigstellen" ist wieder da','ok');
+    closeAuftragDetail();
+    renderAuftraegeList();
+    openAuftragDetail(auftragRecId);
+  } catch(e) {
+    console.error('_aufReopenStatus:', e);
+    toast('❌ '+(e.message||'Fehler'),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '↺ Wieder öffnen'; }
+  }
+}
+
 /** ✅ Auftrag fertigstellen: Status → abgeschlossen + genau ein FD-Ticket erzeugen
  *  (sammelt zusammen aus dem letzten/aktuellsten Bericht). Idempotent: wenn schon
  *  ein FD-Ticket existiert, kein zweites erzeugen. */
@@ -8032,8 +8061,16 @@ function openAuftragDetail(recId) {
       if (document.getElementById('auf-detail-modal')?.classList.contains('show')) openAuftragDetail(recId);
     }).catch(() => {});
   }
+  // v5.71: Status-Badge prominent im Title — sonst übersieht der Mitarbeiter dass
+  // ein Auftrag schon abgeschlossen ist und wundert sich warum kein „Fertigstellen" da ist.
+  const _statusTmp = _normAuftragStatus(f.status);
+  const _statusBadge = (_statusTmp === 'abgeschlossen')
+    ? ' <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#10B981;color:#fff;letter-spacing:.3px;vertical-align:middle">✅ ABGESCHLOSSEN</span>'
+    : (_statusTmp === 'abgerechnet')
+      ? ' <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#6B7280;color:#fff;letter-spacing:.3px;vertical-align:middle">💰 ABGERECHNET</span>'
+      : ' <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#2152A9;color:#fff;letter-spacing:.3px;vertical-align:middle">📋 OFFEN</span>';
   document.getElementById('auf-detail-title').innerHTML =
-    'Auftrag #' + (f.auftrag_num || '–') + ' · <span style="font-weight:400;opacity:.7">' + (T[f.tmpl]?.label || f.tmpl || '') + '</span>';
+    'Auftrag #' + (f.auftrag_num || '–') + _statusBadge + ' · <span style="font-weight:400;opacity:.7">' + (T[f.tmpl]?.label || f.tmpl || '') + '</span>';
   let techs = [];
   try { techs = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techNames = f.techniker_namen || _techNamesByKeys(techs);
@@ -8165,6 +8202,10 @@ function openAuftragDetail(recId) {
     if (hasPermission('auftraege_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())) {
       html += '<button class="btn" style="color:#065F46;border-color:rgba(16,185,129,.45);background:#ECFDF5" onclick="manualCreateFreshdeskTicket(\''+rec.id+'\')" title="Freshdesk-Ticket für diesen Auftrag/Bericht jetzt erstellen">🎫 Ticket erstellen</button>';
     }
+  }
+  // v5.71: „↺ Wieder öffnen" wenn Auftrag schon abgeschlossen ist (versehentliches Fertigstellen rückgängig machen)
+  if (status === 'abgeschlossen' && hasPermission('auftraege_edit')) {
+    html += '<button class="btn" style="color:#9A3412;border-color:rgba(234,88,12,.45);background:#FFF7ED" onclick="_aufReopenStatus(\''+rec.id+'\', this)" title="Setzt den Auftrag wieder auf „Offen" — falls die Fertigstellung versehentlich war">↺ Wieder öffnen</button>';
   }
   foot.innerHTML = html;
 
