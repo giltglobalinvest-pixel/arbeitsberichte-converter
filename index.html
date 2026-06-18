@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.81';
+const APP_VERSION = 'v5.82';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -13919,11 +13919,36 @@ const WV_WIZARD_SNIPPETS = {
     'Die Gebühren der ZÜS selbst sind im Wartungsentgelt nicht enthalten und werden vom Auftraggeber direkt mit der ZÜS abgerechnet.',
 };
 
+/** v5.82: Firma-Stammdaten zentral — Postanschrift + Kontakt pro Slug.
+ *  Aufzugshandwerk-Werte können später ergänzt werden, sobald bekannt. */
+const FIRMA_STAMMDATEN = {
+  aszendio: {
+    name:     'Aszendio Aufzugservice GmbH',
+    adresse:  'Boschstr. 10\n73734 Esslingen am Neckar',
+    email:    'service@aszendio.com',
+    telefon:  '',
+    website:  'www.aszendio.com',
+  },
+  aufzugshandwerk: {
+    name:     'Aufzugshandwerk',
+    adresse:  '',
+    email:    '',
+    telefon:  '',
+    website:  '',
+  },
+};
+
+/** v5.82: Stammdaten für einen Firma-Slug holen — defensiv mit Fallback auf Aszendio-Defaults. */
+function _getFirmaStammdaten(firmaSlug) {
+  const s = String(firmaSlug||'').toLowerCase();
+  return FIRMA_STAMMDATEN[s] || FIRMA_STAMMDATEN.aszendio;
+}
+
 const WV_WIZARD_TEMPLATE =
   '# Wartungsvertrag\n\n'+
   '## Vertragsparteien\n\n'+
   '**Auftraggeber:**\n{{kunde_name}}\n{{kunde_adresse}}\n\n'+
-  '**Auftragnehmer:**\n{{firma_name}}\n\n'+
+  '**Auftragnehmer:**\n{{firma_name}}\n{{firma_adresse}}\n{{firma_email}} · {{firma_telefon}}\n\n'+
   'Vertragsdatum: {{datum_heute}}\n'+
   'Vertragsnummer: {{vertragsnummer}}\n'+
   'Vertragsbeginn: {{vertragsbeginn}}\n\n'+
@@ -15348,7 +15373,12 @@ function _buildVertragVars(vRec, plRec) {
     stundensatz:        plData?.stundensatz != null ? eur(plData.stundensatz) : '',
     gueltig_bis:        pf.gueltig_bis || '',
     datum_heute:        new Date().toLocaleDateString('de-DE'),
-    firma_name:         'Aszendio Aufzugservice GmbH',
+    // v5.82: Auftragnehmer-Stammdaten aus zentraler Konstante (firma-aware)
+    firma_name:         _getFirmaStammdaten(vf.firma).name,
+    firma_adresse:      _getFirmaStammdaten(vf.firma).adresse,
+    firma_email:        _getFirmaStammdaten(vf.firma).email,
+    firma_telefon:      _getFirmaStammdaten(vf.firma).telefon,
+    firma_website:      _getFirmaStammdaten(vf.firma).website,
     // v5.66: Vertragsnummer (App-Verträge) für PDF-Dateinamen
     vertragsnummer:     vf.vertragsnummer || '',
   };
@@ -28431,23 +28461,38 @@ async function _nwvResolveKontaktForKunde(firmaSlug, kunde) {
   }
 }
 
-/** v5.80/81: Baut die Kunde-Adresse mehrzeilig. Reihenfolge:
+/** v5.80/81/82: Baut die Kunde-Adresse mehrzeilig. Reihenfolge:
  *  (1) Flache kunde.strasse/plz/ort wenn vorhanden,
- *  (2) ERP-adresseId via Google-Maps-Endpoint auflösen (echte Postanschrift der Hausverwaltung),
- *  (3) Fallback auf Adresse der ersten gewählten Anlage. */
+ *  (2) defaultrechnungsempfaenger.id via _angResolveEmpfaengerAdresse (echte Postanschrift Hausverwaltung),
+ *  (3) ERP-adresseId via Google-Maps-Endpoint,
+ *  (4) Fallback auf Adresse der ersten gewählten Anlage (NICHT ideal — nur Notnagel). */
 async function _nwvResolveKundeAdresse(firmaSlug, kunde, chosenAnlagen) {
+  console.log('[NWV-Adresse] Kunde-Keys:', Object.keys(kunde||{}).join(', '));
+  console.log('[NWV-Adresse] strasse/plz/ort:', kunde.strasse, '/', kunde.plz, '/', kunde.ort);
+  console.log('[NWV-Adresse] adresseId:', kunde.adresseId, '· defaultrechnungsempfaenger:', kunde.defaultrechnungsempfaenger);
   const direkt = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
-  if (direkt.trim()) return direkt;
-  // ERP-Kunden haben oft NUR eine adresseId (Google-Places-Style) — via Aufzug-ERP-Proxy auflösen
+  if (direkt.trim()) { console.log('[NWV-Adresse] → flache Felder'); return direkt; }
+  // Pfad 2: defaultrechnungsempfaenger.id — der proven Pfad aus dem Angebot-Modul
+  const empfId = kunde.defaultrechnungsempfaenger && kunde.defaultrechnungsempfaenger.id;
+  if (empfId) {
+    try {
+      const empfAdr = await _angResolveEmpfaengerAdresse(firmaSlug, empfId);
+      if (empfAdr && empfAdr.trim()) { console.log('[NWV-Adresse] → Empfaenger-Lookup'); return empfAdr; }
+    } catch(e) { console.warn('[NWV-Adresse] empfId Lookup failed:', e.message); }
+  }
+  // Pfad 3: adresseId (Google-Places-Style)
   const adId = kunde.adresseId || (kunde.defaultrechnungsempfaenger && kunde.defaultrechnungsempfaenger.adresseId) || '';
   if (adId) {
     try {
       const resolved = await _angResolveAdresseId(firmaSlug, adId);
-      if (resolved && resolved.trim()) return resolved;
-    } catch(e) { console.warn('[NWV] adresseId konnte nicht aufgeloest werden:', e.message); }
+      if (resolved && resolved.trim()) { console.log('[NWV-Adresse] → adresseId Google Maps'); return resolved; }
+    } catch(e) { console.warn('[NWV-Adresse] adresseId Lookup failed:', e.message); }
   }
+  // Pfad 4: erste Anlage als Notfall — KEINE saubere Hausverwaltungs-Adresse
   const a0 = (chosenAnlagen||[])[0];
-  return (a0 && a0.adresse) ? String(a0.adresse) : '';
+  if (a0 && a0.adresse) { console.warn('[NWV-Adresse] → Anlagen-Fallback (NICHT ideal — Hausverwaltungs-Anschrift fehlt im ERP)'); return String(a0.adresse); }
+  console.warn('[NWV-Adresse] → KEINE Adresse aufloesbar — Vertrag-Vars bleiben leer');
+  return '';
 }
 
 async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, opts) {
@@ -28481,7 +28526,12 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
     stundensatz:        '',
     gueltig_bis:        '',
     datum_heute:        new Date().toLocaleDateString('de-DE'),
-    firma_name:         'Aszendio Aufzugservice GmbH',
+    // v5.82: Auftragnehmer-Stammdaten aus zentraler Konstante
+    firma_name:         _getFirmaStammdaten(firmaSlug).name,
+    firma_adresse:      _getFirmaStammdaten(firmaSlug).adresse,
+    firma_email:        _getFirmaStammdaten(firmaSlug).email,
+    firma_telefon:      _getFirmaStammdaten(firmaSlug).telefon,
+    firma_website:      _getFirmaStammdaten(firmaSlug).website,
     vertragsnummer:     opts.nummer || '',
     start_datum:        opts.start || '',
     laufzeit_monate:    String(opts.laufzeit||12),
