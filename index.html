@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.86';
+const APP_VERSION = 'v5.87';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28853,6 +28853,25 @@ async function _wvSendVertragEmail(recId, btn) {
       return;
     }
 
+    // v5.87: email_config_id (Absender-Mailbox) ist Pflicht für outbound_email — aus /email_configs holen
+    setProgress(45, '📨 Lade E-Mail-Konfiguration (Absender) …');
+    let emailConfigId = null;
+    try {
+      const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/email_configs', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
+      if (r.ok) {
+        const arr = await r.json();
+        if (Array.isArray(arr) && arr.length) {
+          const primary = arr.find(c => c.primary_role) || arr.find(c => c.active) || arr[0];
+          emailConfigId = primary.id;
+        }
+      }
+    } catch(e) { console.warn('[WV-Send] email_configs:', e.message); }
+    if (!emailConfigId) {
+      onErr('Keine E-Mail-Konfiguration in Freshdesk',
+        'outbound_email braucht eine gültige email_config_id (= „Versand-E-Mail-Adresse" in Freshdesk-Admin → E-Mail). Bitte in Freshdesk eine Support-E-Mail einrichten/aktivieren.');
+      return;
+    }
+
     // Neues Ticket via outbound_email
     setProgress(60, '🎫 Erstelle Ticket via outbound_email…');
     const groupId = localStorage.getItem('fd_group_id_'+firmaSlug);
@@ -28862,9 +28881,10 @@ async function _wvSendVertragEmail(recId, btn) {
     fd.append('subject', subject);
     fd.append('description', bodyHtml);
     fd.append('status', '2'); fd.append('priority', '1');
+    fd.append('email_config_id', String(emailConfigId));
     for (const cc of ccEmails) fd.append('cc_emails[]', cc);
     if (groupId) fd.append('group_id', String(groupId));
-    if (agentId) fd.append('email_config_id', String(agentId));
+    // responder_id wird unten via PUT nachgereicht — outbound_email lehnt es im POST ab
     fd.append('attachments[]', pdfBlob, pdfMeta.filename||'Wartungsvertrag.pdf');
     const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email', {
       method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd
