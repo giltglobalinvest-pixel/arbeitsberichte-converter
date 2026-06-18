@@ -2635,7 +2635,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.62';
+const APP_VERSION = 'v5.63';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21335,6 +21335,16 @@ async function openAngebotWizard() {
   m._mode = 'pdf';
   // v5.14: Vorlagen für Prompt-Modus laden (lazy)
   _angPromptVorlagenLoad(true).then(() => _angWizardRefreshVorlagenSelect()).catch(() => {});
+  // v5.63: Letzten Prompt wiederherstellen wenn User „↶ Zurück zum Prompt" vom Editor benutzt hat
+  try {
+    const last = localStorage.getItem('ang_last_prompt');
+    const ta = document.getElementById('ang-w-promptonly');
+    if (last && ta && !ta.value) {
+      ta.value = last;
+      // Tab automatisch auf Prompt schalten — User kam ja vom Editor zurück
+      setTimeout(() => document.querySelector('[onclick*="_angWizardSwitchTab(\'prompt\')"]')?.click(), 50);
+    }
+  } catch(_){}
   // Drag&Drop
   const drop = document.getElementById('ang-w-drop');
   ['dragover','dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.style.background='#EFF6FF'; drop.style.borderColor='#2152A9'; }));
@@ -21476,6 +21486,8 @@ async function _angWizardGoFromPrompt() {
   if (!m) return;
   const typ = document.getElementById('ang-w-typ').value;
   const promptText = (document.getElementById('ang-w-promptonly')?.value || '').trim();
+  // v5.63: letzten Prompt sichern, damit „↶ Zurück zum Prompt" im Editor ihn wiederherstellen kann
+  try { if (promptText) localStorage.setItem('ang_last_prompt', promptText); } catch(_){}
   if (!promptText) return toast('Bitte einen Prompt eingeben oder Vorlage laden','err');
   if (promptText.length < 20) return toast('Prompt zu kurz — bitte beschreibe was angeboten werden soll','err');
   // Anbieter aus PDF-Tab wird ignoriert; im Prompt-Modus ist „anbieter" der eigene Firmenname / „manuell"
@@ -21588,6 +21600,78 @@ async function _extractAngebotFromPrompt(promptText, typ) {
 }
 
 // ─── v5.14: Prompt-Vorlagen ──────────────────────────────────────────
+/* v5.63: Beispiel-Prompts — werden vor den User-Vorlagen im Dropdown gezeigt,
+ *        sodass neue User direkt einen guten Startpunkt für die KI haben. */
+const ANGEBOT_BEISPIEL_PROMPTS = [
+  {
+    id: '__demo:reparatur',
+    label: '💡 Beispiel: Reparatur',
+    typ:  'reparatur',
+    text:
+      'Reparatur am Aufzug A1 im Müllerweg 8 (Fabriknummer 4321).\n'+
+      '\n'+
+      'Defekt: Frequenzumrichter ausgefallen, Aufzug bleibt zwischen den Etagen stehen.\n'+
+      'Bei der Diagnose festgestellt:\n'+
+      '- Frequenzumrichter Typ ABC-123 muss komplett getauscht werden\n'+
+      '- Steuerplatine ist intakt\n'+
+      '- Anfahrt + Diagnose ca. 2 Stunden\n'+
+      '\n'+
+      'Auszuführende Arbeiten:\n'+
+      '- Neuer Frequenzumrichter (Material ca. 1.200 EUR netto, Aufschlag 20 %)\n'+
+      '- Demontage + Montage durch zwei Monteure, ca. 4 Stunden Arbeitszeit (85 EUR/h pro Mann)\n'+
+      '- Probefahrt + Endmessung\n'+
+      '\n'+
+      'Empfänger: Hausverwaltung Schmidt, Frau Müller. Anrede formell.\n'+
+      'Zahlungsziel 14 Tage netto.'
+  },
+  {
+    id: '__demo:modernisierung',
+    label: '💡 Beispiel: Modernisierung',
+    typ:  'modernisierung',
+    text:
+      'Modernisierung Aufzug A1 in Friedrichstraße 29.\n'+
+      '\n'+
+      'Bestand: Aufzug aus dem Jahr 1985, KONE-Steuerung, originale Kabine.\n'+
+      '\n'+
+      'Geplante Modernisierung:\n'+
+      '- Antrieb komplett ersetzen (neuer Frequenzumrichter mit 2-Stufen-Antrieb)\n'+
+      '- Steuerung modernisieren (KONE-Steuerung → eigene IO-Steuerung mit Notrufmodul)\n'+
+      '- Kabine renovieren: neue Tableau-Tasten, LED-Beleuchtung, Edelstahl-Spiegel\n'+
+      '- Türen: neue Antriebe an beiden Schacht- und Etagentüren\n'+
+      '- Schachtbeleuchtung erneuern (LED)\n'+
+      '\n'+
+      'Pauschalpreis ca. 80.000 EUR netto.\n'+
+      'Zahlung: 30 % bei Auftragsvergabe, 60 % bei Materiallieferung, 10 % nach Abnahme.\n'+
+      '\n'+
+      'Empfänger: Hausverwaltung Meier, Herr Schmidt. Anrede formell.'
+  },
+  {
+    id: '__demo:aufwand',
+    label: '💡 Beispiel: Nach Aufwand (Stundensätze)',
+    typ:  'sonstiges',
+    text:
+      'Störungsbeseitigung / Wartungsarbeiten nach Aufwand am Aufzug Bahnhofstraße 12.\n'+
+      '\n'+
+      'Aktuelles Problem: regelmäßige Türstörungen, Ursache muss vor Ort analysiert werden.\n'+
+      '\n'+
+      'Vorgehen:\n'+
+      '- Anfahrt + Diagnose-Stunden nach tatsächlichem Aufwand abrechnen\n'+
+      '- Reparatur direkt vor Ort soweit möglich\n'+
+      '- Bei größeren Reparaturen wird ein separates Pauschal-Angebot erstellt\n'+
+      '- Verbrauchsmaterial nach tatsächlichem Verbrauch\n'+
+      '\n'+
+      'Stundensätze (verbindlich):\n'+
+      '- Servicetechniker: 85,00 EUR/h\n'+
+      '- Monteur: 75,00 EUR/h\n'+
+      '- Anfahrt pauschal: 50,00 EUR (innerhalb 30 km)\n'+
+      '- Material: nach Aufwand + 20 % Aufschlag auf Selbstkosten\n'+
+      '\n'+
+      'Hinweis: nach Generierung im Editor auf „⏱ Nach Aufwand" umstellen — damit erscheinen die Stundensätze im PDF statt einer Positions-Liste.\n'+
+      '\n'+
+      'Empfänger: Hausverwaltung Schmitt, Frau Becker. Anrede formell.'
+  },
+];
+
 let _angPromptVorlagenCache = { firma:null, items:null, loadedAt:0 };
 
 async function _angPromptVorlagenLoad(useCache) {
@@ -21616,8 +21700,17 @@ function _angWizardRefreshVorlagenSelect() {
   if (!sel) return;
   const items = _angPromptVorlagenCache.items || [];
   const current = sel.value;
-  sel.innerHTML = '<option value="">— eigenen Prompt schreiben —</option>' +
-    items.map(r => '<option value="'+escapeHtml(r.id)+'">'+escapeHtml((r.fields?.name||'(ohne Name)') + (r.fields?.typ ? ' · '+r.fields.typ : ''))+'</option>').join('');
+  // v5.63: Beispiel-Prompts (eingebaut) als optgroup vor den User-Vorlagen
+  const beispielOpts = ANGEBOT_BEISPIEL_PROMPTS.map(b =>
+    '<option value="'+escapeHtml(b.id)+'">'+escapeHtml(b.label)+'</option>'
+  ).join('');
+  const userOpts = items.map(r =>
+    '<option value="'+escapeHtml(r.id)+'">'+escapeHtml((r.fields?.name||'(ohne Name)') + (r.fields?.typ ? ' · '+r.fields.typ : ''))+'</option>'
+  ).join('');
+  sel.innerHTML =
+    '<option value="">— eigenen Prompt schreiben —</option>' +
+    '<optgroup label="Beispiele (zum Anpassen)">'+beispielOpts+'</optgroup>' +
+    (userOpts ? '<optgroup label="Eigene Vorlagen">'+userOpts+'</optgroup>' : '');
   if (current) sel.value = current;
 }
 
@@ -21626,10 +21719,23 @@ function _angWizardLoadVorlage() {
   if (!sel) return;
   const recId = sel.value;
   if (!recId) return;
-  const rec = (_angPromptVorlagenCache.items||[]).find(r => r.id === recId);
-  if (!rec) return;
   const ta = document.getElementById('ang-w-promptonly');
   if (!ta) return;
+  // v5.63: Beispiel-Prompts (__demo:reparatur etc.) — eingebaute Vorlagen
+  if (recId.startsWith('__demo:')) {
+    const beispiel = ANGEBOT_BEISPIEL_PROMPTS.find(b => b.id === recId);
+    if (!beispiel) return;
+    if (ta.value.trim() && !confirm('Vorhandenen Text durch Beispiel „'+beispiel.label+'" überschreiben?')) return;
+    ta.value = beispiel.text;
+    if (beispiel.typ) {
+      const typSel = document.getElementById('ang-w-typ');
+      if (typSel) typSel.value = beispiel.typ;
+    }
+    toast('💡 Beispiel geladen — Text anpassen und „Generieren"','ok');
+    return;
+  }
+  const rec = (_angPromptVorlagenCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
   // Wenn bereits Text drin → fragen
   if (ta.value.trim() && !confirm('Vorhandenen Text durch Vorlage „'+(rec.fields?.name||'')+'" überschreiben?')) return;
   ta.value = rec.fields?.prompt_text || '';
@@ -22439,10 +22545,23 @@ function _angEditorRender() {
     // Modus-abhängiger Block: Pauschal → Positionen + Summary | Aufwand → Stundensätze
     (E.abrechnung === 'aufwand' ? _angRenderStundensaetzeBlock(E) :
       // Positionen
-      '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
-        '<span style="font-size:11px;color:var(--txt3)">'+(_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')+'</span>'+
+      '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
+        '<span style="font-size:11px;color:var(--txt3);flex:1;min-width:200px">'+(_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')+'</span>'+
+        // v5.63: Position manuell hinzufügen — wichtig wenn KI nichts geliefert hat
+        '<button type="button" class="btn prim" style="font-size:11px;padding:5px 10px" onclick="_angAddPosition()" title="Manuell eine neue Position anlegen — z.B. wenn die KI nichts geliefert hat oder eine fehlt">⊕ Position</button>'+
       '</div>'+
-      '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px">'+
+      // Wenn leer: deutlicher Hinweis statt nur leerer Box
+      (E.positionen.length === 0
+        ? '<div style="border:2px dashed var(--bdr);border-radius:8px;padding:24px 16px;text-align:center;margin-bottom:14px;background:#F9FAFB">'+
+            '<div style="font-size:13px;color:var(--txt2);margin-bottom:8px">📭 Keine Positionen vorhanden</div>'+
+            '<div style="font-size:11px;color:var(--txt3);margin-bottom:12px">Die KI hat keine Positionen extrahiert/generiert. Du kannst manuell welche anlegen oder den Prompt nochmal anpassen.</div>'+
+            '<div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">'+
+              '<button type="button" class="btn prim" onclick="_angAddPosition()">⊕ Erste Position anlegen</button>'+
+              (!E.editMode ? '<button type="button" class="btn" onclick="_angBackToPrompt()" title="Prompt nochmal anpassen und neu generieren">↶ Zurück zum Prompt</button>' : '')+
+            '</div>'+
+          '</div>'
+        : '')+
+      '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden;margin-bottom:14px'+(E.positionen.length===0?';display:none':'')+'">'+
         E.positionen.map((p, i) => _angRenderPositionRow(p, i, E)).join('')+
       '</div>'+
       // Summary — eigener Container, damit wir ihn bei VP-Tippen live aktualisieren können
@@ -23185,6 +23304,32 @@ window._angSetStdsatz = function(i, key, v) {
   const list = m._state.stundensaetze || [];
   if (!list[i]) return;
   list[i][key] = (key === 'satz') ? (+v || 0) : String(v);
+};
+
+/** v5.63: Position manuell hinzufügen — Editor-Recover, wenn KI nichts geliefert hat
+ *  oder eine Position fehlt. Fügt eine leere Zeile am Ende ein und re-rendert. */
+window._angAddPosition = function() {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const E = m._state;
+  const nextNr = (E.positionen||[]).reduce((mx, p) => Math.max(mx, +p.nr||0), 0) + 1;
+  E.positionen.push({
+    nr:     nextNr,
+    titel:  '',
+    leistungsbeschreibung: [],
+    menge:  1,
+    ep_kone: 0,
+    vp:     0,
+  });
+  _angEditorRender();
+};
+
+/** v5.63: Vom Editor zurück zum Prompt-Wizard — nur bei NEU-Anlage erlaubt.
+ *  User kann den Prompt anpassen und neu generieren ohne von Vorne. */
+window._angBackToPrompt = function() {
+  if (!confirm('Zurück zum Prompt-Wizard?\n\nAlles was du im Editor bereits geändert hast geht verloren — der Prompt selbst bleibt erhalten und du kannst ihn anpassen + neu generieren.')) return;
+  document.getElementById('ang-editor')?.remove();
+  if (typeof openAngebotWizard === 'function') openAngebotWizard();
+  else toast('Wizard nicht erreichbar — bitte Angebot abbrechen und neu starten','warn');
 };
 
 window._angAddStundensatz = function() {
