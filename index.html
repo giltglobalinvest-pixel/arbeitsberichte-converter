@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.94';
+const APP_VERSION = 'v5.95';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22703,8 +22703,9 @@ function _angWizardLoadStarterClick() {
   toast('✨ Standard-Vorlage geladen','ok');
 }
 
-/** v5.91: User-Standard für den aktuellen Typ speichern — überschreibt den eingebauten Starter
- *  beim nächsten Wizard-Öffnen. */
+/** v5.91/v5.95: User-Standard für den aktuellen Typ speichern — überschreibt den eingebauten Starter
+ *  beim nächsten Wizard-Öffnen. v5.95: Bei voller localStorage-Quota automatisch ERP-Caches leeren
+ *  und nochmal versuchen — der User-Standard ist langlebig, der Cache ist kurzlebig. */
 function _angWizardSaveAsTypStandard() {
   const ta = document.getElementById('ang-w-promptonly');
   const typSel = document.getElementById('ang-w-typ');
@@ -22714,7 +22715,31 @@ function _angWizardSaveAsTypStandard() {
   const typLabel = (ANGEBOT_TYP_OPTIONS.find(o => o.value === typ)?.label || typ);
   if (text.length < 50) return toast('Prompt zu kurz zum Speichern (mind. 50 Zeichen).','err');
   if (!confirm('Aktuellen Prompt als Standard-Vorlage für „'+typLabel+'" speichern?\n\nBeim nächsten Öffnen wird er statt der eingebauten Vorlage geladen. Mit „🗑 Auf eingebaute Vorlage zurücksetzen" kannst du das jederzeit rückgängig machen.')) return;
-  try { localStorage.setItem('ang_starter_'+typ, text); toast('✅ Standard-Vorlage für „'+typLabel+'" gespeichert.','ok'); } catch(e) { toast('❌ Speichern fehlgeschlagen: '+e.message,'err'); }
+  const key = 'ang_starter_'+typ;
+  try {
+    localStorage.setItem(key, text);
+    toast('✅ Standard-Vorlage für „'+typLabel+'" gespeichert.','ok');
+    return;
+  } catch(e) {
+    // Quota voll → ERP-Caches sind Wegwerfdaten, opfern wir sie
+    if (e && (e.name === 'QuotaExceededError' || /quota/i.test(e.message||''))) {
+      console.warn('[Angebot-Starter] localStorage voll — leere ERP-Caches und versuche erneut');
+      let freed = 0;
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith(ERP_CACHE_PREFIX)) { try { localStorage.removeItem(k); freed++; } catch(_){} }
+      }
+      try {
+        localStorage.setItem(key, text);
+        toast('✅ Standard-Vorlage gespeichert. ('+freed+' ERP-Cache-Einträge geleert um Platz zu schaffen — werden beim nächsten View-Aufruf neu geladen.)','ok');
+        return;
+      } catch(e2) {
+        toast('❌ Speichern fehlgeschlagen — localStorage voll. Browser-Daten löschen oder anderen Browser nutzen.','err');
+        return;
+      }
+    }
+    toast('❌ Speichern fehlgeschlagen: '+(e.message||e),'err');
+  }
 }
 
 /** v5.91: User-Standard löschen → eingebauter Starter wieder aktiv. */
