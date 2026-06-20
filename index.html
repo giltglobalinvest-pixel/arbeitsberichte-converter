@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.90';
+const APP_VERSION = 'v5.91';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22508,7 +22508,9 @@ async function openAngebotWizard() {
           '<div style="font-size:11px;color:var(--txt3);margin-top:6px">Beschreibe was angeboten werden soll. Die KI erstellt daraus eine Position pro Leistung + Anschreiben. Preise kannst du angeben (Pauschal oder pro Position) oder weglassen (KI schätzt grob, du korrigierst im Editor).</div>'+
           '<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">'+
             '<button type="button" class="btn" onclick="_angWizardLoadStarterClick()" style="font-size:11px;padding:6px 12px;background:#EFF6FF;border-color:#93C5FD;color:#1E3A8A" title="Standard-Vorlage für den aktuellen Angebotstyp laden (überschreibt nach Rückfrage)">↻ Standard-Vorlage laden</button>'+
-            '<button type="button" class="btn" onclick="_angWizardSaveAsVorlage()" style="font-size:11px;padding:6px 12px">💾 Diesen Prompt als Vorlage speichern</button>'+
+            '<button type="button" class="btn" onclick="_angWizardSaveAsTypStandard()" style="font-size:11px;padding:6px 12px;background:#F0FDF4;border-color:#86EFAC;color:#065F46" title="Diesen Prompt als persönliche Standard-Vorlage für den aktuellen Typ speichern — wird beim nächsten Öffnen automatisch geladen">⭐ Als Standard für diesen Typ speichern</button>'+
+            '<button type="button" class="btn" onclick="_angWizardResetTypStandard()" style="font-size:11px;padding:6px 12px" title="Eigene Standard-Vorlage löschen, eingebaute Aszendio-Vorlage wieder aktivieren">🗑 Auf eingebaute Vorlage zurücksetzen</button>'+
+            '<button type="button" class="btn" onclick="_angWizardSaveAsVorlage()" style="font-size:11px;padding:6px 12px">💾 Als benannte Vorlage speichern</button>'+
           '</div>'+
         '</div>'+
       '</div>'+
@@ -22623,11 +22625,31 @@ async function _angWizardGo() {
 }
 
 // ─── v5.14: Wizard-Mode-Toggle (PDF vs Nur Prompt) ─────────────────────
-/** v5.90: Erkennt, ob der Textarea-Inhalt unverändert einem unserer Starter-Prompts entspricht. */
+/** v5.90/v5.91: Effektiver Starter für einen Typ — User-Override aus localStorage,
+ *  Fallback auf eingebaute Konstante. */
+function _angGetEffectiveStarter(typ) {
+  try {
+    const userStarter = localStorage.getItem('ang_starter_'+typ);
+    if (userStarter && userStarter.trim()) return userStarter;
+  } catch(_){}
+  return ANG_STARTER_PROMPTS[typ] || '';
+}
+
+/** v5.90: Erkennt, ob der Textarea-Inhalt unverändert einem unserer Starter-Prompts entspricht.
+ *  Berücksichtigt sowohl eingebaute als auch User-Override-Starter. */
 function _angWizardIsStarterPrompt(text) {
   const t = String(text||'').trim();
   if (!t) return false;
-  return Object.values(ANG_STARTER_PROMPTS).some(s => s.trim() === t);
+  // Eingebaute Starter
+  if (Object.values(ANG_STARTER_PROMPTS).some(s => s.trim() === t)) return true;
+  // User-Overrides
+  for (const k of Object.keys(ANGEBOT_TYP_OPTIONS.reduce((a,o)=>{a[o.value]=1;return a;},{}))) {
+    try {
+      const s = localStorage.getItem('ang_starter_'+k);
+      if (s && s.trim() === t) return true;
+    } catch(_){}
+  }
+  return false;
 }
 
 /** v5.90: Lädt den Starter-Prompt für den aktuell gewählten Typ in die Textarea.
@@ -22637,7 +22659,7 @@ function _angWizardLoadStarter(force) {
   const typSel = document.getElementById('ang-w-typ');
   if (!ta || !typSel) return;
   const typ = typSel.value;
-  const starter = ANG_STARTER_PROMPTS[typ];
+  const starter = _angGetEffectiveStarter(typ);
   if (!starter) return;
   const cur = ta.value || '';
   if (!force && cur.trim() && !_angWizardIsStarterPrompt(cur)) return;  // User hat schon eigenes drin
@@ -22653,6 +22675,32 @@ function _angWizardLoadStarterClick() {
   }
   _angWizardLoadStarter(true);
   toast('✨ Standard-Vorlage geladen','ok');
+}
+
+/** v5.91: User-Standard für den aktuellen Typ speichern — überschreibt den eingebauten Starter
+ *  beim nächsten Wizard-Öffnen. */
+function _angWizardSaveAsTypStandard() {
+  const ta = document.getElementById('ang-w-promptonly');
+  const typSel = document.getElementById('ang-w-typ');
+  if (!ta || !typSel) return;
+  const typ = typSel.value;
+  const text = (ta.value || '').trim();
+  const typLabel = (ANGEBOT_TYP_OPTIONS.find(o => o.value === typ)?.label || typ);
+  if (text.length < 50) return toast('Prompt zu kurz zum Speichern (mind. 50 Zeichen).','err');
+  if (!confirm('Aktuellen Prompt als Standard-Vorlage für „'+typLabel+'" speichern?\n\nBeim nächsten Öffnen wird er statt der eingebauten Vorlage geladen. Mit „🗑 Auf eingebaute Vorlage zurücksetzen" kannst du das jederzeit rückgängig machen.')) return;
+  try { localStorage.setItem('ang_starter_'+typ, text); toast('✅ Standard-Vorlage für „'+typLabel+'" gespeichert.','ok'); } catch(e) { toast('❌ Speichern fehlgeschlagen: '+e.message,'err'); }
+}
+
+/** v5.91: User-Standard löschen → eingebauter Starter wieder aktiv. */
+function _angWizardResetTypStandard() {
+  const typSel = document.getElementById('ang-w-typ');
+  if (!typSel) return;
+  const typ = typSel.value;
+  const typLabel = (ANGEBOT_TYP_OPTIONS.find(o => o.value === typ)?.label || typ);
+  const has = !!(localStorage.getItem('ang_starter_'+typ));
+  if (!has) return toast('Für „'+typLabel+'" ist keine eigene Standard-Vorlage gespeichert.','info');
+  if (!confirm('Eigene Standard-Vorlage für „'+typLabel+'" löschen?\n\nDanach wird wieder die eingebaute Vorlage beim Öffnen geladen.')) return;
+  try { localStorage.removeItem('ang_starter_'+typ); toast('🗑 Eigene Vorlage gelöscht — eingebaute Vorlage ist wieder aktiv.','ok'); _angWizardLoadStarter(true); } catch(e) { toast('❌ '+e.message,'err'); }
 }
 
 /** v5.90: onchange am Typ-Select — im Prompt-Mode den Starter mit-tauschen,
