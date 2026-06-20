@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.92';
+const APP_VERSION = 'v5.93';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21950,6 +21950,10 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'anschreiben',             type:'multilineText'  },
   // v5.50: Abrechnungs-Modus — 'pauschal' (Default) oder 'aufwand'
   { name:'abrechnung_modus',        type:'singleLineText' },
+  // v5.93: Preisdarstellung im Pauschal-Modus — 'einzel' (Default, jede Position mit Preis)
+  //        oder 'gesamt' (Positionen ohne Einzelpreise, ein Pauschal-Gesamtpreis am Ende)
+  { name:'preisanzeige_modus',      type:'singleLineText' },
+  { name:'pauschalpreis_netto',     type:'number',       options:{ precision:2 } },
   { name:'positionen_json',         type:'multilineText'  },  // [{nr, titel, leistung[], ep_kone, vp, menge}]
   { name:'stundensaetze_json',      type:'multilineText'  },  // [{nr, name, satz, einheit, hinweis}]
   { name:'ust_prozent',             type:'number',       options:{ precision:0 } },
@@ -23480,6 +23484,9 @@ async function openAngebotEditor(ctx) {
         kone_angebot_num:   f.kone_angebot_num   || '',
         kone_angebot_datum: f.kone_angebot_datum || '',
         abrechnung:         f.abrechnung_modus || 'pauschal',
+        // v5.93: Pauschalpreis-Anzeige übernehmen
+        preisanzeige_modus: f.preisanzeige_modus === 'gesamt' ? 'gesamt' : 'einzel',
+        pauschalpreis_netto: +f.pauschalpreis_netto || 0,
         stundensaetze:      stdSaetze,
         positionen:         pos.map(p => ({
           nr: p.nr, titel: p.titel, leistungsbeschreibung: p.leistungsbeschreibung,
@@ -23529,6 +23536,9 @@ async function openAngebotEditor(ctx) {
     bearbeiter: ctx._bearbeiter || APP_KEYS.user?.name || '',
     // v5.50: Abrechnungs-Modus + Stundensätze
     abrechnung: ctx.extracted?.abrechnung || 'pauschal',
+    // v5.93: Preisdarstellung im Pauschal-Modus: 'einzel' (alle Positionspreise) oder 'gesamt' (nur Pauschalpreis am Ende)
+    preisanzeige_modus: ctx.extracted?.preisanzeige_modus === 'gesamt' ? 'gesamt' : 'einzel',
+    pauschalpreis_netto: +ctx.extracted?.pauschalpreis_netto || 0,
     stundensaetze: Array.isArray(ctx.extracted?.stundensaetze) ? ctx.extracted.stundensaetze.map(s => ({
       nr:      +s.nr || 0,
       name:    String(s.name||''),
@@ -23841,6 +23851,8 @@ function _angEditorRender() {
     '</div>'+
     // v5.50: Abrechnungs-Modus Toggle
     _angRenderAbrechnungToggle(E)+
+    // v5.93: Preisdarstellungs-Toggle nur im Pauschal-Modus
+    (E.abrechnung === 'aufwand' ? '' : _angRenderPreisanzeigeToggle(E))+
     // Modus-abhängiger Block: Pauschal → Positionen + Summary | Aufwand → Stundensätze
     (E.abrechnung === 'aufwand' ? _angRenderStundensaetzeBlock(E) :
       // Positionen
@@ -24469,6 +24481,23 @@ function _angRenderSummaryBoxHtml(E) {
     sumVp   += (+p.vp||0)      * (+p.menge||1);
   }
   const ust = +E.ust_prozent || 19;
+  const hiddenHint = (hiddenCount>0 ? '<div style="width:100%;font-size:11px;color:#6B7280;margin-top:4px">🚫 '+hiddenCount+' Position'+(hiddenCount===1?'':'en')+' aus dem Angebot ausgeblendet — nicht in Summen enthalten</div>' : '');
+  // v5.93: Bei Pauschal-Anzeige → der Pauschalpreis ist die maßgebliche VP-Zahl
+  if (E.preisanzeige_modus === 'gesamt') {
+    const pauschal = +E.pauschalpreis_netto || 0;
+    const brutto = pauschal * (1 + ust/100);
+    const margeAbs = pauschal - sumKone;
+    const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
+    return '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#7C2D12">'+
+      '<div><span style="color:var(--txt3);font-size:11px">Summe EK (intern)</span><div style="font-weight:600">'+fmt(sumKone)+' € netto</div></div>'+
+      '<div><span style="color:var(--txt3);font-size:11px">Pos.-Summe (intern)</span><div style="font-weight:600;color:#9A3412">'+fmt(sumVp)+' € netto</div></div>'+
+      '<div style="background:#FFFBEB;padding:6px 10px;border-radius:6px;border:1px solid #FCD34D"><span style="color:#92400E;font-size:11px;font-weight:700">💼 PAUSCHALPREIS</span><div style="font-weight:800;font-size:16px;color:#7C2D12">'+fmt(pauschal)+' € netto</div></div>'+
+      '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
+      '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(pauschal*ust/100)+' €</div></div>'+
+      '<div style="background:#FFFBEB;padding:6px 10px;border-radius:6px;border:1px solid #FCD34D"><span style="color:#92400E;font-size:11px;font-weight:700">PAUSCHAL BRUTTO</span><div style="font-weight:800;font-size:16px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
+      hiddenHint+
+    '</div>';
+  }
   const brutto = sumVp * (1 + ust/100);
   const margeAbs = sumVp - sumKone;
   const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
@@ -24478,7 +24507,7 @@ function _angRenderSummaryBoxHtml(E) {
     '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
     '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(sumVp*ust/100)+' €</div></div>'+
     '<div><span style="color:var(--txt3);font-size:11px">Summe VP Brutto</span><div style="font-weight:700;font-size:15px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
-    (hiddenCount>0 ? '<div style="width:100%;font-size:11px;color:#6B7280;margin-top:4px">🚫 '+hiddenCount+' Position'+(hiddenCount===1?'':'en')+' aus dem Angebot ausgeblendet — nicht in Summen enthalten</div>' : '')+
+    hiddenHint+
   '</div>';
 }
 
@@ -24547,6 +24576,63 @@ function _angRenderAbrechnungToggle(E) {
     '</div>'+
   '</div>';
 }
+
+/* v5.93: Preisdarstellungs-Toggle innerhalb des Pauschal-Modus —
+ *  'einzel' = jede Position mit eigenem Preis + Summe
+ *  'gesamt' = Positionen ohne Preise + ein Pauschalpreis am Ende */
+function _angRenderPreisanzeigeToggle(E) {
+  const mode = E.preisanzeige_modus === 'gesamt' ? 'gesamt' : 'einzel';
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const sumVp = (E.positionen||[]).filter(p => !p.hidden).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
+  const pauschalVal = +E.pauschalpreis_netto || 0;
+  return '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
+      '<div style="font-size:11px;color:#78350F;font-weight:700;text-transform:uppercase;letter-spacing:.5px">Preisdarstellung im PDF</div>'+
+      '<div style="font-size:11px;color:#92400E">'+(mode==='gesamt' ? 'Positionen ohne Einzelpreise, ein Pauschal-Gesamtpreis am Ende' : 'Jede Position mit eigenem Preis + Summe am Ende')+'</div>'+
+    '</div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+      '<button type="button" onclick="_angSetPreisanzeige(\'einzel\')" style="flex:1;min-width:160px;padding:9px 14px;border:2px solid '+(mode==='einzel'?'#D97706':'var(--bdr)')+';border-radius:8px;background:'+(mode==='einzel'?'#D97706':'#fff')+';color:'+(mode==='einzel'?'#fff':'var(--txt2)')+';font-weight:'+(mode==='einzel'?'700':'500')+';font-size:13px;cursor:pointer;text-align:left">📋 Einzelpreise pro Position</button>'+
+      '<button type="button" onclick="_angSetPreisanzeige(\'gesamt\')" style="flex:1;min-width:160px;padding:9px 14px;border:2px solid '+(mode==='gesamt'?'#D97706':'var(--bdr)')+';border-radius:8px;background:'+(mode==='gesamt'?'#D97706':'#fff')+';color:'+(mode==='gesamt'?'#fff':'var(--txt2)')+';font-weight:'+(mode==='gesamt'?'700':'500')+';font-size:13px;cursor:pointer;text-align:left">💼 Nur Pauschalpreis</button>'+
+    '</div>'+
+    (mode === 'gesamt'
+      ? '<div style="margin-top:12px;padding-top:12px;border-top:1px solid #FCD34D;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'+
+          '<label style="font-size:12px;color:#78350F;font-weight:700;flex:1;min-width:200px">💼 Pauschal-Gesamtpreis netto (€) *'+
+            '<div style="font-size:10px;font-weight:500;color:#92400E;margin-top:2px">Vorschlag aus Positions-Summe: <strong>'+fmt(sumVp)+' EUR</strong> — gerne überschreiben (z.B. auf runden Verhandlungspreis)</div>'+
+          '</label>'+
+          '<input id="ang-fld-pauschalpreis" type="number" step="0.01" min="0" value="'+(pauschalVal||'')+'" placeholder="'+fmt(sumVp)+'" oninput="_angSetPauschalpreis(this.value)" style="width:160px;padding:8px 12px;border:2px solid #D97706;border-radius:6px;font-size:14px;font-weight:700;color:#7C2D12;text-align:right;background:#FFFBEB">'+
+          (sumVp > 0 ? '<button type="button" onclick="_angPauschalFromSum()" title="Pauschalpreis = exakte Summe der Einzelpositionen" style="background:#FEF3C7;border:1px solid #FCD34D;color:#78350F;font-size:11px;padding:6px 10px;border-radius:6px;cursor:pointer">↺ aus Summe übernehmen</button>' : '')+
+        '</div>'
+      : ''
+    )+
+  '</div>';
+}
+
+window._angSetPreisanzeige = function(mode) {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const E = m._state;
+  if (E.preisanzeige_modus === mode) return;
+  // Bei Wechsel auf 'gesamt' und Pauschalpreis noch leer → Auto-Vorschlag aus Summe
+  if (mode === 'gesamt' && (!+E.pauschalpreis_netto)) {
+    E.pauschalpreis_netto = (E.positionen||[]).filter(p => !p.hidden).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
+  }
+  E.preisanzeige_modus = mode;
+  _angEditorRender();
+};
+
+window._angSetPauschalpreis = function(val) {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  m._state.pauschalpreis_netto = val === '' ? 0 : (+val || 0);
+  // Summary live aktualisieren ohne kompletten Re-Render (Cursor bleibt im Input)
+  const sumBox = document.getElementById('ang-summary-box');
+  if (sumBox) sumBox.innerHTML = _angRenderSummaryBoxHtml(m._state);
+};
+
+window._angPauschalFromSum = function() {
+  const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
+  const E = m._state;
+  E.pauschalpreis_netto = (E.positionen||[]).filter(p => !p.hidden).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
+  _angEditorRender();
+};
 
 window._angSetAbrechnung = function(mode) {
   const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
@@ -24750,6 +24836,9 @@ async function _angEditorSave() {
       anschreiben: E.anschreiben || '',
       // v5.50: Abrechnungs-Modus + Stundensätze
       abrechnung_modus: E.abrechnung || 'pauschal',
+      // v5.93: Preisdarstellung im Pauschal-Modus persistieren
+      preisanzeige_modus: (E.abrechnung === 'pauschal' && E.preisanzeige_modus === 'gesamt') ? 'gesamt' : 'einzel',
+      pauschalpreis_netto: (E.abrechnung === 'pauschal' && E.preisanzeige_modus === 'gesamt') ? (+E.pauschalpreis_netto || 0) : 0,
       stundensaetze_json: isAufwand ? JSON.stringify(E.stundensaetze||[]) : '',
       positionen_json: isAufwand ? '[]' : JSON.stringify(E.positionen),
       ust_prozent: ust,
@@ -25031,22 +25120,30 @@ async function _buildAngebotPdf(rec) {
     hintLines.forEach((l, i) => doc.text(l, ml+4, y+11+i*4));
     y += 24;
   } else {
-  // POSITIONS-TABELLE — subtiler Header mit dünner Accent-Linie unten statt Vollfarbe
+  // v5.93: Preisanzeige-Modus — 'gesamt' (Positionen ohne Einzelpreise + Pauschalpreis am Ende)
+  //        oder 'einzel' (Standard: Einzelpreise pro Position + Summen-Block)
+  const isGesamt = rec.preisanzeige_modus === 'gesamt';
+  let positionen = [];
+  try { positionen = JSON.parse(rec.positionen_json||'[]'); } catch(_){}
+  positionen = positionen.filter(p => !p.hidden).map((p, i) => ({ ...p, nr: i+1 }));
+
+  // POSITIONS-TABELLE
   if (y > 230) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
   doc.setFillColor(247,249,252); doc.rect(ml, y, cw, 7.5, 'F');
   doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
-  const colNr = 8, colTitel = cw - 8 - 22 - 28 - 28, colMenge = 22, colEP = 28, colGes = 28;
+  const colNr = 8;
+  // Bei 'gesamt': nur NR + TECHNISCHE SPEZIFIKATION (volle Breite)
+  const colTitel = isGesamt ? (cw - colNr) : (cw - 8 - 22 - 28 - 28);
+  const colMenge = 22, colEP = 28;
   doc.text('NR.', ml+2, y+5);
   doc.text('TECHNISCHE SPEZIFIKATION', ml+colNr+2, y+5);
-  doc.text('MENGE', ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
-  doc.text('EINZELPREIS', ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
-  doc.text('GESAMT', mr-2, y+5, { align:'right' });
+  if (!isGesamt) {
+    doc.text('MENGE', ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
+    doc.text('EINZELPREIS', ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
+    doc.text('GESAMT', mr-2, y+5, { align:'right' });
+  }
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.line(ml, y+7.5, mr, y+7.5);
   y += 8;
-  let positionen = [];
-  try { positionen = JSON.parse(rec.positionen_json||'[]'); } catch(_){}
-  // Ausgeblendete Positionen (hidden) raus + Nummerierung neu (1, 2, 3 ohne Lücken)
-  positionen = positionen.filter(p => !p.hidden).map((p, i) => ({ ...p, nr: i+1 }));
   let sumNetto = 0;
   positionen.forEach((p, idx) => {
     const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
@@ -25065,46 +25162,73 @@ async function _buildAngebotPdf(rec) {
     titelLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+li*5));
     doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
     leistungLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
-    doc.setFontSize(10); doc.setTextColor(...GREY);
-    doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
-    doc.text(fmtEUR(p.vp), ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
-    const ges = (+p.vp||0) * (+p.menge||1);
-    sumNetto += ges;
-    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
-    doc.text(fmtEUR(ges)+' EUR', mr-2, y+5, { align:'right' });
-    doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+    if (!isGesamt) {
+      doc.setFontSize(10); doc.setTextColor(...GREY);
+      doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
+      doc.text(fmtEUR(p.vp), ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
+      const ges = (+p.vp||0) * (+p.menge||1);
+      sumNetto += ges;
+      doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+      doc.text(fmtEUR(ges)+' EUR', mr-2, y+5, { align:'right' });
+      doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+    }
     y += rowH;
     doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
   });
-  // SUMMEN — rechtsbündig, dezente Linien-Hierarchie
-  // v5.62: Summen-Block braucht ~30mm Höhe (Netto + USt + Brutto-Linie + Brutto-Text).
-  // Wenn nicht mehr genug Platz vor der Footer-Zone (y=275), neue Seite — sonst
-  // überlappt der Gesamtbruttopreis mit dem Footer.
+  // SUMMEN / PAUSCHALPREIS
   if (y + 32 > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
   y += 4;
   const ust = +rec.ust_prozent || 19;
-  const ustBetrag = sumNetto * ust/100;
-  const brutto = sumNetto + ustBetrag;
-  const sumX = ml + cw - 80;  // Summen-Block rechts, ~80mm Breite
-  // Netto
-  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-  doc.text('Gesamtnettopreis', sumX, y+4);
-  doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
-  doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+4, { align:'right' });
-  y += 5.5;
-  // USt
-  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-  doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
-  doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
-  y += 6;
-  // Trennlinie + Brutto (prominent ohne Vollfarb-Block)
-  doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
-  y += 5;
-  doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
-  doc.text('Gesamtbruttopreis', sumX, y);
-  doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
-  doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
-  y += 10;
+  if (isGesamt) {
+    // v5.93: Pauschalpreis-Block am Ende — eigener prominenter Block, dezent eingerahmt
+    const pauschal = +rec.pauschalpreis_netto || 0;
+    const ustBetrag = pauschal * ust/100;
+    const brutto = pauschal + ustBetrag;
+    const sumX = ml + cw - 80;
+    doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+    doc.text('Alle oben genannten Leistungen sind im folgenden Pauschalpreis enthalten:', ml, y+4);
+    y += 8;
+    // Box um den Pauschalpreis-Block
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6);
+    doc.line(sumX, y, mr, y);
+    y += 4;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    doc.text('Pauschalpreis netto', sumX, y+4);
+    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+    doc.text(fmtEUR(pauschal)+' EUR', mr-2, y+4, { align:'right' });
+    y += 5.5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
+    doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
+    y += 6;
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
+    y += 5;
+    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...NAVY);
+    doc.text('Pauschalpreis brutto', sumX, y);
+    doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
+    y += 10;
+  } else {
+    const ustBetrag = sumNetto * ust/100;
+    const brutto = sumNetto + ustBetrag;
+    const sumX = ml + cw - 80;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    doc.text('Gesamtnettopreis', sumX, y+4);
+    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+    doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+4, { align:'right' });
+    y += 5.5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
+    doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
+    y += 6;
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
+    y += 5;
+    doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
+    doc.text('Gesamtbruttopreis', sumX, y);
+    doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
+    y += 10;
+  }
   } // ende Pauschal-Block (v5.50)
   // v5.19: EINE einheitliche Konditionen-Sektion (boxed) — keine doppelte
   // inline-Render mehr. Per-Record kond_* werden in _appendAngebotsKonditionen
