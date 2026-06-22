@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.99';
+const APP_VERSION = 'v6.00';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20007,6 +20007,14 @@ function openDaVorlageEdit(recId) {
             '<textarea id="dav-desc" rows="2" style="width:100%;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;margin-top:3px">'+escapeHtml(f.description||'')+'</textarea></div>'+
         '</div>'+
         '<div style="font-size:11px;font-weight:600;color:var(--txt2);text-transform:uppercase;margin-bottom:6px">Checkpunkte</div>'+
+        // v6.00: KI-Bar — generiert Konsequenzen für ALLE Checkpunkte der Vorlage (vorlagen-kontextfrei, ohne konkrete Anlage)
+        '<div id="dav-ki-bar" style="background:#F5F3FF;border:1px solid #C4B5FD;border-radius:10px;padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+          '<div style="font-size:12px;color:#5B21B6;flex:1;min-width:200px">'+
+            '<strong>🤖 KI-Beschreibungen für die Vorlage</strong> — generiert pro Checkpunkt fachliche Konsequenzen, allgemein formuliert für eine typische Anlage. Werden mit der Vorlage gespeichert und bei jeder neuen DA übernommen.'+
+          '</div>'+
+          '<button class="btn" id="dav-ki-gen" onclick="_davGenerateKiBeschreibungen()" style="background:#7C3AED;border-color:#7C3AED;color:#fff;font-weight:600;font-size:12px">🤖 KI generieren</button>'+
+          '<button class="btn" id="dav-ki-correct" onclick="_davCorrectKiBeschreibungen()" style="background:#FEF3C7;border-color:#FCD34D;color:#92400E;font-weight:600;font-size:12px">✏ Korrigieren</button>'+
+        '</div>'+
         '<div id="dav-cps-container" style="display:grid;gap:8px"></div>'+
         '<button class="btn" onclick="_davAddCp()" style="margin-top:10px;width:100%">+ Checkpunkt hinzufügen</button>'+
       '</div>'+
@@ -20068,6 +20076,99 @@ function _davToggleCp(i) {
   if (!m._cpsOpen) m._cpsOpen = {};
   m._cpsOpen[i] = !m._cpsOpen[i];
   _davRenderCps();
+}
+
+/* v6.00: KI-Beschreibungen direkt im Vorlagen-Editor generieren / korrigieren.
+   Nutzt _daKiCallGenerate mit vorlagenKontext=true — KI formuliert allgemein
+   für eine typische Anlage, nicht anlagespezifisch. */
+async function _davGenerateKiBeschreibungen() {
+  const m = document.getElementById('dav-edit');
+  if (!m || !m._cps) return;
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+  const validCps = m._cps.filter(cp => (cp.titel||'').trim());
+  if (!validCps.length) return toast('Keine Checkpunkte mit Titel — bitte zuerst Titel eintragen.','err');
+  const hasExisting = m._cps.some(cp => (cp.ki_beschreibung||'').trim());
+  const msg = hasExisting
+    ? 'Alle vorhandenen KI-Beschreibungen NEU generieren?\n\nBestehende Texte werden überschrieben.'
+    : 'Für '+validCps.length+' Checkpunkt(e) der Vorlage fachliche Beschreibungen via KI generieren?\n\n(Allgemein formuliert für typische Anlage, ohne anlagespezifische Details.)';
+  if (!confirm(msg)) return;
+  const btn = document.getElementById('dav-ki-gen');
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ KI generiert…'; }
+  try {
+    const result = await _daKiCallGenerate(m._cps, null, { vorlagenKontext:true });
+    if (!Array.isArray(result.beschreibungen) || !result.beschreibungen.length) throw new Error('KI lieferte keine Beschreibungen');
+    let n = 0;
+    for (let i = 0; i < m._cps.length; i++) {
+      const b = result.beschreibungen[i];
+      if (b && typeof b.text === 'string' && b.text.trim()) {
+        m._cps[i].ki_beschreibung = b.text.trim();
+        n++;
+      }
+    }
+    _davRenderCps();
+    toast('✅ '+n+' Beschreibung(en) generiert. Bitte „💾 Speichern" um in die Vorlage zu übernehmen.','ok');
+  } catch(e) {
+    console.error('[DAV-KI]', e);
+    toast('❌ '+(e.message||'KI-Fehler').slice(0,250),'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origLabel || '🤖 KI generieren'; }
+  }
+}
+
+async function _davCorrectKiBeschreibungen() {
+  const m = document.getElementById('dav-edit');
+  if (!m || !m._cps) return;
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+  const haveAny = m._cps.some(cp => (cp.ki_beschreibung||'').trim());
+  if (!haveAny) return toast('Keine KI-Beschreibungen vorhanden — bitte erst „🤖 KI generieren".','err');
+  document.getElementById('dav-ki-correct-modal')?.remove();
+  const cm = document.createElement('div');
+  cm.id = 'dav-ki-correct-modal';
+  cm.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
+  cm.innerHTML = '<div style="background:var(--surf);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 18px;background:#FCD34D;color:#78350F;font-weight:700;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>✏ Vorlagen-Beschreibungen korrigieren</span>'+
+      '<button onclick="document.getElementById(\'dav-ki-correct-modal\').remove()" style="background:rgba(0,0,0,.15);border:none;color:#78350F;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:16px 20px;flex:1;overflow-y:auto">'+
+      '<p style="font-size:12px;color:var(--txt2);margin:0 0 10px;line-height:1.5">KI politiert ALLE vorhandenen Beschreibungen anhand deiner Anweisungen.</p>'+
+      '<label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anweisungen *</label>'+
+      '<textarea id="dav-ki-correct-instr" rows="6" placeholder="z.B.&#10;- Kürzer fassen (max 2 Sätze pro Checkpunkt)&#10;- Mehr Fokus auf Sicherheitsrisiken&#10;- Allgemein bleiben — keine anlagespezifischen Werte" style="width:100%;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5"></textarea>'+
+    '</div>'+
+    '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'dav-ki-correct-modal\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" id="dav-ki-correct-go" onclick="_davKiCorrectApply()" style="background:#7C3AED;border-color:#7C3AED">🤖 Politur anwenden</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(cm);
+  setTimeout(() => document.getElementById('dav-ki-correct-instr')?.focus(), 80);
+}
+
+async function _davKiCorrectApply() {
+  const m = document.getElementById('dav-edit');
+  if (!m || !m._cps) return;
+  const instr = (document.getElementById('dav-ki-correct-instr')?.value || '').trim();
+  if (instr.length < 10) return toast('Bitte konkrete Anweisungen schreiben.','err');
+  const btn = document.getElementById('dav-ki-correct-go');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ KI politiert…'; }
+  try {
+    const result = await _daKiCallGenerate(m._cps, instr, { vorlagenKontext:true });
+    if (!Array.isArray(result.beschreibungen)) throw new Error('KI lieferte keine Beschreibungen');
+    for (let i = 0; i < m._cps.length; i++) {
+      const b = result.beschreibungen[i];
+      if (b && typeof b.text === 'string' && b.text.trim()) {
+        m._cps[i].ki_beschreibung = b.text.trim();
+      }
+    }
+    document.getElementById('dav-ki-correct-modal')?.remove();
+    _davRenderCps();
+    toast('✅ Beschreibungen politiert. Bitte „💾 Speichern".','ok');
+  } catch(e) {
+    console.error('[DAV-KI-Correct]', e);
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Politur anwenden'; }
+    toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
+  }
 }
 function _davAddCp() {
   const m = document.getElementById('dav-edit');
@@ -21057,19 +21158,25 @@ async function _daSaveAsVorlageSubmit() {
   }
 }
 
-/** v5.97: Ruft Claude mit tool-use, gibt {beschreibungen: [{nr, text}]} zurück.
- *  Wenn correctionInstr gesetzt → KI politiert bestehende Texte, sonst generiert sie neu. */
-async function _daKiCallGenerate(cps, correctionInstr) {
-  const m = document.getElementById('da-detail');
-  const f = m && m._recId ? (((_daCache?.items)||[]).find(r => r.id === m._recId)?.fields || {}) : {};
-  const firmaSlug = f.firma || getCurrentFirmaSlug();
+/** v5.97/v6.00: Ruft Claude mit tool-use, gibt {beschreibungen: [{nr, text}]} zurück.
+ *  Wenn correctionInstr gesetzt → KI politiert bestehende Texte, sonst generiert sie neu.
+ *  v6.00: ctx={anlageInfo, vorlagenKontext} optional — für DA-Vorlagen-Kontext (ohne konkrete Anlage). */
+async function _daKiCallGenerate(cps, correctionInstr, ctx) {
+  ctx = ctx || {};
+  const firmaSlug = ctx.firmaSlug || getCurrentFirmaSlug();
   const companyShort = (firmaSlug === 'aufzug' || firmaSlug === 'aufzugshandwerk') ? 'Aufzugshandwerk' : 'Aszendio';
-  const anlageInfo = [
-    f.fabriknummer ? 'Fabrik-Nr. '+f.fabriknummer : '',
-    f.standort_adresse ? 'Standort: '+f.standort_adresse : '',
-    f.objektTyp ? 'Typ: '+f.objektTyp : '',
-    f.haltestellen ? f.haltestellen+' Haltestellen' : '',
-  ].filter(Boolean).join(' · ');
+  let anlageInfo = ctx.anlageInfo || '';
+  // Fallback: aus aktuell offenem DA-Detail-Modal ableiten (wenn vorhanden)
+  if (!anlageInfo && !ctx.vorlagenKontext) {
+    const m = document.getElementById('da-detail');
+    const f = m && m._recId ? (((_daCache?.items)||[]).find(r => r.id === m._recId)?.fields || {}) : {};
+    anlageInfo = [
+      f.fabriknummer ? 'Fabrik-Nr. '+f.fabriknummer : '',
+      f.standort_adresse ? 'Standort: '+f.standort_adresse : '',
+      f.objektTyp ? 'Typ: '+f.objektTyp : '',
+      f.haltestellen ? f.haltestellen+' Haltestellen' : '',
+    ].filter(Boolean).join(' · ');
+  }
   const cpsForKi = cps.map((cp, i) => ({
     nr: i+1,
     titel: cp.titel || '',
@@ -21099,9 +21206,12 @@ async function _daKiCallGenerate(cps, correctionInstr) {
       },
     },
   };
+  const isVorlage = !!ctx.vorlagenKontext;
   let promptText =
-    'Du bist Aufzugstechnik-Sachverständiger bei '+companyShort+' und schreibst zu einer Datenaufnahme die fachlichen Konsequenzen pro Checkpunkt.\n\n'+
-    'ANLAGE: '+(anlageInfo||'(keine Angabe)')+'\n\n'+
+    'Du bist Aufzugstechnik-Sachverständiger bei '+companyShort+' und schreibst die fachlichen Konsequenzen pro Checkpunkt.\n\n'+
+    (isVorlage
+      ? 'KONTEXT: Diese Beschreibungen werden als WIEDERVERWENDBARE VORLAGE gespeichert — formuliere allgemein für eine typische Aufzugsanlage in einem Wohngebäude, ohne anlagespezifische Details (kein konkretes Baujahr, keine Fabriknummer, keine konkrete Etagenzahl).\n\n'
+      : 'ANLAGE: '+(anlageInfo||'(keine Angabe)')+'\n\n')+
     'AUFGABE: Für JEDEN der unten genannten '+cps.length+' Checkpunkte EINE Beschreibung mit:\n'+
     '• Konsequenz für die Aufzugsanlage (was passiert wenn man nichts tut?)\n'+
     '• Risiko (Sicherheit, Ausfall, Folgeschaden, Personenbefreiung, BetrSichV-Konformität)\n'+
