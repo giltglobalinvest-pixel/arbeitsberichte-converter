@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.05';
+const APP_VERSION = 'v6.06';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20306,11 +20306,25 @@ async function freshdeskCreateTicketForDA(daRec, opts) {
   if (!freshdeskIsConfigured(firmaSlug)) {
     return { skipped:true, reason:'Freshdesk für Firma "'+firmaSlug+'" nicht konfiguriert.' };
   }
-  // Strukturierter Titel
+  // v6.06: Standort robust ermitteln — wenn anlage_adresse leer ist (z.B. Legacy-Records),
+  //        live aus ERP-Anlage nachladen. Standort gehört prominent in Subject + Body.
+  let standort = (f.anlage_adresse||'').trim();
+  if (!standort && f.anlage_id) {
+    try {
+      const all = await erpLoadAnlagen();
+      const a = (all||[]).find(x => String(x.id) === String(f.anlage_id));
+      if (a) standort = _buildAnlageAdresse(a) || '';
+    } catch(e) { console.warn('[Freshdesk-DA-Ticket] Anlage-Lookup für Standort fehlgeschlagen:', e.message); }
+  }
+  // Für den Subject: Standort auf Straße+Hausnummer kürzen (alles vor dem ersten Komma)
+  const standortKurz = standort ? standort.split(',')[0].trim().slice(0,50) : '';
+
+  // Strukturierter Titel — Standort direkt nach DA-Nummer (am wichtigsten für Triage)
   const daNum   = f.da_num ? ('DA-'+f.da_num) : 'DA-?';
   const fab     = (f.anlage_fabriknummer||'').trim();
   const kunde   = (f.kunde_name||'').trim();
   const titleParts = ['Datenaufnahme '+daNum];
+  if (standortKurz) titleParts.push(standortKurz);
   if (fab)   titleParts.push('Fabrik-Nr. '+fab);
   if (kunde) titleParts.push(kunde.slice(0,60));
   const subject = titleParts.join('  ·  ');
@@ -20321,6 +20335,9 @@ async function freshdeskCreateTicketForDA(daRec, opts) {
   // Intro: was zu tun ist + Link
   const introLines = [];
   introLines.push('<p><strong>Neue Datenaufnahme erstellt — bitte Pauschalpreise eintragen und Angebot finalisieren.</strong></p>');
+  if (standort) {
+    introLines.push('<p>📍 <strong>Standort der Anlage:</strong><br>'+escapeHtml(standort).replace(/\n/g,'<br>')+'</p>');
+  }
   introLines.push('<p>🔗 <strong>Direkter Link zur Bearbeitung in der App:</strong><br>'+
     '<a href="'+escapeHtml(appDeepLink)+'">'+escapeHtml(appDeepLink)+'</a></p>');
   if (opts.pdfUrl) {
@@ -20331,8 +20348,8 @@ async function freshdeskCreateTicketForDA(daRec, opts) {
   // Detail-Block
   const fmtList = [];
   if (f.da_num)             fmtList.push('<li><strong>DA-Nummer:</strong> DA-'+f.da_num+'</li>');
+  fmtList.push('<li><strong>Standort:</strong> '+(standort ? escapeHtml(standort) : '<em style="color:#a16207">— kein Standort hinterlegt —</em>')+'</li>');
   if (f.anlage_fabriknummer)fmtList.push('<li><strong>Fabrik-Nr.:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</li>');
-  if (f.anlage_adresse)     fmtList.push('<li><strong>Standort:</strong> '+escapeHtml(f.anlage_adresse)+'</li>');
   if (f.kunde_name)         fmtList.push('<li><strong>Kunde:</strong> '+escapeHtml(f.kunde_name)+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</li>');
   if (f.beschreibung)       fmtList.push('<li><strong>Auftrag/Beschreibung:</strong> '+escapeHtml(f.beschreibung)+'</li>');
   if (f.erstellt_von)       fmtList.push('<li><strong>Erstellt von:</strong> '+escapeHtml(f.erstellt_von)+'</li>');
