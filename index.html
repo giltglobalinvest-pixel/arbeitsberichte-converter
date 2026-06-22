@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.02';
+const APP_VERSION = 'v6.03';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22214,79 +22214,66 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       y += boxH + 8;  // großzügiger Abstand zur 2-Spalten-Sektion
     }
 
-    // Zwei Spalten: Ist (mit Bilder-Galerie) + Massnahme (ohne Bilder)
-    const colW = (cw - 6) / 2;
-    // IST-Spalte
-    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...AMBER);
-    doc.text('IST-ZUSTAND', ml, y+4);
-    let yIst = y + 7;
+    // v6.03: Bilder-Block als eigener Bereich OBERHALB der 2 Spalten (volle Breite)
     const bilder = Array.isArray(cp.bilder_ist) ? cp.bilder_ist.filter(b => typeof b === 'string' && b) : [];
     if (bilder.length > 0) {
-      // Layout: 1 Bild = volle Breite, mehrere = 2 Spalten.
-      // Wichtig: Aspect-Ratio wird beibehalten (kein Stretching mehr).
-      // jsPDF.getImageProperties() liefert native width/height des Bilds.
-      const gridCols = bilder.length === 1 ? 1 : 2;
-      const gap = 2;
-      const cellW = (colW - (gridCols - 1) * gap) / gridCols;
-      // Maximale Höhe pro Bild — damit ein Hochformat-Foto nicht die halbe Seite frisst
-      const maxCellH = bilder.length === 1 ? 90 : 55;
+      doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+      doc.text('BILDER ZUR DATENAUFNAHME', ml, y+4);
+      let yImg = y + 8;
+      // 1 Bild = volle Breite (Cap 90mm), 2-3 = 3 Spalten, mehr = 4 Spalten
+      const gridCols = bilder.length === 1 ? 1 : (bilder.length <= 3 ? bilder.length : 4);
+      const gap = 3;
+      const cellW = (cw - (gridCols - 1) * gap) / gridCols;
+      const maxCellH = bilder.length === 1 ? 90 : 60;
       let col = 0, rowMaxH = 0;
       for (let bi = 0; bi < bilder.length; bi++) {
         const src = bilder[bi];
-        // Aspect aus Bild-Properties
-        let aspect = 0.75;  // Default: 4:3 Querformat
+        let aspect = 0.75;
         try {
           const props = doc.getImageProperties(src);
-          if (props && props.width > 0 && props.height > 0) {
-            aspect = props.height / props.width;
-          }
+          if (props && props.width > 0 && props.height > 0) aspect = props.height / props.width;
         } catch(_){}
-        // In die Zelle einpassen, Aspect bewahren, Höhen-Cap respektieren
         let drawW = cellW;
         let drawH = cellW * aspect;
-        if (drawH > maxCellH) {
-          drawH = maxCellH;
-          drawW = maxCellH / aspect;
-        }
-        // Seitenumbruch wenn nötig
-        if (yIst + drawH > 275) {
-          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30;
+        if (drawH > maxCellH) { drawH = maxCellH; drawW = maxCellH / aspect; }
+        if (yImg + drawH > 275) {
+          doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yImg = 30;
           col = 0; rowMaxH = 0;
         }
         const xCell = ml + col * (cellW + gap);
-        // Horizontal in der Zelle zentrieren (für Hochformat-Bilder)
         const xImg = xCell + (cellW - drawW) / 2;
-        try { doc.addImage(src, 'JPEG', xImg, yIst, drawW, drawH); } catch(_){}
+        try { doc.addImage(src, 'JPEG', xImg, yImg, drawW, drawH); } catch(_){}
         if (drawH > rowMaxH) rowMaxH = drawH;
         col++;
-        if (col >= gridCols) {
-          col = 0;
-          yIst += rowMaxH + gap;
-          rowMaxH = 0;
-        }
+        if (col >= gridCols) { col = 0; yImg += rowMaxH + gap; rowMaxH = 0; }
       }
-      // wenn letzte Zeile angefangen aber nicht voll, trotzdem yIst weiterrücken
-      if (col > 0) yIst += rowMaxH + gap;
-      yIst += 2;
+      if (col > 0) yImg += rowMaxH + gap;
+      y = yImg + 6;  // Abstand zur 2-Spalten-Sektion
     }
-    // v5.97: leere Felder dezent als kursives „nicht erfasst" rendern statt nacktes „-"
+
+    // Zwei Spalten: IST-Zustand (Text only) + Maßnahme (Text only) — gegenübergestellt
+    const colW = (cw - 6) / 2;
+    // v6.03: Labels mit mehr Luft zum Text darunter (yIst/yMaß starten erst nach 11mm statt 7mm)
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...AMBER);
+    doc.text('IST-ZUSTAND', ml, y+4);
+    let yIst = y + 11;
     const istTxt = (cp.ist_zustand||'').trim();
     if (istTxt) {
       doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
       const istLines = doc.splitTextToSize(_sanPdf(istTxt), colW-2);
       istLines.forEach(l => {
         if (yIst > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30; }
-        doc.text(l, ml, yIst); yIst += 4;
+        doc.text(l, ml, yIst); yIst += 4.5;
       });
     } else {
       doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
-      doc.text('— nicht erfasst —', ml, yIst); yIst += 4;
+      doc.text('— nicht erfasst —', ml, yIst); yIst += 4.5;
     }
 
-    // MASSNAHME-Spalte — KEINE Bilder mehr (Wunsch User)
+    // MASSNAHME-Spalte
     doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...GREEN);
     doc.text('ERFORDERLICHE MASSNAHME', ml + colW + 6, y+4);
-    let yMaß = y + 7;
+    let yMaß = y + 11;
     const xMaß = ml + colW + 6;
     const mTxt = (cp.massnahme||'').trim();
     if (mTxt) {
@@ -22294,11 +22281,11 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       const mLines = doc.splitTextToSize(_sanPdf(mTxt), colW-2);
       mLines.forEach(l => {
         if (yMaß > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yMaß = 30; }
-        doc.text(l, xMaß, yMaß); yMaß += 4;
+        doc.text(l, xMaß, yMaß); yMaß += 4.5;
       });
     } else {
       doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
-      doc.text('— nicht erfasst —', xMaß, yMaß); yMaß += 4;
+      doc.text('— nicht erfasst —', xMaß, yMaß); yMaß += 4.5;
     }
 
     // v6.02: großzügiger Abstand zwischen Checkpunkten — Trennlinie zentriert im Whitespace
