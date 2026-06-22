@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.98';
+const APP_VERSION = 'v5.99';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20027,19 +20027,47 @@ function _davRenderCps() {
   const c = document.getElementById('dav-cps-container');
   const cps = m._cps;
   const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
-  c.innerHTML = cps.map((cp, i) =>
-    '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:10px;display:grid;grid-template-columns:24px 1fr 32px;gap:8px;align-items:center">'+
-      '<div style="background:#2152A9;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(i+1)+'</div>'+
-      '<input id="dav-cp-'+i+'" type="text" value="'+esc(cp.titel||'')+'" oninput="_davUpdateCp('+i+',this.value)" placeholder="Titel des Checkpunkts" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
-      '<button onclick="_davRemoveCp('+i+')" title="Entfernen" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:5px;cursor:pointer;font-size:12px">×</button>'+
-    '</div>'
-  ).join('') || '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:12px;background:var(--bg);border-radius:6px;border:1px dashed var(--bdr)">Noch keine Checkpunkte.</div>';
+  // v5.99: collapsible Bereiche pro CP — Titel sichtbar + Details auf Klick (IST / Maßnahme / KI-Beschreibung)
+  c.innerHTML = cps.map((cp, i) => {
+    const hasPrefill = !!((cp.ist_zustand||'').trim() || (cp.massnahme||'').trim() || (cp.ki_beschreibung||'').trim());
+    const open = !!m._cpsOpen?.[i];
+    return '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:6px;overflow:hidden">'+
+      // Header-Zeile: Nummer + Titel + Details-Toggle + Entfernen
+      '<div style="display:grid;grid-template-columns:24px 1fr auto 32px;gap:8px;align-items:center;padding:10px">'+
+        '<div style="background:#2152A9;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(i+1)+'</div>'+
+        '<input id="dav-cp-'+i+'" type="text" value="'+esc(cp.titel||'')+'" oninput="_davUpdateCp('+i+',\'titel\',this.value)" placeholder="Titel des Checkpunkts" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+        '<button onclick="_davToggleCp('+i+')" title="Vorbefüllung bearbeiten" style="background:'+(hasPrefill?'#F5F3FF':'transparent')+';border:1px solid '+(hasPrefill?'#C4B5FD':'var(--bdr)')+';color:'+(hasPrefill?'#5B21B6':'var(--txt2)')+';border-radius:5px;cursor:pointer;font-size:11px;padding:5px 9px">'+(open?'▼':'▶')+(hasPrefill?' ✓ Vorbefüllt':' Vorbefüllung')+'</button>'+
+        '<button onclick="_davRemoveCp('+i+')" title="Entfernen" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:5px;cursor:pointer;font-size:12px">×</button>'+
+      '</div>'+
+      // Collapsible Details
+      (open
+        ? '<div style="background:#fff;padding:10px 14px 12px;border-top:1px solid var(--bdr);display:grid;gap:8px">'+
+            '<div style="font-size:10px;color:var(--txt3);line-height:1.4">💡 Diese Felder werden als <strong>Vorbefüllung</strong> übernommen, wenn jemand aus dieser Vorlage eine neue Datenaufnahme erstellt. Leer lassen wenn keine Vorbefüllung gewünscht.</div>'+
+            '<div><label style="font-size:10px;font-weight:700;color:#92400E;text-transform:uppercase;display:block;margin-bottom:3px">📍 IST-Zustand</label>'+
+              '<textarea rows="2" oninput="_davUpdateCp('+i+',\'ist_zustand\',this.value)" placeholder="Optionaler Vorbefüll-Text" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;resize:vertical">'+esc(cp.ist_zustand||'')+'</textarea></div>'+
+            '<div><label style="font-size:10px;font-weight:700;color:#065F46;text-transform:uppercase;display:block;margin-bottom:3px">🔧 Erforderliche Maßnahme</label>'+
+              '<textarea rows="2" oninput="_davUpdateCp('+i+',\'massnahme\',this.value)" placeholder="Optionaler Vorbefüll-Text" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;resize:vertical">'+esc(cp.massnahme||'')+'</textarea></div>'+
+            '<div><label style="font-size:10px;font-weight:700;color:#5B21B6;text-transform:uppercase;display:block;margin-bottom:3px">🤖 Konsequenzen / Beschreibung</label>'+
+              '<textarea rows="3" oninput="_davUpdateCp('+i+',\'ki_beschreibung\',this.value)" placeholder="Fachliche Auswirkung auf die Anlage — kann später per KI generiert / korrigiert werden" style="width:100%;padding:6px 10px;border:1px solid #C4B5FD;border-radius:5px;font-size:12px;resize:vertical;background:'+(cp.ki_beschreibung?'#F5F3FF':'#fff')+'">'+esc(cp.ki_beschreibung||'')+'</textarea></div>'+
+          '</div>'
+        : '')+
+    '</div>';
+  }).join('') || '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:12px;background:var(--bg);border-radius:6px;border:1px dashed var(--bdr)">Noch keine Checkpunkte.</div>';
 }
 
-function _davUpdateCp(i, value) {
+function _davUpdateCp(i, field, value) {
   const m = document.getElementById('dav-edit');
   if (!m || !m._cps[i]) return;
-  m._cps[i].titel = value;
+  // v5.99: jedes Feld direkt im CP-Objekt aktualisieren (titel, ist_zustand, massnahme, ki_beschreibung)
+  m._cps[i][field] = value;
+}
+
+function _davToggleCp(i) {
+  const m = document.getElementById('dav-edit');
+  if (!m) return;
+  if (!m._cpsOpen) m._cpsOpen = {};
+  m._cpsOpen[i] = !m._cpsOpen[i];
+  _davRenderCps();
 }
 function _davAddCp() {
   const m = document.getElementById('dav-edit');
@@ -20707,6 +20735,8 @@ async function openDaDetail(recId) {
         '<button class="btn" onclick="_daDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Datenaufnahme löschen">🗑 Löschen</button>'+
         (hasPermission('datenaufnahmen_edit') ? '<button class="btn" id="da-save-btn" onclick="_daSave(\''+recId+'\')">💾 Speichern</button>' : '')+
         (canSeePrices() ? '<button class="btn" style="background:#FB923C;border-color:#FB923C;color:#fff;font-weight:600" onclick="_daBuildAndShowAngebotPdf(\''+recId+'\')" title="Angebot mit Pauschalpreisen erzeugen">💰 Angebot-PDF</button>' : '')+
+        // v5.99: Als Vorlage speichern — übernimmt alle Checkpunkte (inkl. ki_beschreibung) als neue DA-Vorlage
+        (hasPermission('datenaufnahmen_edit') && isAdmin() ? '<button class="btn" onclick="_daSaveAsVorlage(\''+recId+'\')" style="background:#F5F3FF;border-color:#C4B5FD;color:#5B21B6;font-weight:600" title="Aktuelle Checkpunkte (inkl. KI-Beschreibungen) als wiederverwendbare Vorlage speichern">📋 Als Vorlage speichern</button>' : '')+
         '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')" title="Datenaufnahme-PDF ohne Preise">📄 PDF erzeugen</button>'+
         // Abschließen: nur wenn noch NICHT abgeschlossen und User darf editieren
         (hasPermission('datenaufnahmen_edit') && f.status !== 'abgeschlossen'
@@ -20943,6 +20973,86 @@ async function _daKiCorrectApply() {
   } catch(e) {
     console.error('[DA-KI-Correct]', e);
     if (btn) { btn.disabled = false; btn.textContent = '🤖 Politur anwenden'; }
+    toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
+  }
+}
+
+/** v5.99: Aktuelle Datenaufnahme als wiederverwendbare DA-Vorlage speichern —
+ *  übernimmt ALLE Checkpunkt-Felder (titel, ist_zustand, massnahme, ki_beschreibung, pauschalpreis). */
+async function _daSaveAsVorlage(recId) {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps) return toast('Keine Datenaufnahme offen.','err');
+  if (!isAdmin()) return toast('🔒 Nur Admins dürfen Vorlagen anlegen.','err');
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token.','err');
+  const validCps = (m._cps||[]).filter(cp => (cp.titel||'').trim());
+  if (!validCps.length) return toast('Keine Checkpunkte mit Titel — bitte erst Titel eintragen.','err');
+  // Default-Name aus Anlage/Auftrag
+  const rec = (_daCache?.items||[]).find(r => r.id === recId);
+  const f = rec?.fields || {};
+  const defaultName = (f.auftrag_titel || f.standort_adresse || ('DA-'+(f.da_num||recId.slice(-4)))).slice(0, 60) + ' (Vorlage)';
+  // Sub-Modal mit Name + Description
+  document.getElementById('da-save-vorlage-modal')?.remove();
+  const sm = document.createElement('div');
+  sm.id = 'da-save-vorlage-modal';
+  sm.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:11200;display:flex;align-items:center;justify-content:center;padding:16px';
+  sm.innerHTML = '<div style="background:var(--surf);max-width:560px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 18px;background:#7C3AED;color:#fff;font-weight:700;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>📋 Als DA-Vorlage speichern</span>'+
+      '<button onclick="document.getElementById(\'da-save-vorlage-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:18px 22px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
+      '<div style="background:#F5F3FF;border:1px solid #C4B5FD;border-radius:8px;padding:10px 12px;font-size:11px;color:#5B21B6;line-height:1.5">'+
+        '💡 Es werden <strong>'+validCps.length+' Checkpunkt(e)</strong> als Vorlage gespeichert — inkl. Titel, IST-Zustand, Maßnahme, KI-Beschreibung'+(canSeePrices()?' und Pauschalpreise':'')+'. Bilder werden NICHT übernommen.'+
+      '</div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Name der Vorlage *</label>'+
+        '<input id="da-savev-name" type="text" value="'+escapeHtml(defaultName)+'" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+      '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Beschreibung <span style="color:var(--txt3);font-weight:500">(optional)</span></label>'+
+        '<textarea id="da-savev-desc" rows="3" placeholder="z.B. „Komplett-Inspektion mit Standardbeschreibungen für Verschmutzung + Türkontakte + Steuerung — alle Konsequenzen vorbefüllt."" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea></div>'+
+    '</div>'+
+    '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'da-save-vorlage-modal\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" id="da-savev-go" onclick="_daSaveAsVorlageSubmit()" style="background:#7C3AED;border-color:#7C3AED">💾 Vorlage speichern</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(sm);
+  setTimeout(() => document.getElementById('da-savev-name')?.focus(), 80);
+}
+
+async function _daSaveAsVorlageSubmit() {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps) return;
+  const name = (document.getElementById('da-savev-name')?.value || '').trim();
+  const description = (document.getElementById('da-savev-desc')?.value || '').trim();
+  if (!name) return toast('Name ist Pflicht.','err');
+  const btn = document.getElementById('da-savev-go');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  // CPs säubern: nur die Vorlagen-relevanten Felder übernehmen, KEINE Bilder
+  const cps = (m._cps||[])
+    .filter(cp => (cp.titel||'').trim())
+    .map(cp => ({
+      titel:           cp.titel || '',
+      ist_zustand:     cp.ist_zustand || '',
+      massnahme:       cp.massnahme || '',
+      ki_beschreibung: cp.ki_beschreibung || '',
+      pauschalpreis:   (cp.pauschalpreis != null) ? +cp.pauschalpreis : null,
+    }));
+  try {
+    if (!_daVorlagenTableEnsured) await _ensureDaVorlagenTable();
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const fields = { name, description, checkpunkte_json: JSON.stringify(cps), sort_order: 99 };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/DA_Vorlagen', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    toast('✅ Vorlage „'+name+'" mit '+cps.length+' Checkpunkt(en) gespeichert.','ok');
+    document.getElementById('da-save-vorlage-modal')?.remove();
+    await loadDaVorlagen();
+  } catch(e) {
+    console.error('[DA-SaveVorlage]', e);
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Vorlage speichern'; }
     toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
   }
 }
