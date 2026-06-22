@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v5.96';
+const APP_VERSION = 'v5.97';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20768,7 +20768,20 @@ function _daRenderCheckpunkte() {
   const summaryBox = canSeePrices()
     ? '<div id="da-angebot-summary" style="margin-top:18px;padding:14px 16px;background:#FFF7ED;border:2px solid #FB923C;border-radius:10px"></div>'
     : '';
+  // v5.97: KI-Beschreibungen pro Checkpunkt
+  const hasAnyDescription = cps.some(cp => (cp.ki_beschreibung||'').trim());
+  const kiBar = (editable && cps.length > 0)
+    ? '<div style="background:#F5F3FF;border:1px solid #C4B5FD;border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+        '<div style="font-size:12px;color:#5B21B6;flex:1;min-width:200px">'+
+          '<strong>🤖 KI-Beschreibungen</strong> — pro Checkpunkt fachliche Konsequenzen + Auswirkung auf die Anlage automatisch generieren.'+
+          (hasAnyDescription ? ' <span style="color:#10B981;font-weight:600">✓ '+cps.filter(c=>(c.ki_beschreibung||'').trim()).length+' Beschreibungen vorhanden.</span>' : '')+
+        '</div>'+
+        '<button class="btn" onclick="_daGenerateKiBeschreibungen()" style="background:#7C3AED;border-color:#7C3AED;color:#fff;font-weight:600;font-size:12px" title="Für alle Checkpunkte (oder leere) Beschreibungen mit Konsequenzen generieren">'+(hasAnyDescription?'↻ Neu generieren':'🤖 KI generieren')+'</button>'+
+        (hasAnyDescription ? '<button class="btn" onclick="_daCorrectKiBeschreibungen()" style="background:#FEF3C7;border-color:#FCD34D;color:#92400E;font-weight:600;font-size:12px" title="KI politiert bestehende Beschreibungen anhand deiner Anweisungen">✏ Korrigieren</button>' : '')+
+      '</div>'
+    : '';
   c.innerHTML = (
+    kiBar +
     html +
     (editable
       ? '<button class="btn prim" onclick="_daAddCheckpunkt()" style="width:100%;margin-top:10px;padding:14px;font-size:14px">+ Checkpunkt hinzufügen</button>'
@@ -20828,9 +20841,187 @@ function _daRenderCheckpunktItem(cp, i, editable) {
         '<textarea id="da-cp-m-'+i+'" rows="3" placeholder="Was muss gemacht werden?" '+dis+
           ' oninput="_daUpdateCp('+i+',\'massnahme\',this.value)" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;resize:vertical">'+esc(cp.massnahme||'')+'</textarea>'+
       '</div>'+
+      // v5.97: KI-Beschreibung (Konsequenzen für die Anlage) — eigener Block, KI-generierbar
+      '<div style="margin-top:12px">'+
+        '<div style="font-size:11px;font-weight:700;color:#5B21B6;text-transform:uppercase;margin-bottom:6px">🤖 Konsequenzen / Beschreibung <span style="color:var(--txt3);font-weight:500;text-transform:none">— fachliche Auswirkung auf die Aufzugsanlage</span></div>'+
+        '<textarea id="da-cp-kibeschr-'+i+'" rows="3" placeholder="Wird per „🤖 KI generieren" oben automatisch befüllt — oder manuell schreiben. Beispiel: \'Verschmutzte Türkontakte führen zu Fehlauslösungen, vorzeitigen Reparaturen und in einigen Fällen zu Personenbefreiungen.\'" '+dis+
+          ' oninput="_daUpdateCp('+i+',\'ki_beschreibung\',this.value)" style="width:100%;padding:6px 10px;border:1px solid #C4B5FD;border-radius:6px;font-size:12px;resize:vertical;background:'+(cp.ki_beschreibung?'#F5F3FF':'#fff')+'">'+esc(cp.ki_beschreibung||'')+'</textarea>'+
+      '</div>'+
       priceHtml+
     '</div>'
   );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   v5.97: KI-Beschreibungen pro Checkpunkt — fachliche Konsequenzen
+   für die Aufzugsanlage automatisch generieren bzw. politieren.
+   ═══════════════════════════════════════════════════════════════ */
+async function _daGenerateKiBeschreibungen() {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps) return;
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+  const cps = m._cps;
+  if (!cps.length) return toast('Keine Checkpunkte vorhanden.','err');
+  // Nur Checkpunkte mit Titel — der Titel ist das fachliche Mindestmaß für die KI
+  const validCps = cps.filter(cp => (cp.titel||'').trim());
+  if (!validCps.length) return toast('Keine Checkpunkte mit Titel — bitte zuerst Titel eintragen.','err');
+  const hasExisting = cps.some(cp => (cp.ki_beschreibung||'').trim());
+  const msg = hasExisting
+    ? 'Alle vorhandenen KI-Beschreibungen NEU generieren?\n\nBestehende Texte werden überschrieben.'
+    : 'Für '+validCps.length+' Checkpunkt(e) fachliche Beschreibung mit Konsequenzen via KI generieren?';
+  if (!confirm(msg)) return;
+  toast('🤖 KI generiert Beschreibungen (10–30 Sek.)…','');
+  try {
+    const result = await _daKiCallGenerate(cps);
+    if (!Array.isArray(result.beschreibungen) || !result.beschreibungen.length) throw new Error('KI lieferte keine Beschreibungen');
+    // Per Index zuordnen — KI hat die Reihenfolge übernommen
+    for (let i = 0; i < cps.length; i++) {
+      const b = result.beschreibungen[i];
+      if (b && typeof b.text === 'string' && b.text.trim()) {
+        cps[i].ki_beschreibung = b.text.trim();
+      }
+    }
+    _daMarkDirty(m);
+    _daRenderCheckpunkte();
+    toast('✅ '+result.beschreibungen.filter(b=>b&&b.text).length+' Beschreibung(en) generiert. Bitte „💾 Speichern".','ok');
+  } catch(e) {
+    console.error('[DA-KI]', e);
+    toast('❌ '+(e.message||'KI-Fehler').slice(0,250),'err');
+  }
+}
+
+async function _daCorrectKiBeschreibungen() {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps) return;
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-API-Key konfiguriert.','err');
+  const cps = m._cps;
+  const haveAny = cps.some(cp => (cp.ki_beschreibung||'').trim());
+  if (!haveAny) return toast('Keine KI-Beschreibungen vorhanden — bitte erst „🤖 KI generieren".','err');
+  document.getElementById('da-ki-correct-modal')?.remove();
+  const cm = document.createElement('div');
+  cm.id = 'da-ki-correct-modal';
+  cm.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
+  cm.innerHTML = '<div style="background:var(--surf);max-width:680px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 18px;background:#FCD34D;color:#78350F;font-weight:700;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>✏ KI-Beschreibungen korrigieren</span>'+
+      '<button onclick="document.getElementById(\'da-ki-correct-modal\').remove()" style="background:rgba(0,0,0,.15);border:none;color:#78350F;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:16px 20px;flex:1;overflow-y:auto">'+
+      '<p style="font-size:12px;color:var(--txt2);margin:0 0 10px;line-height:1.5">KI politiert ALLE vorhandenen Beschreibungen anhand deiner Anweisungen — z.B. <em>„kürzer fassen", „Fokus auf Sicherheit", „weniger Fachsprech, mehr Klartext für Hausverwaltung"</em>.</p>'+
+      '<label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Anweisungen *</label>'+
+      '<textarea id="da-ki-correct-instr" rows="6" placeholder="z.B.&#10;- Kürzer fassen (max 2 Sätze pro Checkpunkt)&#10;- Mehr Fokus auf Sicherheitsrisiken, weniger auf Wartungskosten&#10;- Keine Fachbegriffe — Sprache für Hausverwaltung-Laien" style="width:100%;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5"></textarea>'+
+    '</div>'+
+    '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+      '<button class="btn" onclick="document.getElementById(\'da-ki-correct-modal\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" id="da-ki-correct-go" onclick="_daKiCorrectApply()" style="background:#7C3AED;border-color:#7C3AED">🤖 Politur anwenden</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(cm);
+  setTimeout(() => document.getElementById('da-ki-correct-instr')?.focus(), 80);
+}
+
+async function _daKiCorrectApply() {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps) return;
+  const instr = (document.getElementById('da-ki-correct-instr')?.value || '').trim();
+  if (instr.length < 10) return toast('Bitte konkrete Anweisungen schreiben.','err');
+  const btn = document.getElementById('da-ki-correct-go');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ KI politiert…'; }
+  try {
+    const result = await _daKiCallGenerate(m._cps, instr);
+    if (!Array.isArray(result.beschreibungen)) throw new Error('KI lieferte keine Beschreibungen');
+    for (let i = 0; i < m._cps.length; i++) {
+      const b = result.beschreibungen[i];
+      if (b && typeof b.text === 'string' && b.text.trim()) {
+        m._cps[i].ki_beschreibung = b.text.trim();
+      }
+    }
+    _daMarkDirty(m);
+    document.getElementById('da-ki-correct-modal')?.remove();
+    _daRenderCheckpunkte();
+    toast('✅ Beschreibungen politiert. Bitte „💾 Speichern".','ok');
+  } catch(e) {
+    console.error('[DA-KI-Correct]', e);
+    if (btn) { btn.disabled = false; btn.textContent = '🤖 Politur anwenden'; }
+    toast('❌ '+(e.message||'Fehler').slice(0,250),'err');
+  }
+}
+
+/** v5.97: Ruft Claude mit tool-use, gibt {beschreibungen: [{nr, text}]} zurück.
+ *  Wenn correctionInstr gesetzt → KI politiert bestehende Texte, sonst generiert sie neu. */
+async function _daKiCallGenerate(cps, correctionInstr) {
+  const m = document.getElementById('da-detail');
+  const f = m && m._recId ? (((_datenaufnahmenCache?.items)||[]).find(r => r.id === m._recId)?.fields || {}) : {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const companyShort = (firmaSlug === 'aufzug' || firmaSlug === 'aufzugshandwerk') ? 'Aufzugshandwerk' : 'Aszendio';
+  const anlageInfo = [
+    f.fabriknummer ? 'Fabrik-Nr. '+f.fabriknummer : '',
+    f.standort_adresse ? 'Standort: '+f.standort_adresse : '',
+    f.objektTyp ? 'Typ: '+f.objektTyp : '',
+    f.haltestellen ? f.haltestellen+' Haltestellen' : '',
+  ].filter(Boolean).join(' · ');
+  const cpsForKi = cps.map((cp, i) => ({
+    nr: i+1,
+    titel: cp.titel || '',
+    ist_zustand: cp.ist_zustand || '',
+    massnahme: cp.massnahme || '',
+    bestehende_beschreibung: cp.ki_beschreibung || '',
+  }));
+  const tool = {
+    name: 'generate_beschreibungen',
+    description: 'Erzeugt pro Checkpunkt eine fachliche Beschreibung der Konsequenzen für die Aufzugsanlage.',
+    input_schema: {
+      type: 'object',
+      required: ['beschreibungen'],
+      properties: {
+        beschreibungen: {
+          type: 'array',
+          description: 'Genau eine Beschreibung pro Checkpunkt, in derselben Reihenfolge.',
+          items: {
+            type: 'object',
+            required: ['nr','text'],
+            properties: {
+              nr:   { type:'integer', description:'Nummer des Checkpunkts (1-basiert)' },
+              text: { type:'string', description:'2-4 Sätze: WAS ist die Konsequenz, WELCHES Risiko entsteht, WARUM ist Handlung nötig. Sachlich, fachlich präzise, keine Marketing-Sprache. Schreibstil für Hausverwaltung/technischer Laie.' },
+            },
+          },
+        },
+      },
+    },
+  };
+  let promptText =
+    'Du bist Aufzugstechnik-Sachverständiger bei '+companyShort+' und schreibst zu einer Datenaufnahme die fachlichen Konsequenzen pro Checkpunkt.\n\n'+
+    'ANLAGE: '+(anlageInfo||'(keine Angabe)')+'\n\n'+
+    'AUFGABE: Für JEDEN der unten genannten '+cps.length+' Checkpunkte EINE Beschreibung mit:\n'+
+    '• Konsequenz für die Aufzugsanlage (was passiert wenn man nichts tut?)\n'+
+    '• Risiko (Sicherheit, Ausfall, Folgeschaden, Personenbefreiung, BetrSichV-Konformität)\n'+
+    '• Dringlichkeit (sofort / mittelfristig / vorbeugend)\n'+
+    'Länge: 2-4 Sätze, sachlich, ohne Marketing, verständlich für Hausverwaltungs-Laien.\n'+
+    'Falls IST-Zustand und Maßnahme leer sind, leite aus dem Titel die typische Konsequenz ab.\n\n';
+  if (correctionInstr) {
+    promptText += 'KORREKTUR-ANWEISUNGEN — bestehende Beschreibungen behutsam überarbeiten:\n'+correctionInstr+'\n\n';
+  }
+  promptText += 'CHECKPUNKTE:\n'+JSON.stringify(cpsForKi, null, 2);
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens: 16000,
+      tools:[tool],
+      tool_choice:{ type:'tool', name:'generate_beschreibungen' },
+      messages:[{ role:'user', content:[{ type:'text', text: promptText }] }],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
+  }
+  const data = await resp.json();
+  const block = (data.content||[]).find(b => b.type === 'tool_use');
+  if (!block || !block.input) throw new Error('Kein Tool-Use-Resultat von der KI');
+  return block.input;
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -21752,6 +21943,26 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     y += 6;
     doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 5;
 
+    // v5.97: KI-Beschreibung (Konsequenzen) — volle Breite OBERHALB der 2 Spalten
+    const kiBeschr = String(cp.ki_beschreibung||'').trim();
+    if (kiBeschr) {
+      const PURPLE = [124, 58, 237];
+      const PURPLE_LIGHT = [243, 232, 255];
+      // Box rendern — Höhe vorab berechnen für sauberen Hintergrund
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+      const kiLines = doc.splitTextToSize(_sanPdf(kiBeschr), cw - 8);
+      const boxH = 6 + kiLines.length * 4.5 + 3;
+      if (y + boxH > 275) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); y = 30; }
+      doc.setFillColor(...PURPLE_LIGHT); doc.rect(ml, y, cw, boxH, 'F');
+      doc.setDrawColor(...PURPLE); doc.setLineWidth(0.4); doc.line(ml, y, ml, y + boxH);
+      doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.setTextColor(...PURPLE);
+      doc.text('KONSEQUENZEN / EINSCHAETZUNG', ml + 4, y + 4);
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+      let kY = y + 8.5;
+      kiLines.forEach(l => { doc.text(l, ml + 4, kY); kY += 4.5; });
+      y += boxH + 4;
+    }
+
     // Zwei Spalten: Ist (mit Bilder-Galerie) + Massnahme (ohne Bilder)
     const colW = (cw - 6) / 2;
     // IST-Spalte
@@ -21807,24 +22018,37 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
       if (col > 0) yIst += rowMaxH + gap;
       yIst += 2;
     }
-    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
-    const istLines = doc.splitTextToSize(_sanPdf(cp.ist_zustand || '-'), colW-2);
-    istLines.forEach(l => {
-      if (yIst > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30; }
-      doc.text(l, ml, yIst); yIst += 4;
-    });
+    // v5.97: leere Felder dezent als kursives „nicht erfasst" rendern statt nacktes „-"
+    const istTxt = (cp.ist_zustand||'').trim();
+    if (istTxt) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+      const istLines = doc.splitTextToSize(_sanPdf(istTxt), colW-2);
+      istLines.forEach(l => {
+        if (yIst > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yIst = 30; }
+        doc.text(l, ml, yIst); yIst += 4;
+      });
+    } else {
+      doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+      doc.text('— nicht erfasst —', ml, yIst); yIst += 4;
+    }
 
     // MASSNAHME-Spalte — KEINE Bilder mehr (Wunsch User)
     doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...GREEN);
     doc.text('ERFORDERLICHE MASSNAHME', ml + colW + 6, y+4);
     let yMaß = y + 7;
     const xMaß = ml + colW + 6;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
-    const mLines = doc.splitTextToSize(_sanPdf(cp.massnahme || '-'), colW-2);
-    mLines.forEach(l => {
-      if (yMaß > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yMaß = 30; }
-      doc.text(l, xMaß, yMaß); yMaß += 4;
-    });
+    const mTxt = (cp.massnahme||'').trim();
+    if (mTxt) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.setTextColor(...GREY);
+      const mLines = doc.splitTextToSize(_sanPdf(mTxt), colW-2);
+      mLines.forEach(l => {
+        if (yMaß > 282) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); yMaß = 30; }
+        doc.text(l, xMaß, yMaß); yMaß += 4;
+      });
+    } else {
+      doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+      doc.text('— nicht erfasst —', xMaß, yMaß); yMaß += 4;
+    }
 
     y = Math.max(yIst, yMaß) + 6;
     if (i < cps.length - 1) {
