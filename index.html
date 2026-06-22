@@ -2637,7 +2637,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.03';
+const APP_VERSION = 'v6.04';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22182,6 +22182,8 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     // Migration für ältere Records, die das PDF direkt nach dem Laden bauen
     _daNormalizeCp(cp);
     if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); y = 30; }
+    // v6.04: zusätzliche Luft VOR jedem Checkpunkt-Header (auch vor dem ersten — zum Auftrags-Block)
+    y += 6;
     // Checkpunkt-Header — Nummer-Pill + Titel, sauber zentriert
     const pillW = 8, pillH = 6;
     doc.setFillColor(...ACCENT);
@@ -22191,7 +22193,9 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(12);
     doc.text(_sanPdf('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:'')), ml + pillW + 3, y+1.2);
     y += 6;
-    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y, mr, y); y += 5;
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y, mr, y);
+    // v6.04: mehr Luft zwischen Trennlinie und dem nächsten Block (Konsequenzen-Box / Bilder / IST-Text)
+    y += 9;
 
     // v5.97/v6.02: KI-Beschreibung (Konsequenzen) — volle Breite OBERHALB der 2 Spalten
     //              + großzügige Innen/Außen-Abstände, Umlaute (jsPDF/Helvetica WinAnsi kann sie)
