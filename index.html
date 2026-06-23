@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.16';
+const APP_VERSION = 'v6.17';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21649,7 +21649,28 @@ async function _daSave(recId) {
     }
 
     if (btn) btn.textContent = '⏳ Speichere Datensatz…';
-    const json = JSON.stringify(data);
+    let json = JSON.stringify(data);
+
+    // v6.17: Sicherheitsnetz — wenn DataURLs übrig sind (Upload-Failure) und JSON
+    //         > 95k chars, ersetzen wir die übrigen DataURLs durch leere Strings,
+    //         damit der PATCH nicht am Airtable Long-Text-Cap (100k) scheitert.
+    //         Die fehlgeschlagenen Uploads werden geloggt — der User kann später
+    //         erneut speichern (dann werden sie nachgezogen).
+    let strippedCount = 0;
+    if (json.length > 95 * 1024) {
+      for (const cp of data) {
+        if (!Array.isArray(cp.bilder_ist)) continue;
+        for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
+          const s = cp.bilder_ist[bi];
+          if (typeof s === 'string' && s.startsWith('data:')) {
+            cp.bilder_ist[bi] = '';
+            strippedCount++;
+          }
+        }
+      }
+      json = JSON.stringify(data);
+      if (strippedCount) console.warn('[DA-Save] JSON zu groß — '+strippedCount+' nicht-hochgeladene DataURL(s) gestrippt');
+    }
 
     // Status NICHT überschreiben, wenn DA bereits abgeschlossen ist —
     // sonst würde "Speichern" eine abgeschlossene DA wieder auf in_aufnahme zurücksetzen.
@@ -21670,10 +21691,11 @@ async function _daSave(recId) {
     });
     const d = await r.json();
     if (d.error) {
-      // Fallback: wenn JSON zu groß (z.B. weil Attachment-Upload bei einigen Bildern failed
-      // und DataURLs zurückblieben), versuchen wir die Bilder zu komprimieren.
-      if (/INVALID_VALUE_FOR_COLUMN|TOO_LONG|too long/i.test(d.error.message||'')) {
-        throw new Error('Datensatz zu groß. Vermutlich konnten einige Bilder nicht hochgeladen werden. Bitte später erneut speichern.');
+      // v6.17: Pattern erweitert um "cannot accept" und "invalid value"
+      if (/INVALID_VALUE_FOR_COLUMN|TOO_LONG|too long|cannot accept|invalid value/i.test(d.error.message||'')) {
+        throw new Error('checkpunkte_json zu groß für Airtable (JSON='+Math.round(json.length/1024)+'KB). '
+          + (strippedCount?'Trotz Stripping noch zu groß. ':'')
+          + 'Vermutlich sind sehr viele Texte/Checkpunkte drin. Bitte einige Checkpunkte entfernen oder kürzen.');
       }
       throw new Error(d.error.message||'Fehler');
     }
@@ -21683,12 +21705,17 @@ async function _daSave(recId) {
     m._dirty = false;
     // Autosave-Backup nach erfolgreichem Save löschen
     _daAutosaveClear(recId);
-    toast('💾 Datenaufnahme gespeichert'+(uploadTasks.length?' · '+uploadTasks.length+' Bild'+(uploadTasks.length===1?'':'er')+' hochgeladen':''),'ok');
+    let toastMsg = '💾 Datenaufnahme gespeichert';
+    if (uploadTasks.length) toastMsg += ' · '+uploadTasks.length+' Bild'+(uploadTasks.length===1?'':'er')+' hochgeladen';
+    if (strippedCount) toastMsg += ' · ⚠ '+strippedCount+' Bild'+(strippedCount===1?'':'er')+' konnte(n) nicht hochgeladen werden';
+    toast(toastMsg, strippedCount ? '' : 'ok');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
     _renderDaList();
+    return true;
   } catch(e) {
     toast('❌ '+e.message,'err');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+    return false;
   }
 }
 
@@ -21964,18 +21991,38 @@ async function _daBuildAndShowAngebotPdf(recId) {
 
 async function _daBuildAndShowPdf(recId) {
   const m = document.getElementById('da-detail');
-  // Erst speichern falls dirty
+  // Erst speichern falls dirty — bei Fehler abbrechen, damit kein PDF mit veralteten Daten generiert wird.
   if (m && m._dirty) {
-    await _daSave(recId);
+    const saveOk = await _daSave(recId);
+    if (saveOk === false) {
+      // Save hat einen Fehler getoastet — kein PDF erzeugen
+      return;
+    }
   }
   const rec = (_daCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Record nicht gefunden','err');
   const f = rec.fields || {};
+  // v6.17: bevorzugt den Live-State m._cps verwenden — der hat nach _daSave die
+  //         frischen Attachment-URLs (statt veralteter DataURLs aus dem Cache).
+  //         Fallback: Cache parsen.
   let cps = [];
-  try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  if (m && Array.isArray(m._cps) && m._cps.length) {
+    cps = JSON.parse(JSON.stringify(m._cps)); // deep clone, damit _daResolveBilderToDataUrls
+                                              // den Live-State nicht überschreibt
+  } else {
+    try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  }
   if (cps.length === 0) return toast('Keine Checkpunkte vorhanden','err');
 
-  toast('📄 PDF wird erzeugt…','');
+  // Zähle Bild-Quellen für Diagnose
+  let urlCount = 0, dataUrlCount = 0;
+  for (const cp of cps) for (const b of (cp.bilder_ist||[])) {
+    if (typeof b === 'string' && /^https?:\/\//i.test(b)) urlCount++;
+    else if (typeof b === 'string' && b.startsWith('data:')) dataUrlCount++;
+  }
+  console.log('[DA-PDF] Bilder im Quell-CPS: '+urlCount+' URL(s), '+dataUrlCount+' DataURL(s)');
+
+  toast('📄 PDF wird erzeugt'+(urlCount?' (lade '+urlCount+' Bild'+(urlCount===1?'':'er')+')':'')+'…','');
   try {
     const blob = await _buildDatenaufnahmePdf(f, cps);
     const url = URL.createObjectURL(blob);
