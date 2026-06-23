@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.21';
+const APP_VERSION = 'v6.22';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23634,9 +23634,21 @@ async function openAngebotWizard() {
           '<div id="ang-w-da-selected" style="display:none;margin-top:10px;padding:10px 14px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;font-size:12px;color:#065F46"></div>'+
         '</div>'+
       '</div>'+
-      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
-        '<button class="btn" onclick="document.getElementById(\'ang-wizard\').remove()">Abbrechen</button>'+
-        '<button class="btn prim" id="ang-w-go" disabled onclick="_angWizardGo()" style="opacity:.5">🚀 PDF analysieren</button>'+
+      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr)">'+
+        // v6.22: Progress-Bar während Generate — zeigt Stufen + Bullet-Calls bei DA-Mode
+        '<div id="ang-w-progress" style="display:none;margin-bottom:10px">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--txt2);margin-bottom:5px">'+
+            '<span id="ang-w-progress-label">Lade…</span>'+
+            '<span id="ang-w-progress-count" style="font-variant-numeric:tabular-nums;font-weight:600;color:#2152A9"></span>'+
+          '</div>'+
+          '<div style="width:100%;height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden">'+
+            '<div id="ang-w-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#2152A9 0%,#3B82F6 100%);border-radius:4px;transition:width .25s ease-out"></div>'+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn" onclick="document.getElementById(\'ang-wizard\').remove()">Abbrechen</button>'+
+          '<button class="btn prim" id="ang-w-go" disabled onclick="_angWizardGo()" style="opacity:.5">🚀 PDF analysieren</button>'+
+        '</div>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
@@ -23833,6 +23845,19 @@ window._angWizardSelectDa = function(recId) {
   if (go) { go.disabled = false; go.style.opacity = '1'; }
 };
 
+/** v6.22: Progress-Bar-Update für den Wizard. */
+function _angWizardSetProgress(label, percent, count) {
+  const wrap = document.getElementById('ang-w-progress');
+  const lbl  = document.getElementById('ang-w-progress-label');
+  const bar  = document.getElementById('ang-w-progress-bar');
+  const cnt  = document.getElementById('ang-w-progress-count');
+  if (!wrap) return;
+  wrap.style.display = (percent < 0) ? 'none' : '';
+  if (lbl) lbl.textContent = label || '';
+  if (bar) bar.style.width = Math.max(0, Math.min(100, +percent || 0)) + '%';
+  if (cnt) cnt.textContent = count || '';
+}
+
 /** Generiert ein Angebot aus der gewählten Datenaufnahme. */
 async function _angWizardGoFromDa() {
   const m = document.getElementById('ang-wizard');
@@ -23846,8 +23871,10 @@ async function _angWizardGoFromDa() {
 
   const go = document.getElementById('ang-w-go');
   go.disabled = true; go.textContent = '⏳ KI generiert Leistungsbeschreibungen…';
+  _angWizardSetProgress('Bereite KI-Anfrage vor…', 2, '');
   try {
-    const extracted = await _extractAngebotFromDatenaufnahme(daRec, cps, typ);
+    const extracted = await _extractAngebotFromDatenaufnahme(daRec, cps, typ, _angWizardSetProgress);
+    _angWizardSetProgress('Fertig — öffne Editor…', 100, '');
     console.log('[Angebote-DA] extrahiert:', extracted);
     // Anlage-Match aus DA-Daten
     let matchedAnlage = null;
@@ -23866,14 +23893,17 @@ async function _angWizardGoFromDa() {
     console.error('[Angebote-DA] KI-Generate:', e);
     toast('❌ '+(e.message||e).slice(0,200),'err');
     go.disabled = false; go.textContent = '🤖 Angebot aus Datenaufnahme generieren';
+    _angWizardSetProgress('', -1, '');  // hide
   }
 }
 
 /* v6.21: Zwei-Stufen-Strategie — kleiner Initial-Call (Anschreiben + Konditionen)
  *  und pro Position ein separater Bullet-Call, parallel. Vermeidet Truncation komplett
  *  und liefert immer detaillierte Bullets pro Position.
+ *  v6.22: onProgress(label, percent, count) für Wizard-Progress-Bar.
  */
-async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
+async function _extractAngebotFromDatenaufnahme(daRec, cps, typ, onProgress) {
+  const prog = (typeof onProgress === 'function') ? onProgress : () => {};
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
   const firmaSlug = getCurrentFirmaSlug();
   const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio Aufzugservice GmbH' };
@@ -23922,6 +23952,7 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
     '• Positionen: '+cps.length+' insgesamt:\n'+cpSummaryShort;
 
   console.log('[Angebote-DA] STUFE 1: Anschreiben + Konditionen…');
+  prog('Stufe 1: Anschreiben + Konditionen…', 8, '');
   const headerResp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{
@@ -23962,7 +23993,12 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
 
   // ── STUFE 2: Pro Position parallel ein Bullet-Call ──
   console.log('[Angebote-DA] STUFE 2: '+cps.length+' Position-Calls (parallel, je 4 gleichzeitig)…');
-  const positionen = await _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBlock);
+  prog('Stufe 2: Leistungsbeschreibungen pro Position…', 20, '0 / '+cps.length);
+  const positionen = await _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBlock, (done, total) => {
+    // 20%–95% Spannweite für Stufe 2
+    const pct = 20 + Math.round((done / Math.max(1, total)) * 75);
+    prog('Stufe 2: Leistungsbeschreibungen pro Position…', pct, done+' / '+total);
+  });
 
   return {
     anbieter:           companyShort,
@@ -23984,10 +24020,13 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
 }
 
 /** v6.21: Generiert pro CP einen eigenen Bullet-Call, parallel (4 concurrent).
- *  Fallback bei Failure: deterministisch aus MASSNAHME ableiten. */
-async function _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBlock) {
+ *  Fallback bei Failure: deterministisch aus MASSNAHME ableiten.
+ *  v6.22: onItem(done, total) Callback wird nach jeder fertigen Position aufgerufen. */
+async function _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBlock, onItem) {
   const CONC = 4;
   const results = new Array(cps.length).fill(null);
+  let done = 0;
+  const total = cps.length;
   for (let i = 0; i < cps.length; i += CONC) {
     const batch = cps.slice(i, i + CONC);
     const batchResults = await Promise.allSettled(batch.map((cp, k) => _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, i + k)));
@@ -24016,6 +24055,10 @@ async function _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBloc
           einzelpreis_netto: preis,
           vp: preis,
         };
+      }
+      done++;
+      if (typeof onItem === 'function') {
+        try { onItem(done, total); } catch(_){}
       }
     }
   }
