@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.23';
+const APP_VERSION = 'v6.24';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24068,17 +24068,17 @@ async function _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBloc
 async function _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, idx) {
   const tool = {
     name: 'generate_position_bullets',
-    description: 'Erzeugt fachliche Leistungsbeschreibungs-Bullets für eine einzelne Angebots-Position aus IST-Zustand und Maßnahme.',
+    description: 'Erzeugt eine knappe Leistungsbeschreibung (max. 2 Sätze) für eine einzelne Angebots-Position aus IST-Zustand und Maßnahme.',
     input_schema: {
       type:'object', required:['titel','bullets'],
       properties: {
         titel:   { type:'string', description:'Professionell formulierter Position-Titel — kann der CP-Titel sein, ggf. minimal verfeinert (z.B. „Kabinentüre — Mechanik" statt „Kabinentüre kaputt").' },
-        bullets: { type:'array', items:{ type:'string' }, description:'4-6 fachlich präzise Bullets, was konkret in dieser Position gemacht wird. Technische Sprache, Aszendio-Stil — klar, sachlich, ohne Marketing. Basis: IST-Zustand und MASSNAHME des Checkpunkts.' },
+        bullets: { type:'array', items:{ type:'string' }, description:'EXAKT 2 kurze, knappe Sätze (je 1-2 Zeilen). Sehr knapp halten, kein langer Fließtext. Erster Satz: was wird gemacht. Zweiter Satz: technische Konkretisierung (Bauteil, Schritt, Norm). Aszendio-Stil: klar, sachlich, ohne Marketing.' },
       },
     },
   };
   const prompt =
-    'Du bist Angebots-Assistent für '+companyShort+' (Aufzugstechnik). Aufgabe: Bullets für eine Angebots-Position aus einer Datenaufnahme generieren.\n\n'+
+    'Du bist Angebots-Assistent für '+companyShort+' (Aufzugstechnik). Aufgabe: KNAPPE Leistungsbeschreibung (max. 2 Sätze) für eine Angebots-Position aus einer Datenaufnahme.\n\n'+
     'CHECKPUNKT-TITEL: '+(cp.titel || '(ohne Titel)')+'\n'+
     'IST-ZUSTAND: '+(cp.ist_zustand || '(nicht erfasst)')+'\n'+
     'ERFORDERLICHE MASSNAHME: '+(cp.massnahme || '(nicht erfasst)')+'\n'+
@@ -24086,9 +24086,9 @@ async function _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, idx)
     '\n'+
     'AUFGABE:\n'+
     '• Position-Titel: kurz und professionell (ggf. CP-Titel verfeinern).\n'+
-    '• 4-6 fachliche Bullets: was wird konkret gemacht, um den IST-Zustand in den Soll-Zustand zu bringen.\n'+
+    '• EXAKT 2 kurze Sätze als Leistungsbeschreibung. Keine Bullet-Liste mit 5 Punkten — nur 2 Sätze, knapp und präzise.\n'+
+    '• Erster Satz: was wird gemacht. Zweiter Satz: technische Konkretisierung (z.B. Bauteil, Norm, Vorgehen).\n'+
     '• Technische Sprache, klar, sachlich, ohne Marketing.\n'+
-    '• Bezug auf IST + MASSNAHME — sehr konkret werden (Bauteile nennen, Schritte beschreiben).\n'+
     (lernBlock ? '\n'+lernBlock : '');
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -24100,7 +24100,8 @@ async function _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, idx)
     },
     body: JSON.stringify({
       model:'claude-sonnet-4-6',
-      max_tokens: 2500,
+      // v6.24: kürzere Outputs (nur 2 Sätze) → max_tokens runter auf 800, schneller
+      max_tokens: 800,
       tools:[tool],
       tool_choice:{ type:'tool', name:'generate_position_bullets' },
       messages:[{ role:'user', content:[ { type:'text', text: prompt } ]}],
@@ -24113,23 +24114,26 @@ async function _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, idx)
   const data = await resp.json();
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block?.input) throw new Error('Kein tool_use Block');
+  // v6.24: max 2 Sätze sicherstellen, falls KI doch mehr schickt
+  const raw = Array.isArray(block.input.bullets) ? block.input.bullets.filter(b => typeof b === 'string' && b.trim()) : [];
   return {
     titel: String(block.input.titel || cp.titel || '').trim(),
-    bullets: Array.isArray(block.input.bullets) ? block.input.bullets.filter(b => typeof b === 'string' && b.trim()) : [],
+    bullets: raw.slice(0, 2),
   };
 }
 
 function _angDaFallbackBullets(cp) {
+  // v6.24: Fallback auch nur 2 Sätze
   const bullets = [];
   const massText = String(cp.massnahme||'').trim();
   const istText  = String(cp.ist_zustand||'').trim();
   if (massText) {
     const parts = massText.split(/\n+|(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).map(s => s.trim()).filter(Boolean);
-    for (const p of parts.slice(0, 6)) bullets.push(p.replace(/\.$/,''));
+    for (const p of parts.slice(0, 2)) bullets.push(p.replace(/\.$/,''));
   }
   if (!bullets.length && istText) bullets.push('Behebung des festgestellten Zustands: '+istText.slice(0,200));
   if (!bullets.length) bullets.push('Durchführung der erforderlichen Maßnahmen am Checkpunkt');
-  return bullets;
+  return bullets.slice(0, 2);
 }
 
 // ─── v5.14: Wizard-Mode-Toggle (PDF vs Nur Prompt) ─────────────────────
