@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.19';
+const APP_VERSION = 'v6.20';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23955,7 +23955,9 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
     },
     body: JSON.stringify({
       model:'claude-sonnet-4-6',
-      max_tokens: 32000,
+      // v6.20: 48000 statt 32000 — bei 12+ Checkpunkten mit je 4-6 Bullets + Anschreiben + Konditionen
+      //         war 32k zu knapp, KI brach mid-tool-use ab und positionen blieb leer.
+      max_tokens: 48000,
       tools:[tool],
       tool_choice:{ type:'tool', name:'generate_angebot_from_da' },
       messages:[{ role:'user', content:[ { type:'text', text: prompt } ]}],
@@ -23966,14 +23968,29 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
     throw new Error(err.error?.message || ('API-Fehler '+resp.status));
   }
   const data = await resp.json();
+  // v6.20: Diagnose-Logs für Truncation/Tool-Use-Probleme
+  console.log('[Angebote-DA] API-Response:', { stop_reason: data.stop_reason, usage: data.usage, contentTypes: (data.content||[]).map(b => b.type) });
   const block = (data.content||[]).find(b => b.type === 'tool_use');
-  if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
+  if (!block || !block.input) {
+    console.error('[Angebote-DA] Kein tool_use Block. Volle Response:', data);
+    throw new Error('Kein strukturiertes Tool-Resultat von der KI (stop_reason='+(data.stop_reason||'?')+'). Bitte erneut versuchen.');
+  }
   const out = block.input;
+  console.log('[Angebote-DA] tool_use input:', out);
+  // v6.20: Anschreiben säubern — KI sickert manchmal XML-Tag-Fragmente in den String
+  //         (</anschreiben>, <parameter name="positionen">, etc.) wenn sie verwirrt wird.
+  let anschreiben = String(out.anschreiben || '').trim();
+  anschreiben = anschreiben
+    .replace(/<\/?anschreiben>/gi, '')
+    .replace(/<\/?parameter[^>]*>/gi, '')
+    .replace(/<\/?function_calls>/gi, '')
+    .replace(/<\/?invoke[^>]*>/gi, '')
+    .trim();
 
   // Preise aus DA übernehmen — KI hat keine generiert. Wichtig: DA-Pauschalpreise sind
   //  bereits VP (der Verkaufspreis), deshalb sowohl ep_kone als auch vp auf den
   //  gleichen Wert setzen — damit die Default-Marge nicht *1.20 multipliziert.
-  const positionen = (out.positionen||[]).map((p, i) => {
+  let positionen = (out.positionen||[]).map((p, i) => {
     const cp = cps[i] || {};
     const preis = +cp.pauschalpreis_netto || 0;
     return {
@@ -23981,28 +23998,57 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
       titel: p.titel || cp.titel || '',
       leistungsbeschreibung: Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [],
       menge: 1,
-      einzelpreis_netto: preis,  // wird in openAngebotEditor auf ep_kone gemapped
-      vp: preis,                 // VP = Pauschalpreis (KEINE Default-Marge!)
+      einzelpreis_netto: preis,
+      vp: preis,
     };
   });
+  // v6.20: Fallback — wenn KI keine Positionen geliefert hat (Truncation, Tool-Use-Fehler),
+  //         generieren wir deterministisch aus den DA-Checkpunkten. Besser als leeres Angebot.
+  if (!positionen.length && cps.length) {
+    console.warn('[Angebote-DA] KI hat 0 Positionen geliefert — Fallback aus DA-Checkpunkten ('+cps.length+' CPs)');
+    positionen = cps.map((cp, i) => {
+      const preis = +cp.pauschalpreis_netto || 0;
+      // Bullets aus IST + MASSNAHME ableiten (Splitting an Punkten/Zeilen)
+      const bullets = [];
+      const istText  = String(cp.ist_zustand||'').trim();
+      const massText = String(cp.massnahme  ||'').trim();
+      if (massText) {
+        // Maßnahme zerlegen — entweder pro Zeile oder pro Satz
+        const parts = massText.split(/\n+|(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).map(s => s.trim()).filter(Boolean);
+        for (const p of parts.slice(0, 6)) bullets.push(p.replace(/\.$/,''));
+      }
+      if (!bullets.length && istText) {
+        bullets.push('Behebung des festgestellten Zustands: '+istText.slice(0,200));
+      }
+      if (!bullets.length) bullets.push('Durchführung der erforderlichen Maßnahmen am Checkpunkt');
+      return {
+        nr: i+1,
+        titel: cp.titel || 'Checkpunkt '+(i+1),
+        leistungsbeschreibung: bullets,
+        menge: 1,
+        einzelpreis_netto: preis,
+        vp: preis,
+      };
+    });
+    toast('⚠ KI lieferte keine Positionen — habe '+positionen.length+' aus der DA generiert. Bitte Texte prüfen.','warn');
+  }
 
   return {
     anbieter:           companyShort,
     kone_angebot_num:   '',
     kone_angebot_datum: today,
-    anschreiben:        out.anschreiben || '',
+    anschreiben:        anschreiben,
     positionen,
     ust_prozent:        19,
     kond_lieferzeit:    out.kond_lieferzeit || '',
     kond_preisbasis:    out.kond_preisbasis || '',
     kond_zahlung:       out.kond_zahlung || '',
     kond_hinweise:      out.kond_hinweise || '',
-    // Anlage/Kunde aus DA — werden vom Editor für matchedAnlage verwendet
     equipmentnummer:    '',
     seriennummer:       df.anlage_fabriknummer || '',
     anlage_adresse:     df.anlage_adresse || '',
     kunde_name:         df.kunde_name || '',
-    kunde_adresse:      '',  // wird aus matchedAnlage gezogen
+    kunde_adresse:      '',
   };
 }
 
