@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.20';
+const APP_VERSION = 'v6.21';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23869,7 +23869,10 @@ async function _angWizardGoFromDa() {
   }
 }
 
-/** KI-Aufruf: Generiert Angebots-Positionen aus DA-Checkpunkten. Preise aus DA, Bullets von KI. */
+/* v6.21: Zwei-Stufen-Strategie — kleiner Initial-Call (Anschreiben + Konditionen)
+ *  und pro Position ein separater Bullet-Call, parallel. Vermeidet Truncation komplett
+ *  und liefert immer detaillierte Bullets pro Position.
+ */
 async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
   const firmaSlug = getCurrentFirmaSlug();
@@ -23886,65 +23889,164 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
     lernBlock = _angLernBuildPromptBlock(lernItems, typ);
   } catch(_){}
 
-  // CPs für den Prompt aufbereiten (ohne Bilder, ohne Preise → wir gehen separat damit um)
-  const cpSummary = cps.map((cp, i) => {
-    const lines = ['Checkpunkt '+(i+1)+': '+(cp.titel||'(ohne Titel)')];
-    if (cp.ist_zustand) lines.push('IST: '+cp.ist_zustand);
-    if (cp.massnahme)   lines.push('MASSNAHME: '+cp.massnahme);
-    if (cp.ki_beschreibung) lines.push('KONSEQUENZ: '+cp.ki_beschreibung);
-    if (+cp.pauschalpreis_netto > 0) lines.push('PAUSCHALPREIS: '+cp.pauschalpreis_netto+' EUR netto');
-    return lines.join('\n');
-  }).join('\n\n');
+  // ── STUFE 1: Anschreiben + Konditionen (kleiner Call, robust gegen Truncation) ──
+  const typLabel = ({ reparatur:'Reparatur', modernisierung:'Modernisierung', sonstiges:'Sonstige Leistung' })[typ] || 'Sonstige Leistung';
+  const cpSummaryShort = cps.map((cp, i) => '• Pos '+(i+1)+': '+(cp.titel||'(ohne Titel)')+(+cp.pauschalpreis_netto>0?' ('+cp.pauschalpreis_netto+' EUR)':'')).join('\n');
 
-  const tool = {
-    name: 'generate_angebot_from_da',
-    description: 'Erzeugt ein Angebot aus einer Datenaufnahme. Pro Checkpunkt entsteht eine Angebots-Position. Preise werden aus den Pauschalpreisen der DA übernommen.',
+  const headerTool = {
+    name: 'generate_angebot_header',
+    description: 'Erzeugt Anschreiben und Konditionen für ein Angebot aus einer Datenaufnahme.',
     input_schema: {
-      type: 'object',
-      required: ['positionen','anschreiben'],
+      type:'object', required:['anschreiben'],
       properties: {
-        anbieter:     { type:'string', description:'Immer "'+companyShort+'"' },
-        anschreiben:  { type:'string', description:'Formelles Anschreiben, 2-4 Sätze, mit Bezug zur Datenaufnahme. Bsp.: „Im Anschluss an unsere Bestandsaufnahme vom ... unterbreiten wir Ihnen das folgende Angebot zur Behebung der festgestellten Mängel. Eine vollständige Datenaufnahme mit Bilddokumentation finden Sie im Anhang."' },
-        positionen: {
-          type:'array',
-          description:'Genau '+cps.length+' Positionen — eine pro Checkpunkt, gleiche Reihenfolge wie in der DA.',
-          items: {
-            type:'object',
-            required:['nr','titel','leistungsbeschreibung'],
-            properties: {
-              nr:                    { type:'integer' },
-              titel:                 { type:'string', description:'Der Checkpunkt-Titel — leicht professionalisiert wenn nötig (z.B. „Kabinentüre — Mechanik" statt „Kabinentüre kaputt")' },
-              leistungsbeschreibung: { type:'array', items:{ type:'string' }, description:'3-6 fachlich präzise Bullets — was wird konkret gemacht, um den IST-Zustand in den Soll-Zustand zu überführen. Basis: IST + MASSNAHME des Checkpunkts. Marke „Aszendio-Stil": klar, sachlich, ohne Marketing.' },
-            },
-          },
-        },
-        kond_lieferzeit: { type:'string', description:'Standard für Modernisierung: „Werktägl. Verfügbarkeit nach Auftragsvergabe ca. 6-8 Wochen". Für Reparatur kürzer.' },
-        kond_preisbasis: { type:'string', description:'Standard: „Festpreis, gültig 60 Tage ab Angebotsdatum"' },
-        kond_zahlung:    { type:'string', description:'Modernisierung: 30/60/10. Reparatur: 14 Tage netto.' },
-        kond_hinweise:   { type:'string', description:'Optional, z.B. „Bauseits-Leistungen siehe DA-Anhang"' },
+        anschreiben:  { type:'string', description:'Formelles Anschreiben, 2-4 Sätze, mit Bezug zur Datenaufnahme. KEIN JSON, KEINE Tags, KEINE Liste der Positionen — nur Fließtext! Bsp: „Im Anschluss an unsere Bestandsaufnahme vom XYZ unterbreiten wir Ihnen das folgende Angebot zur Behebung der festgestellten Mängel. Die ausführliche Datenaufnahme mit Bilddokumentation finden Sie im Anhang."' },
+        kond_lieferzeit: { type:'string' },
+        kond_preisbasis: { type:'string' },
+        kond_zahlung:    { type:'string' },
+        kond_hinweise:   { type:'string' },
       },
     },
   };
-
-  const typLabel = ({ reparatur:'Reparatur', modernisierung:'Modernisierung', sonstiges:'Sonstige Leistung' })[typ] || 'Sonstige Leistung';
-  const prompt =
-    'Du bist Angebots-Assistent für '+companyLong+' (Aufzugstechnik). Angebotstyp: '+typLabel+'. Heutiges Datum: '+today+'.\n\n'+
-    'AUFGABE: Erstelle pro Checkpunkt der unten genannten Datenaufnahme eine Angebots-Position. Die Pauschalpreise werden serverseitig aus der DA übernommen — du musst KEINE Preise generieren.\n\n'+
-    'REGELN:\n'+
-    '• Schreibe AUS SICHT der Anbieter-Firma '+companyShort+'.\n'+
-    '• Genau '+cps.length+' Positionen, gleiche Reihenfolge wie in der DA.\n'+
-    '• Position-Titel: Checkpunkt-Titel leicht professionalisiert (Beispiel siehe Schema).\n'+
-    '• Leistungsbeschreibung: 3-6 fachliche Bullets, was konkret getan wird — basierend auf IST-Zustand und MASSNAHME des Checkpunkts.\n'+
-    '• Anschreiben: 2-4 Sätze mit Bezug zur Datenaufnahme. Erwähne, dass die vollständige DA mit Bildern als Anhang beigefügt ist.\n'+
-    '• Konditionen: passend zum Angebotstyp.\n'+
-    (lernBlock ? '• WICHTIG: Halte dich an die unten aufgeführten STIL-VORBILDER bei den Position-Texten.\n' : '')+
-    lernBlock+
-    '\nDATENAUFNAHME DA-'+(df.da_num||'?')+':\n'+
+  const headerPrompt =
+    'Du bist Angebots-Assistent für '+companyLong+'. Angebotstyp: '+typLabel+'. Datum: '+today+'.\n\n'+
+    'Erstelle Anschreiben + Konditionen für ein Angebot aus dieser Datenaufnahme. '+
+    'Die Position-Texte werden in einem separaten Schritt erstellt — du musst KEINE Positionen liefern, nur Anschreiben + Konditionen.\n\n'+
+    'WICHTIG für anschreiben:\n'+
+    '• 2-4 Sätze formeller Fließtext.\n'+
+    '• Bezug zur Datenaufnahme + Hinweis dass die DA mit Bildern als Anhang beiliegt.\n'+
+    '• NIEMALS JSON-Code, XML-Tags oder Listen der Positionen im Anschreiben — nur sauberer Fließtext.\n\n'+
+    'DATENAUFNAHME DA-'+(df.da_num||'?')+':\n'+
     '• Anlage: '+(df.anlage_adresse||'?')+(df.anlage_fabriknummer?' (Fab.-Nr. '+df.anlage_fabriknummer+')':'')+'\n'+
     '• Kunde: '+(df.kunde_name||'?')+(df.kunde_nummer?' (Kd-Nr. '+df.kunde_nummer+')':'')+'\n'+
     (df.beschreibung ? '• Beschreibung: '+df.beschreibung+'\n' : '')+
-    '\nCHECKPUNKTE:\n\n'+cpSummary;
+    '• Positionen: '+cps.length+' insgesamt:\n'+cpSummaryShort;
 
+  console.log('[Angebote-DA] STUFE 1: Anschreiben + Konditionen…');
+  const headerResp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': APP_KEYS.anthropicKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens: 4000,
+      tools:[headerTool],
+      tool_choice:{ type:'tool', name:'generate_angebot_header' },
+      messages:[{ role:'user', content:[ { type:'text', text: headerPrompt } ]}],
+    }),
+  });
+  if (!headerResp.ok) {
+    const err = await headerResp.json().catch(() => ({}));
+    throw new Error(err.error?.message || ('API-Fehler '+headerResp.status));
+  }
+  const headerData = await headerResp.json();
+  console.log('[Angebote-DA] STUFE 1 Response:', { stop_reason: headerData.stop_reason, usage: headerData.usage });
+  const headerBlock = (headerData.content||[]).find(b => b.type === 'tool_use');
+  const headerOut = headerBlock?.input || {};
+  let anschreiben = String(headerOut.anschreiben || '').trim();
+  // Säubern: Tags + JSON-Reste die die KI fälschlich einsickern lassen könnte
+  anschreiben = anschreiben
+    .replace(/<\/?anschreiben>/gi, '')
+    .replace(/<\/?parameter[^>]*>/gi, '')
+    .replace(/<\/?function_calls>/gi, '')
+    .replace(/<\/?invoke[^>]*>/gi, '');
+  // Alles ab erstem JSON-Array-Start auf eigener Zeile abschneiden ([ \n  { …)
+  const jsonStart = anschreiben.search(/\n\s*\[\s*\n?\s*\{/);
+  if (jsonStart > 0) anschreiben = anschreiben.slice(0, jsonStart).trim();
+  // Auch alles ab einer Zeile die nur "[" enthält
+  const bareBracket = anschreiben.search(/\n\s*\[\s*$/m);
+  if (bareBracket > 0) anschreiben = anschreiben.slice(0, bareBracket).trim();
+
+  // ── STUFE 2: Pro Position parallel ein Bullet-Call ──
+  console.log('[Angebote-DA] STUFE 2: '+cps.length+' Position-Calls (parallel, je 4 gleichzeitig)…');
+  const positionen = await _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBlock);
+
+  return {
+    anbieter:           companyShort,
+    kone_angebot_num:   '',
+    kone_angebot_datum: today,
+    anschreiben:        anschreiben,
+    positionen,
+    ust_prozent:        19,
+    kond_lieferzeit:    headerOut.kond_lieferzeit || '',
+    kond_preisbasis:    headerOut.kond_preisbasis || '',
+    kond_zahlung:       headerOut.kond_zahlung || '',
+    kond_hinweise:      headerOut.kond_hinweise || '',
+    equipmentnummer:    '',
+    seriennummer:       df.anlage_fabriknummer || '',
+    anlage_adresse:     df.anlage_adresse || '',
+    kunde_name:         df.kunde_name || '',
+    kunde_adresse:      '',
+  };
+}
+
+/** v6.21: Generiert pro CP einen eigenen Bullet-Call, parallel (4 concurrent).
+ *  Fallback bei Failure: deterministisch aus MASSNAHME ableiten. */
+async function _angDaGenerateAllPositionBullets(cps, typ, companyShort, lernBlock) {
+  const CONC = 4;
+  const results = new Array(cps.length).fill(null);
+  for (let i = 0; i < cps.length; i += CONC) {
+    const batch = cps.slice(i, i + CONC);
+    const batchResults = await Promise.allSettled(batch.map((cp, k) => _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, i + k)));
+    for (let k = 0; k < batchResults.length; k++) {
+      const cp = cps[i + k];
+      const r = batchResults[k];
+      const preis = +cp.pauschalpreis_netto || 0;
+      if (r.status === 'fulfilled' && r.value && Array.isArray(r.value.bullets) && r.value.bullets.length) {
+        results[i + k] = {
+          nr: i + k + 1,
+          titel: r.value.titel || cp.titel || 'Checkpunkt '+(i+k+1),
+          leistungsbeschreibung: r.value.bullets,
+          menge: 1,
+          einzelpreis_netto: preis,
+          vp: preis,
+        };
+      } else {
+        // Fallback: deterministisch aus MASSNAHME
+        console.warn('[Angebote-DA] Pos '+(i+k+1)+': KI-Call fehlgeschlagen, nutze Fallback', r.reason?.message || r.reason);
+        const bullets = _angDaFallbackBullets(cp);
+        results[i + k] = {
+          nr: i + k + 1,
+          titel: cp.titel || 'Checkpunkt '+(i+k+1),
+          leistungsbeschreibung: bullets,
+          menge: 1,
+          einzelpreis_netto: preis,
+          vp: preis,
+        };
+      }
+    }
+  }
+  return results;
+}
+
+async function _angDaGenerateBulletsForCp(cp, typ, companyShort, lernBlock, idx) {
+  const tool = {
+    name: 'generate_position_bullets',
+    description: 'Erzeugt fachliche Leistungsbeschreibungs-Bullets für eine einzelne Angebots-Position aus IST-Zustand und Maßnahme.',
+    input_schema: {
+      type:'object', required:['titel','bullets'],
+      properties: {
+        titel:   { type:'string', description:'Professionell formulierter Position-Titel — kann der CP-Titel sein, ggf. minimal verfeinert (z.B. „Kabinentüre — Mechanik" statt „Kabinentüre kaputt").' },
+        bullets: { type:'array', items:{ type:'string' }, description:'4-6 fachlich präzise Bullets, was konkret in dieser Position gemacht wird. Technische Sprache, Aszendio-Stil — klar, sachlich, ohne Marketing. Basis: IST-Zustand und MASSNAHME des Checkpunkts.' },
+      },
+    },
+  };
+  const prompt =
+    'Du bist Angebots-Assistent für '+companyShort+' (Aufzugstechnik). Aufgabe: Bullets für eine Angebots-Position aus einer Datenaufnahme generieren.\n\n'+
+    'CHECKPUNKT-TITEL: '+(cp.titel || '(ohne Titel)')+'\n'+
+    'IST-ZUSTAND: '+(cp.ist_zustand || '(nicht erfasst)')+'\n'+
+    'ERFORDERLICHE MASSNAHME: '+(cp.massnahme || '(nicht erfasst)')+'\n'+
+    (cp.ki_beschreibung ? 'KONSEQUENZ/HINTERGRUND: '+cp.ki_beschreibung+'\n' : '')+
+    '\n'+
+    'AUFGABE:\n'+
+    '• Position-Titel: kurz und professionell (ggf. CP-Titel verfeinern).\n'+
+    '• 4-6 fachliche Bullets: was wird konkret gemacht, um den IST-Zustand in den Soll-Zustand zu bringen.\n'+
+    '• Technische Sprache, klar, sachlich, ohne Marketing.\n'+
+    '• Bezug auf IST + MASSNAHME — sehr konkret werden (Bauteile nennen, Schritte beschreiben).\n'+
+    (lernBlock ? '\n'+lernBlock : '');
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
     headers:{
@@ -23955,101 +24057,36 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
     },
     body: JSON.stringify({
       model:'claude-sonnet-4-6',
-      // v6.20: 48000 statt 32000 — bei 12+ Checkpunkten mit je 4-6 Bullets + Anschreiben + Konditionen
-      //         war 32k zu knapp, KI brach mid-tool-use ab und positionen blieb leer.
-      max_tokens: 48000,
+      max_tokens: 2500,
       tools:[tool],
-      tool_choice:{ type:'tool', name:'generate_angebot_from_da' },
+      tool_choice:{ type:'tool', name:'generate_position_bullets' },
       messages:[{ role:'user', content:[ { type:'text', text: prompt } ]}],
     }),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
+    throw new Error(err.error?.message || ('API '+resp.status));
   }
   const data = await resp.json();
-  // v6.20: Diagnose-Logs für Truncation/Tool-Use-Probleme
-  console.log('[Angebote-DA] API-Response:', { stop_reason: data.stop_reason, usage: data.usage, contentTypes: (data.content||[]).map(b => b.type) });
   const block = (data.content||[]).find(b => b.type === 'tool_use');
-  if (!block || !block.input) {
-    console.error('[Angebote-DA] Kein tool_use Block. Volle Response:', data);
-    throw new Error('Kein strukturiertes Tool-Resultat von der KI (stop_reason='+(data.stop_reason||'?')+'). Bitte erneut versuchen.');
-  }
-  const out = block.input;
-  console.log('[Angebote-DA] tool_use input:', out);
-  // v6.20: Anschreiben säubern — KI sickert manchmal XML-Tag-Fragmente in den String
-  //         (</anschreiben>, <parameter name="positionen">, etc.) wenn sie verwirrt wird.
-  let anschreiben = String(out.anschreiben || '').trim();
-  anschreiben = anschreiben
-    .replace(/<\/?anschreiben>/gi, '')
-    .replace(/<\/?parameter[^>]*>/gi, '')
-    .replace(/<\/?function_calls>/gi, '')
-    .replace(/<\/?invoke[^>]*>/gi, '')
-    .trim();
-
-  // Preise aus DA übernehmen — KI hat keine generiert. Wichtig: DA-Pauschalpreise sind
-  //  bereits VP (der Verkaufspreis), deshalb sowohl ep_kone als auch vp auf den
-  //  gleichen Wert setzen — damit die Default-Marge nicht *1.20 multipliziert.
-  let positionen = (out.positionen||[]).map((p, i) => {
-    const cp = cps[i] || {};
-    const preis = +cp.pauschalpreis_netto || 0;
-    return {
-      nr: i+1,
-      titel: p.titel || cp.titel || '',
-      leistungsbeschreibung: Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [],
-      menge: 1,
-      einzelpreis_netto: preis,
-      vp: preis,
-    };
-  });
-  // v6.20: Fallback — wenn KI keine Positionen geliefert hat (Truncation, Tool-Use-Fehler),
-  //         generieren wir deterministisch aus den DA-Checkpunkten. Besser als leeres Angebot.
-  if (!positionen.length && cps.length) {
-    console.warn('[Angebote-DA] KI hat 0 Positionen geliefert — Fallback aus DA-Checkpunkten ('+cps.length+' CPs)');
-    positionen = cps.map((cp, i) => {
-      const preis = +cp.pauschalpreis_netto || 0;
-      // Bullets aus IST + MASSNAHME ableiten (Splitting an Punkten/Zeilen)
-      const bullets = [];
-      const istText  = String(cp.ist_zustand||'').trim();
-      const massText = String(cp.massnahme  ||'').trim();
-      if (massText) {
-        // Maßnahme zerlegen — entweder pro Zeile oder pro Satz
-        const parts = massText.split(/\n+|(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).map(s => s.trim()).filter(Boolean);
-        for (const p of parts.slice(0, 6)) bullets.push(p.replace(/\.$/,''));
-      }
-      if (!bullets.length && istText) {
-        bullets.push('Behebung des festgestellten Zustands: '+istText.slice(0,200));
-      }
-      if (!bullets.length) bullets.push('Durchführung der erforderlichen Maßnahmen am Checkpunkt');
-      return {
-        nr: i+1,
-        titel: cp.titel || 'Checkpunkt '+(i+1),
-        leistungsbeschreibung: bullets,
-        menge: 1,
-        einzelpreis_netto: preis,
-        vp: preis,
-      };
-    });
-    toast('⚠ KI lieferte keine Positionen — habe '+positionen.length+' aus der DA generiert. Bitte Texte prüfen.','warn');
-  }
-
+  if (!block?.input) throw new Error('Kein tool_use Block');
   return {
-    anbieter:           companyShort,
-    kone_angebot_num:   '',
-    kone_angebot_datum: today,
-    anschreiben:        anschreiben,
-    positionen,
-    ust_prozent:        19,
-    kond_lieferzeit:    out.kond_lieferzeit || '',
-    kond_preisbasis:    out.kond_preisbasis || '',
-    kond_zahlung:       out.kond_zahlung || '',
-    kond_hinweise:      out.kond_hinweise || '',
-    equipmentnummer:    '',
-    seriennummer:       df.anlage_fabriknummer || '',
-    anlage_adresse:     df.anlage_adresse || '',
-    kunde_name:         df.kunde_name || '',
-    kunde_adresse:      '',
+    titel: String(block.input.titel || cp.titel || '').trim(),
+    bullets: Array.isArray(block.input.bullets) ? block.input.bullets.filter(b => typeof b === 'string' && b.trim()) : [],
   };
+}
+
+function _angDaFallbackBullets(cp) {
+  const bullets = [];
+  const massText = String(cp.massnahme||'').trim();
+  const istText  = String(cp.ist_zustand||'').trim();
+  if (massText) {
+    const parts = massText.split(/\n+|(?<=[.!?])\s+(?=[A-ZÄÖÜ])/).map(s => s.trim()).filter(Boolean);
+    for (const p of parts.slice(0, 6)) bullets.push(p.replace(/\.$/,''));
+  }
+  if (!bullets.length && istText) bullets.push('Behebung des festgestellten Zustands: '+istText.slice(0,200));
+  if (!bullets.length) bullets.push('Durchführung der erforderlichen Maßnahmen am Checkpunkt');
+  return bullets;
 }
 
 // ─── v5.14: Wizard-Mode-Toggle (PDF vs Nur Prompt) ─────────────────────
