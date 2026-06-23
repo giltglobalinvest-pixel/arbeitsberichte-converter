@@ -1398,6 +1398,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
         <button class="tnav-menu-item" id="tnav-overview" onclick="switchView('overview')">📋 Berichts-Übersicht</button>
         <button class="tnav-menu-item" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
         <button class="tnav-menu-item" id="tnav-angebote" onclick="switchView('angebote')">📄 Angebote</button>
+        <button class="tnav-menu-item" id="tnav-briefberichte" onclick="switchView('briefberichte')">📝 Berichte (Briefpapier)</button>
         <button class="tnav-menu-item" id="tnav-projekte" onclick="switchView('projekte')" style="display:none">📅 Projekte</button>
         <button class="tnav-menu-item" id="tnav-verantw" onclick="switchView('verantw')" style="display:none">👷 Verantwortliche</button>
         <button class="tnav-menu-item" id="tnav-vertraege" onclick="switchView('vertraege')">📑 Wartungsverträge</button>
@@ -2037,6 +2038,16 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-body" id="angebote-list" style="padding:20px"></div>
 </div>
 
+<!-- v6.10: BRIEFBERICHTE — Berichte auf Briefpapier pro Firma -->
+<div class="firma-view" id="briefberichte-view">
+  <div class="firma-hdr">
+    <h2>📝 Berichte <span id="briefberichte-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
+    <button class="btn" onclick="renderBriefberichteView({force:true})">↻ Neu laden</button>
+    <button class="btn prim" id="briefberichte-new-btn" onclick="openBriefberichtEditor()">+ Neuer Bericht</button>
+  </div>
+  <div class="firma-body" id="briefberichte-list" style="padding:20px"></div>
+</div>
+
 <!-- PROJEKTE (Projektmanager mit Timeline) -->
 <div class="firma-view" id="projekte-view">
   <div class="firma-hdr">
@@ -2638,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.09';
+const APP_VERSION = 'v6.10';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3315,6 +3326,8 @@ async function showApp() {
   if (tnavExtract) tnavExtract.style.display              = hasPermission('tool_data_extract') ? '' : 'none';
   const tnavAngebote = document.getElementById('tnav-angebote');
   if (tnavAngebote) tnavAngebote.style.display            = hasPermission('tool_angebote') ? '' : 'none';
+  const tnavBb = document.getElementById('tnav-briefberichte');
+  if (tnavBb) tnavBb.style.display                        = hasPermission('tool_briefberichte') ? '' : 'none';
   // Projekte + Verantwortliche: Admin-only
   const tnavProjekte = document.getElementById('tnav-projekte');
   if (tnavProjekte) tnavProjekte.style.display            = isAdmin() ? '' : 'none';
@@ -4006,6 +4019,7 @@ function switchView(view) {
   if (view==='da' && !hasPermission('tool_datenaufnahmen')) return toast('🔒 Keine Berechtigung','err');
   if (view==='extract' && !hasPermission('tool_data_extract')) return toast('🔒 Keine Berechtigung','err');
   if (view==='angebote' && !hasPermission('tool_angebote')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='briefberichte' && !hasPermission('tool_briefberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='dav' && !isAdmin()) return;
 
   const dash = document.getElementById('dash-view');
@@ -4030,7 +4044,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract','angebote'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract','angebote','briefberichte'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -4062,6 +4076,8 @@ function switchView(view) {
   if (extract) extract.classList.toggle('show', view==='extract');
   const angeboteEl = document.getElementById('angebote-view');
   if (angeboteEl) angeboteEl.classList.toggle('show', view==='angebote');
+  const bbEl = document.getElementById('briefberichte-view');
+  if (bbEl) bbEl.classList.toggle('show', view==='briefberichte');
   const projekteEl = document.getElementById('projekte-view');
   if (projekteEl) projekteEl.classList.toggle('show', view==='projekte');
   const verantwEl = document.getElementById('verantw-view');
@@ -4088,6 +4104,7 @@ function switchView(view) {
   if (view==='dav') renderDaVorlagenView();
   if (view==='extract') renderDataExtractView();
   if (view==='angebote') renderAngeboteView();
+  if (view==='briefberichte') renderBriefberichteView();
   if (view==='projekte') renderProjekteView();
   if (view==='verantw')  renderVerantwortlicheView();
   // Mobile-Drawer schließen, falls offen
@@ -5145,6 +5162,11 @@ const FEATURES = {
     desc:  'KONE-/Drittanbieter-PDF-Angebote in Aszendio-eigene Angebote umwandeln (KI-Extraktion, eigener Nummernkreis, eigenes Briefpapier). Sieht Preise (interner Tooltyp).',
     default: false,
   },
+  tool_briefberichte: {
+    label: 'Tool: Berichte (Briefpapier)',
+    desc:  'Freitext-Berichte auf Firmen-Briefpapier verfassen — Standort, Fabriknummer, Empfänger-Anschrift, Freitext, Bild-Anhänge, Signatur. PDF auf Briefpapier der aktiven Firma.',
+    default: false,
+  },
   auftraege_view_all: {
     label: 'Aufträge: Alle anzeigen',
     desc:  'Verwalter-Sicht: sieht alle Aufträge der Firma. Ohne diese Berechtigung nur eigene zugewiesene.',
@@ -5232,7 +5254,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
-      tool_data_extract:true, tool_angebote:true,
+      tool_data_extract:true, tool_angebote:true, tool_briefberichte:true,
     },
   },
   { name:'Verwalter', sort_order:2, is_system:true,
@@ -5243,7 +5265,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
-      tool_data_extract:true, tool_angebote:true,
+      tool_data_extract:true, tool_angebote:true, tool_briefberichte:true,
     },
   },
   { name:'Techniker', sort_order:3, is_system:true,
@@ -37471,6 +37493,687 @@ async function _prjVorlageDelete(recId) {
     await _loadProjektVorlagen(false);
     _renderProjektVorlagenList();
   } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v6.10: BRIEFBERICHTE — Berichte auf Firmen-Briefpapier
+ * ───────────────────────────────────────────────────────────────────────
+ * Pro Firma freie Berichte mit Standort + Fabriknummer + Kunden-Anschrift
+ * + Freitext + Bild-Anhängen + Signatur (Name). PDF auf Briefpapier.
+ * Anlage-Picker zieht Daten aus dem ERP, Felder sind editierbar.
+ * ═══════════════════════════════════════════════════════════════════════ */
+const BB_TABLE_FIELDS = [
+  { name:'app_bb_num',         type:'number',       options:{ precision:0 } },
+  { name:'firma',              type:'singleLineText' },
+  { name:'erstellt_am',        type:'singleLineText' },
+  { name:'erstellt_von',       type:'singleLineText' },
+  { name:'status',             type:'singleLineText' },  // entwurf | finalisiert
+  { name:'titel',              type:'singleLineText' },  // Kurztitel/Betreff
+  // Anlage (gemappt aus ERP via Picker; alle Felder editierbar)
+  { name:'anlage_id',          type:'singleLineText' },
+  { name:'standort',           type:'multilineText'  },
+  { name:'fabriknummer',       type:'singleLineText' },
+  // Empfänger
+  { name:'kunde_name',         type:'singleLineText' },
+  { name:'kunde_nummer',       type:'singleLineText' },
+  { name:'kunde_anschrift',    type:'multilineText'  },
+  // Inhalt
+  { name:'bericht_text',       type:'multilineText'  },
+  { name:'signatur_name',      type:'singleLineText' },
+  { name:'bilder_json',        type:'multilineText'  },  // [{name, dataUrl, caption}]
+  // Output
+  { name:'app_pdf',            type:'multipleAttachments' },
+  { name:'notizen',            type:'multilineText'  },
+];
+let _bbCache = { firma:null, items:null, loadedAt:0 };
+let _bbTableEnsured = false;
+
+async function _ensureBbTable() {
+  if (_bbTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token. Bitte als Admin einloggen.');
+  try {
+    await ensureTable('App_Briefberichte', BB_TABLE_FIELDS);
+    for (const f of BB_TABLE_FIELDS) {
+      try { await ensureField('App_Briefberichte', f.name, f.type); } catch(_){}
+    }
+    _bbTableEnsured = true;
+    return true;
+  } catch(e) {
+    throw new Error('Tabelle "App_Briefberichte" konnte nicht angelegt werden: '+e.message);
+  }
+}
+
+async function _bbGetNextNumber(baseId, firmaSlug) {
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  try {
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Briefberichte'
+      +'?pageSize=100&fields[]=app_bb_num&fields[]=firma'
+      +'&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'");
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) return 1;
+    const d = await r.json();
+    const maxDb = (d.records||[]).reduce((m,r) => Math.max(m, +r.fields?.app_bb_num || 0), 0);
+    return maxDb + 1;
+  } catch(_) { return 1; }
+}
+
+async function _bbLoadAll(firmaSlug, force) {
+  const fresh = !force && _bbCache.firma === firmaSlug && _bbCache.items && (Date.now() - _bbCache.loadedAt) < 60_000;
+  if (fresh) return _bbCache.items;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!baseId || !key) return [];
+  const items = [];
+  let offset = '';
+  try {
+    do {
+      const url = 'https://api.airtable.com/v0/'+baseId+'/App_Briefberichte'
+        +'?pageSize=100'
+        +'&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'")
+        +'&sort[0][field]=app_bb_num&sort[0][direction]=desc'
+        +(offset ? '&offset='+encodeURIComponent(offset) : '');
+      const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+      if (!r.ok) {
+        if (r.status === 404 || r.status === 422) break;
+        throw new Error('HTTP '+r.status);
+      }
+      const d = await r.json();
+      (d.records||[]).forEach(rec => items.push(rec));
+      offset = d.offset || '';
+    } while (offset);
+  } catch(e) {
+    console.warn('[BB] Load fehlgeschlagen:', e.message);
+    return [];
+  }
+  _bbCache = { firma:firmaSlug, items, loadedAt:Date.now() };
+  return items;
+}
+
+async function renderBriefberichteView(opts) {
+  opts = opts || {};
+  if (!hasPermission('tool_briefberichte')) return;
+  const list = document.getElementById('briefberichte-list');
+  if (!list) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  // Tabelle vor erstem Render anlegen (Admin only — sonst stiller Skip)
+  if (!_bbTableEnsured && isAdmin()) {
+    try { await _ensureBbTable(); } catch(_){}
+  }
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Berichte…</div>';
+  let items;
+  try { items = await _bbLoadAll(firmaSlug, opts.force); }
+  catch(e) {
+    list.innerHTML = '<div style="padding:30px;text-align:center"><div style="color:var(--err);font-size:14px;font-weight:600;margin-bottom:8px">⚠ '+escapeHtml(e.message||'')+'</div>'+
+      (isAdmin() ? '<button class="btn" onclick="(async()=>{try{await _ensureBbTable();renderBriefberichteView({force:true});toast(\'✅ Tabelle angelegt\',\'ok\')}catch(e){toast(\'❌ \'+e.message,\'err\')}})()">🛠 Tabelle anlegen</button>' : '')+
+    '</div>';
+    return;
+  }
+  const cntEl = document.getElementById('briefberichte-count');
+  if (cntEl) cntEl.textContent = items.length;
+  if (!items.length) {
+    list.innerHTML = '<div style="max-width:640px;margin:40px auto;padding:32px;text-align:center;background:#F0F9FF;border:1px solid #BAE6FD;border-radius:14px">'+
+      '<div style="font-size:38px;margin-bottom:10px">📝</div>'+
+      '<h3 style="color:#0C4A6E;margin:0 0 8px">Noch keine Berichte</h3>'+
+      '<p style="color:#075985;font-size:13px;line-height:1.6;margin:0 0 16px">'+
+        'Freitext-Berichte auf <strong>Briefpapier der Firma "'+escapeHtml(firmaSlug)+'"</strong> mit Anlagen-Daten, Empfänger-Anschrift, eigenem Text und Bild-Anhängen.'+
+      '</p>'+
+      '<button class="btn prim" onclick="openBriefberichtEditor()">+ Neuen Bericht erstellen</button>'+
+    '</div>';
+    return;
+  }
+  list.innerHTML = items.map(rec => {
+    const f = rec.fields || {};
+    const statusCol = f.status === 'finalisiert' ? { bg:'#D1FAE5', fg:'#065F46', label:'✓ Finalisiert' } : { bg:'#FEF3C7', fg:'#92400E', label:'✎ Entwurf' };
+    const pdfAtt = Array.isArray(f.app_pdf) && f.app_pdf[0] ? f.app_pdf[0] : null;
+    const bilderCount = (() => { try { return JSON.parse(f.bilder_json||'[]').length; } catch(_) { return 0; } })();
+    return '<div style="background:#fff;border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;cursor:pointer" onclick="openBriefberichtEditor({recId:\''+rec.id+'\'})">'+
+      '<div style="background:#0EA5E9;color:#fff;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">BB-'+(f.app_bb_num||'?')+'</div>'+
+      '<div style="flex:1;min-width:240px">'+
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px">'+
+          '<strong style="color:#0C4A6E;font-size:14px">'+escapeHtml(f.titel || '(ohne Titel)')+'</strong>'+
+          '<span style="background:'+statusCol.bg+';color:'+statusCol.fg+';padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">'+statusCol.label+'</span>'+
+          (bilderCount > 0 ? '<span style="background:#F0F9FF;color:#075985;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:600">🖼 '+bilderCount+'</span>' : '')+
+        '</div>'+
+        '<div style="font-size:12px;color:var(--txt2);line-height:1.5">'+
+          (f.kunde_name ? '<div>👤 '+escapeHtml(f.kunde_name)+(f.kunde_nummer?' · Kd-Nr. '+escapeHtml(f.kunde_nummer):'')+'</div>' : '')+
+          (f.standort ? '<div>📍 '+escapeHtml(f.standort.split('\n')[0])+'</div>' : '')+
+          (f.fabriknummer ? '<div>🔧 Fabrik-Nr. '+escapeHtml(f.fabriknummer)+'</div>' : '')+
+        '</div>'+
+        '<div style="font-size:10px;color:var(--txt3);margin-top:4px">'+escapeHtml(f.erstellt_am||'')+' · '+escapeHtml(f.erstellt_von||'')+'</div>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap" onclick="event.stopPropagation()">'+
+        (pdfAtt ? '<a href="'+escapeHtml(pdfAtt.url)+'" target="_blank" rel="noopener" style="background:#FEE2E2;color:#991B1B;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">📄 PDF</a>' : '')+
+        '<button onclick="_bbDelete(\''+rec.id+'\')" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer">🗑</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+window._bbDelete = async function(recId) {
+  if (!confirm('Diesen Bericht wirklich löschen?')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Briefberichte/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    _bbCache = { firma:null, items:null, loadedAt:0 };
+    toast('🗑 Gelöscht','ok');
+    renderBriefberichteView({force:true});
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+/* ── EDITOR ───────────────────────────────────────────────────────────── */
+window.openBriefberichtEditor = async function(opts) {
+  opts = opts || {};
+  if (!hasPermission('tool_briefberichte')) return toast('🔒 Keine Berechtigung','err');
+  try { await _ensureBbTable(); } catch(e) { return toast('❌ Tabelle: '+e.message,'err'); }
+  let state = {
+    recId: opts.recId || null,
+    titel: '',
+    anlage_id: '',
+    standort: '',
+    fabriknummer: '',
+    kunde_name: '',
+    kunde_nummer: '',
+    kunde_anschrift: '',
+    bericht_text: '',
+    signatur_name: APP_KEYS.user?.name || '',
+    bilder: [], // [{name, dataUrl, caption}]
+    status: 'entwurf',
+  };
+  if (opts.recId) {
+    // Edit-Mode: Record laden
+    try {
+      const items = await _bbLoadAll(getCurrentFirmaSlug());
+      const rec = items.find(r => r.id === opts.recId);
+      if (rec) {
+        const f = rec.fields || {};
+        state = {
+          recId: rec.id,
+          titel: f.titel || '',
+          anlage_id: f.anlage_id || '',
+          standort: f.standort || '',
+          fabriknummer: f.fabriknummer || '',
+          kunde_name: f.kunde_name || '',
+          kunde_nummer: f.kunde_nummer || '',
+          kunde_anschrift: f.kunde_anschrift || '',
+          bericht_text: f.bericht_text || '',
+          signatur_name: f.signatur_name || APP_KEYS.user?.name || '',
+          bilder: (() => { try { return JSON.parse(f.bilder_json||'[]'); } catch(_) { return []; } })(),
+          status: f.status || 'entwurf',
+        };
+      }
+    } catch(e) { console.warn('[BB] Load für Edit fehlgeschlagen:', e.message); }
+  }
+  document.getElementById('bb-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'bb-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9990;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  m.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:820px;width:100%;max-height:94vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'+
+      '<div style="padding:16px 22px;border-bottom:1px solid var(--bdr);background:linear-gradient(135deg,#0C4A6E,#0EA5E9);color:#fff;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;gap:10px">'+
+        '<div>'+
+          '<h3 style="margin:0;font-size:17px">📝 '+(state.recId ? 'Bericht bearbeiten' : 'Neuer Bericht')+'</h3>'+
+          '<div style="font-size:11px;opacity:.9;margin-top:2px">Briefpapier: '+escapeHtml(getCurrentFirmaSlug())+'</div>'+
+        '</div>'+
+        '<button onclick="document.getElementById(\'bb-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="bb-ed-body" style="padding:18px 22px;flex:1;overflow-y:auto"></div>'+
+      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'bb-editor\').remove()">Abbrechen</button>'+
+        '<button class="btn" onclick="_bbSave(false)">💾 Als Entwurf speichern</button>'+
+        '<button class="btn prim" onclick="_bbSave(true)">📄 Finalisieren + PDF erstellen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._state = state;
+  _bbEditorRender();
+};
+
+window._bbEditorRender = function() {
+  const m = document.getElementById('bb-editor');
+  if (!m || !m._state) return;
+  const s = m._state;
+  const body = document.getElementById('bb-ed-body');
+  if (!body) return;
+  body.innerHTML =
+    // Anlage-Picker
+    '<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+      '<label style="font-size:11px;font-weight:700;color:#1E40AF;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🛗 Anlage aus ERP (optional, befüllt Felder)</label>'+
+      '<input id="bb-anlage-search" placeholder="Fabriknummer, Standort, Kunde…" oninput="_bbAnlageSearch(this.value)" style="width:100%;padding:8px 10px;border:1px solid #BFDBFE;border-radius:6px;font-size:13px;background:#fff">'+
+      '<div id="bb-anlage-results" style="margin-top:8px;display:none;background:#fff;border:1px solid #BFDBFE;border-radius:6px;max-height:200px;overflow:auto"></div>'+
+    '</div>'+
+    // Titel/Betreff
+    '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Titel / Betreff *</label>'+
+    '<input id="bb-titel" value="'+escapeHtml(s.titel||'')+'" oninput="document.getElementById(\'bb-editor\')._state.titel=this.value" placeholder="z.B. Anlagenzustand · Schadensbericht · Stellungnahme" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;margin-bottom:14px">'+
+    // 3-spaltig: Standort, Fabriknr, Empfänger
+    '<div style="display:grid;grid-template-columns:1fr 200px;gap:12px;margin-bottom:14px">'+
+      '<div>'+
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📍 Standort</label>'+
+        '<textarea id="bb-standort" rows="2" oninput="document.getElementById(\'bb-editor\')._state.standort=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;resize:vertical">'+escapeHtml(s.standort||'')+'</textarea>'+
+      '</div>'+
+      '<div>'+
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">🔧 Fabrik-Nr.</label>'+
+        '<input id="bb-fab" value="'+escapeHtml(s.fabriknummer||'')+'" oninput="document.getElementById(\'bb-editor\')._state.fabriknummer=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '</div>'+
+    '</div>'+
+    // Empfänger
+    '<div style="background:#F9FAFB;border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+      '<label style="font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px">👤 Empfänger / Kunde</label>'+
+      '<div style="display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:8px">'+
+        '<div><label style="font-size:10px;color:var(--txt3)">Firmenname</label>'+
+          '<input id="bb-kn" value="'+escapeHtml(s.kunde_name||'')+'" oninput="document.getElementById(\'bb-editor\')._state.kunde_name=this.value" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+        '<div><label style="font-size:10px;color:var(--txt3)">Kd-Nr.</label>'+
+          '<input id="bb-knr" value="'+escapeHtml(s.kunde_nummer||'')+'" oninput="document.getElementById(\'bb-editor\')._state.kunde_nummer=this.value" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+      '</div>'+
+      '<label style="font-size:10px;color:var(--txt3)">Anschrift (mehrzeilig)</label>'+
+      '<textarea id="bb-kanschr" rows="3" oninput="document.getElementById(\'bb-editor\')._state.kunde_anschrift=this.value" placeholder="Firma&#10;Straße Hausnr.&#10;PLZ Ort" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit;resize:vertical">'+escapeHtml(s.kunde_anschrift||'')+'</textarea>'+
+    '</div>'+
+    // Bericht-Text
+    '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📄 Bericht-Text *</label>'+
+    '<textarea id="bb-text" rows="10" oninput="document.getElementById(\'bb-editor\')._state.bericht_text=this.value" placeholder="Sehr geehrte Damen und Herren,&#10;&#10;hiermit teilen wir Ihnen mit, dass …" style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;line-height:1.55;resize:vertical;margin-bottom:14px">'+escapeHtml(s.bericht_text||'')+'</textarea>'+
+    // Bilder
+    '<div style="background:#FEFCE8;border:1px solid #FDE68A;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'+
+        '<label style="font-size:11px;font-weight:700;color:#92400E;text-transform:uppercase;letter-spacing:.5px">🖼 Bilder ('+s.bilder.length+')</label>'+
+        '<label style="background:#F59E0B;color:#fff;padding:7px 14px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">+ Bilder hinzufügen<input type="file" accept="image/*" multiple style="display:none" onchange="_bbAddImages(this.files)"></label>'+
+      '</div>'+
+      '<div style="font-size:11px;color:#78350F;margin-bottom:8px">Bilder werden automatisch verkleinert (max. 1600px, JPEG 70%) und ans Ende des PDFs angehängt (2 pro Seite mit Bildunterschrift).</div>'+
+      (s.bilder.length === 0
+        ? '<div style="text-align:center;padding:18px;color:#92400E;font-size:12px;background:#FFFBEB;border:1px dashed #FDE68A;border-radius:6px">Noch keine Bilder hochgeladen.</div>'
+        : '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px">'+
+            s.bilder.map((img, i) =>
+              '<div style="background:#fff;border:1px solid #FDE68A;border-radius:8px;overflow:hidden">'+
+                '<div style="position:relative">'+
+                  '<img src="'+escapeHtml(img.dataUrl)+'" style="width:100%;height:100px;object-fit:cover;display:block">'+
+                  '<button onclick="_bbRemoveImage('+i+')" title="Entfernen" style="position:absolute;top:4px;right:4px;background:rgba(220,38,38,.9);color:#fff;border:none;width:24px;height:24px;border-radius:50%;font-size:14px;cursor:pointer">×</button>'+
+                '</div>'+
+                '<input value="'+escapeHtml(img.caption||'')+'" oninput="_bbSetImageCaption('+i+',this.value)" placeholder="Bildunterschrift…" style="width:100%;padding:5px 8px;border:none;border-top:1px solid #FDE68A;font-size:11px;font-family:inherit">'+
+              '</div>'
+            ).join('')+
+          '</div>'
+      )+
+    '</div>'+
+    // Signatur
+    '<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:10px;padding:12px 14px">'+
+      '<label style="font-size:11px;font-weight:700;color:#065F46;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">✍ Signatur (Name unter dem Text)</label>'+
+      '<input id="bb-sig" value="'+escapeHtml(s.signatur_name||'')+'" oninput="document.getElementById(\'bb-editor\')._state.signatur_name=this.value" placeholder="Vor- und Nachname" style="width:100%;padding:8px 10px;border:1px solid #BBF7D0;border-radius:6px;font-size:13px;background:#fff">'+
+    '</div>';
+};
+
+window._bbAnlageSearch = async function(query) {
+  const wrap = document.getElementById('bb-anlage-results');
+  if (!wrap) return;
+  const q = String(query||'').trim().toLowerCase();
+  if (q.length < 2) { wrap.style.display='none'; wrap.innerHTML=''; return; }
+  try {
+    const all = await erpLoadAnlagen();
+    const hits = (all||[]).filter(a => {
+      const hay = [a.anzeigeAdresse, a.fabriknummer, a.kunde?.firmenname, a.kunde?.kundennummer, a.name].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    }).slice(0, 20);
+    if (!hits.length) { wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Treffer</div>'; wrap.style.display='block'; return; }
+    wrap.innerHTML = hits.map(a => {
+      const addr = a.anzeigeAdresse || a.name || '(ohne Adresse)';
+      const kn = a.kunde?.firmenname || '';
+      const fab = a.fabriknummer || '';
+      return '<div onclick="_bbPickAnlage('+a.id+')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#F0F9FF\'" onmouseout="this.style.background=\'\'">'+
+        '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(addr)+'</div>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:2px">'+(fab ? '🔧 '+escapeHtml(fab)+' · ' : '')+escapeHtml(kn)+'</div>'+
+      '</div>';
+    }).join('');
+    wrap.style.display='block';
+  } catch(e) {
+    wrap.innerHTML='<div style="padding:10px;color:#DC2626;font-size:12px">❌ '+escapeHtml(e.message)+'</div>';
+    wrap.style.display='block';
+  }
+};
+
+window._bbPickAnlage = async function(anlageId) {
+  const m = document.getElementById('bb-editor');
+  if (!m || !m._state) return;
+  try {
+    const all = await erpLoadAnlagen();
+    const a = (all||[]).find(x => String(x.id) === String(anlageId));
+    if (!a) return;
+    m._state.anlage_id = String(a.id);
+    m._state.standort = _buildAnlageAdresse(a) || a.anzeigeAdresse || a.name || '';
+    m._state.fabriknummer = a.fabriknummer || '';
+    if (a.kunde) {
+      m._state.kunde_name = a.kunde.firmenname || a.kunde.name || '';
+      m._state.kunde_nummer = String(a.kunde.kundennummer || a.kunde.id || '');
+      // Kunde-Anschrift aus ERP zusammensetzen
+      const k = a.kunde;
+      const parts = [];
+      if (k.firmenname || k.name) parts.push(k.firmenname || k.name);
+      if (k.adresse) {
+        if (typeof k.adresse === 'string') parts.push(k.adresse);
+        else {
+          const z1 = [k.adresse.strasse, k.adresse.hausnummer].filter(Boolean).join(' ');
+          const z2 = [k.adresse.plz, k.adresse.ort].filter(Boolean).join(' ');
+          if (z1) parts.push(z1);
+          if (z2) parts.push(z2);
+        }
+      } else {
+        const z1 = [k.strasse, k.hausnummer].filter(Boolean).join(' ');
+        const z2 = [k.plz, k.ort].filter(Boolean).join(' ');
+        if (z1) parts.push(z1);
+        if (z2) parts.push(z2);
+      }
+      m._state.kunde_anschrift = parts.filter(Boolean).join('\n');
+    }
+    const r = document.getElementById('bb-anlage-results'); if (r) { r.style.display='none'; r.innerHTML=''; }
+    const s = document.getElementById('bb-anlage-search'); if (s) s.value = '';
+    _bbEditorRender();
+    toast('✅ Anlage übernommen','ok');
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+window._bbAddImages = async function(files) {
+  const m = document.getElementById('bb-editor');
+  if (!m || !m._state) return;
+  for (const f of Array.from(files||[])) {
+    try {
+      const dataUrl = await _gbuResizeImage(f, 1600, 0.7);
+      m._state.bilder.push({ name: f.name, dataUrl, caption: '' });
+    } catch(e) { console.warn('[BB] Bild-Verkleinerung fehlgeschlagen:', e.message); }
+  }
+  _bbEditorRender();
+};
+
+window._bbRemoveImage = function(i) {
+  const m = document.getElementById('bb-editor');
+  if (!m || !m._state) return;
+  m._state.bilder.splice(i, 1);
+  _bbEditorRender();
+};
+
+window._bbSetImageCaption = function(i, val) {
+  const m = document.getElementById('bb-editor');
+  if (!m || !m._state || !m._state.bilder[i]) return;
+  m._state.bilder[i].caption = val;
+};
+
+window._bbSave = async function(finalisieren) {
+  const m = document.getElementById('bb-editor');
+  if (!m || !m._state) return;
+  const s = m._state;
+  // Validation
+  if (!s.titel.trim()) return toast('⚠ Titel/Betreff erforderlich','err');
+  if (!s.bericht_text.trim()) return toast('⚠ Bericht-Text erforderlich','err');
+  if (finalisieren && !s.signatur_name.trim()) return toast('⚠ Signatur (Name) erforderlich beim Finalisieren','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  if (!APP_KEYS.airtableWriteKey) return toast('🔒 Kein Write-Token','err');
+  const saveBtn = m.querySelector('.btn.prim');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Speichere…'; }
+  try {
+    await _ensureBbTable();
+    const fields = {
+      firma:           firmaSlug,
+      titel:           s.titel,
+      anlage_id:       s.anlage_id,
+      standort:        s.standort,
+      fabriknummer:    s.fabriknummer,
+      kunde_name:      s.kunde_name,
+      kunde_nummer:    s.kunde_nummer,
+      kunde_anschrift: s.kunde_anschrift,
+      bericht_text:    s.bericht_text,
+      signatur_name:   s.signatur_name,
+      bilder_json:     JSON.stringify(s.bilder || []),
+      status:          finalisieren ? 'finalisiert' : 'entwurf',
+    };
+    let recId = s.recId;
+    if (recId) {
+      // Update
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Briefberichte/'+recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message||'Fehler');
+    } else {
+      // Create
+      fields.app_bb_num    = await _bbGetNextNumber(baseId, firmaSlug);
+      fields.erstellt_am   = new Date().toISOString().slice(0,10);
+      fields.erstellt_von  = APP_KEYS.user?.name || '';
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Briefberichte', {
+        method:'POST',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      const d = await r.json();
+      if (d.error) throw new Error(d.error.message||'Fehler');
+      recId = d.id;
+      s.recId = recId;
+      m._state.recId = recId;
+    }
+    // PDF generieren + anhängen wenn finalisiert
+    if (finalisieren) {
+      if (saveBtn) saveBtn.textContent = '⏳ Erstelle PDF…';
+      const recForPdf = { id: recId, fields: { ...fields, app_bb_num: fields.app_bb_num || (s.recId ? (await _bbLoadAll(firmaSlug, true)).find(r => r.id === recId)?.fields?.app_bb_num : 1) }};
+      const pdfBlob = await _bbBuildPdf(recForPdf, firmaSlug);
+      // Upload zu Airtable
+      try {
+        const filename = 'Bericht-BB-'+(fields.app_bb_num||recId)+'.pdf';
+        const att = await atBlobUpload(recId, 'app_pdf', pdfBlob, filename, 'application/pdf');
+        console.log('[BB] PDF angehängt:', att?.url || '(ok)');
+      } catch(e) {
+        console.warn('[BB] PDF-Upload fehlgeschlagen:', e.message);
+        toast('⚠ PDF erstellt, aber Upload fehlgeschlagen: '+e.message,'err');
+      }
+    }
+    _bbCache = { firma:null, items:null, loadedAt:0 };
+    document.getElementById('bb-editor')?.remove();
+    toast(finalisieren ? '✅ Bericht finalisiert + PDF erstellt' : '💾 Entwurf gespeichert','ok');
+    renderBriefberichteView({force:true});
+  } catch(e) {
+    console.error('[BB] Save-Fehler:', e);
+    toast('❌ '+e.message,'err');
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '📄 Finalisieren + PDF erstellen'; }
+  }
+};
+
+/* ── PDF-GENERATOR ────────────────────────────────────────────────────── */
+async function _bbBuildPdf(rec, firmaSlug) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'portrait', unit:'mm', format:'a4' });
+  const ml = 22, mr = 188, cw = mr - ml;
+  const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio', navy:[26,51,83], accent:[33,82,169] };
+  const NAVY = BR.navy || [26,51,83];
+  const ACCENT = BR.accent || [33,82,169];
+  const GREY = [40,40,40], GREY_L = [110,110,110], GREY_X = [220,220,220];
+  const f = rec.fields || {};
+
+  // Header (Logo + Firmenname)
+  _bbPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X);
+
+  let y = 38;
+  // Empfänger-Block (oben links)
+  if (f.kunde_anschrift && f.kunde_anschrift.trim()) {
+    doc.setFontSize(8); doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal');
+    doc.text(_sanPdf((BR.company || 'Firma')+'  ·  Absender'), ml, y);
+    y += 4;
+    doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, y, ml+82, y);
+    y += 5;
+    doc.setFontSize(10); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+    const lines = String(f.kunde_anschrift||'').split('\n').map(l => l.trim()).filter(Boolean);
+    lines.forEach((l, i) => doc.text(_sanPdf(l), ml, y + i*4.5));
+    y += Math.max(20, lines.length * 4.5 + 6);
+  } else {
+    y += 14;
+  }
+
+  // Datum (rechts)
+  doc.setFontSize(10); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+  const datum = f.erstellt_am || new Date().toISOString().slice(0,10);
+  const ortDatum = ((BR.footerCols && BR.footerCols[0]?.lines || []).slice(-1)[0] || '').replace(/^\d{5}\s*/,'').trim() || 'Esslingen am Neckar';
+  const headLineDatum = ortDatum + ', den ' + (datum.includes('-') ? datum.split('-').reverse().join('.') : datum);
+  doc.text(_sanPdf(headLineDatum), mr, y - 12, { align:'right' });
+
+  // Trennlinie
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.line(ml, y, mr, y);
+  y += 7;
+
+  // Betreff
+  doc.setFontSize(13); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+  const titleLines = doc.splitTextToSize(_sanPdf(f.titel || 'Bericht'), cw);
+  titleLines.forEach((l, i) => doc.text(l, ml, y + i*6));
+  y += titleLines.length * 6 + 4;
+
+  // Sub-Header: Standort + Fabriknr (kompakte Zeile)
+  const subParts = [];
+  if (f.fabriknummer) subParts.push('Fabriknummer: '+f.fabriknummer);
+  if (f.standort) subParts.push('Standort: '+f.standort.split('\n')[0]);
+  if (subParts.length) {
+    doc.setFontSize(9.5); doc.setTextColor(...GREY_L); doc.setFont('helvetica','italic');
+    const subLines = doc.splitTextToSize(_sanPdf(subParts.join('  ·  ')), cw);
+    subLines.forEach((l, i) => doc.text(l, ml, y + i*4.5));
+    y += subLines.length * 4.5 + 4;
+  }
+
+  // Wenn Standort mehrzeilig: zusätzlicher Block
+  if (f.standort && f.standort.includes('\n')) {
+    const extraLines = String(f.standort).split('\n').slice(1).map(l => l.trim()).filter(Boolean);
+    if (extraLines.length) {
+      doc.setFontSize(9.5); doc.setTextColor(...GREY_L); doc.setFont('helvetica','italic');
+      extraLines.forEach((l, i) => doc.text(_sanPdf(l), ml, y + i*4.5));
+      y += extraLines.length * 4.5 + 2;
+    }
+  }
+  y += 4;
+
+  // Bericht-Text
+  doc.setFontSize(11); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+  const textLines = doc.splitTextToSize(_sanPdf(f.bericht_text || ''), cw);
+  for (const line of textLines) {
+    if (y > 260) {
+      doc.addPage();
+      _bbPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X);
+      y = 38;
+    }
+    doc.text(line, ml, y);
+    y += 5.2;
+  }
+
+  // Signatur
+  y += 10;
+  if (y > 252) {
+    doc.addPage();
+    _bbPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X);
+    y = 60;
+  }
+  doc.setFontSize(11); doc.setTextColor(...GREY); doc.setFont('helvetica','normal');
+  doc.text(_sanPdf('Mit freundlichen Grüßen'), ml, y);
+  y += 14;
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.line(ml, y, ml+70, y);
+  y += 4;
+  doc.setFontSize(11); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+  doc.text(_sanPdf(f.signatur_name || ''), ml, y);
+  y += 4;
+  doc.setFontSize(9); doc.setTextColor(...GREY_L); doc.setFont('helvetica','normal');
+  doc.text(_sanPdf(BR.company || ''), ml, y);
+
+  // Footer auf jeder Seite
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, p, pageCount, f);
+  }
+
+  // Bilder-Seiten — 2 pro Seite mit Bildunterschrift
+  let bilder = [];
+  try { bilder = JSON.parse(f.bilder_json || '[]'); } catch(_){}
+  if (Array.isArray(bilder) && bilder.length) {
+    for (let i = 0; i < bilder.length; i += 2) {
+      doc.addPage();
+      _bbPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X);
+      // Seitentitel
+      doc.setFontSize(12); doc.setTextColor(...NAVY); doc.setFont('helvetica','bold');
+      doc.text(_sanPdf('Anhang: Bilder zum Bericht'), ml, 34);
+      doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.line(ml, 36, mr, 36);
+      // 2 Bilder pro Seite, max 110mm hoch each
+      for (let slot = 0; slot < 2 && (i + slot) < bilder.length; slot++) {
+        const img = bilder[i + slot];
+        const slotY = 44 + slot * 120; // 110 Bild + 10 Caption/Spacing
+        const imgMaxH = 100;
+        const imgMaxW = cw;
+        // Echte Bild-Dimensionen lesen
+        let imgW = imgMaxW, imgH = imgMaxH;
+        try {
+          const tmp = await new Promise((resolve, reject) => {
+            const im = new Image();
+            im.onload = () => resolve(im);
+            im.onerror = reject;
+            im.src = img.dataUrl;
+          });
+          const ratio = tmp.width / tmp.height;
+          if (ratio > imgMaxW / imgMaxH) {
+            imgW = imgMaxW; imgH = imgMaxW / ratio;
+          } else {
+            imgH = imgMaxH; imgW = imgMaxH * ratio;
+          }
+        } catch(_){}
+        const x = ml + (cw - imgW) / 2;
+        try { doc.addImage(img.dataUrl, 'JPEG', x, slotY, imgW, imgH); } catch(e) { console.warn('[BB] addImage:', e.message); }
+        // Caption unter dem Bild
+        const captionY = slotY + imgH + 4;
+        doc.setFontSize(9); doc.setTextColor(...GREY_L); doc.setFont('helvetica','italic');
+        const cap = '['+(i + slot + 1)+'] '+(img.caption || '');
+        doc.text(_sanPdf(cap), ml + cw/2, captionY, { align:'center' });
+      }
+    }
+    // Footer auch auf neuen Bild-Seiten
+    const newCount = doc.internal.getNumberOfPages();
+    for (let p = pageCount + 1; p <= newCount; p++) {
+      doc.setPage(p);
+      _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, p, newCount, f);
+    }
+  }
+
+  return doc.output('blob');
+}
+
+function _bbPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X) {
+  // Logo links
+  if (BR.logoB64) {
+    try { doc.addImage(BR.logoB64, 'PNG', ml, 12, BR.logoW || 36, BR.logoH || 7.4); } catch(_){}
+  }
+  // Firmenname rechts (klein)
+  doc.setFont('helvetica','normal'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf(BR.headerLine || BR.company || ''), mr, 16, { align:'right' });
+  // Trennlinie unter Logo-Bereich (nur wenn Logo da)
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, 24, mr, 24);
+}
+
+function _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, page, total, f) {
+  // Footer mit 3 Spalten aus Briefpapier-Cols
+  const fy = 278;
+  const cols = (BR.footerCols && Array.isArray(BR.footerCols)) ? BR.footerCols : [];
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, fy - 2, mr, fy - 2);
+  if (cols.length) {
+    const colW = (mr - ml) / cols.length;
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+    cols.forEach((c, idx) => {
+      const cx = ml + idx * colW;
+      doc.setFont('helvetica','bold');
+      doc.text(_sanPdf(c.title||''), cx, fy);
+      doc.setFont('helvetica','normal');
+      (c.lines||[]).forEach((l, li) => doc.text(_sanPdf(l||''), cx, fy + 3.5 + li*3.2));
+    });
+  } else {
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf(BR.footerLine || BR.company || ''), ml, fy);
+  }
+  // Seitenzahl + Bericht-Nr (ganz unten)
+  doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...GREY_L);
+  const bbNum = f.app_bb_num ? 'Bericht BB-'+f.app_bb_num : '';
+  doc.text(_sanPdf(bbNum), ml, 293);
+  doc.text('Seite '+page+' / '+total, mr, 293, { align:'right' });
 }
 
 </script>
