@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.18';
+const APP_VERSION = 'v6.19';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20967,7 +20967,9 @@ async function openDaDetail(recId) {
         '<button class="btn" onclick="document.getElementById(\'da-detail\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_daDeleteRecord(\''+recId+'\')" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Datenaufnahme löschen">🗑 Löschen</button>'+
         (hasPermission('datenaufnahmen_edit') ? '<button class="btn" id="da-save-btn" onclick="_daSave(\''+recId+'\')">💾 Speichern</button>' : '')+
-        (canSeePrices() ? '<button class="btn" style="background:#FB923C;border-color:#FB923C;color:#fff;font-weight:600" onclick="_daBuildAndShowAngebotPdf(\''+recId+'\')" title="Angebot mit Pauschalpreisen erzeugen">💰 Angebot-PDF</button>' : '')+
+        // v6.19: 'Angebot-PDF'-Button entfernt. Angebote werden jetzt zentral im
+        //   Angebote-Bereich aus dieser Datenaufnahme erzeugt (siehe Hint unten).
+        ''+
         // v5.99: Als Vorlage speichern — übernimmt alle Checkpunkte (inkl. ki_beschreibung) als neue DA-Vorlage
         (hasPermission('datenaufnahmen_edit') && isAdmin() ? '<button class="btn" onclick="_daSaveAsVorlage(\''+recId+'\')" style="background:#F5F3FF;border-color:#C4B5FD;color:#5B21B6;font-weight:600" title="Aktuelle Checkpunkte (inkl. KI-Beschreibungen) als wiederverwendbare Vorlage speichern">📋 Als Vorlage speichern</button>' : '')+
         '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')" title="Datenaufnahme-PDF ohne Preise">📄 PDF erzeugen</button>'+
@@ -22777,6 +22779,10 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'erp_angebot_url',         type:'singleLineText' },
   { name:'erp_pushed_at',           type:'singleLineText' },
   { name:'archived',                type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+  // v6.19: Angebot aus Datenaufnahme erstellt
+  { name:'datenaufnahme_id',        type:'singleLineText' },
+  { name:'datenaufnahme_da_num',    type:'number', options:{ precision:0 } },
+  { name:'da_anhang_pdf',           type:'multipleAttachments' },
 ];
 
 let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
@@ -23546,10 +23552,11 @@ async function openAngebotWizard() {
         '<span id="ang-w-title">📄 Neues Angebot</span>'+
         '<button onclick="document.getElementById(\'ang-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
-      // v5.14: Mode-Toggle (Tabs)
+      // v5.14: Mode-Toggle (Tabs) — v6.19: 3. Tab "Aus Datenaufnahme"
       '<div style="display:flex;gap:0;background:#F3F4F6;border-bottom:1px solid var(--bdr)">'+
-        '<button id="ang-w-tab-pdf"    type="button" onclick="_angWizardSetMode(\'pdf\')"    style="flex:1;padding:11px 14px;background:#fff;border:none;border-bottom:3px solid #2152A9;font-size:13px;font-weight:700;color:#2152A9;cursor:pointer">📄 Aus PDF</button>'+
-        '<button id="ang-w-tab-prompt" type="button" onclick="_angWizardSetMode(\'prompt\')" style="flex:1;padding:11px 14px;background:transparent;border:none;border-bottom:3px solid transparent;font-size:13px;font-weight:600;color:var(--txt2);cursor:pointer">✍️ Nur Prompt</button>'+
+        '<button id="ang-w-tab-pdf"    type="button" onclick="_angWizardSetMode(\'pdf\')"    style="flex:1;padding:11px 10px;background:#fff;border:none;border-bottom:3px solid #2152A9;font-size:13px;font-weight:700;color:#2152A9;cursor:pointer">📄 Aus PDF</button>'+
+        '<button id="ang-w-tab-prompt" type="button" onclick="_angWizardSetMode(\'prompt\')" style="flex:1;padding:11px 10px;background:transparent;border:none;border-bottom:3px solid transparent;font-size:13px;font-weight:600;color:var(--txt2);cursor:pointer">✍️ Nur Prompt</button>'+
+        '<button id="ang-w-tab-da"     type="button" onclick="_angWizardSetMode(\'da\')"     style="flex:1;padding:11px 10px;background:transparent;border:none;border-bottom:3px solid transparent;font-size:13px;font-weight:600;color:var(--txt2);cursor:pointer">📋 Aus Datenaufnahme</button>'+
       '</div>'+
       '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px;line-height:1.6">'+
         '<div id="ang-w-hint-pdf" style="background:#EFF6FF;border-left:3px solid #2152A9;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#1E3A8A">'+
@@ -23557,6 +23564,9 @@ async function openAngebotWizard() {
         '</div>'+
         '<div id="ang-w-hint-prompt" style="display:none;background:#F0FDF4;border-left:3px solid #10b981;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#065F46">'+
           '✍️ Beschreibe das Angebot frei — die KI generiert daraus Anschreiben, Positionen, Leistungsbeschreibung und Preisvorschläge. <strong>Du kannst Prompts als Vorlagen speichern</strong> und immer wieder verwenden (z.B. „Standard-Modernisierung 13-Personen-Aufzug").'+
+        '</div>'+
+        '<div id="ang-w-hint-da" style="display:none;background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#78350F">'+
+          '📋 Wähle eine Datenaufnahme — pro Checkpunkt entsteht eine Angebots-Position. Die <strong>Pauschalpreise aus der DA</strong> werden übernommen, die KI generiert dazu fachliche Leistungsbeschreibungen aus IST-Zustand und Maßnahme. Die <strong>Datenaufnahme (ohne Preise) wird als separates PDF</strong> ans Angebot angehängt.'+
         '</div>'+
         '<div id="ang-w-typ-row" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
           '<div>'+
@@ -23611,6 +23621,17 @@ async function openAngebotWizard() {
             '<button type="button" class="btn" onclick="_angWizardResetTypStandard()" style="font-size:11px;padding:6px 12px" title="Eigene Standard-Vorlage löschen, eingebaute Aszendio-Vorlage wieder aktivieren">🗑 Auf eingebaute Vorlage zurücksetzen</button>'+
             '<button type="button" class="btn" onclick="_angWizardSaveAsVorlage()" style="font-size:11px;padding:6px 12px">💾 Als benannte Vorlage speichern</button>'+
           '</div>'+
+        '</div>'+
+        // ── MODE: AUS DATENAUFNAHME (v6.19) ────────────────────────────
+        '<div id="ang-w-mode-da" style="display:none">'+
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px;flex-wrap:wrap">'+
+            '<label style="font-weight:600;font-size:12px">📋 Datenaufnahme auswählen</label>'+
+            '<input id="ang-w-da-search" placeholder="Suche: DA-Nr, Anlage, Kunde…" oninput="_angWizardFilterDaList()" style="flex:1;min-width:180px;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
+          '</div>'+
+          '<div id="ang-w-da-list" style="border:1px solid var(--bdr);border-radius:8px;max-height:340px;overflow-y:auto;background:#fff">'+
+            '<div style="padding:24px;text-align:center;color:var(--txt3);font-size:12px"><div class="spinner" style="margin:0 auto 8px;width:20px;height:20px"></div>Lade Datenaufnahmen…</div>'+
+          '</div>'+
+          '<div id="ang-w-da-selected" style="display:none;margin-top:10px;padding:10px 14px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;font-size:12px;color:#065F46"></div>'+
         '</div>'+
       '</div>'+
       '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
@@ -23686,6 +23707,7 @@ async function _angWizardGo() {
   const m = document.getElementById('ang-wizard');
   if (!m) return;
   if (m._mode === 'prompt') return _angWizardGoFromPrompt();
+  if (m._mode === 'da') return _angWizardGoFromDa();
   if (!m._file) return;
   const typ = document.getElementById('ang-w-typ').value;
   // Anbieter ermitteln
@@ -23721,6 +23743,267 @@ async function _angWizardGo() {
     toast('❌ KI-Extract: '+(e.message||e).slice(0,200),'err');
     go.disabled = false; go.textContent = '🚀 PDF analysieren';
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// v6.19: Angebot aus Datenaufnahme erstellen
+// ═══════════════════════════════════════════════════════════════════════
+
+/** Lädt die DA-Liste für die aktuelle Firma und rendert sie in den Wizard-Picker. */
+async function _angWizardLoadDaList() {
+  const list = document.getElementById('ang-w-da-list');
+  if (!list) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  try {
+    if (!_daCache.items || _daCache.firma !== firmaSlug) {
+      await _loadDatenaufnahmen(firmaSlug);
+    }
+  } catch(e) {
+    list.innerHTML = '<div style="padding:20px;color:#DC2626;font-size:12px">❌ '+escapeHtml(e.message||String(e))+'</div>';
+    return;
+  }
+  _angWizardRenderDaList(_daCache.items || []);
+}
+
+/** Rendert die gefilterte DA-Liste. */
+function _angWizardRenderDaList(items) {
+  const list = document.getElementById('ang-w-da-list');
+  if (!list) return;
+  if (!items.length) {
+    list.innerHTML = '<div style="padding:24px;text-align:center;color:var(--txt3);font-size:12px">📭 Keine Datenaufnahmen für diese Firma vorhanden.<br>Lege zuerst eine Datenaufnahme an (Menü „Inspektionen → Datenaufnahmen").</div>';
+    return;
+  }
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  list.innerHTML = items.map(rec => {
+    const f = rec.fields || {};
+    let cps = [];
+    try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+    const sumPreis = cps.reduce((s, cp) => s + (+cp.pauschalpreis_netto || 0), 0);
+    const statusColor = ({ entwurf:'#9CA3AF', in_aufnahme:'#F59E0B', abgeschlossen:'#10B981' })[f.status] || '#6B7280';
+    const statusLabel = ({ entwurf:'Entwurf', in_aufnahme:'In Aufnahme', abgeschlossen:'Abgeschlossen' })[f.status] || (f.status||'?');
+    return '<div onclick="_angWizardSelectDa(\''+rec.id+'\')" style="padding:11px 14px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#FEF3C7\'" onmouseout="this.style.background=\'\'">'+
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px">'+
+        '<strong style="color:var(--navy);font-size:13px">DA-'+escapeHtml(String(f.da_num||'?'))+'</strong>'+
+        '<span style="background:'+statusColor+';color:#fff;font-size:10px;padding:2px 8px;border-radius:99px;font-weight:600">'+escapeHtml(statusLabel)+'</span>'+
+      '</div>'+
+      '<div style="color:var(--txt2);line-height:1.4">'+
+        (f.anlage_adresse ? '<div>📍 '+escapeHtml(String(f.anlage_adresse).split('\n')[0])+'</div>' : '')+
+        (f.anlage_fabriknummer ? '<div>🔧 Fabrik-Nr. '+escapeHtml(f.anlage_fabriknummer)+'</div>' : '')+
+        (f.kunde_name ? '<div>👤 '+escapeHtml(f.kunde_name)+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>' : '')+
+        '<div style="color:var(--txt3);font-size:11px;margin-top:3px">📋 '+cps.length+' Checkpunkt'+(cps.length===1?'':'e')+(sumPreis>0?' · Summe '+fmt(sumPreis)+' EUR':'')+'</div>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+window._angWizardFilterDaList = function() {
+  const q = String(document.getElementById('ang-w-da-search')?.value || '').trim().toLowerCase();
+  const all = _daCache.items || [];
+  if (!q) return _angWizardRenderDaList(all);
+  const hits = all.filter(rec => {
+    const f = rec.fields || {};
+    const hay = [f.da_num, f.anlage_adresse, f.anlage_fabriknummer, f.kunde_name, f.kunde_nummer, f.beschreibung].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  });
+  _angWizardRenderDaList(hits);
+};
+
+window._angWizardSelectDa = function(recId) {
+  const m = document.getElementById('ang-wizard');
+  if (!m) return;
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('DA nicht gefunden','err');
+  m._daRec = rec;
+  const f = rec.fields || {};
+  let cps = [];
+  try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const sumPreis = cps.reduce((s, cp) => s + (+cp.pauschalpreis_netto || 0), 0);
+  const info = document.getElementById('ang-w-da-selected');
+  if (info) {
+    info.style.display = '';
+    info.innerHTML = '<strong>✓ DA-'+escapeHtml(String(f.da_num||'?'))+' ausgewählt</strong> — '+
+      cps.length+' Checkpunkt'+(cps.length===1?'':'e')+
+      (sumPreis>0?' · Pauschalsumme '+fmt(sumPreis)+' EUR':' · <em style="color:#92400E">keine Pauschalpreise hinterlegt</em>');
+  }
+  // Visuelle Auswahl in der Liste
+  document.querySelectorAll('#ang-w-da-list > div').forEach(el => el.style.background = '');
+  // Go-Button aktivieren
+  const go = document.getElementById('ang-w-go');
+  if (go) { go.disabled = false; go.style.opacity = '1'; }
+};
+
+/** Generiert ein Angebot aus der gewählten Datenaufnahme. */
+async function _angWizardGoFromDa() {
+  const m = document.getElementById('ang-wizard');
+  if (!m || !m._daRec) return toast('Bitte zuerst eine Datenaufnahme wählen','err');
+  const typ = document.getElementById('ang-w-typ').value;
+  const daRec = m._daRec;
+  const df = daRec.fields || {};
+  let cps = [];
+  try { cps = JSON.parse(df.checkpunkte_json||'[]'); } catch(_){}
+  if (!cps.length) return toast('Diese DA hat keine Checkpunkte','err');
+
+  const go = document.getElementById('ang-w-go');
+  go.disabled = true; go.textContent = '⏳ KI generiert Leistungsbeschreibungen…';
+  try {
+    const extracted = await _extractAngebotFromDatenaufnahme(daRec, cps, typ);
+    console.log('[Angebote-DA] extrahiert:', extracted);
+    // Anlage-Match aus DA-Daten
+    let matchedAnlage = null;
+    if (df.anlage_id && Array.isArray(_anlagenCache?.items)) {
+      matchedAnlage = _anlagenCache.items.find(a => String(a.id) === String(df.anlage_id)) || null;
+    }
+    m.remove();
+    openAngebotEditor({
+      extracted, typ,
+      koneFile: null,
+      matchedAnlage,
+      anbieter: extracted.anbieter || 'Aszendio',
+      _daRec: daRec,  // wird in openAngebotEditor an E weitergereicht für späteren Save
+    });
+  } catch(e) {
+    console.error('[Angebote-DA] KI-Generate:', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+    go.disabled = false; go.textContent = '🤖 Angebot aus Datenaufnahme generieren';
+  }
+}
+
+/** KI-Aufruf: Generiert Angebots-Positionen aus DA-Checkpunkten. Preise aus DA, Bullets von KI. */
+async function _extractAngebotFromDatenaufnahme(daRec, cps, typ) {
+  if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
+  const firmaSlug = getCurrentFirmaSlug();
+  const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio Aufzugservice GmbH' };
+  const companyShort = (firmaSlug === 'aufzug' || firmaSlug === 'aufzugshandwerk') ? 'Aufzugshandwerk' : 'Aszendio';
+  const companyLong  = BR.company || 'Aszendio Aufzugservice GmbH';
+  const today = new Date().toISOString().slice(0,10);
+  const df = daRec.fields || {};
+
+  // Lern-Beispiele für Stil-Vorbild (wenn vorhanden)
+  let lernBlock = '';
+  try {
+    const lernItems = await _angLernLoad();
+    lernBlock = _angLernBuildPromptBlock(lernItems, typ);
+  } catch(_){}
+
+  // CPs für den Prompt aufbereiten (ohne Bilder, ohne Preise → wir gehen separat damit um)
+  const cpSummary = cps.map((cp, i) => {
+    const lines = ['Checkpunkt '+(i+1)+': '+(cp.titel||'(ohne Titel)')];
+    if (cp.ist_zustand) lines.push('IST: '+cp.ist_zustand);
+    if (cp.massnahme)   lines.push('MASSNAHME: '+cp.massnahme);
+    if (cp.ki_beschreibung) lines.push('KONSEQUENZ: '+cp.ki_beschreibung);
+    if (+cp.pauschalpreis_netto > 0) lines.push('PAUSCHALPREIS: '+cp.pauschalpreis_netto+' EUR netto');
+    return lines.join('\n');
+  }).join('\n\n');
+
+  const tool = {
+    name: 'generate_angebot_from_da',
+    description: 'Erzeugt ein Angebot aus einer Datenaufnahme. Pro Checkpunkt entsteht eine Angebots-Position. Preise werden aus den Pauschalpreisen der DA übernommen.',
+    input_schema: {
+      type: 'object',
+      required: ['positionen','anschreiben'],
+      properties: {
+        anbieter:     { type:'string', description:'Immer "'+companyShort+'"' },
+        anschreiben:  { type:'string', description:'Formelles Anschreiben, 2-4 Sätze, mit Bezug zur Datenaufnahme. Bsp.: „Im Anschluss an unsere Bestandsaufnahme vom ... unterbreiten wir Ihnen das folgende Angebot zur Behebung der festgestellten Mängel. Eine vollständige Datenaufnahme mit Bilddokumentation finden Sie im Anhang."' },
+        positionen: {
+          type:'array',
+          description:'Genau '+cps.length+' Positionen — eine pro Checkpunkt, gleiche Reihenfolge wie in der DA.',
+          items: {
+            type:'object',
+            required:['nr','titel','leistungsbeschreibung'],
+            properties: {
+              nr:                    { type:'integer' },
+              titel:                 { type:'string', description:'Der Checkpunkt-Titel — leicht professionalisiert wenn nötig (z.B. „Kabinentüre — Mechanik" statt „Kabinentüre kaputt")' },
+              leistungsbeschreibung: { type:'array', items:{ type:'string' }, description:'3-6 fachlich präzise Bullets — was wird konkret gemacht, um den IST-Zustand in den Soll-Zustand zu überführen. Basis: IST + MASSNAHME des Checkpunkts. Marke „Aszendio-Stil": klar, sachlich, ohne Marketing.' },
+            },
+          },
+        },
+        kond_lieferzeit: { type:'string', description:'Standard für Modernisierung: „Werktägl. Verfügbarkeit nach Auftragsvergabe ca. 6-8 Wochen". Für Reparatur kürzer.' },
+        kond_preisbasis: { type:'string', description:'Standard: „Festpreis, gültig 60 Tage ab Angebotsdatum"' },
+        kond_zahlung:    { type:'string', description:'Modernisierung: 30/60/10. Reparatur: 14 Tage netto.' },
+        kond_hinweise:   { type:'string', description:'Optional, z.B. „Bauseits-Leistungen siehe DA-Anhang"' },
+      },
+    },
+  };
+
+  const typLabel = ({ reparatur:'Reparatur', modernisierung:'Modernisierung', sonstiges:'Sonstige Leistung' })[typ] || 'Sonstige Leistung';
+  const prompt =
+    'Du bist Angebots-Assistent für '+companyLong+' (Aufzugstechnik). Angebotstyp: '+typLabel+'. Heutiges Datum: '+today+'.\n\n'+
+    'AUFGABE: Erstelle pro Checkpunkt der unten genannten Datenaufnahme eine Angebots-Position. Die Pauschalpreise werden serverseitig aus der DA übernommen — du musst KEINE Preise generieren.\n\n'+
+    'REGELN:\n'+
+    '• Schreibe AUS SICHT der Anbieter-Firma '+companyShort+'.\n'+
+    '• Genau '+cps.length+' Positionen, gleiche Reihenfolge wie in der DA.\n'+
+    '• Position-Titel: Checkpunkt-Titel leicht professionalisiert (Beispiel siehe Schema).\n'+
+    '• Leistungsbeschreibung: 3-6 fachliche Bullets, was konkret getan wird — basierend auf IST-Zustand und MASSNAHME des Checkpunkts.\n'+
+    '• Anschreiben: 2-4 Sätze mit Bezug zur Datenaufnahme. Erwähne, dass die vollständige DA mit Bildern als Anhang beigefügt ist.\n'+
+    '• Konditionen: passend zum Angebotstyp.\n'+
+    (lernBlock ? '• WICHTIG: Halte dich an die unten aufgeführten STIL-VORBILDER bei den Position-Texten.\n' : '')+
+    lernBlock+
+    '\nDATENAUFNAHME DA-'+(df.da_num||'?')+':\n'+
+    '• Anlage: '+(df.anlage_adresse||'?')+(df.anlage_fabriknummer?' (Fab.-Nr. '+df.anlage_fabriknummer+')':'')+'\n'+
+    '• Kunde: '+(df.kunde_name||'?')+(df.kunde_nummer?' (Kd-Nr. '+df.kunde_nummer+')':'')+'\n'+
+    (df.beschreibung ? '• Beschreibung: '+df.beschreibung+'\n' : '')+
+    '\nCHECKPUNKTE:\n\n'+cpSummary;
+
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': APP_KEYS.anthropicKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6',
+      max_tokens: 32000,
+      tools:[tool],
+      tool_choice:{ type:'tool', name:'generate_angebot_from_da' },
+      messages:[{ role:'user', content:[ { type:'text', text: prompt } ]}],
+    }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
+  }
+  const data = await resp.json();
+  const block = (data.content||[]).find(b => b.type === 'tool_use');
+  if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
+  const out = block.input;
+
+  // Preise aus DA übernehmen — KI hat keine generiert. Wichtig: DA-Pauschalpreise sind
+  //  bereits VP (der Verkaufspreis), deshalb sowohl ep_kone als auch vp auf den
+  //  gleichen Wert setzen — damit die Default-Marge nicht *1.20 multipliziert.
+  const positionen = (out.positionen||[]).map((p, i) => {
+    const cp = cps[i] || {};
+    const preis = +cp.pauschalpreis_netto || 0;
+    return {
+      nr: i+1,
+      titel: p.titel || cp.titel || '',
+      leistungsbeschreibung: Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [],
+      menge: 1,
+      einzelpreis_netto: preis,  // wird in openAngebotEditor auf ep_kone gemapped
+      vp: preis,                 // VP = Pauschalpreis (KEINE Default-Marge!)
+    };
+  });
+
+  return {
+    anbieter:           companyShort,
+    kone_angebot_num:   '',
+    kone_angebot_datum: today,
+    anschreiben:        out.anschreiben || '',
+    positionen,
+    ust_prozent:        19,
+    kond_lieferzeit:    out.kond_lieferzeit || '',
+    kond_preisbasis:    out.kond_preisbasis || '',
+    kond_zahlung:       out.kond_zahlung || '',
+    kond_hinweise:      out.kond_hinweise || '',
+    // Anlage/Kunde aus DA — werden vom Editor für matchedAnlage verwendet
+    equipmentnummer:    '',
+    seriennummer:       df.anlage_fabriknummer || '',
+    anlage_adresse:     df.anlage_adresse || '',
+    kunde_name:         df.kunde_name || '',
+    kunde_adresse:      '',  // wird aus matchedAnlage gezogen
+  };
 }
 
 // ─── v5.14: Wizard-Mode-Toggle (PDF vs Nur Prompt) ─────────────────────
@@ -23845,34 +24128,55 @@ function _angWizardSetMode(mode) {
   m._mode = mode;
   const tabPdf    = document.getElementById('ang-w-tab-pdf');
   const tabPrompt = document.getElementById('ang-w-tab-prompt');
+  const tabDa     = document.getElementById('ang-w-tab-da');
   const paneA     = document.getElementById('ang-w-mode-pdf');
   const paneB     = document.getElementById('ang-w-mode-prompt');
+  const paneC     = document.getElementById('ang-w-mode-da');
   const hintA     = document.getElementById('ang-w-hint-pdf');
   const hintB     = document.getElementById('ang-w-hint-prompt');
+  const hintC     = document.getElementById('ang-w-hint-da');
   const go        = document.getElementById('ang-w-go');
   const title     = document.getElementById('ang-w-title');
   const anbBlock  = document.getElementById('ang-w-anbieter-block');
   const typRow    = document.getElementById('ang-w-typ-row');
+  // Alle Tabs auf inaktiv setzen
+  for (const t of [tabPdf, tabPrompt, tabDa]) {
+    if (t) { t.style.background = 'transparent'; t.style.color = 'var(--txt2)'; t.style.borderBottomColor = 'transparent'; t.style.fontWeight = '600'; }
+  }
+  if (paneA) paneA.style.display = 'none';
+  if (paneB) paneB.style.display = 'none';
+  if (paneC) paneC.style.display = 'none';
+  if (hintA) hintA.style.display = 'none';
+  if (hintB) hintB.style.display = 'none';
+  if (hintC) hintC.style.display = 'none';
   if (mode === 'prompt') {
-    if (tabPdf)    { tabPdf.style.background    = 'transparent'; tabPdf.style.color    = 'var(--txt2)'; tabPdf.style.borderBottomColor    = 'transparent'; tabPdf.style.fontWeight    = '600'; }
-    if (tabPrompt) { tabPrompt.style.background = '#fff';        tabPrompt.style.color = '#10b981';     tabPrompt.style.borderBottomColor = '#10b981';     tabPrompt.style.fontWeight = '700'; }
-    if (paneA) paneA.style.display = 'none';
+    if (tabPrompt) { tabPrompt.style.background = '#fff'; tabPrompt.style.color = '#10b981'; tabPrompt.style.borderBottomColor = '#10b981'; tabPrompt.style.fontWeight = '700'; }
     if (paneB) paneB.style.display = '';
-    if (hintA) hintA.style.display = 'none';
     if (hintB) hintB.style.display = '';
     if (title) title.textContent = '✍️ Neues Angebot — Nur aus Prompt';
     if (go)    { go.textContent = '🤖 Generieren'; go.disabled = false; go.style.opacity = '1'; }
-    // Anbieter-Quelle bei Prompt-Modus weglassen + Typ einspaltig anzeigen
     if (anbBlock) anbBlock.style.display = 'none';
     if (typRow)   typRow.style.gridTemplateColumns = '1fr';
-    // v5.90: Auto-Load des Starters wenn Textarea leer
     _angWizardLoadStarter(false);
+  } else if (mode === 'da') {
+    if (tabDa) { tabDa.style.background = '#fff'; tabDa.style.color = '#F59E0B'; tabDa.style.borderBottomColor = '#F59E0B'; tabDa.style.fontWeight = '700'; }
+    if (paneC) paneC.style.display = '';
+    if (hintC) hintC.style.display = '';
+    if (title) title.textContent = '📋 Neues Angebot — aus Datenaufnahme';
+    if (go)    {
+      go.textContent = '🤖 Angebot aus Datenaufnahme generieren';
+      const hasDa = !!m._daRec;
+      go.disabled = !hasDa;
+      go.style.opacity = hasDa ? '1' : '.5';
+    }
+    // Anbieter-Quelle bei DA-Modus weglassen + Typ einspaltig anzeigen
+    if (anbBlock) anbBlock.style.display = 'none';
+    if (typRow)   typRow.style.gridTemplateColumns = '1fr';
+    // Liste lazy laden
+    _angWizardLoadDaList();
   } else {
-    if (tabPrompt) { tabPrompt.style.background = 'transparent'; tabPrompt.style.color = 'var(--txt2)'; tabPrompt.style.borderBottomColor = 'transparent'; tabPrompt.style.fontWeight = '600'; }
-    if (tabPdf)    { tabPdf.style.background    = '#fff';        tabPdf.style.color    = '#2152A9';    tabPdf.style.borderBottomColor    = '#2152A9';    tabPdf.style.fontWeight    = '700'; }
-    if (paneB) paneB.style.display = 'none';
+    if (tabPdf) { tabPdf.style.background = '#fff'; tabPdf.style.color = '#2152A9'; tabPdf.style.borderBottomColor = '#2152A9'; tabPdf.style.fontWeight = '700'; }
     if (paneA) paneA.style.display = '';
-    if (hintB) hintB.style.display = 'none';
     if (hintA) hintA.style.display = '';
     if (title) title.textContent = '📄 Neues Angebot — Original-PDF hochladen';
     if (go)    {
@@ -24876,6 +25180,11 @@ async function openAngebotEditor(ctx) {
     kontakt_id:    ctx._kontakt_id   || '',
     kontakt_name:  ctx._kontakt_name || '',
     _kontakte_list: null,  // Cache der Kontakte-Liste (nach Anlage-Wahl geladen)
+    // v6.19: DA-Verknüpfung — wird beim Save persistiert + DA-PDF wird als Anhang hochgeladen
+    _daRec: ctx._daRec || null,
+    // Im Edit-Mode aus dem Record rekonstruieren
+    _daId:    ctx.editMode ? ((_angeboteCache.items||[]).find(r=>r.id===ctx.recId)?.fields?.datenaufnahme_id || '') : '',
+    _daNum:   ctx.editMode ? +((_angeboteCache.items||[]).find(r=>r.id===ctx.recId)?.fields?.datenaufnahme_da_num || 0) : 0,
   };
   const m = document.createElement('div');
   m.id = 'ang-editor';
@@ -26186,6 +26495,14 @@ async function _angEditorSave() {
       kond_zahlung: E.kond_zahlung || '',
       kond_hinweise: E.kond_hinweise || '',
     };
+    // v6.19: DA-Verknüpfung persistieren (sowohl bei NEU als auch bei EDIT)
+    if (E._daRec) {
+      fields.datenaufnahme_id     = E._daRec.id;
+      fields.datenaufnahme_da_num = +E._daRec.fields?.da_num || 0;
+    } else if (E._daId) {
+      fields.datenaufnahme_id     = E._daId;
+      fields.datenaufnahme_da_num = +E._daNum || 0;
+    }
     // Bei Neu-Anlage: erstellt_am/erstellt_von + status setzen
     if (!E.editMode) {
       fields.erstellt_am  = new Date().toISOString().slice(0,10);
@@ -26230,6 +26547,29 @@ async function _angEditorSave() {
     } catch(pdfErr) {
       console.warn('[Angebote] App-PDF:', pdfErr);
       toast('⚠ Angebot gespeichert, App-PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
+    }
+    // v6.19: DA-PDF (ohne Preise) als zusätzliches Attachment anhängen, wenn aus DA generiert
+    if (E._daRec) {
+      if (btn) btn.textContent = '⏳ Erzeuge Datenaufnahme-Anhang…';
+      try {
+        // Sicherstellen dass das Feld in der Tabelle existiert (kann fehlen bei Bestands-Records)
+        if (APP_KEYS.airtableWriteKey) {
+          try { await ensureField('App_Angebote', 'da_anhang_pdf', 'multipleAttachments'); } catch(_){}
+        }
+        const daRec = E._daRec;
+        const df = daRec.fields || {};
+        let daCps = [];
+        try { daCps = JSON.parse(df.checkpunkte_json||'[]'); } catch(_){}
+        // Bilder URL→DataURL hat _buildDatenaufnahmePdf intern via _daResolveBilderToDataUrls
+        const daCpsClone = JSON.parse(JSON.stringify(daCps));
+        const daBlob = await _buildDatenaufnahmePdf(df, daCpsClone, { withPrices: false });
+        const daFname = 'Datenaufnahme-DA'+(df.da_num||'?')+'.pdf';
+        await atBlobUpload(recId, 'da_anhang_pdf', daBlob, daFname, 'application/pdf');
+        console.log('[Angebote-DA] DA-PDF angehängt:', daFname);
+      } catch(daPdfErr) {
+        console.warn('[Angebote-DA] DA-PDF:', daPdfErr);
+        toast('⚠ Angebot OK, aber DA-Anhang fehlgeschlagen: '+(daPdfErr.message||daPdfErr).slice(0,160),'warn');
+      }
     }
     // === ERP-Anfrage anlegen (nur bei NEU, nicht bei Edit) ===
     // So ist die Anfrage-ID bereits gespeichert, wenn später der Push aufgerufen wird.
