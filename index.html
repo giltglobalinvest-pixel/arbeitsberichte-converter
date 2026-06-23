@@ -2031,6 +2031,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-hdr">
     <h2>📄 Angebote <span id="angebote-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
     <button class="btn" onclick="renderAngeboteView({force:true})">↻ Neu laden</button>
+    <button class="btn" onclick="openAngLernModal()" title="KI-Lern-Beispiele verwalten — die KI nutzt aktive Beispiele beim Generieren neuer Angebote als Stilvorbild">📚 KI-Lern-Beispiele</button>
     <button class="btn prim" id="angebote-new-btn" onclick="openAngebotWizard()">+ Neues Angebot</button>
   </div>
   <div class="firma-body" id="angebote-list" style="padding:20px"></div>
@@ -2637,7 +2638,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.06';
+const APP_VERSION = 'v6.07';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22467,6 +22468,280 @@ const ANGEBOTE_TABLE_FIELDS = [
 let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _angeboteTableEnsured = false;
 
+/* ═══════════════════════════════════════════════════════════════════════
+ * v6.07: KI-Lern-Beispiele für Angebot-Positionen
+ * ───────────────────────────────────────────────────────────────────────
+ * Der User passt KI-generierte Position-Texte manuell an. Damit die KI
+ * aus diesen Anpassungen "lernt", werden gute Beispiele explizit per Button
+ * pro Position als Lern-Beispiel gespeichert. Beim nächsten KI-Generate
+ * werden die Beispiele typ-gefiltert als Few-Shot in den Prompt eingespeist.
+ * ═══════════════════════════════════════════════════════════════════════ */
+const ANG_LERN_TABLE_FIELDS = [
+  { name:'firma',           type:'singleLineText' },
+  { name:'angebot_typ',     type:'singleLineText' }, // modernisierung | reparatur | sonstiges
+  { name:'position_titel',  type:'singleLineText' },
+  { name:'position_bullets',type:'multilineText'  }, // eine Zeile = ein Bullet
+  { name:'notiz',           type:'multilineText'  },
+  { name:'aktiv',           type:'checkbox', options:{ icon:'check', color:'greenBright' }},
+  { name:'erstellt_am',     type:'singleLineText' },
+  { name:'erstellt_von',    type:'singleLineText' },
+];
+let _angLernCache = { firma:null, items:null, loadedAt:0 };
+let _angLernTableEnsured = false;
+
+async function _ensureAngLernTable() {
+  if (_angLernTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token. Bitte als Admin einloggen.');
+  try {
+    await ensureTable('App_Angebot_Lernbeispiele', ANG_LERN_TABLE_FIELDS);
+    for (const f of ANG_LERN_TABLE_FIELDS) {
+      try { await ensureField('App_Angebot_Lernbeispiele', f.name, f.type); } catch(_){}
+    }
+    _angLernTableEnsured = true;
+    return true;
+  } catch(e) {
+    throw new Error('Tabelle "App_Angebot_Lernbeispiele" konnte nicht angelegt werden: '+e.message);
+  }
+}
+
+async function _angLernLoad(force) {
+  const firmaSlug = getCurrentFirmaSlug();
+  const fresh = !force && _angLernCache.firma === firmaSlug && _angLernCache.items && (Date.now() - _angLernCache.loadedAt) < 60_000;
+  if (fresh) return _angLernCache.items;
+  const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!baseId || !key) return [];
+  const items = [];
+  let offset = '';
+  try {
+    do {
+      const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele'
+        +'?pageSize=100'
+        +'&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'")
+        +(offset ? '&offset='+encodeURIComponent(offset) : '');
+      const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+      if (!r.ok) {
+        // Tabelle existiert vermutlich noch nicht → leere Liste zurückgeben
+        if (r.status === 404 || r.status === 422) break;
+        throw new Error('HTTP '+r.status);
+      }
+      const d = await r.json();
+      (d.records||[]).forEach(rec => items.push(rec));
+      offset = d.offset || '';
+    } while (offset);
+  } catch(e) {
+    console.warn('[Ang-Lern] Load fehlgeschlagen:', e.message);
+    return [];
+  }
+  _angLernCache = { firma:firmaSlug, items, loadedAt:Date.now() };
+  return items;
+}
+
+function _angLernGetActiveByTyp(items, typ) {
+  return (items||[]).filter(r => {
+    const f = r.fields || {};
+    if (f.aktiv === false) return false;
+    return (f.angebot_typ||'sonstiges') === typ;
+  });
+}
+
+/* Konvertiert Lern-Beispiele in einen Few-Shot-Block für den KI-Prompt. */
+function _angLernBuildPromptBlock(items, typ) {
+  const active = _angLernGetActiveByTyp(items, typ);
+  if (!active.length) return '';
+  const MAX = 12; // genug für Stil-Übernahme, ohne den Prompt zu sprengen
+  const sel = active.slice(-MAX); // bevorzugt die neuesten
+  const blocks = sel.map((rec, i) => {
+    const f = rec.fields || {};
+    const bullets = String(f.position_bullets||'').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const bulletText = bullets.map(b => '  • '+b).join('\n');
+    return 'Beispiel '+(i+1)+': "'+(f.position_titel||'')+'"\n'+bulletText;
+  }).join('\n\n');
+  return '\n\nSTIL-VORBILDER (so möchte der Nutzer Position-Texte für '+typ.toUpperCase()+'-Angebote formuliert haben — bitte Stil, Bullet-Länge und Detail-Tiefe übernehmen, NICHT wortgleich kopieren):\n\n'+blocks+'\n';
+}
+
+window._angSavePosAsLernbeispiel = async function(posIdx) {
+  try {
+    const m = document.getElementById('ang-editor');
+    const E = m && m._state; if (!E) return;
+    const p = (E.positionen||[])[posIdx]; if (!p) return;
+    const typ = E.angebot_typ || 'sonstiges';
+    if (!confirm('Diese Position als KI-Lern-Beispiel für "'+typ+'"-Angebote speichern?\n\n'+
+        'Titel: '+(p.titel||'(ohne Titel)')+'\n'+
+        'Bullets: '+(p.leistungsbeschreibung||[]).length)) return;
+    if (!APP_KEYS.airtableWriteKey) { toast('🔒 Kein Write-Token — bitte als Admin einloggen','err'); return; }
+    try { await _ensureAngLernTable(); } catch(e) { toast('❌ Tabelle: '+e.message,'err'); return; }
+    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const fields = {
+      firma:           getCurrentFirmaSlug(),
+      angebot_typ:     typ,
+      position_titel:  String(p.titel||'').slice(0,250),
+      position_bullets:(p.leistungsbeschreibung||[]).map(s => String(s).trim()).filter(Boolean).join('\n'),
+      aktiv:           true,
+      erstellt_am:     new Date().toISOString().slice(0,10),
+      erstellt_von:    APP_KEYS.user?.name || '',
+    };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    _angLernCache = { firma:null, items:null, loadedAt:0 }; // invalidate
+    toast('📚 Als KI-Lern-Beispiel gespeichert','ok');
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+  }
+};
+
+window._angDeleteLernbeispiel = async function(recId) {
+  if (!confirm('Lern-Beispiel löschen? Die KI sieht es danach nicht mehr.')) return;
+  try {
+    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele/'+recId, {
+      method:'DELETE',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    _angLernCache = { firma:null, items:null, loadedAt:0 };
+    toast('🗑 Gelöscht','ok');
+    if (typeof renderAngLernView === 'function') renderAngLernView();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+window._angToggleLernAktiv = async function(recId, aktiv) {
+  try {
+    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ aktiv: !!aktiv }}),
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    _angLernCache = { firma:null, items:null, loadedAt:0 };
+    if (typeof renderAngLernView === 'function') renderAngLernView();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+window._angEditLernbeispiel = async function(recId) {
+  try {
+    const items = await _angLernLoad();
+    const rec = items.find(r => r.id === recId);
+    if (!rec) { toast('❌ Beispiel nicht gefunden','err'); return; }
+    const f = rec.fields || {};
+    const bullets = String(f.position_bullets||'').split(/\r?\n/).join('\n');
+    const html =
+      '<div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px" onclick="if(event.target===this)this.remove()">'+
+        '<div style="background:#fff;border-radius:12px;max-width:560px;width:100%;max-height:90vh;overflow:auto;padding:20px;box-shadow:0 20px 60px rgba(0,0,0,.3)">'+
+          '<h3 style="margin:0 0 14px;color:#2152A9">📚 Lern-Beispiel bearbeiten</h3>'+
+          '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Typ</label>'+
+          '<select id="angL-typ" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;margin-bottom:12px">'+
+            ['modernisierung','reparatur','sonstiges'].map(t => '<option value="'+t+'"'+((f.angebot_typ||'sonstiges')===t?' selected':'')+'>'+t+'</option>').join('')+
+          '</select>'+
+          '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Position-Titel</label>'+
+          '<input id="angL-titel" value="'+escapeHtml(f.position_titel||'')+'" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;margin-bottom:12px">'+
+          '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Bullets (eine Zeile = ein Bullet)</label>'+
+          '<textarea id="angL-bullets" rows="7" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit;margin-bottom:12px">'+escapeHtml(bullets)+'</textarea>'+
+          '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Notiz (optional)</label>'+
+          '<textarea id="angL-notiz" rows="2" style="width:100%;padding:7px 9px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;margin-bottom:16px">'+escapeHtml(f.notiz||'')+'</textarea>'+
+          '<div style="display:flex;gap:8px;justify-content:flex-end">'+
+            '<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="padding:8px 14px;border:1px solid var(--bdr);background:#fff;border-radius:6px;cursor:pointer">Abbrechen</button>'+
+            '<button onclick="_angSaveLernbeispielEdit(\''+recId+'\')" style="padding:8px 14px;background:#2152A9;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">💾 Speichern</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+    const wrap = document.createElement('div'); wrap.innerHTML = html;
+    document.body.appendChild(wrap.firstElementChild);
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+window._angSaveLernbeispielEdit = async function(recId) {
+  try {
+    const typ    = (document.getElementById('angL-typ')||{}).value || 'sonstiges';
+    const titel  = (document.getElementById('angL-titel')||{}).value || '';
+    const bullets= (document.getElementById('angL-bullets')||{}).value || '';
+    const notiz  = (document.getElementById('angL-notiz')||{}).value || '';
+    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ angebot_typ:typ, position_titel:titel.slice(0,250), position_bullets:bullets, notiz:notiz }}),
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    _angLernCache = { firma:null, items:null, loadedAt:0 };
+    document.querySelectorAll('div[style*="position:fixed"]').forEach(el => { if (el.style.zIndex === '9999') el.remove(); });
+    toast('💾 Gespeichert','ok');
+    if (typeof renderAngLernView === 'function') renderAngLernView();
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+window.openAngLernModal = async function() {
+  // Voll-Modal mit Liste, Filter, Aktiv-Toggle, Edit, Löschen
+  const html =
+    '<div id="ang-lern-modal" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9990;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)this.remove()">'+
+      '<div style="background:#fff;border-radius:14px;max-width:900px;width:100%;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'+
+        '<div style="padding:18px 20px;border-bottom:1px solid var(--bdr);display:flex;align-items:center;justify-content:space-between;gap:12px">'+
+          '<div>'+
+            '<h3 style="margin:0;color:#2152A9">📚 KI-Lern-Beispiele für Angebote</h3>'+
+            '<div style="font-size:11px;color:var(--txt3);margin-top:3px">Per-Position gespeicherte Vorbilder. Die KI sieht aktive Beispiele beim Generieren neuer Angebote — typ-gefiltert.</div>'+
+          '</div>'+
+          '<button onclick="document.getElementById(\'ang-lern-modal\').remove()" style="background:#fff;border:1px solid var(--bdr);border-radius:6px;padding:6px 12px;font-size:18px;cursor:pointer">×</button>'+
+        '</div>'+
+        '<div style="padding:12px 20px;border-bottom:1px solid var(--bdr);display:flex;gap:10px;flex-wrap:wrap;align-items:center">'+
+          '<label style="font-size:12px;color:var(--txt2);font-weight:600">Filter Typ:</label>'+
+          '<select id="ang-lern-filter" onchange="renderAngLernView()" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+            '<option value="">Alle</option>'+
+            '<option value="modernisierung">Modernisierung</option>'+
+            '<option value="reparatur">Reparatur</option>'+
+            '<option value="sonstiges">Sonstiges</option>'+
+          '</select>'+
+          '<button onclick="renderAngLernView(true)" style="padding:6px 12px;background:#fff;border:1px solid var(--bdr);border-radius:6px;font-size:12px;cursor:pointer">↻ Neu laden</button>'+
+        '</div>'+
+        '<div id="ang-lern-list" style="flex:1;overflow:auto;padding:12px 20px">Lade…</div>'+
+      '</div>'+
+    '</div>';
+  const wrap = document.createElement('div'); wrap.innerHTML = html;
+  document.body.appendChild(wrap.firstElementChild);
+  try { await _ensureAngLernTable(); } catch(_){}
+  await renderAngLernView(true);
+};
+
+window.renderAngLernView = async function(force) {
+  const list = document.getElementById('ang-lern-list');
+  if (!list) return;
+  const filterTyp = (document.getElementById('ang-lern-filter')||{}).value || '';
+  let items;
+  try { items = await _angLernLoad(force); } catch(e) { list.innerHTML = '<div style="color:#DC2626">❌ '+escapeHtml(e.message)+'</div>'; return; }
+  const filtered = items.filter(r => !filterTyp || (r.fields?.angebot_typ||'sonstiges') === filterTyp);
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:32px;text-align:center;color:var(--txt3);font-size:13px">📭 Noch keine Lern-Beispiele '+(filterTyp?'für "'+filterTyp+'"':'')+' gespeichert.<br><br>'+
+      'Speichere Position-Texte aus dem Angebote-Editor per <strong>"📚 Als Lern-Beispiel"</strong>-Button — danach lernt die KI deinen Stil bei jedem neuen Angebot.</div>';
+    return;
+  }
+  // Neueste zuerst
+  const sorted = filtered.slice().sort((a,b) => String(b.fields?.erstellt_am||'').localeCompare(String(a.fields?.erstellt_am||'')));
+  list.innerHTML = sorted.map(rec => {
+    const f = rec.fields || {};
+    const aktiv = f.aktiv !== false;
+    const bullets = String(f.position_bullets||'').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    const typBadgeColor = ({ modernisierung:'#7C3AED', reparatur:'#DC2626', sonstiges:'#6B7280' })[f.angebot_typ||'sonstiges'] || '#6B7280';
+    return '<div style="background:'+(aktiv?'#fff':'#F3F4F6')+';border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:10px;opacity:'+(aktiv?'1':'.55')+'">'+
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">'+
+        '<span style="background:'+typBadgeColor+';color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;text-transform:uppercase">'+escapeHtml(f.angebot_typ||'sonstiges')+'</span>'+
+        '<strong style="flex:1;color:#222;font-size:13px">'+escapeHtml(f.position_titel||'(ohne Titel)')+'</strong>'+
+        '<span style="font-size:10px;color:var(--txt3)">'+escapeHtml(f.erstellt_am||'')+' · '+escapeHtml(f.erstellt_von||'')+'</span>'+
+      '</div>'+
+      (bullets.length ? '<div style="font-size:12px;color:var(--txt2);line-height:1.5;background:#FAFBFD;padding:8px 10px;border-radius:5px;margin-bottom:8px">'+bullets.map(b => '• '+escapeHtml(b)).join('<br>')+'</div>' : '')+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap">'+
+        '<button onclick="_angToggleLernAktiv(\''+rec.id+'\','+(!aktiv)+')" style="padding:5px 10px;background:'+(aktiv?'#10B981':'#9CA3AF')+';color:#fff;border:none;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer">'+(aktiv?'✓ Aktiv':'⏸ Inaktiv')+'</button>'+
+        '<button onclick="_angEditLernbeispiel(\''+rec.id+'\')" style="padding:5px 10px;background:#fff;border:1px solid var(--bdr);border-radius:5px;font-size:11px;cursor:pointer">✏️ Bearbeiten</button>'+
+        '<button onclick="_angDeleteLernbeispiel(\''+rec.id+'\')" style="padding:5px 10px;background:#fff;border:1px solid #FCA5A5;color:#DC2626;border-radius:5px;font-size:11px;cursor:pointer">🗑 Löschen</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+};
+
 const ANGEBOT_VP_DEFAULT_MARGE = 1.20;  // Anbieter-EK × 1.20 → VP-Vorschlag
 
 // v5.50: Default-Stundensätze für "Nach Aufwand"-Angebote — werden geladen
@@ -23372,6 +23647,13 @@ async function _extractAngebotFromPrompt(promptText, typ) {
     },
   };
   const typLabel = ({ reparatur:'Reparatur', modernisierung:'Modernisierung', sonstiges:'Sonstige Leistung' })[typ] || 'Sonstige Leistung';
+  // v6.07: Aktive Lern-Beispiele für den Typ als Few-Shot-Stilvorbild in den Prompt einspeisen.
+  //        Der User pflegt sie über den 📚-Button am Position-Editor.
+  let lernBlock = '';
+  try {
+    const lernItems = await _angLernLoad();
+    lernBlock = _angLernBuildPromptBlock(lernItems, typ);
+  } catch(e) { console.warn('[Ang-KI] Lern-Beispiele konnten nicht geladen werden:', e.message); }
   const prompt =
     'Du bist Angebots-Assistent für '+companyLong+' (Aufzugstechnik). Aktueller Angebotstyp: '+typLabel+'. Heutiges Datum: '+today+'.\n\n'+
     'Der User hat dir die Beschreibung des Angebots in eigenen Worten geliefert. Daraus erstellst du ein vollständiges Angebot — Anschreiben, Positionen mit Leistungsbeschreibung, Preise und Konditionen.\n\n'+
@@ -23382,8 +23664,10 @@ async function _extractAngebotFromPrompt(promptText, typ) {
     '• Positionen: pro logischer Teilleistung eine eigene Position. Klare Titel + 2-5 Bullets in leistungsbeschreibung mit konkreten Arbeitsschritten.\n'+
     '• Preise: wenn der User Zahlen nennt → exakt verwenden. Wenn nur Pauschal → gewichtet aufteilen. Wenn nichts → realistisch schätzen für deutsche Aufzugstechnik.\n'+
     '• Konditionen: passend zum Angebotstyp wählen. Reparatur = 14 Tage netto. Modernisierung = 30/60/10-Schema.\n'+
-    '• Sprache: deutsch, professionell, präzise — kein Marketing.\n\n'+
-    'USER-BESCHREIBUNG:\n'+
+    '• Sprache: deutsch, professionell, präzise — kein Marketing.\n'+
+    (lernBlock ? '• WICHTIG: Halte dich beim Stil und Detail-Grad der Positionen an die unten aufgeführten STIL-VORBILDER (vom Nutzer gepflegt). Übernimm Wortwahl, Bullet-Länge und Konkretheits-Grad — aber NIE wortgleich kopieren.\n' : '')+
+    lernBlock+
+    '\nUSER-BESCHREIBUNG:\n'+
     promptText;
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -25213,7 +25497,8 @@ function _angIsManuell(E) {
 function _angRenderPositionRow(p, i, E) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   const gesamt = (+p.vp||0) * (+p.menge||1);
-  const leistungHtml = (p.leistungsbeschreibung||[]).map(l => '<div>• '+escapeHtml(l)+'</div>').join('');
+  // v6.07: Bullets editierbar — Textarea, eine Zeile = ein Bullet
+  const bulletText = (p.leistungsbeschreibung||[]).map(s => String(s).trim()).filter(Boolean).join('\n');
   const isHidden = !!p.hidden;
   const isManuell = _angIsManuell(E);
   const ekLabel = isManuell ? 'EK (manuell)' : 'EK ('+(E?.anbieter||'Anbieter')+')';
@@ -25231,7 +25516,17 @@ function _angRenderPositionRow(p, i, E) {
       '<div style="background:'+(isHidden?'#9CA3AF':'#2152A9')+';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
       '<div>'+
         '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px'+(isHidden?';text-decoration:line-through':'')+'">'+
-        (leistungHtml ? '<div style="font-size:11px;color:var(--txt2);line-height:1.5">'+leistungHtml+'</div>' : '')+
+        // v6.07: Bullets als Textarea (jede Zeile = ein Bullet). Auto-Height via rows-Attribut.
+        '<textarea id="ang-pos-bullets-'+i+'" rows="'+Math.max(2, Math.min(8, bulletText.split(/\n/).length + 1))+'" '+
+          'oninput="_angSetPosBullets('+i+', this.value)" '+
+          'placeholder="Eine Zeile = ein Bullet (z.B. „Lieferung eines fabrikneuen Inkrementalgebers…")" '+
+          'style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;font-family:inherit;line-height:1.5;color:var(--txt2);background:#fff;resize:vertical;margin-bottom:4px">'+
+          escapeHtml(bulletText)+
+        '</textarea>'+
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px">'+
+          '<button onclick="_angSavePosAsLernbeispiel('+i+')" title="Diese Position als KI-Lern-Beispiel speichern — die KI nutzt sie als Stilvorbild bei künftigen Angeboten ('+escapeHtml(E.angebot_typ||'sonstiges')+')" style="background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;font-size:10px;padding:4px 8px;border-radius:4px;cursor:pointer;font-weight:600">📚 Als Lern-Beispiel</button>'+
+          '<span style="font-size:9px;color:var(--txt3)">'+(p.leistungsbeschreibung||[]).length+' Bullet'+((p.leistungsbeschreibung||[]).length===1?'':'s')+'</span>'+
+        '</div>'+
       '</div>'+
       ekCell+
       '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">VP (deins) *</label>'+
@@ -25245,6 +25540,13 @@ function _angRenderPositionRow(p, i, E) {
     '</div>'+
   '</div>';
 }
+
+// v6.07: Bullet-Textarea → leistungsbeschreibung-Array
+window._angSetPosBullets = function(i, raw) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state || !m._state.positionen || !m._state.positionen[i]) return;
+  m._state.positionen[i].leistungsbeschreibung = String(raw||'').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+};
 
 /* ═══════════════════════════════════════════════════════════════════════
  * v5.50: Abrechnungs-Modus Toggle + Stundensatz-Liste (Nach-Aufwand-Angebot)
