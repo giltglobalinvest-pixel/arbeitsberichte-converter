@@ -2638,7 +2638,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.07';
+const APP_VERSION = 'v6.08';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23632,7 +23632,8 @@ async function _extractAngebotFromPrompt(promptText, typ) {
               titel:                 { type:'string', description:'Klare Kurzbezeichnung der Leistung' },
               leistungsbeschreibung: { type:'array', items:{ type:'string' }, description:'Bullet-Liste der Teilleistungen — fachlich präzise, kein Marketing-Sprech' },
               menge:                 { type:'number', description:'Default 1' },
-              einzelpreis_netto:     { type:'number', description:'Netto-Einzelpreis in EUR. Wenn der User Preise nennt, exakt übernehmen. Wenn nur Pauschalpreis: gleichmäßig oder gewichtet aufteilen. Wenn keine Preise: realistisch schätzen aus deinem Branchenwissen für Aufzugstechnik in Deutschland.' },
+              einzelpreis_netto:     { type:'number', description:'Netto-Einzelpreis in EUR. Wenn der User Preise nennt, exakt übernehmen. Wenn nur Pauschalpreis: gleichmäßig oder gewichtet aufteilen. Wenn keine Preise: realistisch schätzen aus deinem Branchenwissen für Aufzugstechnik in Deutschland. Wenn preis_aufwand=true: hier 0 setzen.' },
+              preis_aufwand:         { type:'boolean', description:'Setze auf TRUE, wenn diese Position nach tatsächlichem Verbrauch oder Aufwand abgerechnet wird und KEIN konkreter Einzelpreis ausgewiesen werden soll (z.B. „Material nach Verbrauch", „Anfahrt nach Stundensatz"). Im PDF erscheint dann „nach Aufwand*" statt einer Zahl, und die Position fließt nicht in die Summe ein. Default false.' },
             },
           },
         },
@@ -23663,6 +23664,7 @@ async function _extractAngebotFromPrompt(promptText, typ) {
     '• Anschreiben: 2-4 Sätze, formell, mit Bezug auf den Anlass (z.B. „nach Rücksprache mit Herrn Schmidt unterbreiten wir Ihnen das folgende Angebot").\n'+
     '• Positionen: pro logischer Teilleistung eine eigene Position. Klare Titel + 2-5 Bullets in leistungsbeschreibung mit konkreten Arbeitsschritten.\n'+
     '• Preise: wenn der User Zahlen nennt → exakt verwenden. Wenn nur Pauschal → gewichtet aufteilen. Wenn nichts → realistisch schätzen für deutsche Aufzugstechnik.\n'+
+    '• Positionen ohne festen Preis (Material nach Verbrauch, Anfahrt nach Stundensatz, Schadensumfang noch unklar): preis_aufwand=true UND einzelpreis_netto=0. Sie tauchen mit „nach Aufwand*" im PDF auf und fließen NICHT in die Summe ein.\n'+
     '• Konditionen: passend zum Angebotstyp wählen. Reparatur = 14 Tage netto. Modernisierung = 30/60/10-Schema.\n'+
     '• Sprache: deutsch, professionell, präzise — kein Marketing.\n'+
     (lernBlock ? '• WICHTIG: Halte dich beim Stil und Detail-Grad der Positionen an die unten aufgeführten STIL-VORBILDER (vom Nutzer gepflegt). Übernimm Wortwahl, Bullet-Länge und Konkretheits-Grad — aber NIE wortgleich kopieren.\n' : '')+
@@ -24523,6 +24525,8 @@ async function openAngebotEditor(ctx) {
       // die KI-Extract liefert nur einzelpreis_netto. Wenn vp im Pos-Objekt drin ist (editmode),
       // verwende den; sonst Default-Marge.
       vp: (typeof p.vp === 'number') ? p.vp : Math.round((+p.einzelpreis_netto || 0) * ANGEBOT_VP_DEFAULT_MARGE * 100) / 100,
+      // v6.08: KI darf preis_aufwand=true setzen (z.B. „Material nach Verbrauch") — durchreichen
+      preis_aufwand: !!p.preis_aufwand,
     })),
     ust_prozent: +ctx.extracted.ust_prozent || 19,
     anschreiben: ctx.extracted.anschreiben || '',
@@ -25450,14 +25454,16 @@ async function _angReloadKontakte(btn) {
  */
 function _angRenderSummaryBoxHtml(E) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
-  let sumKone = 0, sumVp = 0, hiddenCount = 0;
+  let sumKone = 0, sumVp = 0, hiddenCount = 0, aufwandCount = 0;
   for (const p of E.positionen) {
     if (p.hidden) { hiddenCount++; continue; }
+    if (p.preis_aufwand) { aufwandCount++; continue; }  // v6.08: nicht in Summen
     sumKone += (+p.ep_kone||0) * (+p.menge||1);
     sumVp   += (+p.vp||0)      * (+p.menge||1);
   }
   const ust = +E.ust_prozent || 19;
-  const hiddenHint = (hiddenCount>0 ? '<div style="width:100%;font-size:11px;color:#6B7280;margin-top:4px">🚫 '+hiddenCount+' Position'+(hiddenCount===1?'':'en')+' aus dem Angebot ausgeblendet — nicht in Summen enthalten</div>' : '');
+  const hiddenHint = (hiddenCount>0 ? '<div style="width:100%;font-size:11px;color:#6B7280;margin-top:4px">🚫 '+hiddenCount+' Position'+(hiddenCount===1?'':'en')+' aus dem Angebot ausgeblendet — nicht in Summen enthalten</div>' : '')+
+    (aufwandCount>0 ? '<div style="width:100%;font-size:11px;color:#0E7490;margin-top:4px">💧 '+aufwandCount+' Position'+(aufwandCount===1?'':'en')+' mit „nach Aufwand" — kein Preis im PDF, nicht in Summen</div>' : '');
   // v5.93: Bei Pauschal-Anzeige → der Pauschalpreis ist die maßgebliche VP-Zahl
   if (E.preisanzeige_modus === 'gesamt') {
     const pauschal = +E.pauschalpreis_netto || 0;
@@ -25496,7 +25502,8 @@ function _angIsManuell(E) {
 
 function _angRenderPositionRow(p, i, E) {
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
-  const gesamt = (+p.vp||0) * (+p.menge||1);
+  const isAufwand = !!p.preis_aufwand;  // v6.08
+  const gesamt = isAufwand ? 0 : (+p.vp||0) * (+p.menge||1);
   // v6.07: Bullets editierbar — Textarea, eine Zeile = ein Bullet
   const bulletText = (p.leistungsbeschreibung||[]).map(s => String(s).trim()).filter(Boolean).join('\n');
   const isHidden = !!p.hidden;
@@ -25510,10 +25517,17 @@ function _angRenderPositionRow(p, i, E) {
         '<input type="number" step="0.01" min="0" id="ang-pos-ek-'+i+'" value="'+(p.ep_kone||'')+'" oninput="_angSetPos('+i+',\'ep_kone\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #67E8F9;border-radius:4px;font-size:12px;font-weight:600;color:#0E7490;text-align:right;background:#ECFEFF"></div>'
     : '<div><label style="font-size:10px;color:var(--txt3);display:block">'+ekLabel+'</label>'+
         '<div style="font-size:12px;color:var(--txt2);padding:5px 0">'+fmt(p.ep_kone)+' €</div></div>';
+  // v6.08: VP-Zelle — wenn preis_aufwand: deaktiviert + "nach Aufwand"-Hinweis
+  const vpCell = isAufwand
+    ? '<div><label style="font-size:10px;color:#6B7280;font-weight:700;display:block">VP (deins)</label>'+
+        '<div style="padding:5px 8px;border:1px dashed #D1D5DB;border-radius:4px;font-size:11px;color:#6B7280;text-align:center;background:#F9FAFB;font-style:italic">nach Aufwand</div></div>'
+    : '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">VP (deins) *</label>'+
+        '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>';
   return '<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);background:'+rowBg+';opacity:'+rowOpacity+';position:relative">'+
     (isHidden ? '<div style="position:absolute;top:8px;right:14px;background:#6B7280;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">👁‍🗨 NICHT IM ANGEBOT</div>' : '')+
+    (isAufwand && !isHidden ? '<div style="position:absolute;top:8px;right:14px;background:#0891B2;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">💧 NACH AUFWAND</div>' : '')+
     '<div style="display:grid;grid-template-columns:30px 1fr 90px 130px 100px 32px;gap:10px;align-items:start">'+
-      '<div style="background:'+(isHidden?'#9CA3AF':'#2152A9')+';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
+      '<div style="background:'+(isHidden?'#9CA3AF':(isAufwand?'#0891B2':'#2152A9'))+';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
       '<div>'+
         '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px'+(isHidden?';text-decoration:line-through':'')+'">'+
         // v6.07: Bullets als Textarea (jede Zeile = ein Bullet). Auto-Height via rows-Attribut.
@@ -25523,16 +25537,20 @@ function _angRenderPositionRow(p, i, E) {
           'style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;font-family:inherit;line-height:1.5;color:var(--txt2);background:#fff;resize:vertical;margin-bottom:4px">'+
           escapeHtml(bulletText)+
         '</textarea>'+
-        '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px">'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px">'+
           '<button onclick="_angSavePosAsLernbeispiel('+i+')" title="Diese Position als KI-Lern-Beispiel speichern — die KI nutzt sie als Stilvorbild bei künftigen Angeboten ('+escapeHtml(E.angebot_typ||'sonstiges')+')" style="background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;font-size:10px;padding:4px 8px;border-radius:4px;cursor:pointer;font-weight:600">📚 Als Lern-Beispiel</button>'+
+          // v6.08: Preis-Aufwand-Checkbox
+          '<label style="display:inline-flex;align-items:center;gap:5px;font-size:10px;color:'+(isAufwand?'#0E7490':'var(--txt2)')+';cursor:pointer;'+(isAufwand?'background:#ECFEFF;border:1px solid #67E8F9;padding:3px 7px;border-radius:4px;font-weight:600':'')+'" title="Statt eines konkreten Preises wird im Angebot „nach Aufwand" angezeigt — die Position fließt nicht in die Summen ein.">'+
+            '<input type="checkbox" '+(isAufwand?'checked':'')+' onchange="_angTogglePreisAufwand('+i+', this.checked)" style="margin:0;cursor:pointer">'+
+            '💧 Preis ausblenden (nach Aufwand)'+
+          '</label>'+
           '<span style="font-size:9px;color:var(--txt3)">'+(p.leistungsbeschreibung||[]).length+' Bullet'+((p.leistungsbeschreibung||[]).length===1?'':'s')+'</span>'+
         '</div>'+
       '</div>'+
       ekCell+
-      '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">VP (deins) *</label>'+
-        '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>'+
+      vpCell+
       '<div><label style="font-size:10px;color:var(--txt3);display:block">Gesamt VP</label>'+
-        '<div id="ang-pos-sum-'+i+'" style="font-size:13px;font-weight:700;color:#7C2D12;padding:5px 0;text-align:right">'+fmt(gesamt)+' €</div></div>'+
+        '<div id="ang-pos-sum-'+i+'" style="font-size:'+(isAufwand?'11':'13')+'px;font-weight:'+(isAufwand?'500':'700')+';color:'+(isAufwand?'#6B7280':'#7C2D12')+';padding:5px 0;text-align:right'+(isAufwand?';font-style:italic':'')+'">'+(isAufwand ? 'nach Aufwand' : fmt(gesamt)+' €')+'</div></div>'+
       // Toggle-Button: Position aus dem PDF ausblenden
       '<div style="display:flex;flex-direction:column;gap:3px;align-items:center">'+
         '<button onclick="_angTogglePosHidden('+i+')" title="'+(isHidden?'Wieder in Angebot aufnehmen':'Aus dem Angebot ausblenden (Position bleibt erhalten)')+'" style="background:'+(isHidden?'#6B7280':'transparent')+';color:'+(isHidden?'#fff':'var(--txt3)')+';border:1px solid '+(isHidden?'#6B7280':'var(--bdr)')+';border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:14px;padding:0">'+(isHidden?'👁':'🚫')+'</button>'+
@@ -25540,6 +25558,16 @@ function _angRenderPositionRow(p, i, E) {
     '</div>'+
   '</div>';
 }
+
+// v6.08: Toggle "nach Aufwand" — Position bleibt sichtbar im PDF, aber ohne Preis,
+//         und wird nicht in die Summen einberechnet. Full re-render damit VP-Zelle
+//         und Summary-Box konsistent sind.
+window._angTogglePreisAufwand = function(i, checked) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state || !m._state.positionen || !m._state.positionen[i]) return;
+  m._state.positionen[i].preis_aufwand = !!checked;
+  if (typeof _angEditorRender === 'function') _angEditorRender();
+};
 
 // v6.07: Bullet-Textarea → leistungsbeschreibung-Array
 window._angSetPosBullets = function(i, raw) {
@@ -25577,7 +25605,7 @@ function _angRenderAbrechnungToggle(E) {
 function _angRenderPreisanzeigeToggle(E) {
   const mode = E.preisanzeige_modus === 'gesamt' ? 'gesamt' : 'einzel';
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
-  const sumVp = (E.positionen||[]).filter(p => !p.hidden).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
+  const sumVp = (E.positionen||[]).filter(p => !p.hidden && !p.preis_aufwand).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
   const pauschalVal = +E.pauschalpreis_netto || 0;
   return '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
@@ -25607,7 +25635,7 @@ window._angSetPreisanzeige = function(mode) {
   if (E.preisanzeige_modus === mode) return;
   // Bei Wechsel auf 'gesamt' und Pauschalpreis noch leer → Auto-Vorschlag aus Summe
   if (mode === 'gesamt' && (!+E.pauschalpreis_netto)) {
-    E.pauschalpreis_netto = (E.positionen||[]).filter(p => !p.hidden).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
+    E.pauschalpreis_netto = (E.positionen||[]).filter(p => !p.hidden && !p.preis_aufwand).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
   }
   E.preisanzeige_modus = mode;
   _angEditorRender();
@@ -25624,7 +25652,7 @@ window._angSetPauschalpreis = function(val) {
 window._angPauschalFromSum = function() {
   const m = document.getElementById('ang-editor'); if (!m || !m._state) return;
   const E = m._state;
-  E.pauschalpreis_netto = (E.positionen||[]).filter(p => !p.hidden).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
+  E.pauschalpreis_netto = (E.positionen||[]).filter(p => !p.hidden && !p.preis_aufwand).reduce((s,p) => s + (+p.vp||0)*(+p.menge||1), 0);
   _angEditorRender();
 };
 
@@ -26139,7 +26167,10 @@ async function _buildAngebotPdf(rec) {
   doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.line(ml, y+7.5, mr, y+7.5);
   y += 8;
   let sumNetto = 0;
+  let hasAufwandPos = false;  // v6.08: für Fußnoten-Hinweis am Ende
   positionen.forEach((p, idx) => {
+    const isAufwand = !!p.preis_aufwand;  // v6.08
+    if (isAufwand) hasAufwandPos = true;
     const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
     const leistung = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [];
     const leistungLines = [];
@@ -26158,17 +26189,33 @@ async function _buildAngebotPdf(rec) {
     leistungLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
     if (!isGesamt) {
       doc.setFontSize(10); doc.setTextColor(...GREY);
-      doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
-      doc.text(fmtEUR(p.vp), ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
-      const ges = (+p.vp||0) * (+p.menge||1);
-      sumNetto += ges;
-      doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
-      doc.text(fmtEUR(ges)+' EUR', mr-2, y+5, { align:'right' });
-      doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+      if (isAufwand) {
+        // v6.08: kein Einzelpreis — stattdessen "nach Aufwand*" in den Preis-Spalten
+        doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
+        doc.setFont('helvetica','italic'); doc.setTextColor(...GREY_L); doc.setFontSize(9);
+        doc.text('nach Aufwand*', ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
+        doc.text('nach Aufwand*', mr-2, y+5, { align:'right' });
+        doc.setFont('helvetica','normal'); doc.setTextColor(...GREY); doc.setFontSize(10);
+      } else {
+        doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
+        doc.text(fmtEUR(p.vp), ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
+        const ges = (+p.vp||0) * (+p.menge||1);
+        sumNetto += ges;
+        doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+        doc.text(fmtEUR(ges)+' EUR', mr-2, y+5, { align:'right' });
+        doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+      }
     }
     y += rowH;
     doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
   });
+  // v6.08: Fußnote bei Aufwand-Positionen
+  if (hasAufwandPos && !isGesamt) {
+    if (y + 8 > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    doc.setFont('helvetica','italic'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf('* Abrechnung dieser Position nach tatsächlichem Aufwand bzw. Verbrauch — gegen Nachweis (Lieferschein / Stundenrapport).'), ml, y+4);
+    y += 6;
+  }
   // SUMMEN / PAUSCHALPREIS
   if (y + 32 > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
   y += 4;
