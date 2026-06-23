@@ -2638,7 +2638,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.08';
+const APP_VERSION = 'v6.09';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7253,9 +7253,11 @@ async function _aufPushAllBerichteToFd(auftragRecId, btn) {
       '<ul>'+bullets+'</ul>',
       '<p>Alle Berichte sind als PDF-Anhang beigefügt.</p>',
     ].join('');
-    // FD-Type aus angebot_typ
-    const ANGEBOT_TO_FD_TYPE = { WARTUNG_NOTRUF:'Wartung', WARTUNG:'Wartung', PAUSCHAL:'Pauschal', AUFWAND:'Nach Aufwand', MODERNISIERUNG:'Modernisierung' };
-    const fdType = ANGEBOT_TO_FD_TYPE[String(af.angebot_typ||'').toUpperCase()] || null;
+    // FD-Type: Bericht-Push aus abgeschlossenem Auftrag → "Auftrag bearbeiten" (Buchhaltung rechnet ab).
+    // v6.09: Freshdesk-Account hat das Type-Schema umgestellt — erlaubt sind jetzt nur noch
+    //        'Anfrage eingegangen', 'Angebot nachfassen', 'Auftrag bearbeiten', 'Kundenaquise', 'Sonstiges'.
+    //        Alle Auftrags-bezogenen Pushes laufen auf "Auftrag bearbeiten".
+    const fdType = 'Auftrag bearbeiten';
     // FormData mit allen PDFs
     const fd = new FormData();
     fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
@@ -34202,18 +34204,11 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, 
     '<p>Vollständiger Bericht im Anhang.</p>',
   ].filter(Boolean).join('');
 
-  // Freshdesk-"type" akzeptiert nur die im Account konfigurierten Werte
-  // (hier: Pauschal, Nach Aufwand, Modernisierung, Wartung).
-  // Mapping aus dem Angebots-Typ — wenn nicht passend, Feld weglassen.
-  const ANGEBOT_TO_FD_TYPE = {
-    'WARTUNG_NOTRUF': 'Wartung',
-    'WARTUNG':        'Wartung',
-    'PAUSCHAL':       'Pauschal',
-    'AUFWAND':        'Nach Aufwand',
-    'MODERNISIERUNG': 'Modernisierung',
-  };
-  const angTypUpper = String(af.angebot_typ||'').toUpperCase();
-  const fdType = ANGEBOT_TO_FD_TYPE[angTypUpper] || null;
+  // Freshdesk-"type" akzeptiert nur die im Account konfigurierten Werte.
+  // v6.09: Schema umgestellt — erlaubt sind jetzt nur noch 'Anfrage eingegangen',
+  //        'Angebot nachfassen', 'Auftrag bearbeiten', 'Kundenaquise', 'Sonstiges'.
+  //        Bericht-Push aus abgeschlossenem Auftrag → "Auftrag bearbeiten" (Buchhaltung rechnet ab).
+  const fdType = 'Auftrag bearbeiten';
 
   const fd = new FormData();
   fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
