@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.14';
+const APP_VERSION = 'v6.15';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20363,6 +20363,10 @@ const DA_TABLE_FIELDS = [
   { name:'status',                 type:'singleLineText' },
   { name:'checkpunkte_json',       type:'multilineText' },
   { name:'pdf',                    type:'multipleAttachments' },
+  // v6.15: Bild-Pool — Bilder werden nicht mehr als DataURL inline im JSON gespeichert
+  //        (Airtable Long-Text Cap 100k chars war schnell voll), sondern als echte
+  //        Attachments. In checkpunkte_json stehen nur noch die URL-Referenzen.
+  { name:'bilder_pool',            type:'multipleAttachments' },
   { name:'erstellt_am',            type:'singleLineText' },
   { name:'erstellt_von',           type:'singleLineText' },
   { name:'aufgenommen_am',         type:'singleLineText' },
@@ -21577,35 +21581,7 @@ function _daViewImage(i, idx) {
 async function _daSave(recId) {
   const m = document.getElementById('da-detail');
   if (!m) return;
-  // Bilder ggf. iterativ verkleinern (analog GBU) bis JSON < 90KB
   const data = m._cps;
-  const MAX = 90 * 1024;
-  let json = JSON.stringify(data);
-  if (json.length > MAX) {
-    toast('⏳ Komprimiere Bilder…','');
-    // Sanftere Shrink-Stufen — wir starten höher und gehen nicht unter 500px/Q40,
-    // damit Bilder im PDF noch scharf bleiben. Wenn auch das nicht reicht,
-    // sieht der User den 100KB-Fehler unten und kann ein Bild entfernen.
-    const passes = [{dim:900,q:0.65},{dim:800,q:0.6},{dim:700,q:0.55},{dim:600,q:0.5},{dim:500,q:0.4}];
-    for (const p of passes) {
-      if (json.length <= MAX) break;
-      for (const cp of data) {
-        if (Array.isArray(cp.bilder_ist)) {
-          for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
-            const src = cp.bilder_ist[bi];
-            if (typeof src === 'string' && src.startsWith('data:')) {
-              try {
-                const s = await _gbuShrinkDataUrl(src, p.dim, p.q);
-                if (s.length < src.length) cp.bilder_ist[bi] = s;
-              } catch(_){}
-            }
-          }
-        }
-      }
-      json = JSON.stringify(data);
-    }
-  }
-  if (json.length > 100*1024) return toast('Zu viele/zu große Bilder. Bitte einige entfernen.','err');
   const btn = document.getElementById('da-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere…'; }
   try {
@@ -21613,6 +21589,68 @@ async function _daSave(recId) {
       try { await _ensureDaTable(); } catch(_){}
     }
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+
+    // v6.15: Bilder-DataURLs als Attachments hochladen (parallel) — danach im
+    //        checkpunkte_json nur noch die URLs ablegen. Damit kann das JSON
+    //        klein bleiben (Airtable Long-Text Cap 100k chars), und wir können
+    //        beliebig viele Bilder anhängen. Schon-URLs werden NICHT erneut
+    //        hochgeladen, damit Re-Saves billig bleiben.
+    const uploadTasks = []; // [{cpIdx, biIdx, dataUrl}]
+    for (let ci = 0; ci < data.length; ci++) {
+      const cp = data[ci];
+      if (!Array.isArray(cp.bilder_ist)) continue;
+      for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
+        const src = cp.bilder_ist[bi];
+        if (typeof src === 'string' && src.startsWith('data:')) {
+          uploadTasks.push({ ci, bi, dataUrl: src });
+        }
+      }
+    }
+    if (uploadTasks.length) {
+      // v6.15: Sicherstellen dass das bilder_pool-Feld existiert (Bestands-Tabellen
+      //        wurden ohne dieses Feld angelegt; _daTableEnsured könnte true sein
+      //        und _ensureDaTable überspringen, daher hier ein direkter Aufruf).
+      if (APP_KEYS.airtableWriteKey) {
+        try { await ensureField('Datenaufnahmen', 'bilder_pool', 'multipleAttachments'); } catch(_){}
+      }
+      toast('⏳ Lade '+uploadTasks.length+' Bild'+(uploadTasks.length===1?'':'er')+' hoch…','');
+      if (btn) btn.textContent = '⏳ Lade Bilder hoch (0/'+uploadTasks.length+')…';
+      let done = 0;
+      const CONC = 4; // 4 parallel hochladen — schnell genug, ohne den Server zu überlasten
+      for (let i = 0; i < uploadTasks.length; i += CONC) {
+        const batch = uploadTasks.slice(i, i + CONC);
+        const results = await Promise.allSettled(batch.map(async (t, k) => {
+          // dataUrl → blob
+          const blob = await (await fetch(t.dataUrl)).blob();
+          // Eindeutiger Filename: cp-Index, Bild-Index, Timestamp, Batch-Slot — verhindert
+          // Verwechslung bei parallelen Uploads auf den gleichen Record.
+          const filename = 'cp'+(t.ci+1)+'-'+(t.bi+1)+'-'+Date.now()+'-'+i+'-'+k+'.jpg';
+          const att = await atBlobUpload(recId, 'bilder_pool', blob, filename, blob.type || 'image/jpeg');
+          // Airtable liefert das gesamte aktualisierte Record-Objekt zurück.
+          // Wir suchen unser Attachment per Filename — robuster gegen Race-Conditions
+          // mit parallelen Uploads (Reihenfolge im Array nicht garantiert).
+          const arr = (att && att.fields && Array.isArray(att.fields.bilder_pool)) ? att.fields.bilder_pool : [];
+          const found = arr.find(a => a.filename === filename) || arr[arr.length - 1];
+          if (!found || !found.url) throw new Error('Upload OK, aber URL nicht gefunden');
+          return { task: t, url: found.url };
+        }));
+        for (let k = 0; k < results.length; k++) {
+          const r = results[k];
+          if (r.status === 'fulfilled') {
+            const { task, url } = r.value;
+            data[task.ci].bilder_ist[task.bi] = url;
+          } else {
+            console.warn('[DA-Save] Bild-Upload fehlgeschlagen:', r.reason?.message || r.reason);
+          }
+          done++;
+        }
+        if (btn) btn.textContent = '⏳ Lade Bilder hoch ('+done+'/'+uploadTasks.length+')…';
+      }
+    }
+
+    if (btn) btn.textContent = '⏳ Speichere Datensatz…';
+    const json = JSON.stringify(data);
+
     // Status NICHT überschreiben, wenn DA bereits abgeschlossen ist —
     // sonst würde "Speichern" eine abgeschlossene DA wieder auf in_aufnahme zurücksetzen.
     const rec = (_daCache.items||[]).find(x => x.id === recId);
@@ -21631,14 +21669,21 @@ async function _daSave(recId) {
       }}),
     });
     const d = await r.json();
-    if (d.error) throw new Error(d.error.message||'Fehler');
+    if (d.error) {
+      // Fallback: wenn JSON zu groß (z.B. weil Attachment-Upload bei einigen Bildern failed
+      // und DataURLs zurückblieben), versuchen wir die Bilder zu komprimieren.
+      if (/INVALID_VALUE_FOR_COLUMN|TOO_LONG|too long/i.test(d.error.message||'')) {
+        throw new Error('Datensatz zu groß. Vermutlich konnten einige Bilder nicht hochgeladen werden. Bitte später erneut speichern.');
+      }
+      throw new Error(d.error.message||'Fehler');
+    }
     // Cache lokal aktualisieren
     const idx = _daCache.items.findIndex(x => x.id === recId);
     if (idx >= 0) _daCache.items[idx] = d;
     m._dirty = false;
     // Autosave-Backup nach erfolgreichem Save löschen
     _daAutosaveClear(recId);
-    toast('💾 Datenaufnahme gespeichert ('+Math.round(json.length/1024)+'KB)','ok');
+    toast('💾 Datenaufnahme gespeichert'+(uploadTasks.length?' · '+uploadTasks.length+' Bild'+(uploadTasks.length===1?'':'er')+' hochgeladen':''),'ok');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
     _renderDaList();
   } catch(e) {
@@ -22169,9 +22214,57 @@ async function _bpSave(firmaId, btn) {
   }
 }
 
+/**
+ * v6.15: Bilder-Pool — wandelt URL-Referenzen (Airtable-Attachments) in DataURLs
+ *  um, damit jsPDF sie addImage()-en kann. Funktioniert parallel, modifiziert
+ *  die übergebenen cps in-place. URLs/Errors werden zu leeren Strings, sodass
+ *  der spätere bilder-filter sie rausnimmt — kein Crash im PDF-Build.
+ */
+async function _daResolveBilderToDataUrls(cps) {
+  if (!Array.isArray(cps)) return;
+  const tasks = [];
+  for (let ci = 0; ci < cps.length; ci++) {
+    const cp = cps[ci];
+    if (!Array.isArray(cp.bilder_ist)) continue;
+    for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
+      const src = cp.bilder_ist[bi];
+      if (typeof src === 'string' && /^https?:\/\//i.test(src)) {
+        tasks.push({ ci, bi, url: src });
+      }
+    }
+  }
+  if (!tasks.length) return;
+  // 6 parallel — Airtable-Attachment-URLs sind statisch hosted, parallel-fetch ist OK
+  const CONC = 6;
+  for (let i = 0; i < tasks.length; i += CONC) {
+    const batch = tasks.slice(i, i + CONC);
+    const results = await Promise.allSettled(batch.map(async t => {
+      const blob = await (await fetch(t.url)).blob();
+      return await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = reject;
+        r.readAsDataURL(blob);
+      });
+    }));
+    for (let k = 0; k < results.length; k++) {
+      const r = results[k];
+      const t = batch[k];
+      if (r.status === 'fulfilled') {
+        cps[t.ci].bilder_ist[t.bi] = r.value;
+      } else {
+        console.warn('[DA-PDF] Bild-Fetch fehlgeschlagen:', t.url, r.reason?.message || r.reason);
+        cps[t.ci].bilder_ist[t.bi] = ''; // wird vom späteren filter ausgeschlossen
+      }
+    }
+  }
+}
+
 async function _buildDatenaufnahmePdf(rec, cps, opts) {
   opts = opts || {};
   const withPrices = !!opts.withPrices;
+  // v6.15: URL-Bilder → DataURLs vorab konvertieren (jsPDF braucht DataURL)
+  await _daResolveBilderToDataUrls(cps);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
   const ml = 15, mr = 195, cw = mr - ml;
