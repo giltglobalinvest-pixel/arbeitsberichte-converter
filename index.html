@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.11';
+const APP_VERSION = 'v6.12';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7275,11 +7275,8 @@ async function _aufPushAllBerichteToFd(auftragRecId, btn) {
       '<ul>'+bullets+'</ul>',
       '<p>Alle Berichte sind als PDF-Anhang beigefügt.</p>',
     ].join('');
-    // FD-Type: Bericht-Push aus abgeschlossenem Auftrag → "Auftrag bearbeiten" (Buchhaltung rechnet ab).
-    // v6.09: Freshdesk-Account hat das Type-Schema umgestellt — erlaubt sind jetzt nur noch
-    //        'Anfrage eingegangen', 'Angebot nachfassen', 'Auftrag bearbeiten', 'Kundenaquise', 'Sonstiges'.
-    //        Alle Auftrags-bezogenen Pushes laufen auf "Auftrag bearbeiten".
-    const fdType = 'Auftrag bearbeiten';
+    // v6.12: FD-Type pro Firma — Aszendio und Aufzugshandwerk haben unterschiedliche FD-Type-Schemas.
+    const fdType = _fdResolveTicketType(firmaSlug, af.angebot_typ);
     // FormData mit allen PDFs
     const fd = new FormData();
     fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
@@ -7348,6 +7345,25 @@ let _ftState = {
   speechSnapshot: '',
   createdTickets: [],
 };
+
+/* v6.12: Freshdesk-"type" akzeptiert pro Account unterschiedliche Werte.
+ *   Aszendio:        'Anfrage eingegangen','Angebot nachfassen','Auftrag bearbeiten','Kundenaquise','Sonstiges'
+ *   Aufzugshandwerk: 'Pauschal','Nach Aufwand','Modernisierung','Wartung'
+ * Wenn Firma unbekannt → null zurückgeben (Type-Feld wird dann weggelassen, FD akzeptiert das). */
+function _fdResolveTicketType(firmaSlug, angebotTyp) {
+  const slug = String(firmaSlug||'').toLowerCase();
+  const angTyp = String(angebotTyp||'').toUpperCase();
+  if (slug === 'aszendio') {
+    // Aszendio: alles vom Bericht-Push ist "Auftrag bearbeiten" (Buchhaltung rechnet ab).
+    return 'Auftrag bearbeiten';
+  }
+  if (slug === 'aufzug' || slug === 'aufzugshandwerk') {
+    // Aufzugshandwerk: nutzt das alte Angebot-Typ-Schema. Pauschal als Default.
+    const map = { WARTUNG:'Wartung', WARTUNG_NOTRUF:'Wartung', PAUSCHAL:'Pauschal', AUFWAND:'Nach Aufwand', MODERNISIERUNG:'Modernisierung' };
+    return map[angTyp] || 'Pauschal';
+  }
+  return null; // unbekannte Firma → kein type-Feld
+}
 
 // v5.29: Folge-Tickets werden in Freshdesk auf eine feste Gruppe + Bearbeiter
 // gerouted. IDs werden beim ersten Submit per FD-API-Lookup ermittelt und gecacht.
@@ -34226,11 +34242,8 @@ async function freshdeskCreateTicketForBericht(berichtRec, pdfBlob, auftragRec, 
     '<p>Vollständiger Bericht im Anhang.</p>',
   ].filter(Boolean).join('');
 
-  // Freshdesk-"type" akzeptiert nur die im Account konfigurierten Werte.
-  // v6.09: Schema umgestellt — erlaubt sind jetzt nur noch 'Anfrage eingegangen',
-  //        'Angebot nachfassen', 'Auftrag bearbeiten', 'Kundenaquise', 'Sonstiges'.
-  //        Bericht-Push aus abgeschlossenem Auftrag → "Auftrag bearbeiten" (Buchhaltung rechnet ab).
-  const fdType = 'Auftrag bearbeiten';
+  // v6.12: FD-Type pro Firma — Aszendio und Aufzugshandwerk haben unterschiedliche Type-Schemas.
+  const fdType = _fdResolveTicketType(firmaSlug, af.angebot_typ);
 
   const fd = new FormData();
   fd.append('email', APP_KEYS.freshdeskRequesterEmails[firmaSlug]);
