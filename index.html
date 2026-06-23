@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.17';
+const APP_VERSION = 'v6.18';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21626,12 +21626,27 @@ async function _daSave(recId) {
           // Verwechslung bei parallelen Uploads auf den gleichen Record.
           const filename = 'cp'+(t.ci+1)+'-'+(t.bi+1)+'-'+Date.now()+'-'+i+'-'+k+'.jpg';
           const att = await atBlobUpload(recId, 'bilder_pool', blob, filename, blob.type || 'image/jpeg');
-          // Airtable liefert das gesamte aktualisierte Record-Objekt zurück.
-          // Wir suchen unser Attachment per Filename — robuster gegen Race-Conditions
-          // mit parallelen Uploads (Reihenfolge im Array nicht garantiert).
-          const arr = (att && att.fields && Array.isArray(att.fields.bilder_pool)) ? att.fields.bilder_pool : [];
-          const found = arr.find(a => a.filename === filename) || arr[arr.length - 1];
-          if (!found || !found.url) throw new Error('Upload OK, aber URL nicht gefunden');
+          // v6.18: Airtable returnt das Feld manchmal unter Field-ID statt Name —
+          //         deshalb in ALLEN Feldern des Response per Filename suchen.
+          let found = null;
+          if (att && att.fields) {
+            for (const fname of Object.keys(att.fields)) {
+              const val = att.fields[fname];
+              if (Array.isArray(val)) {
+                const m = val.find(a => a && a.filename === filename && a.url);
+                if (m) { found = m; break; }
+              }
+            }
+          }
+          // Letzte Rettung: irgendein Attachment im bilder_pool (Fallback für Edge-Cases)
+          if (!found && att?.fields?.bilder_pool && Array.isArray(att.fields.bilder_pool) && att.fields.bilder_pool.length) {
+            const arr = att.fields.bilder_pool;
+            found = arr[arr.length - 1];
+          }
+          if (!found || !found.url) {
+            console.warn('[DA-Save] Response-Struktur unerwartet:', att);
+            throw new Error('Upload OK, aber URL nicht im Response gefunden');
+          }
           return { task: t, url: found.url };
         }));
         for (let k = 0; k < results.length; k++) {
