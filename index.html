@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.15';
+const APP_VERSION = 'v6.16';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22215,10 +22215,67 @@ async function _bpSave(firmaId, btn) {
 }
 
 /**
- * v6.15: Bilder-Pool — wandelt URL-Referenzen (Airtable-Attachments) in DataURLs
- *  um, damit jsPDF sie addImage()-en kann. Funktioniert parallel, modifiziert
- *  die übergebenen cps in-place. URLs/Errors werden zu leeren Strings, sodass
- *  der spätere bilder-filter sie rausnimmt — kein Crash im PDF-Build.
+ * v6.15/v6.16: Lädt ein Bild von einer URL und gibt eine komprimierte JPEG-DataURL zurück.
+ *  Versucht zuerst `fetch()` (schneller, blob-basiert). Wenn das CORS-blocked ist,
+ *  fällt es auf `<img crossOrigin="anonymous">` + Canvas zurück (umgeht CORS bei
+ *  korrekten Airtable-Headers). Bei beiden Wegen wird durch ein Canvas geschickt,
+ *  damit das Bild gleichzeitig auf maxDim verkleinert wird (kleineres PDF).
+ */
+async function _daFetchImageAsDataUrl(url, maxDim, quality) {
+  maxDim = maxDim || 1100;
+  quality = quality || 0.75;
+  const drawImageToDataUrl = (img) => {
+    const canvas = document.createElement('canvas');
+    let w = img.naturalWidth || img.width;
+    let h = img.naturalHeight || img.height;
+    if (!w || !h) throw new Error('Bild hat keine Dimensionen');
+    if (w > maxDim || h > maxDim) {
+      const r = Math.min(maxDim / w, maxDim / h);
+      w = Math.round(w * r);
+      h = Math.round(h * r);
+    }
+    canvas.width = w; canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', quality);
+  };
+  // Weg 1: fetch → blob → ImageBitmap → Canvas. Funktioniert wenn CORS-Headers stimmen.
+  try {
+    const resp = await fetch(url, { mode:'cors', cache:'no-store' });
+    if (resp.ok) {
+      const blob = await resp.blob();
+      try {
+        const bmp = await createImageBitmap(blob);
+        const dataUrl = drawImageToDataUrl(bmp);
+        try { bmp.close(); } catch(_){}
+        return dataUrl;
+      } catch(_) {
+        // createImageBitmap nicht verfügbar oder failed → über <img> fallback
+      }
+    }
+  } catch(_) {
+    // CORS-blocked → image-Element fallback
+  }
+  // Weg 2: <img crossOrigin="anonymous"> + Canvas — umgeht viele CORS-Restriktionen,
+  //  solange der Server Access-Control-Allow-Origin setzt (Airtable tut das).
+  return await new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try { resolve(drawImageToDataUrl(img)); }
+      catch(e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error('Image konnte nicht geladen werden (CORS / Netzwerk)'));
+    img.src = url;
+  });
+}
+
+/**
+ * v6.15: Wandelt alle URL-Bilder in cps in komprimierte DataURLs um, damit jsPDF
+ *  sie addImage()-en kann. Parallel, in-place. Fehler → leerer String → vom Filter
+ *  ausgeschlossen.
  */
 async function _daResolveBilderToDataUrls(cps) {
   if (!Array.isArray(cps)) return;
@@ -22234,19 +22291,11 @@ async function _daResolveBilderToDataUrls(cps) {
     }
   }
   if (!tasks.length) return;
-  // 6 parallel — Airtable-Attachment-URLs sind statisch hosted, parallel-fetch ist OK
-  const CONC = 6;
+  // 4 parallel — Airtable-Attachment-URLs sind statisch, das verkraften sie locker
+  const CONC = 4;
   for (let i = 0; i < tasks.length; i += CONC) {
     const batch = tasks.slice(i, i + CONC);
-    const results = await Promise.allSettled(batch.map(async t => {
-      const blob = await (await fetch(t.url)).blob();
-      return await new Promise((resolve, reject) => {
-        const r = new FileReader();
-        r.onload = () => resolve(r.result);
-        r.onerror = reject;
-        r.readAsDataURL(blob);
-      });
-    }));
+    const results = await Promise.allSettled(batch.map(t => _daFetchImageAsDataUrl(t.url, 1100, 0.75)));
     for (let k = 0; k < results.length; k++) {
       const r = results[k];
       const t = batch[k];
