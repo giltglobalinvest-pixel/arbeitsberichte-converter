@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.25';
+const APP_VERSION = 'v6.26';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28321,6 +28321,18 @@ async function _angSendCustomerEmail(recId, btn) {
     setProgress(5, '📥 Lade PDF aus Airtable …');
     // 1) PDF als Blob holen
     const pdfBlob = await (await fetch(appPdf.url)).blob();
+    // v6.26: Wenn Angebot aus Datenaufnahme erstellt wurde → DA-Anhang-PDF mit anhängen
+    const daAnhang = f.da_anhang_pdf?.[0] || null;
+    let daBlob = null;
+    if (daAnhang?.url) {
+      try {
+        setProgress(15, '📥 Lade DA-Anhang …');
+        daBlob = await (await fetch(daAnhang.url)).blob();
+        console.log('[Angebot-Send] DA-Anhang geladen:', daAnhang.filename, Math.round(daBlob.size/1024)+'KB');
+      } catch(e) {
+        console.warn('[Angebot-Send] DA-Anhang Fetch failed:', e.message);
+      }
+    }
     // v5.52: Reply-Pfad — auf bestehendes Ticket antworten, ohne neues anzulegen
     if (replyTicketId) {
       // Test-Modus + Reply: macht keinen Sinn (würde an die Original-Anfrage-Email gehen).
@@ -28350,6 +28362,10 @@ async function _angSendCustomerEmail(recId, btn) {
       fdReply.append('body', bodyHtml);
       for (const cc of ccEmails) fdReply.append('cc_emails[]', cc);
       fdReply.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
+      // v6.26: DA-Anhang mit anhängen, falls vorhanden
+      if (daBlob) {
+        fdReply.append('attachments[]', daBlob, daAnhang.filename || ('Datenaufnahme-DA'+(f.datenaufnahme_da_num||'?')+'.pdf'));
+      }
       await erpEnsureSession();
       const replyUrl = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+replyTicketId+'/reply';
       const rR = await fetch(replyUrl, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fdReply });
@@ -28510,6 +28526,10 @@ async function _angSendCustomerEmail(recId, btn) {
     // nach erfolgreichem POST per PUT /tickets/<id>.
     for (const cc of ccEmails) fd.append('cc_emails[]', cc);
     fd.append('attachments[]', pdfBlob, appPdf.filename || ('Angebot-ANG-'+(f.app_angebot_num||'')+'.pdf'));
+    // v6.26: DA-Anhang mit anhängen, falls vorhanden
+    if (daBlob) {
+      fd.append('attachments[]', daBlob, daAnhang.filename || ('Datenaufnahme-DA'+(f.datenaufnahme_da_num||'?')+'.pdf'));
+    }
     await erpEnsureSession();
     const url = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email';
     const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
