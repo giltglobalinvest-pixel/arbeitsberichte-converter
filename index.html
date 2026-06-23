@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.10';
+const APP_VERSION = 'v6.11';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20336,7 +20336,7 @@ async function freshdeskCreateTicketForDA(daRec, opts) {
   let standort = (f.anlage_adresse||'').trim();
   if (!standort && f.anlage_id) {
     try {
-      const all = await erpLoadAnlagen();
+      const all = await _loadAnlagenForFirma(firmaSlug);
       const a = (all||[]).find(x => String(x.id) === String(f.anlage_id));
       if (a) standort = _buildAnlageAdresse(a) || '';
     } catch(e) { console.warn('[Freshdesk-DA-Ticket] Anlage-Lookup für Standort fehlgeschlagen:', e.message); }
@@ -37743,8 +37743,8 @@ window._bbEditorRender = function() {
     // Anlage-Picker
     '<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
       '<label style="font-size:11px;font-weight:700;color:#1E40AF;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🛗 Anlage aus ERP (optional, befüllt Felder)</label>'+
-      '<input id="bb-anlage-search" placeholder="Fabriknummer, Standort, Kunde…" oninput="_bbAnlageSearch(this.value)" style="width:100%;padding:8px 10px;border:1px solid #BFDBFE;border-radius:6px;font-size:13px;background:#fff">'+
-      '<div id="bb-anlage-results" style="margin-top:8px;display:none;background:#fff;border:1px solid #BFDBFE;border-radius:6px;max-height:200px;overflow:auto"></div>'+
+      '<input id="bb-anlage-search" placeholder="Klicken für Liste oder Fabriknummer/Standort/Kunde tippen…" onfocus="_bbAnlageSearch(this.value||\'\')" oninput="_bbAnlageSearch(this.value)" onblur="setTimeout(()=>{const r=document.getElementById(\'bb-anlage-results\');if(r)r.style.display=\'none\'},200)" style="width:100%;padding:8px 10px;border:1px solid #BFDBFE;border-radius:6px;font-size:13px;background:#fff">'+
+      '<div id="bb-anlage-results" style="margin-top:8px;display:none;background:#fff;border:1px solid #BFDBFE;border-radius:6px;max-height:280px;overflow:auto"></div>'+
     '</div>'+
     // Titel/Betreff
     '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Titel / Betreff *</label>'+
@@ -37808,27 +37808,34 @@ window._bbAnlageSearch = async function(query) {
   const wrap = document.getElementById('bb-anlage-results');
   if (!wrap) return;
   const q = String(query||'').trim().toLowerCase();
-  if (q.length < 2) { wrap.style.display='none'; wrap.innerHTML=''; return; }
+  const firmaSlug = getCurrentFirmaSlug();
+  wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Lade Anlagen…</div>';
+  wrap.style.display='block';
   try {
-    const all = await erpLoadAnlagen();
-    const hits = (all||[]).filter(a => {
-      const hay = [a.anzeigeAdresse, a.fabriknummer, a.kunde?.firmenname, a.kunde?.kundennummer, a.name].filter(Boolean).join(' ').toLowerCase();
-      return hay.includes(q);
-    }).slice(0, 20);
-    if (!hits.length) { wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Treffer</div>'; wrap.style.display='block'; return; }
+    const all = await _loadAnlagenForFirma(firmaSlug);
+    let hits = all || [];
+    if (q.length > 0) {
+      hits = hits.filter(a => {
+        const hay = [a.anzeigeAdresse, a.fabriknummer, a.kunde?.firmenname, a.kunde?.kundennummer, a.name].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    } else {
+      // Bei leerem Query: alphabetisch nach Adresse sortiert
+      hits = hits.slice().sort((a,b) => String(a.anzeigeAdresse||'').localeCompare(String(b.anzeigeAdresse||''),'de'));
+    }
+    hits = hits.slice(0, 50);
+    if (!hits.length) { wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Anlagen gefunden</div>'; return; }
     wrap.innerHTML = hits.map(a => {
       const addr = a.anzeigeAdresse || a.name || '(ohne Adresse)';
       const kn = a.kunde?.firmenname || '';
       const fab = a.fabriknummer || '';
-      return '<div onclick="_bbPickAnlage('+a.id+')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#F0F9FF\'" onmouseout="this.style.background=\'\'">'+
+      return '<div onmousedown="event.preventDefault();_bbPickAnlage('+a.id+')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#F0F9FF\'" onmouseout="this.style.background=\'\'">'+
         '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(addr)+'</div>'+
         '<div style="font-size:11px;color:var(--txt3);margin-top:2px">'+(fab ? '🔧 '+escapeHtml(fab)+' · ' : '')+escapeHtml(kn)+'</div>'+
       '</div>';
     }).join('');
-    wrap.style.display='block';
   } catch(e) {
-    wrap.innerHTML='<div style="padding:10px;color:#DC2626;font-size:12px">❌ '+escapeHtml(e.message)+'</div>';
-    wrap.style.display='block';
+    wrap.innerHTML='<div style="padding:10px;color:#DC2626;font-size:12px">❌ '+escapeHtml(e.message||String(e))+'</div>';
   }
 };
 
@@ -37836,7 +37843,7 @@ window._bbPickAnlage = async function(anlageId) {
   const m = document.getElementById('bb-editor');
   if (!m || !m._state) return;
   try {
-    const all = await erpLoadAnlagen();
+    const all = await _loadAnlagenForFirma(getCurrentFirmaSlug());
     const a = (all||[]).find(x => String(x.id) === String(anlageId));
     if (!a) return;
     m._state.anlage_id = String(a.id);
