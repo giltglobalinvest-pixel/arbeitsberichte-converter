@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.37';
+const APP_VERSION = 'v6.38';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21061,31 +21061,46 @@ function _daNormalizeCp(cp) {
 }
 
 /**
- * v6.36: Airtable Attachment-URLs expirieren nach ~2 Stunden. Beim Öffnen einer
- * gespeicherten DA matchen wir die Filenames aus den persistierten URLs gegen
- * das frische bilder_pool-Attachment-Feld und ersetzen die URLs mit den aktuellen.
- * Filename-Format aus _daSave: 'cp{ci}-{bi}-{ts}-{i}-{k}.jpg'.
- * Pool-Eintrag = { url, filename, ... } direkt aus Airtable.
+ * v6.36/v6.38: Airtable Attachment-URLs expirieren nach ~2 Stunden. Beim Öffnen
+ * einer gespeicherten DA werden die URLs in bilder_ist[] gegen das frische
+ * bilder_pool-Attachment-Feld gematcht und ersetzt.
+ *
+ * v6.38: v5-URLs (https://v5.airtableusercontent.com/v3/u/{a}/{b}/{TS}/{TOKEN}/{sig}…)
+ *   haben KEINEN Filename mit Extension im Pfad — der Filename-Regex matchte ins
+ *   Leere und stale URLs blieben bestehen (HTTP 410). Neue Strategie: extrahiere
+ *   den stabilen TOKEN-Teil (6. Pfad-Segment) und matche darüber. Filename-Match
+ *   bleibt als Fallback für alte Legacy-URLs.
  */
+function _daExtractAirtableToken(u) {
+  // /v3/u/{a}/{b}/{ts}/{TOKEN}/{download_sig}?...
+  const m = String(u||'').match(/\/v3\/u\/\d+\/\d+\/\d+\/([^\/?#]+)\//);
+  return m ? m[1] : null;
+}
 function _daRefreshBilderFromPool(cps, bilderPool) {
   if (!Array.isArray(cps) || !Array.isArray(bilderPool) || !bilderPool.length) return;
-  // Map filename → fresh url
-  const byName = new Map();
+  // Map: token → fresh url, filename → fresh url
+  const byToken = new Map();
+  const byName  = new Map();
   for (const a of bilderPool) {
-    if (a && a.filename && a.url) byName.set(a.filename, a.url);
+    if (!a || !a.url) continue;
+    const tok = _daExtractAirtableToken(a.url);
+    if (tok) byToken.set(tok, a.url);
+    if (a.filename) byName.set(a.filename, a.url);
   }
-  if (!byName.size) return;
+  if (!byToken.size && !byName.size) return;
   let refreshed = 0;
   for (const cp of cps) {
     if (!Array.isArray(cp.bilder_ist)) continue;
     for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
       const src = cp.bilder_ist[bi];
       if (typeof src !== 'string' || !src || src.startsWith('data:')) continue;
-      // Filename am Ende des Pfades (vor evtl. Query-String)
-      const m = src.match(/\/([^\/?#]+\.(?:jpe?g|png|webp|gif))(?:[?#]|$)/i);
-      const fn = m ? m[1] : null;
-      if (!fn) continue;
-      const fresh = byName.get(fn);
+      let fresh = null;
+      const tok = _daExtractAirtableToken(src);
+      if (tok) fresh = byToken.get(tok) || null;
+      if (!fresh) {
+        const fm = src.match(/\/([^\/?#]+\.(?:jpe?g|png|webp|gif))(?:[?#]|$)/i);
+        if (fm) fresh = byName.get(fm[1]) || null;
+      }
       if (fresh && fresh !== src) {
         cp.bilder_ist[bi] = fresh;
         refreshed++;
