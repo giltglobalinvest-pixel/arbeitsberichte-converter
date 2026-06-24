@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.36';
+const APP_VERSION = 'v6.37';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21095,9 +21095,36 @@ function _daRefreshBilderFromPool(cps, bilderPool) {
   if (refreshed) console.log('[DA] '+refreshed+' Bild-URLs aus bilder_pool aufgefrischt');
 }
 
+/**
+ * v6.37: Einzelnen DA-Record frisch von Airtable laden. Nötig weil Airtable
+ * Attachment-URLs (auch in bilder_pool) nach ~2h expirieren — wenn der App-Cache
+ * älter ist, sind die URLs darin stale (HTTP 410). Ein gezielter GET liefert
+ * frisch signierte URLs für genau diesen Record. Schreibt zurück in den Cache.
+ */
+async function _daFetchRecordFresh(recId) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!baseId || !key) return null;
+  const url = 'https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+encodeURIComponent(recId);
+  const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+  if (!r.ok) throw new Error('Airtable GET '+r.status);
+  const data = await r.json();
+  // Cache aktualisieren
+  const idx = (_daCache.items||[]).findIndex(x => x.id === recId);
+  if (idx >= 0 && data && data.fields) _daCache.items[idx] = data;
+  return data;
+}
+
 async function openDaDetail(recId) {
-  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  let rec = (_daCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Datenaufnahme nicht gefunden','err');
+  // v6.37: Record frisch nachladen falls Cache > 90s alt → fresh bilder_pool-URLs
+  if (Date.now() - (_daCache.loadedAt || 0) > 90 * 1000) {
+    try {
+      const fresh = await _daFetchRecordFresh(recId);
+      if (fresh && fresh.fields) rec = fresh;
+    } catch(e) { console.warn('[DA] Refresh fail:', e.message); }
+  }
   const f = rec.fields || {};
   let cps = [];
   try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
