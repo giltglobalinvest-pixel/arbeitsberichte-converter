@@ -2661,7 +2661,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.33';
+const APP_VERSION = 'v6.34';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6626,6 +6626,9 @@ async function loadAuftraegeAndRender() {
     // Letzten Sync-Status laden + anzeigen (passiert async, non-blocking)
     if (canSync) loadLastSyncStatus().catch(()=>{});
     renderAuftraegeList();
+    // v6.34: Auto-Mark „abgerechnet" für abgeschlossene Aufträge mit ERP-Rechnung
+    //         (gedrosselt auf 1× pro 30 Min pro Firma, silent im Hintergrund)
+    if (!allMode) _aufScheduleAutoMarkAbgerechnet(firmaSlug);
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
   }
@@ -11634,6 +11637,106 @@ async function bulkCheckInvoices() {
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🙈 Rechnungen prüfen + ausblenden'; }
   }
+}
+
+/* ──────────────────────────────────────────────────────────────
+   v6.34: Auto-„abgerechnet" — abgeschlossene Aufträge mit Rechnung
+   im ERP automatisch auf Status „abgerechnet" setzen.
+   ────────────────────────────────────────────────────────────── */
+async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
+  opts = opts || {};
+  const silent = !!opts.silent;
+  if (!APP_KEYS.valtownProxyUrl) return { skipped:'no-proxy' };
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return { skipped:'no-permission' };
+  if (!firmaSlug || firmaSlug === '__all__') return { skipped:'no-firma' };
+
+  // Kandidaten: abgeschlossene Aufträge mit ERP-ID, noch nicht abgerechnet
+  const candidates = _auftragCache.filter(r => {
+    const f = r.fields || {};
+    if (!f.ext_id) return false;
+    if ((f.firma||'') !== firmaSlug) return false;
+    return _normAuftragStatus(f.status) === 'abgeschlossen';
+  });
+  if (!candidates.length) return { checked:0, marked:0, skipped:'no-candidates' };
+
+  if (!silent) toast('⏳ Prüfe '+candidates.length+' abgeschlossene Aufträge auf Rechnungen…','');
+
+  // Wartungsvertrag-Schutz
+  let wartungsAngebotIds = new Set();
+  try {
+    await _loadWartungsAnlagen(firmaSlug);
+    wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set();
+  } catch(_){}
+
+  // Schema sicherstellen
+  try {
+    await ensureField('Auftraege', 'invoice_num',  'singleLineText');
+    await ensureField('Auftraege', 'invoice_date', 'singleLineText');
+    await ensureField('Auftraege', 'invoice_id',   'singleLineText');
+  } catch(_){}
+
+  let list;
+  try { list = await _fetchErpRechnungen(firmaSlug); }
+  catch(e) {
+    console.warn('[auto-abgerechnet] ERP-Rechnungen fail:', e.message);
+    if (!silent) toast('❌ Rechnungen aus ERP nicht erreichbar: '+e.message,'err');
+    return { skipped:'erp-fail' };
+  }
+  const idx = _indexRechnungenByAuftrag(list);
+
+  let marked = 0, skippedWartung = 0, atFails = 0;
+  for (const rec of candidates) {
+    const f = rec.fields || {};
+    if (_isWartungsvertragAuftrag(rec, wartungsAngebotIds)) { skippedWartung++; continue; }
+    const inv = idx.get(String(f.ext_id));
+    if (!inv) continue;
+    const invNum  = String(inv.rechnungsnummer || inv.id || '');
+    const invDate = String(inv.rechnungsdatum || inv.createdDate || inv.leistungszeitraum || '').slice(0,10);
+    const invId   = String(inv.id || '');
+    try {
+      await _patchAuftragFields(rec.id, {
+        status:        'abgerechnet',
+        invoice_num:   invNum,
+        invoice_date:  invDate,
+        invoice_id:    invId,
+      });
+      // Lokal-Cache aktualisieren
+      rec.fields.status        = 'abgerechnet';
+      rec.fields.invoice_num   = invNum;
+      rec.fields.invoice_date  = invDate;
+      rec.fields.invoice_id    = invId;
+      marked++;
+    } catch(e) {
+      atFails++;
+      console.warn('[auto-abgerechnet] Patch fail #'+f.auftrag_num+':', e.message);
+    }
+  }
+  // Marker speichern damit Auto-Run nicht zu oft läuft
+  try { localStorage.setItem('auf_auto_invoiced_'+firmaSlug, String(Date.now())); } catch(_){}
+  if (!silent || marked > 0) {
+    const parts = [];
+    parts.push(marked+' Auftrag'+(marked===1?'':'e')+' auf abgerechnet gesetzt');
+    if (skippedWartung) parts.push(skippedWartung+' Wartungsverträge ausgenommen');
+    if (atFails) parts.push(atFails+' Airtable-Fehler');
+    toast('✅ '+parts.join(' · '), atFails ? 'warn' : 'ok');
+    if (marked > 0) renderAuftraegeList();
+  }
+  return { checked: candidates.length, marked, skippedWartung, atFails };
+}
+
+/** Auto-Run beim Aufträge-View-Laden — gedrosselt auf 1× pro 30 Min pro Firma. */
+function _aufScheduleAutoMarkAbgerechnet(firmaSlug) {
+  if (!firmaSlug || firmaSlug === '__all__') return;
+  if (!APP_KEYS.valtownProxyUrl) return;
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return;
+  // Throttle: nicht öfter als 1× pro 30 Min pro Firma
+  try {
+    const last = +localStorage.getItem('auf_auto_invoiced_'+firmaSlug) || 0;
+    if (Date.now() - last < 30*60*1000) return;
+  } catch(_){}
+  setTimeout(() => {
+    _aufAutoMarkAbgerechnet(firmaSlug, { silent: true }).catch(e => console.warn('[auto-abgerechnet]', e.message));
+  }, 1500);
 }
 
 /* ──────────────────────────────────────────────────────────────
