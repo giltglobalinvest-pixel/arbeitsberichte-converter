@@ -2661,7 +2661,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.32';
+const APP_VERSION = 'v6.33';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -39098,6 +39098,10 @@ const LV_TABLE_FIELDS = [
   { name:'erstellt_von',           type:'singleLineText' },
   { name:'notizen',                type:'multilineText'  },
   { name:'archived',               type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+  // v6.33: Freshdesk-Verknüpfung
+  { name:'fd_ticket_id',           type:'number', options:{ precision:0 } },
+  { name:'fd_ticket_url',          type:'singleLineText' },
+  { name:'fd_pushed_at',           type:'singleLineText' },
 ];
 let _lvCache = { firma:null, items:null, loadedAt:0 };
 let _lvTableEnsured = false;
@@ -39200,11 +39204,100 @@ async function renderLvView(opts) {
       '</div>'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap" onclick="event.stopPropagation()">'+
         (pdfAtt ? '<a href="'+escapeHtml(pdfAtt.url)+'" target="_blank" rel="noopener" style="background:#FEF3C7;color:#92400E;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">📄 PDF</a>' : '')+
+        // v6.33: Freshdesk-Push — wenn schon gepusht: kleines Ticket-Badge mit Link, sonst Push-Button
+        (f.fd_ticket_id
+          ? '<a href="'+escapeHtml(f.fd_ticket_url||'#')+'" target="_blank" rel="noopener" style="background:#ECFDF5;color:#065F46;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none;border:1px solid #6EE7B7" title="Bereits ins Freshdesk gepusht — klick zum Öffnen">🎫 #'+escapeHtml(String(f.fd_ticket_id))+'</a>'
+          : (pdfAtt ? '<button onclick="_lvPushToFreshdesk(\''+rec.id+'\', this)" style="background:#3B82F6;color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer" title="LV als Freshdesk-Ticket erstellen — kann dann an Subunternehmer/Bieter weitergeleitet werden">🎫 Freshdesk</button>' : ''))+
         '<button onclick="_lvDelete(\''+rec.id+'\')" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer">🗑</button>'+
       '</div>'+
     '</div>';
   }).join('');
 }
+
+/** v6.33: Push LV als Freshdesk-Ticket — mit PDF im Anhang, damit das LV
+ *  intern an Subunternehmer/Bieter weitergeleitet werden kann. */
+window._lvPushToFreshdesk = async function(recId, btn) {
+  const rec = (_lvCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('LV nicht gefunden','err');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert','err');
+  const pdfAtt = Array.isArray(f.pdf) && f.pdf[0] ? f.pdf[0] : null;
+  if (!pdfAtt?.url) return toast('Kein PDF vorhanden — bitte erst LV speichern','err');
+  // Bestätigung wenn bereits gepusht
+  if (f.fd_ticket_id && !confirm('LV wurde bereits am '+(f.fd_pushed_at||'?').slice(0,16).replace('T',' ')+' als Ticket #'+f.fd_ticket_id+' gepusht.\n\nNochmal pushen (neues Ticket)?')) return;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Push…'; }
+  try {
+    // PDF holen
+    const pdfBlob = await (await fetch(pdfAtt.url)).blob();
+    // Subject + Body
+    const lvNum = f.lv_num ? 'LV-'+f.lv_num : 'LV';
+    const titel = (f.titel||'').slice(0,80);
+    const subject = lvNum + (titel?' · '+titel:'')+(f.anlage_fabriknummer?' · Fab.-Nr. '+f.anlage_fabriknummer:'');
+    const lines = [];
+    lines.push('<p><strong>Leistungsverzeichnis '+escapeHtml(lvNum)+'</strong></p>');
+    if (titel)               lines.push('<p>📋 <strong>Titel:</strong> '+escapeHtml(titel)+'</p>');
+    if (f.anlage_adresse)    lines.push('<p>📍 <strong>Standort:</strong> '+escapeHtml(String(f.anlage_adresse).replace(/\n/g,', '))+'</p>');
+    if (f.anlage_fabriknummer) lines.push('<p>🔧 <strong>Fabriknummer:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</p>');
+    let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    lines.push('<p>📋 <strong>'+positionen.length+' Position'+(positionen.length===1?'':'en')+'</strong> im LV — Details siehe PDF im Anhang.</p>');
+    if (f.vorbemerkung) lines.push('<hr><p><em>Vorbemerkung:</em></p><p>'+escapeHtml(f.vorbemerkung).replace(/\n/g,'<br>')+'</p>');
+    lines.push('<p style="font-size:11px;color:#888">Dieses Ticket wurde automatisch aus der Elevator Servicebox erzeugt — bitte ggf. an Subunternehmer/Bieter weiterleiten.</p>');
+    // Type per Firma
+    const fdType = _fdResolveTicketType(firmaSlug, null);
+    const requesterEmail = APP_KEYS.freshdeskRequesterEmails?.[firmaSlug];
+    if (!requesterEmail) throw new Error('Keine Freshdesk-Requester-Email für Firma "'+firmaSlug+'" konfiguriert.');
+    const fd = new FormData();
+    fd.append('email', requesterEmail);
+    fd.append('subject', subject);
+    fd.append('description', lines.join(''));
+    fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
+    if (fdType) fd.append('type', fdType);
+    fd.append('attachments[]', pdfBlob, (pdfAtt.filename || lvNum+'.pdf'));
+    await erpEnsureSession();
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+    const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+    const text = await res.text();
+    let data; try { data = text ? JSON.parse(text) : null; } catch(_){ data = { _raw:text }; }
+    if (!res.ok) {
+      let msg = 'HTTP '+res.status;
+      if (data?.errors && Array.isArray(data.errors)) msg = data.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; ');
+      else if (data?.upstream_body_excerpt) try { const up = JSON.parse(data.upstream_body_excerpt); if (Array.isArray(up.errors)) msg = up.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; '); } catch(_){}
+      else if (data?.description) msg = data.description;
+      throw new Error(msg);
+    }
+    const ticketId = data?.id;
+    const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
+    // Persistieren am LV
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse/'+recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields:{ fd_ticket_id: ticketId, fd_ticket_url: ticketUrl, fd_pushed_at: new Date().toISOString(), status:'versendet' }}),
+      });
+      // Cache aktualisieren
+      const idx = (_lvCache.items||[]).findIndex(x => x.id === recId);
+      if (idx >= 0) {
+        _lvCache.items[idx].fields = _lvCache.items[idx].fields || {};
+        Object.assign(_lvCache.items[idx].fields, { fd_ticket_id:ticketId, fd_ticket_url:ticketUrl, fd_pushed_at:new Date().toISOString(), status:'versendet' });
+      }
+    } catch(persistErr) { console.warn('[LV-Push] Persist:', persistErr.message); }
+    toast('🎫 Ticket #'+ticketId+' erstellt — '+(ticketUrl?'in Freshdesk öffnen':'OK'), 'ok');
+    if (ticketUrl) { try { window.open(ticketUrl, '_blank'); } catch(_){} }
+    renderLvView({force:true});
+    // Editor-Refresh wenn offen
+    if (document.getElementById('lv-editor')) {
+      document.getElementById('lv-editor').remove();
+      openLvEditor({ recId });
+    }
+  } catch(e) {
+    console.error('[LV-Push]', e);
+    toast('❌ Push: '+(e.message||e).slice(0,200), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🎫 Ins Freshdesk pushen'; }
+  }
+};
 
 window._lvDelete = async function(recId) {
   if (!confirm('LV wirklich löschen?')) return;
@@ -39560,6 +39653,10 @@ window.openLvEditor = async function(ctx) {
         status: f.status || 'entwurf',
         _existing_pdf: Array.isArray(f.pdf) && f.pdf[0] ? f.pdf[0] : null,
         _lv_num: f.lv_num,
+        // v6.33: FD-Verknüpfung für Banner/Button-State
+        _fd_ticket_id:  f.fd_ticket_id || null,
+        _fd_ticket_url: f.fd_ticket_url || '',
+        _fd_pushed_at:  f.fd_pushed_at  || '',
       };
     }
   }
@@ -39620,9 +39717,17 @@ function _lvEditorRender() {
           '<div style="font-size:18px;font-weight:700;color:#7C2D12">'+fmt(sumPreis)+' EUR</div>'+
         '</div>'+
       '</div>'+
-      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
-        '<button onclick="document.getElementById(\'lv-editor\').remove()" style="padding:8px 14px;border:1px solid var(--bdr);background:#fff;border-radius:6px;cursor:pointer">Abbrechen</button>'+
-        '<button id="lv-ed-save" onclick="_lvSave()" style="padding:8px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">💾 Speichern + PDF erzeugen</button>'+
+      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center">'+
+        // v6.33: FD-Status-Banner links, falls bereits gepusht
+        (s._fd_ticket_id
+          ? '<div style="font-size:11px;color:#065F46;font-weight:600;display:flex;align-items:center;gap:6px">🎫 Im Freshdesk: '+(s._fd_ticket_url?'<a href="'+escapeHtml(s._fd_ticket_url)+'" target="_blank" rel="noopener" style="color:#065F46;font-weight:700">#'+escapeHtml(String(s._fd_ticket_id))+' öffnen ↗</a>':'#'+escapeHtml(String(s._fd_ticket_id)))+'</div>'
+          : '<div></div>')+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button onclick="document.getElementById(\'lv-editor\').remove()" style="padding:8px 14px;border:1px solid var(--bdr);background:#fff;border-radius:6px;cursor:pointer">Abbrechen</button>'+
+          // v6.33: Freshdesk-Push (nur sichtbar wenn PDF schon da, d.h. recId vorhanden)
+          (s.recId ? '<button id="lv-ed-push" onclick="_lvPushToFreshdesk(\''+s.recId+'\', this)" style="padding:8px 14px;background:#3B82F6;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer" title="LV als Freshdesk-Ticket erstellen — kann dann an Subunternehmer/Bieter weitergeleitet werden">🎫 '+(s._fd_ticket_id?'Erneut ':'')+'Ins Freshdesk pushen</button>' : '')+
+          '<button id="lv-ed-save" onclick="_lvSave()" style="padding:8px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">💾 Speichern + PDF erzeugen</button>'+
+        '</div>'+
       '</div>'+
     '</div>';
 }
