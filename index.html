@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.40';
+const APP_VERSION = 'v6.41';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21071,57 +21071,60 @@ function _daNormalizeCp(cp) {
  *   den stabilen TOKEN-Teil (6. Pfad-Segment) und matche darüber. Filename-Match
  *   bleibt als Fallback für alte Legacy-URLs.
  */
-function _daExtractAirtableToken(u) {
-  // v6.40: URL-Format ist /v3/u/{a}/{b}/{ts}/{SIGNATURE}/{ATTACHMENT_ID}?...
-  // {SIGNATURE} und {ts} ändern sich bei jedem Read, {ATTACHMENT_ID} (letztes
-  // Pfad-Segment) ist stabil. Vorher matchte der Regex die SIGNATURE → kein Hit.
-  const m = String(u||'').match(/\/v3\/u\/\d+\/\d+\/\d+\/[^\/?#]+\/([^\/?#]+)(?:[?#]|$)/);
-  return m ? m[1] : null;
-}
+/**
+ * v6.41: Filename-Pattern-Match — die in _daSave erzeugten Filenames
+ * 'cp{ci+1}-{bi+1}-{ts}-{i}-{k}.jpg' kodieren bereits die exakte cp+bild-Position.
+ * Wir parsen die Filenames aus bilder_pool und schreiben die fresh-URL direkt
+ * in cps[ci].bilder_ist[bi]. Robust gegen URL-Format-Änderungen, weil wir nicht
+ * versuchen die stale URL gegen die fresh URL zu matchen — wir kennen die
+ * Zielposition aus dem Filename selbst. Bei mehreren Pool-Einträgen für denselben
+ * Slot (Re-Upload) gewinnt der mit dem höchsten Timestamp im Filename.
+ */
 function _daRefreshBilderFromPool(cps, bilderPool) {
   if (!Array.isArray(cps)) return;
   const poolLen = Array.isArray(bilderPool) ? bilderPool.length : 0;
-  let storedCount = 0, storedSamples = [];
-  for (const cp of (cps||[])) for (const b of (cp.bilder_ist||[])) {
-    if (typeof b === 'string' && /^https?:\/\//i.test(b)) { storedCount++; if (storedSamples.length<2) storedSamples.push(b); }
+  let storedCount = 0;
+  for (const cp of cps) for (const b of (cp.bilder_ist||[])) {
+    if (typeof b === 'string' && /^https?:\/\//i.test(b)) storedCount++;
   }
   console.log('[DA-Refresh] cps='+cps.length+' · stored URLs='+storedCount+' · pool='+poolLen);
   if (!poolLen) {
-    console.warn('[DA-Refresh] bilder_pool ist LEER — refresh nicht möglich. Stored sample:', storedSamples[0]||null);
+    if (storedCount) console.warn('[DA-Refresh] bilder_pool LEER — refresh nicht möglich');
     return;
   }
-  // Map: token → fresh url, filename → fresh url
-  const byToken = new Map();
-  const byName  = new Map();
+  // Pool indexieren per (ci-bi) → höchster Timestamp gewinnt
+  const byCpBi = new Map();
+  let parsedFromFilename = 0;
   for (const a of bilderPool) {
-    if (!a || !a.url) continue;
-    const tok = _daExtractAirtableToken(a.url);
-    if (tok) byToken.set(tok, a.url);
-    if (a.filename) byName.set(a.filename, a.url);
+    if (!a || !a.url || !a.filename) continue;
+    const m = a.filename.match(/^cp(\d+)-(\d+)-(\d+)-/);
+    if (!m) continue;
+    const ci = parseInt(m[1], 10) - 1;
+    const bi = parseInt(m[2], 10) - 1;
+    const ts = parseInt(m[3], 10);
+    if (ci < 0 || bi < 0) continue;
+    const key = ci + '-' + bi;
+    const prev = byCpBi.get(key);
+    if (!prev || prev.ts < ts) byCpBi.set(key, { url: a.url, ts });
+    parsedFromFilename++;
   }
-  console.log('[DA-Refresh] pool indexed — token='+byToken.size+' · filename='+byName.size+' · pool sample:', (bilderPool[0]?.url||null));
-  let refreshed = 0, noMatch = 0;
-  for (const cp of cps) {
+  console.log('[DA-Refresh] pool indexed — '+parsedFromFilename+'/'+poolLen+' Filenames parsbar · '+byCpBi.size+' eindeutige Slots');
+  let refreshed = 0, noSlot = 0;
+  for (let ci = 0; ci < cps.length; ci++) {
+    const cp = cps[ci];
     if (!Array.isArray(cp.bilder_ist)) continue;
     for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
       const src = cp.bilder_ist[bi];
       if (typeof src !== 'string' || !src || src.startsWith('data:')) continue;
-      let fresh = null;
-      const tok = _daExtractAirtableToken(src);
-      if (tok) fresh = byToken.get(tok) || null;
-      if (!fresh) {
-        const fm = src.match(/\/([^\/?#]+\.(?:jpe?g|png|webp|gif))(?:[?#]|$)/i);
-        if (fm) fresh = byName.get(fm[1]) || null;
-      }
-      if (fresh) {
-        if (fresh !== src) { cp.bilder_ist[bi] = fresh; refreshed++; }
+      const hit = byCpBi.get(ci + '-' + bi);
+      if (hit) {
+        if (hit.url !== src) { cp.bilder_ist[bi] = hit.url; refreshed++; }
       } else {
-        noMatch++;
-        if (noMatch <= 2) console.warn('[DA-Refresh] kein Pool-Match für stored URL:', src);
+        noSlot++;
       }
     }
   }
-  console.log('[DA-Refresh] refreshed='+refreshed+' · no-match='+noMatch);
+  console.log('[DA-Refresh] refreshed='+refreshed+' · ohne-Pool-Slot='+noSlot);
 }
 
 /**
