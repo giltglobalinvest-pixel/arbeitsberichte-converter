@@ -2649,7 +2649,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.27';
+const APP_VERSION = 'v6.28';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -27144,6 +27144,15 @@ function openAngebotDetail(recId) {
         (f.kone_angebot_num ? '<div><strong>🔗 '+escapeHtml(f.anbieter||'Original')+':</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
         (f.erp_anfrage_id ? '<div style="margin-top:6px;padding:6px 10px;background:#EFF6FF;border-left:3px solid #2152A9;border-radius:4px"><strong style="color:#1E3A8A">📋 ERP-Anfrage:</strong> '+(f.erp_anfrage_url ? '<a href="'+escapeHtml(f.erp_anfrage_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Anfrage '+escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id)+' öffnen ↗</a>' : escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id))+'</div>' : '')+
         (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 ERP-Angebot:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
+        // v6.28: Send-Status-Banner — zeigt ob/wann/an wen gesendet wurde
+        ((f.fd_send_ticket_id||f.fd_send_email)
+          ? '<div style="margin-top:6px;padding:8px 12px;background:#ECFDF5;border:2px solid #10b981;border-radius:6px;font-size:12px;color:#065F46">'+
+              '<div style="font-weight:700;display:flex;align-items:center;gap:6px"><span>📧 Versendet</span>'+(f.status==='gesendet'?'<span style="background:#10b981;color:#fff;font-size:10px;padding:1px 8px;border-radius:99px">Status: gesendet</span>':'<span style="background:#F59E0B;color:#fff;font-size:10px;padding:1px 8px;border-radius:99px">⚠ Status NICHT gesendet — vermutlich Test</span>')+'</div>'+
+              (f.fd_send_email ? '<div>📨 An: <strong>'+escapeHtml(f.fd_send_email)+'</strong></div>' : '')+
+              (f.fd_send_at ? '<div>🕐 Am: '+escapeHtml(String(f.fd_send_at).slice(0,16).replace('T',' '))+'</div>' : '')+
+              (f.fd_send_ticket_id ? '<div>🎫 Ticket: '+(f.fd_send_ticket_url?'<a href="'+escapeHtml(f.fd_send_ticket_url)+'" target="_blank" rel="noopener" style="color:#065F46;font-weight:700">#'+escapeHtml(String(f.fd_send_ticket_id))+' öffnen ↗</a>':'#'+escapeHtml(String(f.fd_send_ticket_id)))+'</div>' : '')+
+            '</div>'
+          : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
         // v5.50: Bei Aufwand-Modus statt Summen-Block einen lila Hinweis
@@ -28325,6 +28334,7 @@ async function _angSendCustomerEmail(recId, btn) {
     setProgress(5, '📥 Lade PDF aus Airtable …');
     // 1) PDF als Blob holen
     const pdfBlob = await (await fetch(appPdf.url)).blob();
+    console.log('[Angebot-Send] App-PDF geladen:', Math.round(pdfBlob.size/1024)+'KB');
     // v6.26: Wenn Angebot aus Datenaufnahme erstellt wurde → DA-Anhang-PDF mit anhängen
     const daAnhang = f.da_anhang_pdf?.[0] || null;
     let daBlob = null;
@@ -28335,6 +28345,17 @@ async function _angSendCustomerEmail(recId, btn) {
         console.log('[Angebot-Send] DA-Anhang geladen:', daAnhang.filename, Math.round(daBlob.size/1024)+'KB');
       } catch(e) {
         console.warn('[Angebot-Send] DA-Anhang Fetch failed:', e.message);
+      }
+    }
+    // v6.28: Anhang-Größen-Check — Freshdesk-Limit ist 20MB pro Mail, harte Warnung ab 15MB
+    const totalSize = (pdfBlob?.size || 0) + (daBlob?.size || 0);
+    const totalMB = totalSize / (1024*1024);
+    console.log('[Angebot-Send] Anhang-Größe gesamt:', totalMB.toFixed(1)+'MB');
+    if (totalMB > 15) {
+      const ok = confirm('⚠ Anhang-Größe '+totalMB.toFixed(1)+' MB — das Freshdesk-Limit liegt bei ~20 MB pro E-Mail. Es kann sein dass der Versand abgelehnt wird.\n\nTrotzdem senden?');
+      if (!ok) {
+        if (footer) footer.innerHTML = origFooterHtml;
+        return;
       }
     }
     // v5.52: Reply-Pfad — auf bestehendes Ticket antworten, ohne neues anzulegen
