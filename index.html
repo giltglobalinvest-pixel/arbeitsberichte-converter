@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.38';
+const APP_VERSION = 'v6.39';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21077,7 +21077,17 @@ function _daExtractAirtableToken(u) {
   return m ? m[1] : null;
 }
 function _daRefreshBilderFromPool(cps, bilderPool) {
-  if (!Array.isArray(cps) || !Array.isArray(bilderPool) || !bilderPool.length) return;
+  if (!Array.isArray(cps)) return;
+  const poolLen = Array.isArray(bilderPool) ? bilderPool.length : 0;
+  let storedCount = 0, storedSamples = [];
+  for (const cp of (cps||[])) for (const b of (cp.bilder_ist||[])) {
+    if (typeof b === 'string' && /^https?:\/\//i.test(b)) { storedCount++; if (storedSamples.length<2) storedSamples.push(b); }
+  }
+  console.log('[DA-Refresh] cps='+cps.length+' · stored URLs='+storedCount+' · pool='+poolLen);
+  if (!poolLen) {
+    console.warn('[DA-Refresh] bilder_pool ist LEER — refresh nicht möglich. Stored sample:', storedSamples[0]||null);
+    return;
+  }
   // Map: token → fresh url, filename → fresh url
   const byToken = new Map();
   const byName  = new Map();
@@ -21087,8 +21097,8 @@ function _daRefreshBilderFromPool(cps, bilderPool) {
     if (tok) byToken.set(tok, a.url);
     if (a.filename) byName.set(a.filename, a.url);
   }
-  if (!byToken.size && !byName.size) return;
-  let refreshed = 0;
+  console.log('[DA-Refresh] pool indexed — token='+byToken.size+' · filename='+byName.size+' · pool sample:', (bilderPool[0]?.url||null));
+  let refreshed = 0, noMatch = 0;
   for (const cp of cps) {
     if (!Array.isArray(cp.bilder_ist)) continue;
     for (let bi = 0; bi < cp.bilder_ist.length; bi++) {
@@ -21101,13 +21111,15 @@ function _daRefreshBilderFromPool(cps, bilderPool) {
         const fm = src.match(/\/([^\/?#]+\.(?:jpe?g|png|webp|gif))(?:[?#]|$)/i);
         if (fm) fresh = byName.get(fm[1]) || null;
       }
-      if (fresh && fresh !== src) {
-        cp.bilder_ist[bi] = fresh;
-        refreshed++;
+      if (fresh) {
+        if (fresh !== src) { cp.bilder_ist[bi] = fresh; refreshed++; }
+      } else {
+        noMatch++;
+        if (noMatch <= 2) console.warn('[DA-Refresh] kein Pool-Match für stored URL:', src);
       }
     }
   }
-  if (refreshed) console.log('[DA] '+refreshed+' Bild-URLs aus bilder_pool aufgefrischt');
+  console.log('[DA-Refresh] refreshed='+refreshed+' · no-match='+noMatch);
 }
 
 /**
@@ -21133,13 +21145,18 @@ async function _daFetchRecordFresh(recId) {
 async function openDaDetail(recId) {
   let rec = (_daCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Datenaufnahme nicht gefunden','err');
-  // v6.37: Record frisch nachladen falls Cache > 90s alt → fresh bilder_pool-URLs
-  if (Date.now() - (_daCache.loadedAt || 0) > 90 * 1000) {
-    try {
-      const fresh = await _daFetchRecordFresh(recId);
-      if (fresh && fresh.fields) rec = fresh;
-    } catch(e) { console.warn('[DA] Refresh fail:', e.message); }
-  }
+  // v6.39: IMMER frisch nachladen — _daCache.loadedAt sagt nur wann der Cache zuletzt
+  // GEBAUT wurde, nicht ob die Attachment-URLs darin noch gültig sind. v5-URLs
+  // expirieren ~2h nach dem ursprünglichen Listing-Call. Ein gezielter GET liefert
+  // garantiert fresh signierte URLs für genau diesen Record.
+  try {
+    const fresh = await _daFetchRecordFresh(recId);
+    if (fresh && fresh.fields) {
+      rec = fresh;
+      const oldPoolLen = (rec.fields.bilder_pool||[]).length;
+      console.log('[DA-Refresh] frisch geladen — bilder_pool: '+oldPoolLen+' Attachments');
+    }
+  } catch(e) { console.warn('[DA-Refresh] fail:', e.message); }
   const f = rec.fields || {};
   let cps = [];
   try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
