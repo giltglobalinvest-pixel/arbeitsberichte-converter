@@ -1398,6 +1398,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
         <button class="tnav-menu-item" id="tnav-overview" onclick="switchView('overview')">📋 Berichts-Übersicht</button>
         <button class="tnav-menu-item" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
         <button class="tnav-menu-item" id="tnav-angebote" onclick="switchView('angebote')">📄 Angebote</button>
+        <button class="tnav-menu-item" id="tnav-lv" onclick="switchView('lv')">📑 Leistungsverzeichnisse</button>
         <button class="tnav-menu-item" id="tnav-briefberichte" onclick="switchView('briefberichte')">📝 Berichte (Briefpapier)</button>
         <button class="tnav-menu-item" id="tnav-projekte" onclick="switchView('projekte')" style="display:none">📅 Projekte</button>
         <button class="tnav-menu-item" id="tnav-verantw" onclick="switchView('verantw')" style="display:none">👷 Verantwortliche</button>
@@ -2048,6 +2049,17 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-body" id="briefberichte-list" style="padding:20px"></div>
 </div>
 
+<!-- v6.30: LEISTUNGSVERZEICHNISSE — Ausschreibungs-LVs pro Firma -->
+<div class="firma-view" id="lv-view">
+  <div class="firma-hdr">
+    <h2>📑 Leistungsverzeichnisse <span id="lv-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
+    <button class="btn" onclick="renderLvView({force:true})">↻ Neu laden</button>
+    <button class="btn" onclick="openLvPromptVorlagenModal()" title="Prompt-Vorlagen für LV-Generierung verwalten">📚 Prompt-Vorlagen</button>
+    <button class="btn prim" id="lv-new-btn" onclick="openLvWizard()">+ Neues LV</button>
+  </div>
+  <div class="firma-body" id="lv-list" style="padding:20px"></div>
+</div>
+
 <!-- PROJEKTE (Projektmanager mit Timeline) -->
 <div class="firma-view" id="projekte-view">
   <div class="firma-hdr">
@@ -2649,7 +2661,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.29';
+const APP_VERSION = 'v6.30';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3328,6 +3340,8 @@ async function showApp() {
   if (tnavAngebote) tnavAngebote.style.display            = hasPermission('tool_angebote') ? '' : 'none';
   const tnavBb = document.getElementById('tnav-briefberichte');
   if (tnavBb) tnavBb.style.display                        = hasPermission('tool_briefberichte') ? '' : 'none';
+  const tnavLv = document.getElementById('tnav-lv');
+  if (tnavLv) tnavLv.style.display                        = hasPermission('tool_lv') ? '' : 'none';
   // Projekte + Verantwortliche: Admin-only
   const tnavProjekte = document.getElementById('tnav-projekte');
   if (tnavProjekte) tnavProjekte.style.display            = isAdmin() ? '' : 'none';
@@ -4020,6 +4034,7 @@ function switchView(view) {
   if (view==='extract' && !hasPermission('tool_data_extract')) return toast('🔒 Keine Berechtigung','err');
   if (view==='angebote' && !hasPermission('tool_angebote')) return toast('🔒 Keine Berechtigung','err');
   if (view==='briefberichte' && !hasPermission('tool_briefberichte')) return toast('🔒 Keine Berechtigung','err');
+  if (view==='lv' && !hasPermission('tool_lv')) return toast('🔒 Keine Berechtigung','err');
   if (view==='dav' && !isAdmin()) return;
 
   const dash = document.getElementById('dash-view');
@@ -4044,7 +4059,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract','angebote','briefberichte'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract','angebote','briefberichte','lv'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -4078,6 +4093,8 @@ function switchView(view) {
   if (angeboteEl) angeboteEl.classList.toggle('show', view==='angebote');
   const bbEl = document.getElementById('briefberichte-view');
   if (bbEl) bbEl.classList.toggle('show', view==='briefberichte');
+  const lvEl = document.getElementById('lv-view');
+  if (lvEl) lvEl.classList.toggle('show', view==='lv');
   const projekteEl = document.getElementById('projekte-view');
   if (projekteEl) projekteEl.classList.toggle('show', view==='projekte');
   const verantwEl = document.getElementById('verantw-view');
@@ -4105,6 +4122,7 @@ function switchView(view) {
   if (view==='extract') renderDataExtractView();
   if (view==='angebote') renderAngeboteView();
   if (view==='briefberichte') renderBriefberichteView();
+  if (view==='lv') renderLvView();
   if (view==='projekte') renderProjekteView();
   if (view==='verantw')  renderVerantwortlicheView();
   // Mobile-Drawer schließen, falls offen
@@ -5167,6 +5185,11 @@ const FEATURES = {
     desc:  'Freitext-Berichte auf Firmen-Briefpapier verfassen — Standort, Fabriknummer, Empfänger-Anschrift, Freitext, Bild-Anhänge, Signatur. PDF auf Briefpapier der aktiven Firma.',
     default: false,
   },
+  tool_lv: {
+    label: 'Tool: Leistungsverzeichnisse',
+    desc:  'Ausschreibungs-LVs erstellen — Anlage wählen, KI generiert Positionen (Titel + Beschreibung) aus Prompt, Preise editierbar, PDF auf Briefpapier. Für Ausschreibungen an Bieter oder als interne Kalkulationsbasis.',
+    default: false,
+  },
   auftraege_view_all: {
     label: 'Aufträge: Alle anzeigen',
     desc:  'Verwalter-Sicht: sieht alle Aufträge der Firma. Ohne diese Berechtigung nur eigene zugewiesene.',
@@ -5254,7 +5277,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
-      tool_data_extract:true, tool_angebote:true, tool_briefberichte:true,
+      tool_data_extract:true, tool_angebote:true, tool_briefberichte:true, tool_lv:true,
     },
   },
   { name:'Verwalter', sort_order:2, is_system:true,
@@ -5265,7 +5288,7 @@ const ROLLEN_DEFAULTS = [
       auftraege_view_all:true, auftraege_create:true, auftraege_edit:true,
       auftraege_see_prices:true, delete_reports:true,
       tool_datenaufnahmen:true, datenaufnahmen_create:true, datenaufnahmen_edit:true,
-      tool_data_extract:true, tool_angebote:true, tool_briefberichte:true,
+      tool_data_extract:true, tool_angebote:true, tool_briefberichte:true, tool_lv:true,
     },
   },
   { name:'Techniker', sort_order:3, is_system:true,
@@ -39047,6 +39070,782 @@ function _bbPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X) {
   doc.text(_sanPdf(BR.headerLine || BR.company || ''), mr, 16, { align:'right' });
   // Trennlinie unter Logo-Bereich (nur wenn Logo da)
   doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, 24, mr, 24);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v6.30: LEISTUNGSVERZEICHNISSE — Ausschreibungs-LVs pro Firma
+ * ───────────────────────────────────────────────────────────────────────
+ * Workflow:
+ *  1. Anlage wählen (Picker mit ERP-Vorbefüllung)
+ *  2. Prompt-Vorlage laden oder selbst tippen → KI generiert Positionen
+ *  3. Editor: Titel + Beschreibung + (optional) Preis editierbar
+ *  4. PDF auf Briefpapier mit Positions-Tabelle
+ * ═══════════════════════════════════════════════════════════════════════ */
+const LV_TABLE_FIELDS = [
+  { name:'lv_num',                 type:'number', options:{ precision:0 } },
+  { name:'firma',                  type:'singleLineText' },
+  { name:'titel',                  type:'singleLineText' },
+  { name:'status',                 type:'singleLineText' },  // entwurf | fertig | versendet | archiviert
+  { name:'anlage_id',              type:'singleLineText' },
+  { name:'anlage_fabriknummer',    type:'singleLineText' },
+  { name:'anlage_adresse',         type:'multilineText'  },
+  { name:'kunde_name',             type:'singleLineText' },
+  { name:'kunde_nummer',           type:'singleLineText' },
+  { name:'vorbemerkung',           type:'multilineText'  },
+  { name:'positionen_json',        type:'multilineText'  },  // [{nr, titel, beschreibung, preis}]
+  { name:'pdf',                    type:'multipleAttachments' },
+  { name:'erstellt_am',            type:'singleLineText' },
+  { name:'erstellt_von',           type:'singleLineText' },
+  { name:'notizen',                type:'multilineText'  },
+  { name:'archived',               type:'checkbox', options:{ icon:'check', color:'grayBright' }},
+];
+let _lvCache = { firma:null, items:null, loadedAt:0 };
+let _lvTableEnsured = false;
+
+async function _ensureLvTable() {
+  if (_lvTableEnsured) return true;
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token. Bitte als Admin einloggen.');
+  await ensureTable('App_Leistungsverzeichnisse', LV_TABLE_FIELDS);
+  for (const f of LV_TABLE_FIELDS) {
+    try { await ensureField('App_Leistungsverzeichnisse', f.name, f.type); } catch(_){}
+  }
+  _lvTableEnsured = true;
+  return true;
+}
+
+async function _lvGetNextNumber(baseId, firmaSlug) {
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  try {
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse'
+      +'?pageSize=100&fields[]=lv_num&fields[]=firma'
+      +'&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'");
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) return 1;
+    const d = await r.json();
+    const maxDb = (d.records||[]).reduce((m,r) => Math.max(m, +r.fields?.lv_num || 0), 0);
+    return maxDb + 1;
+  } catch(_){ return 1; }
+}
+
+async function _lvLoadAll(firmaSlug, force) {
+  const fresh = !force && _lvCache.firma === firmaSlug && _lvCache.items && (Date.now() - _lvCache.loadedAt) < 60_000;
+  if (fresh) return _lvCache.items;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!baseId || !key) return [];
+  const items = []; let offset = '';
+  try {
+    do {
+      const url = 'https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse'
+        +'?pageSize=100&filterByFormula='+encodeURIComponent("{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'")
+        +'&sort[0][field]=lv_num&sort[0][direction]=desc'
+        +(offset ? '&offset='+encodeURIComponent(offset) : '');
+      const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+      if (!r.ok) { if (r.status === 404 || r.status === 422) break; throw new Error('HTTP '+r.status); }
+      const d = await r.json();
+      (d.records||[]).forEach(rec => items.push(rec));
+      offset = d.offset || '';
+    } while (offset);
+  } catch(e) { console.warn('[LV] Load:', e.message); return []; }
+  _lvCache = { firma:firmaSlug, items, loadedAt:Date.now() };
+  return items;
+}
+
+async function renderLvView(opts) {
+  opts = opts || {};
+  if (!hasPermission('tool_lv')) return;
+  const list = document.getElementById('lv-list'); if (!list) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  if (!_lvTableEnsured && isAdmin()) { try { await _ensureLvTable(); } catch(_){} }
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade LVs…</div>';
+  let items;
+  try { items = await _lvLoadAll(firmaSlug, opts.force); }
+  catch(e) {
+    list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--err)">⚠ '+escapeHtml(e.message)+
+      (isAdmin() ? '<br><button class="btn" onclick="(async()=>{try{await _ensureLvTable();renderLvView({force:true});toast(\'✅ Tabelle angelegt\',\'ok\')}catch(e){toast(\'❌ \'+e.message,\'err\')}})()" style="margin-top:10px">🛠 Tabelle anlegen</button>' : '')+
+    '</div>';
+    return;
+  }
+  const cntEl = document.getElementById('lv-count'); if (cntEl) cntEl.textContent = items.length;
+  if (!items.length) {
+    list.innerHTML = '<div style="max-width:640px;margin:40px auto;padding:32px;text-align:center;background:#FFFBEB;border:1px solid #FCD34D;border-radius:14px">'+
+      '<div style="font-size:38px;margin-bottom:10px">📑</div>'+
+      '<h3 style="color:#92400E;margin:0 0 8px">Noch keine Leistungsverzeichnisse</h3>'+
+      '<p style="color:#78350F;font-size:13px;line-height:1.6;margin:0 0 16px">Anlage wählen → Prompt eingeben → KI generiert Positionen → Preise eintragen → PDF erzeugen. Für Ausschreibungen an Bieter oder interne Kalkulationsbasis.</p>'+
+      '<button class="btn prim" onclick="openLvWizard()">+ Erstes LV erstellen</button>'+
+    '</div>';
+    return;
+  }
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  list.innerHTML = items.filter(rec => !(rec.fields?.archived)).map(rec => {
+    const f = rec.fields || {};
+    let pos = []; try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    const sum = pos.reduce((s,p) => s + (+p.preis||0), 0);
+    const statusCol = ({ entwurf:'#9CA3AF', fertig:'#10B981', versendet:'#3B82F6' })[f.status] || '#6B7280';
+    const pdfAtt = Array.isArray(f.pdf) && f.pdf[0] ? f.pdf[0] : null;
+    return '<div style="background:#fff;border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:10px;display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;cursor:pointer" onclick="openLvEditor({recId:\''+rec.id+'\'})">'+
+      '<div style="background:#F59E0B;color:#fff;width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0">LV-'+(f.lv_num||'?')+'</div>'+
+      '<div style="flex:1;min-width:240px">'+
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:4px">'+
+          '<strong style="color:#92400E;font-size:14px">'+escapeHtml(f.titel||'(ohne Titel)')+'</strong>'+
+          '<span style="background:'+statusCol+';color:#fff;padding:2px 8px;border-radius:99px;font-size:10px;font-weight:700">'+escapeHtml((f.status||'entwurf').toUpperCase())+'</span>'+
+        '</div>'+
+        '<div style="font-size:12px;color:var(--txt2);line-height:1.5">'+
+          (f.kunde_name ? '<div>👤 '+escapeHtml(f.kunde_name)+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>' : '')+
+          (f.anlage_adresse ? '<div>📍 '+escapeHtml(String(f.anlage_adresse).split('\n')[0])+'</div>' : '')+
+          (f.anlage_fabriknummer ? '<div>🔧 Fabrik-Nr. '+escapeHtml(f.anlage_fabriknummer)+'</div>' : '')+
+          '<div style="color:var(--txt3);font-size:11px;margin-top:3px">📋 '+pos.length+' Position'+(pos.length===1?'':'en')+(sum>0?' · Summe '+fmt(sum)+' EUR':'')+'</div>'+
+        '</div>'+
+        '<div style="font-size:10px;color:var(--txt3);margin-top:4px">'+escapeHtml(f.erstellt_am||'')+' · '+escapeHtml(f.erstellt_von||'')+'</div>'+
+      '</div>'+
+      '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap" onclick="event.stopPropagation()">'+
+        (pdfAtt ? '<a href="'+escapeHtml(pdfAtt.url)+'" target="_blank" rel="noopener" style="background:#FEF3C7;color:#92400E;padding:6px 12px;border-radius:6px;font-size:12px;font-weight:600;text-decoration:none">📄 PDF</a>' : '')+
+        '<button onclick="_lvDelete(\''+rec.id+'\')" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;padding:6px 10px;border-radius:6px;font-size:11px;cursor:pointer">🗑</button>'+
+      '</div>'+
+    '</div>';
+  }).join('');
+}
+
+window._lvDelete = async function(recId) {
+  if (!confirm('LV wirklich löschen?')) return;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse/'+recId, {
+      method:'DELETE', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    _lvCache = { firma:null, items:null, loadedAt:0 };
+    toast('🗑 Gelöscht','ok');
+    renderLvView({force:true});
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+/* ── Prompt-Vorlagen (localStorage-basiert) ─────────────────────────── */
+const LV_PROMPT_STARTER_DEFAULT = 'Erstelle ein Leistungsverzeichnis für eine Aufzugs-Modernisierung. Pro Position: Titel + 2-3 Sätze technische Beschreibung. Berücksichtige:\n• Antrieb (Frequenzumrichter)\n• Steuerung\n• Türen + Türantrieb\n• Kabine (Bedientableau, Beleuchtung)\n• Schachtbeleuchtung\n• Notrufsystem (BetrSichV)\n• Personenschutz Türraum\n• Demontage Altanlage + Entsorgung\n• Inbetriebnahme + Abnahme';
+
+function _lvLoadPromptVorlagen() {
+  try { return JSON.parse(localStorage.getItem('lv_prompt_vorlagen')||'[]'); } catch(_){ return []; }
+}
+function _lvSavePromptVorlagen(v) {
+  try { localStorage.setItem('lv_prompt_vorlagen', JSON.stringify(v||[])); } catch(_){}
+}
+
+window.openLvPromptVorlagenModal = function() {
+  const vorlagen = _lvLoadPromptVorlagen();
+  document.getElementById('lv-pv-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'lv-pv-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  m.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:780px;width:100%;max-height:92vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'+
+      '<div style="padding:16px 22px;border-bottom:1px solid var(--bdr);display:flex;justify-content:space-between;align-items:center;gap:10px;background:#F59E0B;color:#fff;border-radius:14px 14px 0 0">'+
+        '<h3 style="margin:0">📚 LV-Prompt-Vorlagen</h3>'+
+        '<button onclick="document.getElementById(\'lv-pv-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div id="lv-pv-list" style="flex:1;overflow:auto;padding:16px 22px">'+
+        (vorlagen.length === 0
+          ? '<div style="text-align:center;padding:32px;color:var(--txt3);font-size:13px">📭 Noch keine eigenen Vorlagen.<br><br>Lege im LV-Wizard einen guten Prompt an und speichere ihn dort als Vorlage.</div>'
+          : vorlagen.map((v, i) =>
+              '<div style="background:#FFFBEB;border:1px solid #FCD34D;border-radius:10px;padding:12px 14px;margin-bottom:10px">'+
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">'+
+                  '<strong style="color:#92400E">'+escapeHtml(v.name||'(ohne Name)')+'</strong>'+
+                  '<button onclick="_lvDeletePromptVorlage('+i+')" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;padding:4px 10px;border-radius:5px;font-size:11px;cursor:pointer">🗑</button>'+
+                '</div>'+
+                '<div style="font-size:12px;color:var(--txt2);line-height:1.5;white-space:pre-wrap;font-family:ui-monospace,Menlo,monospace;background:#fff;padding:8px 10px;border-radius:5px;max-height:140px;overflow:auto">'+escapeHtml(v.prompt||'')+'</div>'+
+              '</div>'
+            ).join('')
+        )+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+};
+
+window._lvDeletePromptVorlage = function(i) {
+  if (!confirm('Vorlage löschen?')) return;
+  const v = _lvLoadPromptVorlagen();
+  v.splice(i, 1);
+  _lvSavePromptVorlagen(v);
+  openLvPromptVorlagenModal();
+};
+
+/* ── WIZARD: Neues LV ─────────────────────────────────────────────── */
+window.openLvWizard = async function() {
+  if (!hasPermission('tool_lv')) return toast('🔒 Keine Berechtigung','err');
+  try { if (isAdmin()) await _ensureLvTable(); } catch(e) { return toast('❌ Tabelle: '+e.message,'err'); }
+  document.getElementById('lv-wizard')?.remove();
+  const vorlagen = _lvLoadPromptVorlagen();
+  const m = document.createElement('div');
+  m.id = 'lv-wizard';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10800;display:flex;align-items:center;justify-content:center;padding:14px';
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  m.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:94vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'+
+      '<div style="padding:14px 22px;background:#F59E0B;color:#fff;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;gap:10px">'+
+        '<h3 style="margin:0">📑 Neues Leistungsverzeichnis</h3>'+
+        '<button onclick="document.getElementById(\'lv-wizard\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        // Anlage-Picker
+        '<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+          '<label style="font-size:11px;font-weight:700;color:#1E40AF;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🛗 Anlage aus ERP (optional)</label>'+
+          '<input id="lv-w-anlage-search" placeholder="Klicken für Liste oder Fabriknummer/Standort/Kunde tippen…" onfocus="_lvAnlageSearch(this.value||\'\')" oninput="_lvAnlageSearch(this.value)" onblur="setTimeout(()=>{const r=document.getElementById(\'lv-w-anlage-results\');if(r)r.style.display=\'none\'},200)" style="width:100%;padding:8px 10px;border:1px solid #BFDBFE;border-radius:6px;font-size:13px">'+
+          '<div id="lv-w-anlage-results" style="margin-top:8px;display:none;background:#fff;border:1px solid #BFDBFE;border-radius:6px;max-height:260px;overflow:auto"></div>'+
+          '<div id="lv-w-anlage-selected" style="display:none;margin-top:8px;padding:8px 12px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;font-size:12px;color:#065F46"></div>'+
+        '</div>'+
+        // Titel
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Titel / Bezeichnung *</label>'+
+        '<input id="lv-w-titel" placeholder="z.B. „Modernisierung Aufzug A1 — LV für Ausschreibung"" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;margin-bottom:14px">'+
+        // Prompt-Vorlagen-Picker
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:8px;flex-wrap:wrap">'+
+          '<label style="font-size:11px;font-weight:700;color:var(--txt2)">📚 Prompt-Vorlage laden</label>'+
+          '<button type="button" onclick="openLvPromptVorlagenModal()" style="font-size:11px;padding:5px 10px;background:#fff;border:1px solid var(--bdr);border-radius:5px;cursor:pointer">⚙ Vorlagen verwalten</button>'+
+        '</div>'+
+        '<select id="lv-w-vorlage" onchange="_lvWizardLoadVorlage()" style="cursor:pointer;width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;margin-bottom:14px">'+
+          '<option value="">— eigenen Prompt schreiben —</option>'+
+          '<option value="__starter__">⭐ Standard-Modernisierung (eingebaut)</option>'+
+          vorlagen.map((v, i) => '<option value="'+i+'">📋 '+escapeHtml(v.name||'(ohne Name)')+'</option>').join('')+
+        '</select>'+
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">✍️ Prompt — was soll das LV enthalten? *</label>'+
+        '<textarea id="lv-w-prompt" rows="10" placeholder="Beschreibe die Leistungen die im LV stehen sollen. Z.B.:&#10;„LV für Modernisierung Schindler 3300, 4 Stockwerke. Antrieb, Steuerung, Türen, Kabine, Schachtbeleuchtung, Notruf. Pro Position 2-3 Sätze technische Beschreibung."" style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;line-height:1.55;resize:vertical;margin-bottom:8px"></textarea>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'+
+          '<button type="button" onclick="_lvWizardSaveAsVorlage()" style="font-size:11px;padding:6px 12px;background:#F0FDF4;border:1px solid #86EFAC;color:#065F46;border-radius:5px;cursor:pointer">💾 Als Vorlage speichern</button>'+
+        '</div>'+
+        // Vorbemerkung
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📄 Vorbemerkung im LV (optional)</label>'+
+        '<textarea id="lv-w-vorbemerkung" rows="3" placeholder="z.B. „Die nachstehenden Positionen beziehen sich auf die Modernisierung der Aufzugsanlage gemäß BetrSichV…"" style="width:100%;padding:10px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical"></textarea>'+
+      '</div>'+
+      // Progress + Footer
+      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr)">'+
+        '<div id="lv-w-progress" style="display:none;margin-bottom:10px">'+
+          '<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--txt2);margin-bottom:5px"><span id="lv-w-progress-label">Lade…</span><span id="lv-w-progress-count" style="font-weight:600;color:#F59E0B"></span></div>'+
+          '<div style="width:100%;height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden"><div id="lv-w-progress-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#F59E0B 0%,#FBBF24 100%);border-radius:4px;transition:width .25s"></div></div>'+
+        '</div>'+
+        '<div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+          '<button onclick="document.getElementById(\'lv-wizard\').remove()" style="padding:8px 14px;border:1px solid var(--bdr);background:#fff;border-radius:6px;cursor:pointer">Abbrechen</button>'+
+          '<button id="lv-w-go" onclick="_lvWizardGenerate()" style="padding:8px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">🤖 LV mit KI generieren</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+};
+
+window._lvWizardLoadVorlage = function() {
+  const sel = document.getElementById('lv-w-vorlage');
+  const ta = document.getElementById('lv-w-prompt');
+  if (!sel || !ta) return;
+  const val = sel.value;
+  if (val === '') return;
+  if (val === '__starter__') { ta.value = LV_PROMPT_STARTER_DEFAULT; return; }
+  const i = +val;
+  const vorlagen = _lvLoadPromptVorlagen();
+  if (vorlagen[i]) ta.value = vorlagen[i].prompt || '';
+};
+
+window._lvWizardSaveAsVorlage = function() {
+  const ta = document.getElementById('lv-w-prompt');
+  const prompt = (ta?.value || '').trim();
+  if (!prompt) return toast('Bitte erst Prompt eingeben','warn');
+  const name = window.prompt('Name der Vorlage:', '');
+  if (!name) return;
+  const vorlagen = _lvLoadPromptVorlagen();
+  vorlagen.push({ name, prompt });
+  _lvSavePromptVorlagen(vorlagen);
+  toast('💾 Vorlage gespeichert','ok');
+  // Dropdown neu rendern (Wizard re-open ist einfacher)
+  const sel = document.getElementById('lv-w-vorlage');
+  if (sel) {
+    const opt = document.createElement('option');
+    opt.value = String(vorlagen.length - 1);
+    opt.textContent = '📋 '+name;
+    sel.appendChild(opt);
+  }
+};
+
+window._lvAnlageSearch = async function(query) {
+  const wrap = document.getElementById('lv-w-anlage-results');
+  if (!wrap) return;
+  const q = String(query||'').trim().toLowerCase();
+  wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Lade Anlagen…</div>';
+  wrap.style.display='block';
+  try {
+    const all = await _loadAnlagenForFirma(getCurrentFirmaSlug());
+    let hits = all || [];
+    if (q.length > 0) {
+      hits = hits.filter(a => {
+        const hay = [a.anzeigeAdresse, a.fabriknummer, a.kunde?.firmenname, a.kunde?.kundennummer, a.name].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    } else {
+      hits = hits.slice().sort((a,b) => String(a.anzeigeAdresse||'').localeCompare(String(b.anzeigeAdresse||''),'de'));
+    }
+    hits = hits.slice(0, 50);
+    if (!hits.length) { wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Anlagen</div>'; return; }
+    wrap.innerHTML = hits.map(a => {
+      const addr = a.anzeigeAdresse || a.name || '(ohne Adresse)';
+      const kn = a.kunde?.firmenname || '';
+      const fab = a.fabriknummer || '';
+      return '<div onmousedown="event.preventDefault();_lvPickAnlage('+a.id+')" style="padding:8px 12px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#FEF3C7\'" onmouseout="this.style.background=\'\'">'+
+        '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(addr)+'</div>'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:2px">'+(fab ? '🔧 '+escapeHtml(fab)+' · ' : '')+escapeHtml(kn)+'</div>'+
+      '</div>';
+    }).join('');
+  } catch(e) { wrap.innerHTML='<div style="padding:10px;color:#DC2626;font-size:12px">❌ '+escapeHtml(e.message)+'</div>'; }
+};
+
+window._lvPickAnlage = async function(anlageId) {
+  const m = document.getElementById('lv-wizard');
+  if (!m) return;
+  try {
+    const all = await _loadAnlagenForFirma(getCurrentFirmaSlug());
+    const a = (all||[]).find(x => String(x.id) === String(anlageId));
+    if (!a) return;
+    m._anlage = a;
+    const info = document.getElementById('lv-w-anlage-selected');
+    if (info) {
+      info.style.display = '';
+      info.innerHTML = '<strong>✓ Anlage gewählt:</strong> '+escapeHtml(a.anzeigeAdresse||a.name||'')+
+        (a.fabriknummer?' · Fab.-Nr. '+escapeHtml(a.fabriknummer):'')+
+        (a.kunde?.firmenname?'<br>👤 '+escapeHtml(a.kunde.firmenname)+(a.kunde.kundennummer?' (Kd-Nr. '+escapeHtml(String(a.kunde.kundennummer))+')':''):'');
+    }
+    // Titel vorbefüllen wenn leer
+    const titelInp = document.getElementById('lv-w-titel');
+    if (titelInp && !titelInp.value) {
+      titelInp.value = 'LV — '+(a.anzeigeAdresse||a.name||'Anlage').split(',')[0].trim();
+    }
+    const r = document.getElementById('lv-w-anlage-results'); if (r) { r.style.display='none'; r.innerHTML=''; }
+    const s = document.getElementById('lv-w-anlage-search'); if (s) s.value = '';
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
+
+function _lvWizardSetProgress(label, pct, count) {
+  const wrap = document.getElementById('lv-w-progress');
+  const lbl  = document.getElementById('lv-w-progress-label');
+  const bar  = document.getElementById('lv-w-progress-bar');
+  const cnt  = document.getElementById('lv-w-progress-count');
+  if (!wrap) return;
+  wrap.style.display = (pct < 0) ? 'none' : '';
+  if (lbl) lbl.textContent = label || '';
+  if (bar) bar.style.width = Math.max(0, Math.min(100, +pct || 0)) + '%';
+  if (cnt) cnt.textContent = count || '';
+}
+
+window._lvWizardGenerate = async function() {
+  const m = document.getElementById('lv-wizard'); if (!m) return;
+  const titel = (document.getElementById('lv-w-titel')?.value || '').trim();
+  const prompt = (document.getElementById('lv-w-prompt')?.value || '').trim();
+  const vorbemerkung = (document.getElementById('lv-w-vorbemerkung')?.value || '').trim();
+  if (!titel) return toast('Titel erforderlich','warn');
+  if (!prompt) return toast('Prompt erforderlich','warn');
+  if (!APP_KEYS.anthropicKey) return toast('Kein Anthropic-Key','err');
+  const go = document.getElementById('lv-w-go');
+  go.disabled = true; go.style.opacity = '.6'; go.textContent = '⏳ KI generiert…';
+  _lvWizardSetProgress('KI generiert Positionen…', 20, '');
+  try {
+    const positionen = await _lvKiGenerate(prompt, m._anlage);
+    _lvWizardSetProgress('Fertig — öffne Editor…', 100, positionen.length+' Pos.');
+    await new Promise(r => setTimeout(r, 300));
+    m.remove();
+    openLvEditor({ titel, vorbemerkung, anlage: m._anlage, positionen });
+  } catch(e) {
+    console.error('[LV-Wizard]', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+    go.disabled = false; go.style.opacity = '1'; go.textContent = '🤖 LV mit KI generieren';
+    _lvWizardSetProgress('', -1, '');
+  }
+};
+
+async function _lvKiGenerate(promptText, anlage) {
+  const tool = {
+    name: 'generate_lv',
+    description: 'Erzeugt ein Leistungsverzeichnis (LV) aus einer Beschreibung. Pro Position: Titel + Beschreibung (2-3 Sätze). Preise werden NICHT von der KI gesetzt — der User trägt sie nach.',
+    input_schema: {
+      type: 'object', required:['positionen'],
+      properties: {
+        positionen: {
+          type:'array',
+          description:'Liste der LV-Positionen. Eine Position pro klar abgrenzbarer Leistung.',
+          items: {
+            type:'object', required:['nr','titel','beschreibung'],
+            properties: {
+              nr:           { type:'integer' },
+              titel:        { type:'string', description:'Klarer technischer Titel der Position (max. 80 Zeichen)' },
+              beschreibung: { type:'string', description:'2-3 Sätze fachliche Leistungsbeschreibung. Was wird konkret geliefert/installiert/gemacht. Technische Sprache, kein Marketing.' },
+            },
+          },
+        },
+      },
+    },
+  };
+  const anlInfo = anlage ? '\n\nANLAGEN-KONTEXT:\n• Standort: '+(anlage.anzeigeAdresse||anlage.name||'?')+(anlage.fabriknummer?'\n• Fabriknummer: '+anlage.fabriknummer:'')+(anlage.kunde?.firmenname?'\n• Kunde: '+anlage.kunde.firmenname:'') : '';
+  const fullPrompt =
+    'Du bist Leistungsverzeichnis-Assistent für ein Aufzugs-Service-Unternehmen.\n\n'+
+    'AUFGABE: Erstelle aus der folgenden Beschreibung ein strukturiertes Leistungsverzeichnis.\n\n'+
+    'REGELN:\n'+
+    '• Pro Position: klarer Titel + 2-3 Sätze technische Beschreibung.\n'+
+    '• Technische Sprache, präzise, kein Marketing.\n'+
+    '• Berücksichtige relevante Normen (BetrSichV, EN 81-20/50 etc.) wo angebracht.\n'+
+    '• KEINE Preise generieren — die werden vom User nachgetragen.\n'+
+    '• 5-25 Positionen je nach Umfang.\n'+
+    anlInfo+'\n\n'+
+    'USER-BESCHREIBUNG:\n'+promptText;
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{
+      'Content-Type':'application/json',
+      'x-api-key': APP_KEYS.anthropicKey,
+      'anthropic-version':'2023-06-01',
+      'anthropic-dangerous-direct-browser-access':'true',
+    },
+    body: JSON.stringify({
+      model:'claude-sonnet-4-6', max_tokens: 32000,
+      tools:[tool], tool_choice:{ type:'tool', name:'generate_lv' },
+      messages:[{ role:'user', content:[ { type:'text', text: fullPrompt } ]}],
+    }),
+  });
+  if (!resp.ok) { const err = await resp.json().catch(()=>({})); throw new Error(err.error?.message || ('API '+resp.status)); }
+  const data = await resp.json();
+  const block = (data.content||[]).find(b => b.type === 'tool_use');
+  if (!block?.input) throw new Error('Kein Tool-Resultat (stop_reason='+(data.stop_reason||'?')+')');
+  const out = block.input;
+  return (out.positionen||[]).map((p, i) => ({
+    nr: i+1,
+    titel: String(p.titel||'').trim() || 'Position '+(i+1),
+    beschreibung: String(p.beschreibung||'').trim(),
+    preis: 0,
+  }));
+}
+
+/* ── EDITOR ────────────────────────────────────────────────────────── */
+window.openLvEditor = async function(ctx) {
+  ctx = ctx || {};
+  if (!hasPermission('tool_lv')) return;
+  try { if (isAdmin()) await _ensureLvTable(); } catch(_){}
+  let state = {
+    recId: ctx.recId || null,
+    titel: ctx.titel || '',
+    vorbemerkung: ctx.vorbemerkung || '',
+    anlage_id: ctx.anlage ? String(ctx.anlage.id) : '',
+    anlage_fabriknummer: ctx.anlage?.fabriknummer || '',
+    anlage_adresse: ctx.anlage?.anzeigeAdresse || ctx.anlage?.name || '',
+    kunde_name: ctx.anlage?.kunde?.firmenname || '',
+    kunde_nummer: ctx.anlage?.kunde?.kundennummer ? String(ctx.anlage.kunde.kundennummer) : '',
+    positionen: Array.isArray(ctx.positionen) ? ctx.positionen : [],
+    status: 'entwurf',
+  };
+  if (ctx.recId) {
+    const items = await _lvLoadAll(getCurrentFirmaSlug());
+    const rec = items.find(r => r.id === ctx.recId);
+    if (rec) {
+      const f = rec.fields || {};
+      let pos = []; try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+      state = {
+        recId: rec.id,
+        titel: f.titel || '',
+        vorbemerkung: f.vorbemerkung || '',
+        anlage_id: f.anlage_id || '',
+        anlage_fabriknummer: f.anlage_fabriknummer || '',
+        anlage_adresse: f.anlage_adresse || '',
+        kunde_name: f.kunde_name || '',
+        kunde_nummer: f.kunde_nummer || '',
+        positionen: pos,
+        status: f.status || 'entwurf',
+        _existing_pdf: Array.isArray(f.pdf) && f.pdf[0] ? f.pdf[0] : null,
+        _lv_num: f.lv_num,
+      };
+    }
+  }
+  document.getElementById('lv-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'lv-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:10700;display:flex;align-items:center;justify-content:center;padding:14px';
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  document.body.appendChild(m);
+  m._state = state;
+  _lvEditorRender();
+};
+
+function _lvEditorRender() {
+  const m = document.getElementById('lv-editor'); if (!m || !m._state) return;
+  const s = m._state;
+  const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  const sumPreis = (s.positionen||[]).reduce((acc, p) => acc + (+p.preis||0), 0);
+  m.innerHTML =
+    '<div style="background:#fff;border-radius:14px;max-width:920px;width:100%;max-height:96vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)">'+
+      '<div style="padding:14px 22px;background:#F59E0B;color:#fff;border-radius:14px 14px 0 0;display:flex;justify-content:space-between;align-items:center;gap:10px">'+
+        '<h3 style="margin:0">📑 '+(s.recId ? 'LV bearbeiten — LV-'+(s._lv_num||'?') : 'Neues Leistungsverzeichnis')+'</h3>'+
+        '<button onclick="document.getElementById(\'lv-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;flex:1;overflow-y:auto">'+
+        // Stammdaten
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Titel</label>'+
+        '<input id="lv-ed-titel" value="'+escapeHtml(s.titel)+'" oninput="document.getElementById(\'lv-editor\')._state.titel=this.value" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;margin-bottom:12px">'+
+        '<div style="display:grid;grid-template-columns:1fr 160px;gap:10px;margin-bottom:12px">'+
+          '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📍 Standort</label>'+
+            '<textarea id="lv-ed-standort" rows="2" oninput="document.getElementById(\'lv-editor\')._state.anlage_adresse=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(s.anlage_adresse)+'</textarea></div>'+
+          '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">🔧 Fabrik-Nr.</label>'+
+            '<input id="lv-ed-fab" value="'+escapeHtml(s.anlage_fabriknummer)+'" oninput="document.getElementById(\'lv-editor\')._state.anlage_fabriknummer=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
+        '</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:14px">'+
+          '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">👤 Kunde</label>'+
+            '<input id="lv-ed-kunde" value="'+escapeHtml(s.kunde_name)+'" oninput="document.getElementById(\'lv-editor\')._state.kunde_name=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
+          '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Kd-Nr.</label>'+
+            '<input id="lv-ed-kdnr" value="'+escapeHtml(s.kunde_nummer)+'" oninput="document.getElementById(\'lv-editor\')._state.kunde_nummer=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
+        '</div>'+
+        // Vorbemerkung
+        '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📄 Vorbemerkung</label>'+
+        '<textarea id="lv-ed-vorbem" rows="3" oninput="document.getElementById(\'lv-editor\')._state.vorbemerkung=this.value" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;margin-bottom:14px">'+escapeHtml(s.vorbemerkung)+'</textarea>'+
+        // Positionen
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">'+
+          '<h4 style="margin:0;color:#92400E">📋 Positionen ('+(s.positionen?.length||0)+')</h4>'+
+          '<button onclick="_lvEdAddPos()" style="background:#F59E0B;color:#fff;border:none;padding:6px 12px;border-radius:5px;font-size:12px;font-weight:600;cursor:pointer">+ Position</button>'+
+        '</div>'+
+        '<div style="border:1px solid var(--bdr);border-radius:8px;overflow:hidden">'+
+          (s.positionen||[]).map((p,i) => _lvEdRenderPos(p,i)).join('')+
+        '</div>'+
+        // Summen-Box
+        '<div style="margin-top:14px;padding:12px 16px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:8px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">'+
+          '<div style="font-size:12px;color:#78350F">Summe (netto) — wenn alle Preise eingetragen sind</div>'+
+          '<div style="font-size:18px;font-weight:700;color:#7C2D12">'+fmt(sumPreis)+' EUR</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="padding:12px 22px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+        '<button onclick="document.getElementById(\'lv-editor\').remove()" style="padding:8px 14px;border:1px solid var(--bdr);background:#fff;border-radius:6px;cursor:pointer">Abbrechen</button>'+
+        '<button id="lv-ed-save" onclick="_lvSave()" style="padding:8px 16px;background:#F59E0B;color:#fff;border:none;border-radius:6px;font-weight:700;cursor:pointer">💾 Speichern + PDF erzeugen</button>'+
+      '</div>'+
+    '</div>';
+}
+
+function _lvEdRenderPos(p, i) {
+  return '<div style="padding:10px 14px;border-bottom:1px solid var(--bdr);background:'+(i%2?'#FAFBFD':'#fff')+';display:grid;grid-template-columns:30px 1fr 130px 32px;gap:10px;align-items:start">'+
+    '<div style="background:#F59E0B;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
+    '<div>'+
+      '<input value="'+escapeHtml(p.titel||'')+'" oninput="_lvEdSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;margin-bottom:4px">'+
+      '<textarea rows="3" oninput="_lvEdSetPos('+i+',\'beschreibung\',this.value)" placeholder="Technische Beschreibung — 2-3 Sätze" style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;font-family:inherit;line-height:1.5;resize:vertical">'+escapeHtml(p.beschreibung||'')+'</textarea>'+
+    '</div>'+
+    '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">Preis (€ netto)</label>'+
+      '<input type="number" step="0.01" min="0" value="'+(p.preis||'')+'" oninput="_lvEdSetPos('+i+',\'preis\',+this.value||0)" placeholder="leer = Bieter trägt ein" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:12px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>'+
+    '<button onclick="_lvEdRemovePos('+i+')" title="Position entfernen" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;width:28px;height:28px;border-radius:5px;font-size:13px;cursor:pointer">🗑</button>'+
+  '</div>';
+}
+
+window._lvEdSetPos = function(i, field, val) {
+  const m = document.getElementById('lv-editor'); if (!m || !m._state || !m._state.positionen[i]) return;
+  m._state.positionen[i][field] = val;
+  // Bei Preis-Änderung: Summe live updaten ohne full re-render (würde Cursor verlieren)
+  if (field === 'preis') {
+    const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+    const sum = m._state.positionen.reduce((acc, p) => acc + (+p.preis||0), 0);
+    const sumEl = m.querySelector('[style*="font-size:18px"][style*="color:#7C2D12"]');
+    if (sumEl) sumEl.textContent = fmt(sum)+' EUR';
+  }
+};
+window._lvEdAddPos = function() {
+  const m = document.getElementById('lv-editor'); if (!m || !m._state) return;
+  m._state.positionen.push({ nr: m._state.positionen.length + 1, titel: '', beschreibung: '', preis: 0 });
+  _lvEditorRender();
+};
+window._lvEdRemovePos = function(i) {
+  if (!confirm('Position entfernen?')) return;
+  const m = document.getElementById('lv-editor'); if (!m || !m._state) return;
+  m._state.positionen.splice(i, 1);
+  m._state.positionen.forEach((p, k) => p.nr = k+1);
+  _lvEditorRender();
+};
+
+window._lvSave = async function() {
+  const m = document.getElementById('lv-editor'); if (!m || !m._state) return;
+  const s = m._state;
+  if (!s.titel.trim()) return toast('Titel erforderlich','warn');
+  const btn = document.getElementById('lv-ed-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere…'; }
+  const firmaSlug = getCurrentFirmaSlug();
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  try {
+    await _ensureLvTable();
+    const fields = {
+      firma: firmaSlug,
+      titel: s.titel,
+      status: 'fertig',
+      anlage_id: s.anlage_id || '',
+      anlage_fabriknummer: s.anlage_fabriknummer || '',
+      anlage_adresse: s.anlage_adresse || '',
+      kunde_name: s.kunde_name || '',
+      kunde_nummer: s.kunde_nummer || '',
+      vorbemerkung: s.vorbemerkung || '',
+      positionen_json: JSON.stringify(s.positionen || []),
+    };
+    let recId = s.recId;
+    if (recId) {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse/'+recId, {
+        method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      const d = await r.json(); if (d.error) throw new Error(d.error.message||'Fehler');
+    } else {
+      fields.lv_num = await _lvGetNextNumber(baseId, firmaSlug);
+      fields.erstellt_am = new Date().toISOString().slice(0,10);
+      fields.erstellt_von = APP_KEYS.user?.name || '';
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse', {
+        method:'POST', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      const d = await r.json(); if (d.error) throw new Error(d.error.message||'Fehler');
+      recId = d.id; s.recId = recId; s._lv_num = fields.lv_num;
+    }
+    // PDF erzeugen + anhängen
+    if (btn) btn.textContent = '⏳ Erzeuge PDF…';
+    try {
+      const recForPdf = { id: recId, fields: { ...fields, lv_num: fields.lv_num || s._lv_num } };
+      const blob = await _buildLvPdf(recForPdf, firmaSlug);
+      const fname = 'LV-'+(fields.lv_num||s._lv_num||recId)+'.pdf';
+      // Vor neuem Upload: bestehendes PDF-Feld leeren damit das neue als [0] erscheint
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse/'+recId, {
+          method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ pdf: [] }}),
+        });
+      } catch(_){}
+      await atBlobUpload(recId, 'pdf', blob, fname, 'application/pdf');
+    } catch(pdfErr) {
+      console.warn('[LV] PDF:', pdfErr);
+      toast('⚠ LV gespeichert, PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
+    }
+    _lvCache = { firma:null, items:null, loadedAt:0 };
+    document.getElementById('lv-editor')?.remove();
+    toast('✅ LV gespeichert','ok');
+    renderLvView({force:true});
+  } catch(e) {
+    console.error('[LV-Save]', e);
+    toast('❌ '+e.message,'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern + PDF erzeugen'; }
+  }
+};
+
+/* ── PDF-Generator ──────────────────────────────────────────────────── */
+async function _buildLvPdf(rec, firmaSlug) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const ml = 18, mr = 192, cw = mr - ml;
+  const BR = _daFirmaBranding(firmaSlug);
+  const NAVY = BR.navy || [26,51,83], GREY = [40,40,40], GREY_L = [110,110,110], GREY_X = [220,220,220];
+  const f = rec.fields || {};
+  const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
+  let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+  const sumPreis = positionen.reduce((s,p) => s + (+p.preis||0), 0);
+  const hasAnyPrice = positionen.some(p => (+p.preis||0) > 0);
+
+  // Header
+  if (BR.logoB64) { try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW, 12, BR.logoW, BR.logoH); } catch(_){} }
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf(BR.headerLine||BR.company||''), ml, 16);
+  doc.setDrawColor(...(BR.accent||NAVY)); doc.setLineWidth(0.5); doc.line(ml, 22, mr, 22);
+
+  let y = 32;
+  doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(...NAVY);
+  doc.text('Leistungsverzeichnis', ml, y); y += 7;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
+  doc.text('LV-'+(f.lv_num||'?')+(f.titel?'  ·  '+f.titel:''), ml, y); y += 10;
+
+  // Stammdaten
+  doc.setFontSize(10); doc.setTextColor(...GREY);
+  if (f.anlage_adresse) { doc.text(_sanPdf('Standort: '+String(f.anlage_adresse).split('\n')[0]), ml, y); y += 5; }
+  if (f.anlage_fabriknummer) { doc.text(_sanPdf('Fabriknummer: '+f.anlage_fabriknummer), ml, y); y += 5; }
+  if (f.kunde_name) { doc.text(_sanPdf('Kunde: '+f.kunde_name+(f.kunde_nummer?' (Kd-Nr. '+f.kunde_nummer+')':'')), ml, y); y += 5; }
+  y += 4;
+
+  // Vorbemerkung
+  if (f.vorbemerkung) {
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(...NAVY);
+    doc.text('Vorbemerkung', ml, y); y += 5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+    const vbLines = doc.splitTextToSize(_sanPdf(f.vorbemerkung), cw);
+    vbLines.forEach(l => { doc.text(l, ml, y); y += 4.5; });
+    y += 4;
+  }
+
+  // Positions-Tabelle
+  if (y > 250) { doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L); y = 32; }
+  doc.setFillColor(247,249,252); doc.rect(ml, y, cw, 7.5, 'F');
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(8.5);
+  const colNr = 10, colPreis = 32;
+  const colTitel = cw - colNr - colPreis;
+  doc.text('POS.', ml+2, y+5);
+  doc.text('LEISTUNG', ml+colNr+2, y+5);
+  doc.text('PREIS NETTO (EUR)', mr-2, y+5, { align:'right' });
+  doc.setDrawColor(...NAVY); doc.line(ml, y+7.5, mr, y+7.5);
+  y += 8;
+
+  positionen.forEach((p, idx) => {
+    const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
+    const beschLines = p.beschreibung ? doc.splitTextToSize(_sanPdf(p.beschreibung), colTitel-4) : [];
+    const rowH = Math.max(10, titelLines.length*5 + beschLines.length*4 + 4);
+    if (y + rowH > 270) { doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L); y = 32; }
+    if (idx%2 === 0) { doc.setFillColor(250,250,250); doc.rect(ml, y, cw, rowH, 'F'); }
+    doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(10);
+    doc.text(String(p.nr||(idx+1)), ml+2, y+5);
+    doc.setFont('helvetica','bold');
+    titelLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+li*5));
+    if (beschLines.length) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+      beschLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
+    }
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    const preisStr = (+p.preis||0) > 0 ? fmtEUR(p.preis) : '_______';
+    doc.text(preisStr, mr-2, y+5, { align:'right' });
+    y += rowH;
+    doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
+  });
+
+  // Summe falls Preise gesetzt
+  if (hasAnyPrice) {
+    y += 4;
+    if (y + 12 > 275) { doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L); y = 32; }
+    const sumX = mr - 60;
+    doc.setDrawColor(...NAVY); doc.setLineWidth(0.5); doc.line(sumX, y, mr, y); y += 4;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    doc.text('Summe netto', sumX, y+4);
+    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+    doc.text(fmtEUR(sumPreis)+' EUR', mr-2, y+4, { align:'right' });
+    y += 8;
+  } else {
+    y += 6;
+    doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf('Preise bitte pro Position eintragen — Summe wird vom Bieter gebildet.'), ml, y); y += 6;
+  }
+
+  // Footer auf allen Seiten
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let p = 1; p <= pageCount; p++) {
+    doc.setPage(p);
+    _lvPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, p, pageCount, f);
+  }
+  return doc.output('blob');
+}
+
+function _lvPdfHeader(doc, ml, mr, BR, GREY_L) {
+  if (BR.logoB64) { try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW, 12, BR.logoW, BR.logoH); } catch(_){} }
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf(BR.headerLine||BR.company||''), ml, 16);
+  doc.setDrawColor(...(BR.accent||[33,82,169])); doc.setLineWidth(0.5); doc.line(ml, 22, mr, 22);
+}
+
+function _lvPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, page, total, f) {
+  const fy = 278;
+  const cols = (BR.footerCols && Array.isArray(BR.footerCols)) ? BR.footerCols : [];
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, fy - 2, mr, fy - 2);
+  if (cols.length) {
+    const colW = (mr - ml) / cols.length;
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+    cols.forEach((c, idx) => {
+      const cx = ml + idx * colW;
+      doc.setFont('helvetica','bold'); doc.text(_sanPdf(c.title||''), cx, fy);
+      doc.setFont('helvetica','normal'); (c.lines||[]).forEach((l, li) => doc.text(_sanPdf(l||''), cx, fy + 3.5 + li*3.2));
+    });
+  }
+  doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf('LV-'+(f.lv_num||'?')), ml, 293);
+  doc.text('Seite '+page+' / '+total, mr, 293, { align:'right' });
 }
 
 function _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, page, total, f) {
