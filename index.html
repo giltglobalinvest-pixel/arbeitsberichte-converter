@@ -2320,6 +2320,12 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
     <button class="btn" id="auf-erp-debug-btn" onclick="openErpAuftragDebug()" style="display:none;color:#7c2d12;border-color:rgba(180,83,9,.4)" title="ERP-Auftrag Rohdaten anzeigen — zur Identifikation des richtigen Auftragsnummern-Felds">🔍 ERP-Felder</button>
     <button class="btn" id="auf-dedup-btn" onclick="openAuftragDedupModal()" style="display:none;color:#9a3412;border-color:rgba(180,83,9,.4)" title="Doppelte Aufträge finden und bereinigen">🧹 Duplikate</button>
+    <!-- v6.35: Auto-„abgerechnet"-Indikator — sichtbar während die Hintergrund-Prüfung läuft -->
+    <div id="auf-auto-check-pill" style="display:none;align-items:center;gap:8px;padding:6px 14px;background:#EFF6FF;border:1px solid #93C5FD;border-radius:99px;font-size:12px;color:#1E40AF;font-weight:600">
+      <span style="display:inline-block;width:14px;height:14px;border:2px solid #93C5FD;border-top-color:#2152A9;border-radius:50%;animation:auf-spin 0.8s linear infinite"></span>
+      <span id="auf-auto-check-label">Prüfe Rechnungen…</span>
+    </div>
+    <style>@keyframes auf-spin{to{transform:rotate(360deg)}}</style>
   </div>
   <!-- Bulk-Action-Bar (sticky bottom) — sichtbar nur im Select-Mode -->
   <div id="auf-bulk-bar" style="display:none;position:fixed;left:0;right:0;bottom:0;background:var(--surf,#fff);border-top:2px solid var(--err,#dc2626);padding:12px 22px;box-shadow:0 -4px 16px rgba(0,0,0,.1);z-index:100;align-items:center;gap:12px;flex-wrap:wrap">
@@ -2661,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.34';
+const APP_VERSION = 'v6.35';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11642,7 +11648,20 @@ async function bulkCheckInvoices() {
 /* ──────────────────────────────────────────────────────────────
    v6.34: Auto-„abgerechnet" — abgeschlossene Aufträge mit Rechnung
    im ERP automatisch auf Status „abgerechnet" setzen.
+   v6.35: Sichtbarer Spinner-Indikator in der Aufträge-Toolbar.
    ────────────────────────────────────────────────────────────── */
+function _aufAutoCheckPill(visible, label) {
+  const pill = document.getElementById('auf-auto-check-pill');
+  const lbl  = document.getElementById('auf-auto-check-label');
+  if (!pill) return;
+  if (visible) {
+    if (label && lbl) lbl.textContent = label;
+    pill.style.display = 'inline-flex';
+  } else {
+    pill.style.display = 'none';
+  }
+}
+
 async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
   opts = opts || {};
   const silent = !!opts.silent;
@@ -11661,67 +11680,75 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
 
   if (!silent) toast('⏳ Prüfe '+candidates.length+' abgeschlossene Aufträge auf Rechnungen…','');
 
-  // Wartungsvertrag-Schutz
-  let wartungsAngebotIds = new Set();
+  _aufAutoCheckPill(true, 'Lade Wartungsverträge…');
   try {
-    await _loadWartungsAnlagen(firmaSlug);
-    wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set();
-  } catch(_){}
-
-  // Schema sicherstellen
-  try {
-    await ensureField('Auftraege', 'invoice_num',  'singleLineText');
-    await ensureField('Auftraege', 'invoice_date', 'singleLineText');
-    await ensureField('Auftraege', 'invoice_id',   'singleLineText');
-  } catch(_){}
-
-  let list;
-  try { list = await _fetchErpRechnungen(firmaSlug); }
-  catch(e) {
-    console.warn('[auto-abgerechnet] ERP-Rechnungen fail:', e.message);
-    if (!silent) toast('❌ Rechnungen aus ERP nicht erreichbar: '+e.message,'err');
-    return { skipped:'erp-fail' };
-  }
-  const idx = _indexRechnungenByAuftrag(list);
-
-  let marked = 0, skippedWartung = 0, atFails = 0;
-  for (const rec of candidates) {
-    const f = rec.fields || {};
-    if (_isWartungsvertragAuftrag(rec, wartungsAngebotIds)) { skippedWartung++; continue; }
-    const inv = idx.get(String(f.ext_id));
-    if (!inv) continue;
-    const invNum  = String(inv.rechnungsnummer || inv.id || '');
-    const invDate = String(inv.rechnungsdatum || inv.createdDate || inv.leistungszeitraum || '').slice(0,10);
-    const invId   = String(inv.id || '');
+    // Wartungsvertrag-Schutz
+    let wartungsAngebotIds = new Set();
     try {
-      await _patchAuftragFields(rec.id, {
-        status:        'abgerechnet',
-        invoice_num:   invNum,
-        invoice_date:  invDate,
-        invoice_id:    invId,
-      });
-      // Lokal-Cache aktualisieren
-      rec.fields.status        = 'abgerechnet';
-      rec.fields.invoice_num   = invNum;
-      rec.fields.invoice_date  = invDate;
-      rec.fields.invoice_id    = invId;
-      marked++;
-    } catch(e) {
-      atFails++;
-      console.warn('[auto-abgerechnet] Patch fail #'+f.auftrag_num+':', e.message);
+      await _loadWartungsAnlagen(firmaSlug);
+      wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set();
+    } catch(_){}
+
+    // Schema sicherstellen
+    try {
+      await ensureField('Auftraege', 'invoice_num',  'singleLineText');
+      await ensureField('Auftraege', 'invoice_date', 'singleLineText');
+      await ensureField('Auftraege', 'invoice_id',   'singleLineText');
+    } catch(_){}
+
+    _aufAutoCheckPill(true, 'Lade Rechnungen aus ERP…');
+    let list;
+    try { list = await _fetchErpRechnungen(firmaSlug); }
+    catch(e) {
+      console.warn('[auto-abgerechnet] ERP-Rechnungen fail:', e.message);
+      if (!silent) toast('❌ Rechnungen aus ERP nicht erreichbar: '+e.message,'err');
+      return { skipped:'erp-fail' };
     }
+    const idx = _indexRechnungenByAuftrag(list);
+
+    let marked = 0, skippedWartung = 0, atFails = 0;
+    for (let i = 0; i < candidates.length; i++) {
+      const rec = candidates[i];
+      const f   = rec.fields || {};
+      _aufAutoCheckPill(true, 'Prüfe '+(i+1)+'/'+candidates.length+'…');
+      if (_isWartungsvertragAuftrag(rec, wartungsAngebotIds)) { skippedWartung++; continue; }
+      const inv = idx.get(String(f.ext_id));
+      if (!inv) continue;
+      const invNum  = String(inv.rechnungsnummer || inv.id || '');
+      const invDate = String(inv.rechnungsdatum || inv.createdDate || inv.leistungszeitraum || '').slice(0,10);
+      const invId   = String(inv.id || '');
+      try {
+        await _patchAuftragFields(rec.id, {
+          status:        'abgerechnet',
+          invoice_num:   invNum,
+          invoice_date:  invDate,
+          invoice_id:    invId,
+        });
+        // Lokal-Cache aktualisieren
+        rec.fields.status        = 'abgerechnet';
+        rec.fields.invoice_num   = invNum;
+        rec.fields.invoice_date  = invDate;
+        rec.fields.invoice_id    = invId;
+        marked++;
+      } catch(e) {
+        atFails++;
+        console.warn('[auto-abgerechnet] Patch fail #'+f.auftrag_num+':', e.message);
+      }
+    }
+    // Marker speichern damit Auto-Run nicht zu oft läuft
+    try { localStorage.setItem('auf_auto_invoiced_'+firmaSlug, String(Date.now())); } catch(_){}
+    if (!silent || marked > 0) {
+      const parts = [];
+      parts.push(marked+' Auftrag'+(marked===1?'':'e')+' auf abgerechnet gesetzt');
+      if (skippedWartung) parts.push(skippedWartung+' Wartungsverträge ausgenommen');
+      if (atFails) parts.push(atFails+' Airtable-Fehler');
+      toast('✅ '+parts.join(' · '), atFails ? 'warn' : 'ok');
+      if (marked > 0) renderAuftraegeList();
+    }
+    return { checked: candidates.length, marked, skippedWartung, atFails };
+  } finally {
+    _aufAutoCheckPill(false);
   }
-  // Marker speichern damit Auto-Run nicht zu oft läuft
-  try { localStorage.setItem('auf_auto_invoiced_'+firmaSlug, String(Date.now())); } catch(_){}
-  if (!silent || marked > 0) {
-    const parts = [];
-    parts.push(marked+' Auftrag'+(marked===1?'':'e')+' auf abgerechnet gesetzt');
-    if (skippedWartung) parts.push(skippedWartung+' Wartungsverträge ausgenommen');
-    if (atFails) parts.push(atFails+' Airtable-Fehler');
-    toast('✅ '+parts.join(' · '), atFails ? 'warn' : 'ok');
-    if (marked > 0) renderAuftraegeList();
-  }
-  return { checked: candidates.length, marked, skippedWartung, atFails };
 }
 
 /** Auto-Run beim Aufträge-View-Laden — gedrosselt auf 1× pro 30 Min pro Firma. */
