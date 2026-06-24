@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.39';
+const APP_VERSION = 'v6.40';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21072,8 +21072,10 @@ function _daNormalizeCp(cp) {
  *   bleibt als Fallback für alte Legacy-URLs.
  */
 function _daExtractAirtableToken(u) {
-  // /v3/u/{a}/{b}/{ts}/{TOKEN}/{download_sig}?...
-  const m = String(u||'').match(/\/v3\/u\/\d+\/\d+\/\d+\/([^\/?#]+)\//);
+  // v6.40: URL-Format ist /v3/u/{a}/{b}/{ts}/{SIGNATURE}/{ATTACHMENT_ID}?...
+  // {SIGNATURE} und {ts} ändern sich bei jedem Read, {ATTACHMENT_ID} (letztes
+  // Pfad-Segment) ist stabil. Vorher matchte der Regex die SIGNATURE → kein Hit.
+  const m = String(u||'').match(/\/v3\/u\/\d+\/\d+\/\d+\/[^\/?#]+\/([^\/?#]+)(?:[?#]|$)/);
   return m ? m[1] : null;
 }
 function _daRefreshBilderFromPool(cps, bilderPool) {
