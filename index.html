@@ -2661,7 +2661,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.31';
+const APP_VERSION = 'v6.32';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -39588,18 +39588,21 @@ function _lvEditorRender() {
         // Stammdaten
         '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Titel</label>'+
         '<input id="lv-ed-titel" value="'+escapeHtml(s.titel)+'" oninput="document.getElementById(\'lv-editor\')._state.titel=this.value" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;margin-bottom:12px">'+
-        '<div style="display:grid;grid-template-columns:1fr 160px;gap:10px;margin-bottom:12px">'+
+        // v6.32: Anlage-Picker auch im Editor — User kann Standort/Fabrik-Nr aus ERP nachträglich setzen
+        '<div style="background:#EFF6FF;border:1px solid #BFDBFE;border-radius:8px;padding:10px 12px;margin-bottom:12px">'+
+          '<label style="font-size:11px;font-weight:700;color:#1E40AF;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">🛗 Anlage aus ERP wählen</label>'+
+          '<input id="lv-ed-anlage-search" placeholder="Klicken für Liste oder Fabriknummer/Standort tippen…" onfocus="_lvEdAnlageSearch(this.value||\'\')" oninput="_lvEdAnlageSearch(this.value)" onblur="setTimeout(()=>{const r=document.getElementById(\'lv-ed-anlage-results\');if(r)r.style.display=\'none\'},200)" style="width:100%;padding:7px 9px;border:1px solid #BFDBFE;border-radius:5px;font-size:12px;background:#fff">'+
+          '<div id="lv-ed-anlage-results" style="margin-top:6px;display:none;background:#fff;border:1px solid #BFDBFE;border-radius:5px;max-height:240px;overflow:auto"></div>'+
+        '</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 160px;gap:10px;margin-bottom:14px">'+
           '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📍 Standort</label>'+
             '<textarea id="lv-ed-standort" rows="2" oninput="document.getElementById(\'lv-editor\')._state.anlage_adresse=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical">'+escapeHtml(s.anlage_adresse)+'</textarea></div>'+
           '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">🔧 Fabrik-Nr.</label>'+
             '<input id="lv-ed-fab" value="'+escapeHtml(s.anlage_fabriknummer)+'" oninput="document.getElementById(\'lv-editor\')._state.anlage_fabriknummer=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
         '</div>'+
-        '<div style="display:grid;grid-template-columns:1fr 140px;gap:10px;margin-bottom:14px">'+
-          '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">👤 Kunde</label>'+
-            '<input id="lv-ed-kunde" value="'+escapeHtml(s.kunde_name)+'" oninput="document.getElementById(\'lv-editor\')._state.kunde_name=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
-          '<div><label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">Kd-Nr.</label>'+
-            '<input id="lv-ed-kdnr" value="'+escapeHtml(s.kunde_nummer)+'" oninput="document.getElementById(\'lv-editor\')._state.kunde_nummer=this.value" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px"></div>'+
-        '</div>'+
+        // v6.32: Kunde-Felder entfernt — LV ist für Subunternehmer/Monteure, Kunde gehört da nicht hin.
+        //         State-Felder bleiben (Schema unverändert), werden aber nicht mehr angezeigt/editiert.
+        ''+
         // Vorbemerkung
         '<label style="font-size:11px;font-weight:700;color:var(--txt2);display:block;margin-bottom:4px">📄 Vorbemerkung</label>'+
         '<textarea id="lv-ed-vorbem" rows="3" oninput="document.getElementById(\'lv-editor\')._state.vorbemerkung=this.value" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:inherit;resize:vertical;margin-bottom:14px">'+escapeHtml(s.vorbemerkung)+'</textarea>'+
@@ -39636,6 +39639,56 @@ function _lvEdRenderPos(p, i) {
     '<button onclick="_lvEdRemovePos('+i+')" title="Position entfernen" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;width:28px;height:28px;border-radius:5px;font-size:13px;cursor:pointer">🗑</button>'+
   '</div>';
 }
+
+window._lvEdAnlageSearch = async function(query) {
+  const wrap = document.getElementById('lv-ed-anlage-results');
+  if (!wrap) return;
+  const q = String(query||'').trim().toLowerCase();
+  wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Lade Anlagen…</div>';
+  wrap.style.display='block';
+  try {
+    const all = await _loadAnlagenForFirma(getCurrentFirmaSlug());
+    let hits = all || [];
+    if (q.length > 0) {
+      hits = hits.filter(a => {
+        const hay = [a.anzeigeAdresse, a.fabriknummer, a.kunde?.firmenname, a.kunde?.kundennummer, a.name].filter(Boolean).join(' ').toLowerCase();
+        return hay.includes(q);
+      });
+    } else {
+      hits = hits.slice().sort((a,b) => String(a.anzeigeAdresse||'').localeCompare(String(b.anzeigeAdresse||''),'de'));
+    }
+    hits = hits.slice(0, 50);
+    if (!hits.length) { wrap.innerHTML='<div style="padding:10px;color:var(--txt3);font-size:12px">Keine Anlagen</div>'; return; }
+    wrap.innerHTML = hits.map(a => {
+      const addr = a.anzeigeAdresse || a.name || '(ohne Adresse)';
+      const fab = a.fabriknummer || '';
+      return '<div onmousedown="event.preventDefault();_lvEdPickAnlage('+a.id+')" style="padding:7px 11px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#FEF3C7\'" onmouseout="this.style.background=\'\'">'+
+        '<div style="font-weight:600;color:var(--navy)">'+escapeHtml(addr)+'</div>'+
+        (fab ? '<div style="font-size:11px;color:var(--txt3);margin-top:2px">🔧 '+escapeHtml(fab)+'</div>' : '')+
+      '</div>';
+    }).join('');
+  } catch(e) { wrap.innerHTML='<div style="padding:10px;color:#DC2626;font-size:12px">❌ '+escapeHtml(e.message)+'</div>'; }
+};
+
+window._lvEdPickAnlage = async function(anlageId) {
+  const m = document.getElementById('lv-editor');
+  if (!m || !m._state) return;
+  try {
+    const all = await _loadAnlagenForFirma(getCurrentFirmaSlug());
+    const a = (all||[]).find(x => String(x.id) === String(anlageId));
+    if (!a) return;
+    m._state.anlage_id = String(a.id);
+    m._state.anlage_adresse = a.anzeigeAdresse || a.name || '';
+    m._state.anlage_fabriknummer = a.fabriknummer || '';
+    // Kunde im State weiter halten für Backwards-Compat, aber nicht im PDF/Editor anzeigen
+    if (a.kunde) {
+      m._state.kunde_name = a.kunde.firmenname || a.kunde.name || '';
+      m._state.kunde_nummer = String(a.kunde.kundennummer || a.kunde.id || '');
+    }
+    _lvEditorRender();
+    toast('✅ Anlage übernommen','ok');
+  } catch(e) { toast('❌ '+e.message,'err'); }
+};
 
 window._lvEdSetPos = function(i, field, val) {
   const m = document.getElementById('lv-editor'); if (!m || !m._state || !m._state.positionen[i]) return;
@@ -39755,11 +39808,10 @@ async function _buildLvPdf(rec, firmaSlug) {
   doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY);
   doc.text('LV-'+(f.lv_num||'?')+(f.titel?'  ·  '+f.titel:''), ml, y); y += 10;
 
-  // Stammdaten
+  // Stammdaten — v6.32: Kunde NICHT mehr im LV anzeigen (LV ist für Subunternehmer/Monteure)
   doc.setFontSize(10); doc.setTextColor(...GREY);
   if (f.anlage_adresse) { doc.text(_sanPdf('Standort: '+String(f.anlage_adresse).split('\n')[0]), ml, y); y += 5; }
   if (f.anlage_fabriknummer) { doc.text(_sanPdf('Fabriknummer: '+f.anlage_fabriknummer), ml, y); y += 5; }
-  if (f.kunde_name) { doc.text(_sanPdf('Kunde: '+f.kunde_name+(f.kunde_nummer?' (Kd-Nr. '+f.kunde_nummer+')':'')), ml, y); y += 5; }
   y += 4;
 
   // Vorbemerkung
