@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.41';
+const APP_VERSION = 'v6.42';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21061,40 +21061,19 @@ function _daNormalizeCp(cp) {
 }
 
 /**
- * v6.36/v6.38: Airtable Attachment-URLs expirieren nach ~2 Stunden. Beim Öffnen
- * einer gespeicherten DA werden die URLs in bilder_ist[] gegen das frische
- * bilder_pool-Attachment-Feld gematcht und ersetzt.
+ * Airtable Attachment-URLs expirieren nach ~2 Stunden. Beim Öffnen einer
+ * gespeicherten DA werden die stale URLs in bilder_ist[] durch frische aus dem
+ * bilder_pool-Attachment-Feld ersetzt.
  *
- * v6.38: v5-URLs (https://v5.airtableusercontent.com/v3/u/{a}/{b}/{TS}/{TOKEN}/{sig}…)
- *   haben KEINEN Filename mit Extension im Pfad — der Filename-Regex matchte ins
- *   Leere und stale URLs blieben bestehen (HTTP 410). Neue Strategie: extrahiere
- *   den stabilen TOKEN-Teil (6. Pfad-Segment) und matche darüber. Filename-Match
- *   bleibt als Fallback für alte Legacy-URLs.
- */
-/**
- * v6.41: Filename-Pattern-Match — die in _daSave erzeugten Filenames
- * 'cp{ci+1}-{bi+1}-{ts}-{i}-{k}.jpg' kodieren bereits die exakte cp+bild-Position.
- * Wir parsen die Filenames aus bilder_pool und schreiben die fresh-URL direkt
- * in cps[ci].bilder_ist[bi]. Robust gegen URL-Format-Änderungen, weil wir nicht
- * versuchen die stale URL gegen die fresh URL zu matchen — wir kennen die
- * Zielposition aus dem Filename selbst. Bei mehreren Pool-Einträgen für denselben
- * Slot (Re-Upload) gewinnt der mit dem höchsten Timestamp im Filename.
+ * Strategie: Pool-Filenames aus _daSave haben die Form
+ * 'cp{ci+1}-{bi+1}-{ts}-{i}-{k}.jpg' — wir parsen ci+bi direkt aus dem Filename
+ * und schreiben die fresh-URL ohne URL-Vergleich nach cps[ci].bilder_ist[bi].
+ * Bei mehreren Pool-Einträgen für denselben Slot (Re-Upload) gewinnt der mit
+ * dem höchsten Timestamp.
  */
 function _daRefreshBilderFromPool(cps, bilderPool) {
-  if (!Array.isArray(cps)) return;
-  const poolLen = Array.isArray(bilderPool) ? bilderPool.length : 0;
-  let storedCount = 0;
-  for (const cp of cps) for (const b of (cp.bilder_ist||[])) {
-    if (typeof b === 'string' && /^https?:\/\//i.test(b)) storedCount++;
-  }
-  console.log('[DA-Refresh] cps='+cps.length+' · stored URLs='+storedCount+' · pool='+poolLen);
-  if (!poolLen) {
-    if (storedCount) console.warn('[DA-Refresh] bilder_pool LEER — refresh nicht möglich');
-    return;
-  }
-  // Pool indexieren per (ci-bi) → höchster Timestamp gewinnt
+  if (!Array.isArray(cps) || !Array.isArray(bilderPool) || !bilderPool.length) return;
   const byCpBi = new Map();
-  let parsedFromFilename = 0;
   for (const a of bilderPool) {
     if (!a || !a.url || !a.filename) continue;
     const m = a.filename.match(/^cp(\d+)-(\d+)-(\d+)-/);
@@ -21106,10 +21085,8 @@ function _daRefreshBilderFromPool(cps, bilderPool) {
     const key = ci + '-' + bi;
     const prev = byCpBi.get(key);
     if (!prev || prev.ts < ts) byCpBi.set(key, { url: a.url, ts });
-    parsedFromFilename++;
   }
-  console.log('[DA-Refresh] pool indexed — '+parsedFromFilename+'/'+poolLen+' Filenames parsbar · '+byCpBi.size+' eindeutige Slots');
-  let refreshed = 0, noSlot = 0;
+  if (!byCpBi.size) return;
   for (let ci = 0; ci < cps.length; ci++) {
     const cp = cps[ci];
     if (!Array.isArray(cp.bilder_ist)) continue;
@@ -21117,14 +21094,9 @@ function _daRefreshBilderFromPool(cps, bilderPool) {
       const src = cp.bilder_ist[bi];
       if (typeof src !== 'string' || !src || src.startsWith('data:')) continue;
       const hit = byCpBi.get(ci + '-' + bi);
-      if (hit) {
-        if (hit.url !== src) { cp.bilder_ist[bi] = hit.url; refreshed++; }
-      } else {
-        noSlot++;
-      }
+      if (hit && hit.url !== src) cp.bilder_ist[bi] = hit.url;
     }
   }
-  console.log('[DA-Refresh] refreshed='+refreshed+' · ohne-Pool-Slot='+noSlot);
 }
 
 /**
@@ -21150,18 +21122,14 @@ async function _daFetchRecordFresh(recId) {
 async function openDaDetail(recId) {
   let rec = (_daCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Datenaufnahme nicht gefunden','err');
-  // v6.39: IMMER frisch nachladen — _daCache.loadedAt sagt nur wann der Cache zuletzt
-  // GEBAUT wurde, nicht ob die Attachment-URLs darin noch gültig sind. v5-URLs
-  // expirieren ~2h nach dem ursprünglichen Listing-Call. Ein gezielter GET liefert
+  // Record bei jedem Öffnen frisch nachladen — _daCache.loadedAt sagt nur wann der
+  // Cache zuletzt gebaut wurde, nicht ob die Attachment-URLs darin noch gültig sind.
+  // v5-Airtable-URLs expirieren ~2h nach dem Listing-Call; ein gezielter GET liefert
   // garantiert fresh signierte URLs für genau diesen Record.
   try {
     const fresh = await _daFetchRecordFresh(recId);
-    if (fresh && fresh.fields) {
-      rec = fresh;
-      const oldPoolLen = (rec.fields.bilder_pool||[]).length;
-      console.log('[DA-Refresh] frisch geladen — bilder_pool: '+oldPoolLen+' Attachments');
-    }
-  } catch(e) { console.warn('[DA-Refresh] fail:', e.message); }
+    if (fresh && fresh.fields) rec = fresh;
+  } catch(e) { console.warn('[DA] Refresh fail:', e.message); }
   const f = rec.fields || {};
   let cps = [];
   try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
