@@ -2661,7 +2661,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.30';
+const APP_VERSION = 'v6.31';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -39458,7 +39458,7 @@ window._lvWizardGenerate = async function() {
 async function _lvKiGenerate(promptText, anlage) {
   const tool = {
     name: 'generate_lv',
-    description: 'Erzeugt ein Leistungsverzeichnis (LV) aus einer Beschreibung. Pro Position: Titel + Beschreibung (2-3 Sätze). Preise werden NICHT von der KI gesetzt — der User trägt sie nach.',
+    description: 'Erzeugt ein Leistungsverzeichnis (LV) aus einer Beschreibung. Pro Position: Titel + 1 SATZ knappe Arbeitsanweisung. Preise werden NICHT von der KI gesetzt.',
     input_schema: {
       type: 'object', required:['positionen'],
       properties: {
@@ -39469,24 +39469,32 @@ async function _lvKiGenerate(promptText, anlage) {
             type:'object', required:['nr','titel','beschreibung'],
             properties: {
               nr:           { type:'integer' },
-              titel:        { type:'string', description:'Klarer technischer Titel der Position (max. 80 Zeichen)' },
-              beschreibung: { type:'string', description:'2-3 Sätze fachliche Leistungsbeschreibung. Was wird konkret geliefert/installiert/gemacht. Technische Sprache, kein Marketing.' },
+              titel:        { type:'string', description:'Kurzer Titel der Position (max. 60 Zeichen). Beispiel: „Türkontakte Schacht erneuern" — NICHT „Ersatzteil-Paket – Türkontakte Schacht (komplett gemäß EN 81-20)".' },
+              beschreibung: { type:'string', description:'EXAKT EIN kurzer Satz, max. 15 Wörter. Konkret was zu tun ist. KEINE Normen erwähnen. KEIN Gelaber wie „Die Bauteile entsprechen" oder „Erfassung umfasst". KEINE Marketing-Phrasen. Einfache Sprache für Subunternehmer und Monteure. Beispiel GUT: „Alle Türkontakte an Schachttüren ausbauen und gegen neue tauschen." Beispiel SCHLECHT: „Die Türkontakte entsprechen den Anforderungen der EN 81-20 hinsichtlich Schaltspannung und mechanischer Eignung."' },
             },
           },
         },
       },
     },
   };
-  const anlInfo = anlage ? '\n\nANLAGEN-KONTEXT:\n• Standort: '+(anlage.anzeigeAdresse||anlage.name||'?')+(anlage.fabriknummer?'\n• Fabriknummer: '+anlage.fabriknummer:'')+(anlage.kunde?.firmenname?'\n• Kunde: '+anlage.kunde.firmenname:'') : '';
+  const anlInfo = anlage ? '\n\nANLAGE: '+(anlage.anzeigeAdresse||anlage.name||'?')+(anlage.fabriknummer?', Fab.-Nr. '+anlage.fabriknummer:'') : '';
   const fullPrompt =
-    'Du bist Leistungsverzeichnis-Assistent für ein Aufzugs-Service-Unternehmen.\n\n'+
-    'AUFGABE: Erstelle aus der folgenden Beschreibung ein strukturiertes Leistungsverzeichnis.\n\n'+
-    'REGELN:\n'+
-    '• Pro Position: klarer Titel + 2-3 Sätze technische Beschreibung.\n'+
-    '• Technische Sprache, präzise, kein Marketing.\n'+
-    '• Berücksichtige relevante Normen (BetrSichV, EN 81-20/50 etc.) wo angebracht.\n'+
-    '• KEINE Preise generieren — die werden vom User nachgetragen.\n'+
-    '• 5-25 Positionen je nach Umfang.\n'+
+    'Du bist LV-Assistent für ein Aufzugs-Service-Unternehmen. Das LV ist für Subunternehmer und eigene Monteure — die wollen wissen WAS zu tun ist, nicht warum oder welche Norm.\n\n'+
+    'AUFGABE: Erstelle aus der Beschreibung ein LV mit knappen Positionen.\n\n'+
+    'HARTE REGELN:\n'+
+    '• Titel: kurz und konkret, max. 60 Zeichen. KEIN „komplett", KEIN „gemäß", KEIN „inkl.". Beispiel: „Antrieb erneuern" statt „Antriebs-Erneuerung komplett gemäß Herstellerspezifikation".\n'+
+    '• Beschreibung: GENAU EIN Satz, max. 15 Wörter. Konkret was zu tun ist.\n'+
+    '• VERBOTEN: Normen-Erwähnungen (EN 81-20, BetrSichV etc.), Phrasen wie „Die Bauteile entsprechen", „Erfassung umfasst", „Umfang wird auf Basis", „statistischen Ausfallhäufigkeiten", „Herstellervorgaben", „Verpackung und Lagerung erfolgen".\n'+
+    '• VERBOTEN: Marketing-Sprache, allgemeine Floskeln, Konjunktive, lange Erklärungen.\n'+
+    '• ERLAUBT: simple Verben (ausbauen, einbauen, prüfen, austauschen, anschließen, einstellen). Konkrete Bauteile.\n'+
+    '• KEINE Preise.\n'+
+    '• 5-25 Positionen je nach Umfang.\n\n'+
+    'GUTES BEISPIEL einer Position:\n'+
+    '  Titel: „Türkontakte Schacht ersetzen"\n'+
+    '  Beschreibung: „Alle Türkontakte an Schachttüren ausbauen und gegen neue tauschen."\n\n'+
+    'SCHLECHTES BEISPIEL (nicht so machen!):\n'+
+    '  Titel: „Ersatzteil-Paket – Türkontakte Schacht (komplett)"\n'+
+    '  Beschreibung: „Lieferung eines Lagervorrats an Türkontakten für sämtliche Schachttüren der Anlage gemäß Anlagentyp und Fabriknummer. Die Kontakte entsprechen den Anforderungen der EN 81-20 (Abschnitt 5.3.9) hinsichtlich Schaltspannung..."\n'+
     anlInfo+'\n\n'+
     'USER-BESCHREIBUNG:\n'+promptText;
   const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -39498,7 +39506,7 @@ async function _lvKiGenerate(promptText, anlage) {
       'anthropic-dangerous-direct-browser-access':'true',
     },
     body: JSON.stringify({
-      model:'claude-sonnet-4-6', max_tokens: 32000,
+      model:'claude-sonnet-4-6', max_tokens: 8000,
       tools:[tool], tool_choice:{ type:'tool', name:'generate_lv' },
       messages:[{ role:'user', content:[ { type:'text', text: fullPrompt } ]}],
     }),
