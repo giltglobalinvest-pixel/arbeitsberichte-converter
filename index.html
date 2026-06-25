@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.42';
+const APP_VERSION = 'v6.43';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28389,8 +28389,26 @@ function _angOpenSendModal(recId) {
         '<div>• Gruppe: <strong>'+(localStorage.getItem('fd_group_id_'+firmaSlug)?'gespeicherte Auswahl':ANGEBOT_FD_GROUP_CANDIDATES.join(' / '))+'</strong></div>'+
         '<div>• Bearbeiter: <strong>'+(localStorage.getItem('fd_agent_id_'+firmaSlug)?'gespeicherte Auswahl':ANGEBOT_FD_RESPONDER_CANDIDATES[0])+'</strong></div>'+
         '<div>• Signatur: <strong>aus deinem Freshdesk-Profil</strong> (über /agents/me)</div>'+
-        '<div>• PDF: <strong>'+escapeHtml(appPdf.filename || 'Angebot.pdf')+'</strong> ('+Math.round((appPdf.size||0)/1024)+' KB)</div>'+
       '</div>'+
+      // v6.43: PDF-Anhänge mit Vorschau-Buttons (Angebot + optional Datenaufnahme)
+      (() => {
+        const atts = [{ label:'Angebot', url:appPdf.url, filename:appPdf.filename||'Angebot.pdf', size:appPdf.size||0 }];
+        const daAnh = f.da_anhang_pdf?.[0];
+        if (daAnh?.url) atts.push({ label:'Datenaufnahme', url:daAnh.url, filename:daAnh.filename||'Datenaufnahme.pdf', size:daAnh.size||0 });
+        return '<div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:10px 14px">'+
+          '<div style="font-size:12px;font-weight:700;color:#075985;margin-bottom:6px">📎 '+atts.length+' Anhang'+(atts.length===1?'':'/Anhänge')+' werden mitgesendet:</div>'+
+          atts.map(a =>
+            '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #BAE6FD;border-radius:6px;padding:8px 10px;margin-top:6px">'+
+              '<span style="font-size:18px">📄</span>'+
+              '<div style="flex:1;min-width:0;overflow:hidden">'+
+                '<div style="font-size:11px;font-weight:700;color:#075985">'+escapeHtml(a.label)+'</div>'+
+                '<div style="font-size:11px;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(a.filename)+' · '+Math.round(a.size/1024)+' KB</div>'+
+              '</div>'+
+              '<a href="'+escapeHtml(a.url)+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:700;color:#fff;background:#0369A1;padding:7px 12px;border-radius:5px;text-decoration:none;flex-shrink:0;white-space:nowrap">👁 Vorschau</a>'+
+            '</div>'
+          ).join('')+
+        '</div>';
+      })()+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Empfänger-E-Mail *</label>'+
         '<input id="angsend-email" type="email" data-default-email="'+escapeHtml(defaultEmail)+'" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
       // v5.44: CC-Empfänger (frei, optional, mehrere mit Komma getrennt)
