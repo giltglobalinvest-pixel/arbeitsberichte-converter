@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.43';
+const APP_VERSION = 'v6.44';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21296,7 +21296,14 @@ function _daRenderCheckpunktItem(cp, i, editable) {
   const addBtn = editable
     ? '<button onclick="_daAddImage('+i+')" style="width:96px;height:72px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;flex-shrink:0" title="Foto hinzufügen"><span style="font-size:20px">📷</span><span>+ Foto</span></button>'
     : (bilder.length === 0 ? '<div style="width:96px;height:72px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>' : '');
-  const galleryHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+thumbsHtml+addBtn+'</div>';
+  // v6.44: Drag & Drop — kompletter Galerie-Container ist Drop-Zone wenn editierbar
+  const dropAttrs = editable
+    ? ' ondragover="_daDragOver(event,this)" ondragleave="_daDragLeave(event,this)" ondragend="_daDragLeave(event,this)" ondrop="_daDrop(event,'+i+',this)"'
+    : '';
+  const dropHint = (editable && bilder.length === 0)
+    ? '<span style="font-size:11px;color:var(--txt3);font-style:italic">↖ klicken oder Fotos hierher ziehen</span>'
+    : '';
+  const galleryHtml = '<div'+dropAttrs+' style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:4px;border:2px dashed transparent;border-radius:8px;transition:background .15s,border-color .15s">'+thumbsHtml+addBtn+dropHint+'</div>';
   const dis = editable ? '' : 'disabled';
   // Pauschalpreis nur sichtbar+editierbar für User mit canSeePrices Permission
   const showPrice = canSeePrices();
@@ -21750,6 +21757,30 @@ function _daRemoveCp(i) {
  * Mehrere Bilder pro Checkpunkt möglich (bilder_ist[]).
  * Maßnahme bekommt keine Bilder.
  */
+async function _daProcessImageFiles(i, fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps[i]) return;
+  if (!Array.isArray(m._cps[i].bilder_ist)) m._cps[i].bilder_ist = [];
+  toast('🖼 Komprimiere '+files.length+' Foto'+(files.length===1?'':'s')+'…','');
+  let added = 0, errs = 0;
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) { errs++; continue; }
+    if (file.size > 15*1024*1024) { errs++; continue; }
+    try {
+      // 1100px / Q75: deutlich schärfer als das alte 800/0.6.
+      // Größenkontrolle erfolgt bei Bedarf später durch die _daSave-Shrink-Schleife.
+      const dataUrl = await _gbuResizeImage(file, 1100, 0.75);
+      m._cps[i].bilder_ist.push(dataUrl);
+      added++;
+    } catch(_) { errs++; }
+  }
+  if (added) { _daMarkDirty(m); _daRenderCheckpunkte(); }
+  if (added && !errs) toast('🖼 '+added+' Foto'+(added===1?'':'s')+' hinzugefügt','ok');
+  else if (added && errs) toast('🖼 '+added+' OK · '+errs+' Fehler','');
+  else toast('❌ Keine Bilder hinzugefügt','err');
+}
 function _daAddImage(i) {
   const input = document.createElement('input');
   input.type = 'file';
@@ -21757,31 +21788,23 @@ function _daAddImage(i) {
   // KEIN capture-Attribut: iOS/Android zeigen Auswahl-Sheet
   // (Kamera ODER Foto-Mediathek ODER Datei). Sonst wäre nur Kamera möglich.
   input.multiple = true;          // Mehrere Bilder gleichzeitig hochladen
-  input.onchange = async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    const m = document.getElementById('da-detail');
-    if (!m || !m._cps[i]) return;
-    if (!Array.isArray(m._cps[i].bilder_ist)) m._cps[i].bilder_ist = [];
-    let added = 0, errs = 0;
-    toast('🖼 Komprimiere '+files.length+' Foto'+(files.length===1?'':'s')+'…','');
-    for (const file of files) {
-      if (!file.type.startsWith('image/')) { errs++; continue; }
-      if (file.size > 15*1024*1024) { errs++; continue; }
-      try {
-        // 1100px / Q75: deutlich schärfer als das alte 800/0.6.
-        // Größenkontrolle erfolgt bei Bedarf später durch die _daSave-Shrink-Schleife.
-        const dataUrl = await _gbuResizeImage(file, 1100, 0.75);
-        m._cps[i].bilder_ist.push(dataUrl);
-        added++;
-      } catch(_) { errs++; }
-    }
-    if (added) { _daMarkDirty(m); _daRenderCheckpunkte(); }
-    if (added && !errs) toast('🖼 '+added+' Foto'+(added===1?'':'s')+' hinzugefügt','ok');
-    else if (added && errs) toast('🖼 '+added+' OK · '+errs+' Fehler','');
-    else toast('❌ Keine Bilder hinzugefügt','err');
-  };
+  input.onchange = (e) => _daProcessImageFiles(i, e.target.files);
   input.click();
+}
+// v6.44: Drag & Drop für IST-Galerie eines Checkpunkts
+function _daDragOver(ev, el) {
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+  if (el) { el.style.background = '#EFF6FF'; el.style.borderColor = '#2152A9'; }
+}
+function _daDragLeave(ev, el) {
+  if (el) { el.style.background = ''; el.style.borderColor = 'transparent'; }
+}
+function _daDrop(ev, i, el) {
+  ev.preventDefault();
+  if (el) { el.style.background = ''; el.style.borderColor = 'transparent'; }
+  const files = ev.dataTransfer?.files;
+  if (files && files.length) _daProcessImageFiles(i, files);
 }
 
 function _daRemoveImage(i, idx) {
