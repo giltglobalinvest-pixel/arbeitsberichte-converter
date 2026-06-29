@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.72';
+const APP_VERSION = 'v6.73';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -25368,10 +25368,11 @@ function _angWizardFdCreateAnlage() {
   });
 }
 
-function _angWizardFdContinue() {
+async function _angWizardFdContinue() {
   const m = document.getElementById('ang-wizard');
   if (!m || !m._fdData) return;
   const { analysis, match } = m._fdData;
+  const firmaSlug = getCurrentFirmaSlug();
   // Editor-Input bauen: alles im "manuell"-Modus, alle bekannten Daten vorbefüllen
   const positionen = (analysis.vorgeschlagene_positionen||[]).map((p, i) => ({
     nr: i+1,
@@ -25380,15 +25381,42 @@ function _angWizardFdContinue() {
     menge: 1,
     einzelpreis_netto: 0,
   }));
-  // v6.71: Anschreiben aus Analyse-Daten generieren (vorher leer).
-  //   Anrede aus kontakt_name (Vorname Nachname → Nachname), Anliegen als Bezug.
-  const kontaktName = (analysis.kontakt_name || '').trim();
-  const lastName = kontaktName.includes(' ') ? kontaktName.split(' ').slice(-1)[0] : kontaktName;
-  const anrede = lastName
-    ? ('Sehr geehrte/r '+lastName+',')
-    : 'Sehr geehrte Damen und Herren,';
+  // v6.73: Kontakt aus ERP laden für die korrekte Briefanrede.
+  //   ERP-Kontakte haben das anrede-Feld als komplette Brief-Anrede ("Sehr geehrter Herr Müller").
+  //   Match-Reihenfolge: Email → Nachname → keiner.
+  let kontakt = null;
+  if (match.kunde && (match.kunde.kundennummer || match.kunde.id)) {
+    try {
+      const kdNr = match.kunde.kundennummer || match.kunde.id;
+      const kontakte = await _bulkLoadKontaktList(firmaSlug, kdNr);
+      const emailNorm = String(analysis.kontakt_email||'').trim().toLowerCase();
+      if (emailNorm) {
+        kontakt = kontakte.find(k => String(k.email||'').trim().toLowerCase() === emailNorm) || null;
+      }
+      if (!kontakt && analysis.kontakt_name) {
+        const ln = analysis.kontakt_name.trim().split(/\s+/).slice(-1)[0].toLowerCase();
+        if (ln) kontakt = kontakte.find(k => String(k.nachname||'').trim().toLowerCase() === ln) || null;
+      }
+    } catch(e) { console.warn('[FD-Continue] Kontakt-Lookup:', e.message); }
+  }
+  // Anrede aus ERP-Kontakt (Briefanrede) ableiten — Fallback: aus FD-Analyse generieren
+  let anrede;
+  if (kontakt && kontakt.anrede) {
+    const a = String(kontakt.anrede).trim().replace(/[,!]+$/,'');
+    if (/^sehr\s+geehrte?[rn]?\s+/i.test(a)) {
+      anrede = a + ','; // ERP enthält schon volle Briefanrede inkl. Name
+    } else {
+      const nn = (kontakt.nachname || '').trim();
+      if (/^frau$/i.test(a))      anrede = 'Sehr geehrte Frau '+nn+',';
+      else if (/^herr$/i.test(a)) anrede = 'Sehr geehrter Herr '+nn+',';
+      else                        anrede = 'Sehr geehrte Damen und Herren,';
+    }
+  } else {
+    const kontaktName = (analysis.kontakt_name || '').trim();
+    const lastName = kontaktName.includes(' ') ? kontaktName.split(/\s+/).slice(-1)[0] : kontaktName;
+    anrede = lastName ? ('Sehr geehrte/r '+lastName+',') : 'Sehr geehrte Damen und Herren,';
+  }
   const bezug = (analysis.anliegen || '').trim();
-  // Bezug auf max. ~200 Zeichen kürzen + Satzende stumpf abschneiden
   const bezugKurz = bezug.length > 200 ? (bezug.slice(0,200).replace(/[.,;:!?\s]+$/, '')+'…') : bezug;
   const anschreiben =
     anrede + '\n\n' +
