@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.45';
+const APP_VERSION = 'v6.46';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -32682,6 +32682,42 @@ async function _submitCreateAnlageStandalone() {
   const btn = document.getElementById('pl-new-save-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ erstelle im ERP…'; }
   try {
+    // v6.46: ERP wirft NullPointerException im AnsprechpartnerController wenn beim
+    //   POST kein Ansprechpartner mitgegeben wird (siehe AnlageFetcher.fetchAttributes).
+    //   Wir laden den Standard-Ansprechpartner + Kontakt des Kunden und schicken alle
+    //   bekannten Feld-Varianten mit (analog zum funktionierenden Bulk-Import-Pfad).
+    try {
+      const kundenNr = kunde.kundennummer || kunde.id;
+      const [kontakte, ansprechs] = await Promise.all([
+        _bulkLoadKontaktList(firmaSlug, kundenNr),
+        _bulkLoadAnsprechList(firmaSlug, kundenNr),
+      ]);
+      const kontakt  = (kontakte||[])[_bulkAutoSelectIdx(kontakte)] || null;
+      const ansprech = (ansprechs||[])[_bulkAutoSelectIdx(ansprechs)] || null;
+      if (kontakt && kontakt.id != null) {
+        const kid = +kontakt.id;
+        payload.kontaktId       = kid;
+        payload.kontakt         = kontakt;
+        payload.kundenkontaktId = kid;
+      }
+      if (ansprech && ansprech.id != null) {
+        const aid = +ansprech.id;
+        payload.ansprechpartnerId            = aid;
+        payload.ansprechpartner              = ansprech;
+        payload.standardansprechpartnerId    = aid;
+        payload.standardAnsprechpartnerId    = aid;
+        payload.standardansprechpartner      = ansprech;
+        payload.standardAnsprechpartner      = ansprech;
+        payload.defaultAnsprechpartnerId     = aid;
+        payload.defaultAnsprechpartner       = ansprech;
+        payload.hauptansprechpartnerId       = aid;
+        payload.hauptAnsprechpartnerId       = aid;
+        payload.hauptansprechpartner         = ansprech;
+      }
+      console.log('[NeueAnlage] Kontakt:', kontakt?.id, '· Ansprechpartner:', ansprech?.id);
+    } catch(e) {
+      console.warn('[NeueAnlage] Kontakt/Ansprech-Load fail (POST trotzdem versuchen):', e.message);
+    }
     const created = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen', { method:'POST', body: payload });
     if (!created || !created.id) throw new Error('ERP gab keine ID zurück.');
     // Anlagen-Cache invalidieren + Anlagen-Liste refreshen
