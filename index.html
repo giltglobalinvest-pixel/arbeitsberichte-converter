@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.44';
+const APP_VERSION = 'v6.45';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6015,6 +6015,13 @@ async function ensureLegacyFirmaFields() {
     await ensureTable('App_Angebote', ANGEBOTE_TABLE_FIELDS);
     for (const fld of ANGEBOTE_TABLE_FIELDS) {
       try { await ensureField('App_Angebote', fld.name, fld.type); } catch(_){}
+    }
+  }
+  // v6.45: App_Angebot_Anhang_Vorlagen — wiederverwendbare PDF-Anhänge für Angebote
+  if (typeof ANGEBOT_ANHANG_VORLAGEN_TABLE_FIELDS !== 'undefined') {
+    await ensureTable('App_Angebot_Anhang_Vorlagen', ANGEBOT_ANHANG_VORLAGEN_TABLE_FIELDS);
+    for (const fld of ANGEBOT_ANHANG_VORLAGEN_TABLE_FIELDS) {
+      try { await ensureField('App_Angebot_Anhang_Vorlagen', fld.name, fld.type); } catch(_){}
     }
   }
   // Rollen-Tabelle für Permission-Templates
@@ -23100,10 +23107,76 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'datenaufnahme_id',        type:'singleLineText' },
   { name:'datenaufnahme_da_num',    type:'number', options:{ precision:0 } },
   { name:'da_anhang_pdf',           type:'multipleAttachments' },
+  // v6.45: Zusätzliche Anhang-Vorlagen, ausgewählt im Editor (mehrere möglich)
+  { name:'anhang_vorlage_ids',      type:'multilineText' },  // JSON-Array mit Record-IDs aus App_Angebot_Anhang_Vorlagen
+  { name:'anhang_vorlage_namen',    type:'multilineText' },  // denormalisierte Namen-Liste (1 pro Zeile) zur Anzeige
 ];
 
 let _angeboteCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _angeboteTableEnsured = false;
+
+// v6.45: Angebot-Anhang-Vorlagen — pro Firma wiederverwendbare PDFs die ans Angebot mitgesendet werden
+const ANGEBOT_ANHANG_VORLAGEN_TABLE_FIELDS = [
+  { name:'name',                    type:'singleLineText' },
+  { name:'beschreibung',            type:'multilineText'  },
+  { name:'pdfs',                    type:'multipleAttachments' },
+  { name:'firma',                   type:'singleLineText' },
+  { name:'aktiv',                   type:'checkbox', options:{ icon:'check', color:'greenBright' }},
+  { name:'erstellt_am',             type:'singleLineText' },
+  { name:'erstellt_von',            type:'singleLineText' },
+];
+let _angVorlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+let _angVorlagenTableEnsured = false;
+
+/** v6.45: Lädt aktive Anhang-Vorlagen der Firma. Cache 60s. */
+async function _loadAngVorlagen(firmaSlug, opts) {
+  opts = opts || {};
+  if (!firmaSlug) return [];
+  const fresh = !opts.force && _angVorlagenCache.firma === firmaSlug && _angVorlagenCache.items && (Date.now() - _angVorlagenCache.loadedAt) < 60_000;
+  if (fresh) return _angVorlagenCache.items;
+  if (_angVorlagenCache.loading) {
+    while (_angVorlagenCache.loading) await new Promise(r => setTimeout(r, 100));
+    if (_angVorlagenCache.firma === firmaSlug && _angVorlagenCache.items) return _angVorlagenCache.items;
+  }
+  _angVorlagenCache.loading = true;
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key    = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    if (!baseId || !key) { _angVorlagenCache.loading = false; return []; }
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen'
+      + '?pageSize=100'
+      + '&filterByFormula='+encodeURIComponent('AND({firma}="'+firmaSlug+'",NOT({aktiv}=0))')
+      + '&sort[0][field]=name&sort[0][direction]=asc';
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) {
+      // Tabelle existiert evtl. noch nicht
+      _angVorlagenCache = { firma:firmaSlug, items:[], loadedAt:Date.now(), loading:false };
+      return [];
+    }
+    const d = await r.json();
+    _angVorlagenCache = { firma:firmaSlug, items:d.records||[], loadedAt:Date.now(), loading:false };
+    return _angVorlagenCache.items;
+  } catch(e) {
+    console.warn('[AngVorlagen] load fail:', e.message);
+    _angVorlagenCache.loading = false;
+    return [];
+  }
+}
+
+/** v6.45: Frischen Record-Get für eine einzelne Vorlage — liefert nicht-stale URLs. */
+async function _fetchAngVorlageFresh(recId) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!baseId || !key) return null;
+  const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen/'+encodeURIComponent(recId), {
+    headers:{ 'Authorization':'Bearer '+key }
+  });
+  if (!r.ok) throw new Error('Vorlage GET '+r.status);
+  const data = await r.json();
+  const idx = (_angVorlagenCache.items||[]).findIndex(x => x.id === recId);
+  if (idx >= 0 && data && data.fields) _angVorlagenCache.items[idx] = data;
+  return data;
+}
 
 /* ═══════════════════════════════════════════════════════════════════════
  * v6.07: KI-Lern-Beispiele für Angebot-Positionen
@@ -32467,17 +32540,21 @@ function _renderKundenPickerListForAnlage() {
     out.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Keine Treffer. <br><br>Falls der Kunde noch nicht im ERP ist: <strong>+ Neuer Kunde</strong> oben.</div>';
     return;
   }
-  out.innerHTML = filtered.map(k =>
-    '<div data-kp-kid="'+escapeHtml(String(k.id))+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+  // v6.45: Index-basiertes Click-Targeting — ID-basierter Lookup hat den falschen
+  //   Kunden ausgewählt wenn die ERP-Antwort entweder kein x.id liefert (find()
+  //   nahm dann den ersten Treffer) oder es Duplikate gibt. Der Index in `filtered`
+  //   ist eindeutig und stimmt 1:1 mit der gerenderten DOM-Reihenfolge.
+  out.innerHTML = filtered.map((k, idx) =>
+    '<div data-kp-idx="'+idx+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
       '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
       '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
       (k.kundennummer ? '<div style="font-size:11px;color:var(--txt3)">Kd-Nr.: '+escapeHtml(k.kundennummer)+'</div>' : '')+
     '</div>'
   ).join('');
   out.onclick = (ev) => {
-    const item = ev.target.closest('[data-kp-kid]');
+    const item = ev.target.closest('[data-kp-idx]');
     if (!item) return;
-    const k = list.find(x => String(x.id) === String(item.dataset.kpKid));
+    const k = filtered[+item.dataset.kpIdx];
     if (k) _proceedToAnlageForm(k);
   };
 }
@@ -33109,8 +33186,9 @@ function _renderKundenPickerList() {
     out.innerHTML = '<div style="padding:30px;text-align:center;color:var(--txt3)">Keine Treffer.</div>';
     return;
   }
-  out.innerHTML = filtered.map(k =>
-    '<div data-kp-kid="'+escapeHtml(String(k.id))+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
+  // v6.45: Index-basiertes Click-Targeting (siehe _renderKundenPickerListForAnlage).
+  out.innerHTML = filtered.map((k, idx) =>
+    '<div data-kp-idx="'+idx+'" style="padding:10px 12px;border:1px solid var(--bdr);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:background .15s" onmouseover="this.style.background=\'rgba(0,0,0,.03)\'" onmouseout="this.style.background=\'transparent\'">'+
       '<div style="font-weight:600;color:var(--navy);font-size:13px">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
       '<div style="font-size:11px;color:var(--txt2);margin-top:2px">'+escapeHtml([k.strasse,k.plz,k.ort].filter(Boolean).join(', '))+'</div>'+
       (k.kundennummer ? '<div style="font-size:11px;color:var(--txt3)">Kd-Nr.: '+escapeHtml(k.kundennummer)+'</div>' : '')+
@@ -33118,11 +33196,11 @@ function _renderKundenPickerList() {
   ).join('');
   // Event-Delegation: Klick auf einen Listen-Eintrag → Auswahl
   out.onclick = (ev) => {
-    const item = ev.target.closest('[data-kp-kid]');
+    const item = ev.target.closest('[data-kp-idx]');
     if (!item) return;
-    const id = item.dataset.kpKid;
-    console.log('[KundenPicker] Klick auf id:', id);
-    _selectKundeFromPicker(id).catch(e => {
+    const k = filtered[+item.dataset.kpIdx];
+    if (!k) return;
+    _selectKundeFromPicker(k).catch(e => {
       console.error('[KundenPicker] Fehler beim Auswählen:', e);
       toast('❌ '+e.message,'err');
     });
@@ -33148,10 +33226,16 @@ function _openKundeFromPicker() {
   });
 }
 
-async function _selectKundeFromPicker(kundeId) {
-  // ID kann String oder Number kommen — beide Vergleiche probieren
-  const k = (_kundenCache.items||[]).find(x => String(x.id) === String(kundeId));
-  if (!k) { console.warn('[KundenPicker] ID nicht im Cache gefunden:', kundeId); return; }
+async function _selectKundeFromPicker(kundeOrId) {
+  // v6.45: Akzeptiert entweder ein Kunden-Objekt (aus dem Picker direkt) oder eine ID
+  //   (Legacy / Create-Dialog-Pfad). Objekt zu bevorzugen — eindeutig + kein Cache-Lookup.
+  let k;
+  if (kundeOrId && typeof kundeOrId === 'object') {
+    k = kundeOrId;
+  } else {
+    k = (_kundenCache.items||[]).find(x => String(x.id) === String(kundeOrId));
+  }
+  if (!k) { console.warn('[KundenPicker] Kunde nicht gefunden:', kundeOrId); return; }
   const firmaSlug = getCurrentFirmaSlug();
   const modal = document.getElementById('kunden-pl-modal');
   if (!modal) { document.getElementById('kp-picker-modal').remove(); return; }
