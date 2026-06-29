@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.53';
+const APP_VERSION = 'v6.54';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -40871,6 +40871,16 @@ window._lvSave = async function() {
   const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
   try {
     await _ensureLvTable();
+    // v6.54: data-URLs aus positionen_json strippen — Airtable Long-Text-Cap ist 100k chars,
+    //   und Base64-Bilder sprengen das schnell (1 Bild ≈ 150 KB). Beim Initial-PATCH/POST
+    //   ersetzen wir data:-URLs durch leere Strings; nach dem Upload überschreiben wir
+    //   die Slots mit den frischen Attachment-URLs und PATCHen das Feld erneut.
+    const positionenForFirstSave = (s.positionen||[]).map(p => ({
+      ...p,
+      bilder: Array.isArray(p.bilder)
+        ? p.bilder.map(b => (typeof b === 'string' && b.startsWith('data:')) ? '' : b)
+        : [],
+    }));
     const fields = {
       firma: firmaSlug,
       titel: s.titel,
@@ -40881,7 +40891,7 @@ window._lvSave = async function() {
       kunde_name: s.kunde_name || '',
       kunde_nummer: s.kunde_nummer || '',
       vorbemerkung: s.vorbemerkung || '',
-      positionen_json: JSON.stringify(s.positionen || []),
+      positionen_json: JSON.stringify(positionenForFirstSave),
     };
     let recId = s.recId;
     if (recId) {
