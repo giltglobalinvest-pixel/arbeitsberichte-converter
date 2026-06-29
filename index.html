@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.62';
+const APP_VERSION = 'v6.63';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22585,8 +22585,11 @@ async function _daBuildAndShowPdf(recId) {
  */
 function _daFirmaBranding(firmaSlug) {
   const slug = String(firmaSlug || '').trim().toLowerCase();
+  // v6.63: Default-Branding pro Firma — Override aus briefpapier_footer_md kommt am Ende,
+  //   funktioniert dadurch sowohl für Aszendio als auch Aufzugshandwerk.
+  let base;
   if (slug === 'aufzug' || slug === 'aufzugshandwerk') {
-    return {
+    base = {
       slug: 'aufzug',
       logoB64: AUFZUG_LOGO_B64,
       logoW: 36, logoH: 7.4,
@@ -22595,58 +22598,57 @@ function _daFirmaBranding(firmaSlug) {
       footerLine: 'Aufzugshandwerk',
       navy: [40, 40, 40],
       accent: [40, 40, 40],
-      // 3-Spalten-Briefpapier-Footer für PDFs
       footerCols: [
         { title:'Aufzugshandwerk',   lines:['Hauptstraße 1','12345 Musterstadt'] },
         { title:'Kontakt',           lines:['info@aufzugshandwerk.de','www.aufzugshandwerk.de'] },
         { title:'Rechtliches',       lines:['HRB 00000','USt-IdNr. DE000000000'] },
       ],
     };
+  } else {
+    base = {
+      slug: 'aszendio',
+      logoB64: LOGO_B64,
+      logoW: 54, logoH: 9,
+      company: 'Aszendio Aufzugservice GmbH',
+      headerLine: 'Aszendio Aufzugservice GmbH  ·  info@aszendio.com  ·  www.aszendio.com',
+      footerLine: 'Aszendio Aufzugservice GmbH',
+      navy: [26, 51, 83],
+      accent: [33, 82, 169],
+      footerCols: [
+        { title:'Aszendio Aufzugservice GmbH',
+          lines:[
+            'Boschstraße 10',
+            '73734 Esslingen am Neckar',
+            'Tel. +49 711 9688 2904',
+          ]},
+        { title:'Kontakt',
+          lines:[
+            'info@aszendio.com',
+            'www.aszendio.com',
+            'Geschäftsführer: Walter Schäfer',
+          ]},
+        { title:'Rechtliches',
+          lines:[
+            'HRB 800526',
+            'Amtsgericht Stuttgart',
+            'USt-IdNr.: folgt',
+          ]},
+      ],
+    };
   }
-  // Default: Aszendio — echte Daten aus aszendio.com/impressum (v4.97).
-  // User kann die Werte in der Firmen-Verwaltung pro Firma überschreiben
-  // (Feld briefpapier_footer_md im Firmen-Record). _daFirmaBranding mergt das beim Aufruf.
-  const baseAszendio = {
-    slug: 'aszendio',
-    logoB64: LOGO_B64,
-    logoW: 54, logoH: 9,
-    company: 'Aszendio Aufzugservice GmbH',
-    headerLine: 'Aszendio Aufzugservice GmbH  ·  info@aszendio.com  ·  www.aszendio.com',
-    footerLine: 'Aszendio Aufzugservice GmbH',
-    navy: [26, 51, 83],
-    accent: [33, 82, 169],
-    footerCols: [
-      { title:'Aszendio Aufzugservice GmbH',
-        lines:[
-          'Boschstraße 10',
-          '73734 Esslingen am Neckar',
-          'Tel. +49 711 9688 2904',
-        ]},
-      { title:'Kontakt',
-        lines:[
-          'info@aszendio.com',
-          'www.aszendio.com',
-          'Geschäftsführer: Walter Schäfer',
-        ]},
-      { title:'Rechtliches',
-        lines:[
-          'HRB 800526',
-          'Amtsgericht Stuttgart',
-          'USt-IdNr.: folgt',
-        ]},
-    ],
-  };
-  // Custom-Daten aus Firmen-Record überschreiben Defaults (Briefpapier-Editor in Firmen-Verwaltung)
+  // Custom-Daten aus Firmen-Record überschreiben Defaults (Briefpapier-Editor in Firmen-Verwaltung).
+  // Gilt jetzt für ALLE Firmen (nicht mehr nur Aszendio).
   const firmaRec = (_firmenCache||[]).find(f => f.fields?.slug === slug);
-  console.log('[Branding] slug='+slug+', firmaRec gefunden?', !!firmaRec, 'briefpapier_footer_md vorhanden?', !!firmaRec?.fields?.briefpapier_footer_md);
   if (firmaRec?.fields?.briefpapier_footer_md) {
     const cols = _parseBriefpapierMd(firmaRec.fields.briefpapier_footer_md);
-    console.log('[Branding] Custom-Footer geparst:', cols.length, 'Spalten →', cols);
-    if (cols.length) baseAszendio.footerCols = cols;
+    if (cols.length) {
+      base.footerCols = cols;
+      console.log('[Branding] '+slug+': Custom-Footer aus briefpapier_footer_md übernommen ('+cols.length+' Spalten)');
+    }
   } else {
-    console.log('[Branding] Verwende hardcoded Default-Footer fuer', slug);
+    console.log('[Branding] '+slug+': verwendet hardcoded Default-Footer — kann in Firmen-Verwaltung → 📝 Briefpapier überschrieben werden');
   }
-  return baseAszendio;
+  return base;
 }
 
 /**
