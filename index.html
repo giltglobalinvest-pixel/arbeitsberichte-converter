@@ -2667,7 +2667,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.47';
+const APP_VERSION = 'v6.48';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9191,47 +9191,30 @@ function closeAnlageDetailModal() {
 }
 
 /**
- * v6.47: Anlage archivieren/wiederherstellen — PATCH /api/anlagen/{id} mit {archived}.
- * Bei 404/405 Fallback auf PUT. Aktualisiert lokalen Cache + Liste.
+ * v6.48: Anlage archivieren — DELETE /api/anlagen/{id}.
+ * Das ERP macht intern Soft-Delete (Anlage bleibt mit archived=true erhalten).
+ * Wiederherstellen ist über die ERP-API derzeit nicht möglich — der User wird darauf hingewiesen.
  */
 async function _anlSetArchived(archived, btn) {
   const a = _anlagenViewSelected;
   if (!a || a.id == null) return toast('Keine Anlage ausgewählt','err');
   const firmaSlug = getCurrentFirmaSlug();
-  const action = archived ? 'archivieren' : 'aus dem Archiv holen';
-  if (!confirm('Anlage „'+(a.anzeigeAdresse||a.name||'?')+'" '+action+'?')) return;
+  if (!archived) {
+    alert('Wiederherstellen über die App ist derzeit nicht möglich — die ERP-API unterstützt das nicht. Bitte direkt im ERP entarchivieren.');
+    return;
+  }
+  if (!confirm('Anlage „'+(a.anzeigeAdresse||a.name||'?')+'" archivieren?\n\nHinweis: Wiederherstellen geht aktuell nur direkt im ERP.')) return;
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
   try {
-    let ok = false;
-    try {
-      await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
-        method: 'PATCH',
-        body: { archived: !!archived },
-      });
-      ok = true;
-    } catch(e1) {
-      // Fallback: PUT mit vollem Objekt (manche ERP-Versionen unterstützen kein PATCH)
-      try {
-        const full = { ...a, archived: !!archived };
-        await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
-          method: 'PUT',
-          body: full,
-        });
-        ok = true;
-      } catch(e2) {
-        throw new Error('PATCH+PUT fehlgeschlagen: '+(e2.message||e1.message));
-      }
-    }
-    if (ok) {
-      // Lokalen Cache aktualisieren
-      a.archived = !!archived;
-      const cached = (_anlagenCache.items||[]).find(x => String(x.id) === String(a.id));
-      if (cached) cached.archived = !!archived;
-      toast('✅ Anlage '+(archived?'archiviert':'wiederhergestellt'),'ok');
-      _renderAnlagenList();
-      closeAnlageDetailModal();
-    }
+    await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), { method:'DELETE' });
+    // Lokalen Cache aktualisieren
+    a.archived = true;
+    const cached = (_anlagenCache.items||[]).find(x => String(x.id) === String(a.id));
+    if (cached) cached.archived = true;
+    toast('✅ Anlage archiviert','ok');
+    _renderAnlagenList();
+    closeAnlageDetailModal();
   } catch(e) {
     console.error('[Anlage-Archive]', e);
     toast('❌ '+(e.message||'Fehler'),'err');
