@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.52';
+const APP_VERSION = 'v6.53';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -39983,6 +39983,8 @@ const LV_TABLE_FIELDS = [
   { name:'fd_ticket_id',           type:'number', options:{ precision:0 } },
   { name:'fd_ticket_url',          type:'singleLineText' },
   { name:'fd_pushed_at',           type:'singleLineText' },
+  // v6.53: Bilder pro Position — werden beim FD-Push als Mail-Anhänge mitgesendet
+  { name:'bilder_pool',            type:'multipleAttachments' },
 ];
 let _lvCache = { firma:null, items:null, loadedAt:0 };
 let _lvTableEnsured = false;
@@ -40111,6 +40113,34 @@ window._lvPushToFreshdesk = async function(recId, btn) {
   try {
     // PDF holen
     const pdfBlob = await (await fetch(pdfAtt.url)).blob();
+    // v6.53: Bilder pro Position als Mail-Anhänge laden — fresh GET damit URLs nicht expired sind
+    let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+    let bildBlobs = [];
+    try {
+      const fresh = await _lvFetchRecordFresh(recId);
+      const freshPos = (() => { try { return JSON.parse(fresh?.fields?.positionen_json||'[]'); } catch(_){ return []; }})();
+      // URL-Refresh aus bilder_pool damit wir die aktuellsten signierten URLs haben
+      _lvRefreshBilderFromPool(freshPos, fresh?.fields?.bilder_pool);
+      // Alle Bild-URLs flach sammeln (mit Position-Hinweis im Filename)
+      const tasks = [];
+      for (let pi = 0; pi < freshPos.length; pi++) {
+        const bilder = freshPos[pi].bilder;
+        if (!Array.isArray(bilder)) continue;
+        for (let bi = 0; bi < bilder.length; bi++) {
+          const u = bilder[bi];
+          if (typeof u !== 'string' || !u || u.startsWith('data:')) continue;
+          tasks.push({ url: u, name: 'Pos'+(pi+1)+'-'+(bi+1)+'.jpg' });
+        }
+      }
+      if (tasks.length) {
+        if (btn) btn.textContent = '⏳ Lade '+tasks.length+' Bild'+(tasks.length===1?'':'er')+'…';
+        const res = await Promise.allSettled(tasks.map(async t => {
+          const b = await (await fetch(t.url)).blob();
+          return { blob: b, name: t.name };
+        }));
+        bildBlobs = res.filter(r => r.status === 'fulfilled').map(r => r.value);
+      }
+    } catch(e) { console.warn('[LV-Push] Bilder-Load fail:', e.message); }
     // Subject + Body
     const lvNum = f.lv_num ? 'LV-'+f.lv_num : 'LV';
     const titel = (f.titel||'').slice(0,80);
@@ -40120,8 +40150,8 @@ window._lvPushToFreshdesk = async function(recId, btn) {
     if (titel)               lines.push('<p>📋 <strong>Titel:</strong> '+escapeHtml(titel)+'</p>');
     if (f.anlage_adresse)    lines.push('<p>📍 <strong>Standort:</strong> '+escapeHtml(String(f.anlage_adresse).replace(/\n/g,', '))+'</p>');
     if (f.anlage_fabriknummer) lines.push('<p>🔧 <strong>Fabriknummer:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</p>');
-    let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
     lines.push('<p>📋 <strong>'+positionen.length+' Position'+(positionen.length===1?'':'en')+'</strong> im LV — Details siehe PDF im Anhang.</p>');
+    if (bildBlobs.length) lines.push('<p>📷 <strong>'+bildBlobs.length+' Foto'+(bildBlobs.length===1?'':'s')+'</strong> im Anhang.</p>');
     if (f.vorbemerkung) lines.push('<hr><p><em>Vorbemerkung:</em></p><p>'+escapeHtml(f.vorbemerkung).replace(/\n/g,'<br>')+'</p>');
     lines.push('<p style="font-size:11px;color:#888">Dieses Ticket wurde automatisch aus der Elevator Servicebox erzeugt — bitte ggf. an Subunternehmer/Bieter weiterleiten.</p>');
     // Type per Firma
@@ -40135,6 +40165,8 @@ window._lvPushToFreshdesk = async function(recId, btn) {
     fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
     if (fdType) fd.append('type', fdType);
     fd.append('attachments[]', pdfBlob, (pdfAtt.filename || lvNum+'.pdf'));
+    // v6.53: Bilder als zusätzliche Anhänge
+    for (const x of bildBlobs) fd.append('attachments[]', x.blob, x.name);
     await erpEnsureSession();
     const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
     const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
@@ -40517,10 +40549,17 @@ window.openLvEditor = async function(ctx) {
   };
   if (ctx.recId) {
     const items = await _lvLoadAll(getCurrentFirmaSlug());
-    const rec = items.find(r => r.id === ctx.recId);
+    let rec = items.find(r => r.id === ctx.recId);
+    // v6.53: Frischen GET damit bilder_pool nicht stale ist (Airtable URLs expirieren ~2h)
+    try {
+      const fresh = await _lvFetchRecordFresh(ctx.recId);
+      if (fresh && fresh.fields) rec = fresh;
+    } catch(e) { console.warn('[LV] fresh fetch fail:', e.message); }
     if (rec) {
       const f = rec.fields || {};
       let pos = []; try { pos = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+      // v6.53: Stale URLs in pos.bilder durch fresh URLs aus bilder_pool ersetzen
+      _lvRefreshBilderFromPool(pos, f.bilder_pool);
       state = {
         recId: rec.id,
         titel: f.titel || '',
@@ -40614,16 +40653,138 @@ function _lvEditorRender() {
 }
 
 function _lvEdRenderPos(p, i) {
+  // v6.53: Bilder pro Position — Thumbnails + Foto-Add-Button + Drag&Drop
+  const bilder = Array.isArray(p.bilder) ? p.bilder : [];
+  const thumbs = bilder.map((src, bi) =>
+    '<div style="position:relative;width:72px;height:54px;border:1px solid var(--bdr);border-radius:5px;overflow:hidden;background:#f9fafb;flex-shrink:0">'+
+      '<img src="'+src+'" onclick="_lvEdViewImage('+i+','+bi+')" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in">'+
+      '<button onclick="_lvEdRemoveImage('+i+','+bi+')" style="position:absolute;top:1px;right:1px;background:rgba(220,38,38,.92);color:#fff;border:none;width:18px;height:18px;border-radius:50%;font-size:11px;cursor:pointer;line-height:1" title="Foto entfernen">×</button>'+
+    '</div>'
+  ).join('');
+  const addBtn = '<button onclick="_lvEdAddImage('+i+')" style="width:72px;height:54px;border:2px dashed var(--bdr);border-radius:5px;background:#f9fafb;cursor:pointer;font-size:10px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;flex-shrink:0" title="Foto hinzufügen"><span style="font-size:16px">📷</span><span>+ Foto</span></button>';
+  const dropHint = bilder.length === 0 ? '<span style="font-size:10px;color:var(--txt3);font-style:italic">↖ klicken oder Fotos ziehen</span>' : '';
+  const gallery =
+    '<div ondragover="_lvEdDragOver(event,this)" ondragleave="_lvEdDragLeave(event,this)" ondragend="_lvEdDragLeave(event,this)" ondrop="_lvEdDrop(event,'+i+',this)"'+
+      ' style="margin-top:6px;padding:4px;border:2px dashed transparent;border-radius:6px;display:flex;gap:5px;flex-wrap:wrap;align-items:center;transition:background .15s,border-color .15s">'+
+      thumbs + addBtn + dropHint +
+    '</div>';
   return '<div style="padding:10px 14px;border-bottom:1px solid var(--bdr);background:'+(i%2?'#FAFBFD':'#fff')+';display:grid;grid-template-columns:30px 1fr 130px 32px;gap:10px;align-items:start">'+
     '<div style="background:#F59E0B;color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
     '<div>'+
       '<input value="'+escapeHtml(p.titel||'')+'" oninput="_lvEdSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;margin-bottom:4px">'+
       '<textarea rows="3" oninput="_lvEdSetPos('+i+',\'beschreibung\',this.value)" placeholder="Technische Beschreibung — 2-3 Sätze" style="width:100%;padding:6px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:11px;font-family:inherit;line-height:1.5;resize:vertical">'+escapeHtml(p.beschreibung||'')+'</textarea>'+
+      gallery+
     '</div>'+
     '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">Preis (€ netto)</label>'+
       '<input type="number" step="0.01" min="0" value="'+(p.preis||'')+'" oninput="_lvEdSetPos('+i+',\'preis\',+this.value||0)" placeholder="leer = Bieter trägt ein" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:12px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>'+
     '<button onclick="_lvEdRemovePos('+i+')" title="Position entfernen" style="background:#fff;border:1px solid #FCA5A5;color:#DC2626;width:28px;height:28px;border-radius:5px;font-size:13px;cursor:pointer">🗑</button>'+
   '</div>';
+}
+
+/* v6.53: LV-Bilder-Helpers — Komprimierung wie bei DA-Bildern, Storage als data-URL bis zum Save */
+async function _lvEdProcessImageFiles(i, fileList) {
+  const files = Array.from(fileList||[]);
+  if (!files.length) return;
+  const m = document.getElementById('lv-editor');
+  if (!m || !m._state || !m._state.positionen[i]) return;
+  if (!Array.isArray(m._state.positionen[i].bilder)) m._state.positionen[i].bilder = [];
+  toast('🖼 Komprimiere '+files.length+' Foto'+(files.length===1?'':'s')+'…','');
+  let added = 0, errs = 0;
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) { errs++; continue; }
+    if (file.size > 15*1024*1024) { errs++; continue; }
+    try {
+      const dataUrl = await _gbuResizeImage(file, 1100, 0.75);
+      m._state.positionen[i].bilder.push(dataUrl);
+      added++;
+    } catch(_) { errs++; }
+  }
+  if (added) _lvEditorRender();
+  if (added && !errs) toast('🖼 '+added+' Foto'+(added===1?'':'s')+' hinzugefügt','ok');
+  else if (added && errs) toast('🖼 '+added+' OK · '+errs+' Fehler','');
+  else toast('❌ Keine Bilder hinzugefügt','err');
+}
+function _lvEdAddImage(i) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = 'image/*'; input.multiple = true;
+  input.onchange = (e) => _lvEdProcessImageFiles(i, e.target.files);
+  input.click();
+}
+function _lvEdRemoveImage(i, bi) {
+  if (!confirm('Foto entfernen?')) return;
+  const m = document.getElementById('lv-editor');
+  if (!m || !m._state || !m._state.positionen[i] || !Array.isArray(m._state.positionen[i].bilder)) return;
+  m._state.positionen[i].bilder.splice(bi, 1);
+  _lvEditorRender();
+}
+function _lvEdViewImage(i, bi) {
+  const m = document.getElementById('lv-editor');
+  const src = m?._state?.positionen?.[i]?.bilder?.[bi];
+  if (!src) return;
+  const lb = document.createElement('div');
+  lb.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:11500;display:flex;align-items:center;justify-content:center;cursor:zoom-out;padding:20px';
+  lb.innerHTML = '<img src="'+src+'" style="max-width:100%;max-height:100%;border-radius:8px;box-shadow:0 10px 40px rgba(0,0,0,.5)">';
+  lb.onclick = () => lb.remove();
+  document.body.appendChild(lb);
+}
+function _lvEdDragOver(ev, el) {
+  ev.preventDefault();
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'copy';
+  if (el) { el.style.background = '#EFF6FF'; el.style.borderColor = '#2152A9'; }
+}
+function _lvEdDragLeave(ev, el) {
+  if (el) { el.style.background = ''; el.style.borderColor = 'transparent'; }
+}
+function _lvEdDrop(ev, i, el) {
+  ev.preventDefault();
+  if (el) { el.style.background = ''; el.style.borderColor = 'transparent'; }
+  const files = ev.dataTransfer?.files;
+  if (files && files.length) _lvEdProcessImageFiles(i, files);
+}
+
+/**
+ * v6.53: Stale Airtable-Attachment-URLs in pos.bilder gegen frische aus bilder_pool ersetzen.
+ *   Filename-Pattern: 'pos{pi+1}-{bi+1}-{ts}-{n}.jpg' → wir parsen pi+bi direkt und
+ *   schreiben fresh-URL ohne URL-Vergleich nach positionen[pi].bilder[bi].
+ *   Bei Re-Upload gewinnt höchster Timestamp.
+ */
+function _lvRefreshBilderFromPool(positionen, bilderPool) {
+  if (!Array.isArray(positionen) || !Array.isArray(bilderPool) || !bilderPool.length) return;
+  const byPb = new Map();
+  for (const a of bilderPool) {
+    if (!a || !a.url || !a.filename) continue;
+    const m = a.filename.match(/^pos(\d+)-(\d+)-(\d+)-/);
+    if (!m) continue;
+    const pi = parseInt(m[1],10) - 1;
+    const bi = parseInt(m[2],10) - 1;
+    const ts = parseInt(m[3],10);
+    if (pi < 0 || bi < 0) continue;
+    const key = pi+'-'+bi;
+    const prev = byPb.get(key);
+    if (!prev || prev.ts < ts) byPb.set(key, { url:a.url, ts });
+  }
+  if (!byPb.size) return;
+  for (let pi = 0; pi < positionen.length; pi++) {
+    const bilder = positionen[pi].bilder;
+    if (!Array.isArray(bilder)) continue;
+    for (let bi = 0; bi < bilder.length; bi++) {
+      const src = bilder[bi];
+      if (typeof src !== 'string' || !src || src.startsWith('data:')) continue;
+      const hit = byPb.get(pi+'-'+bi);
+      if (hit && hit.url !== src) bilder[bi] = hit.url;
+    }
+  }
+}
+
+async function _lvFetchRecordFresh(recId) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  if (!baseId || !key) return null;
+  const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse/'+encodeURIComponent(recId), {
+    headers:{ 'Authorization':'Bearer '+key }
+  });
+  if (!r.ok) throw new Error('LV GET '+r.status);
+  return await r.json();
 }
 
 window._lvEdAnlageSearch = async function(query) {
@@ -40739,6 +40900,66 @@ window._lvSave = async function() {
       });
       const d = await r.json(); if (d.error) throw new Error(d.error.message||'Fehler');
       recId = d.id; s.recId = recId; s._lv_num = fields.lv_num;
+    }
+    // v6.53: Bilder als Attachments hochladen — data-URLs in pos.bilder finden, zum
+    //   bilder_pool hochladen und fresh URL ins pos-Objekt zurückschreiben, dann erneut
+    //   positionen_json PATCHen damit die persistierten URLs synchron sind.
+    const uploadTasks = [];
+    for (let pi = 0; pi < s.positionen.length; pi++) {
+      const bilder = s.positionen[pi].bilder;
+      if (!Array.isArray(bilder)) continue;
+      for (let bi = 0; bi < bilder.length; bi++) {
+        const src = bilder[bi];
+        if (typeof src === 'string' && src.startsWith('data:')) {
+          uploadTasks.push({ pi, bi, dataUrl: src });
+        }
+      }
+    }
+    if (uploadTasks.length) {
+      if (btn) btn.textContent = '⏳ Lade '+uploadTasks.length+' Bild'+(uploadTasks.length===1?'':'er')+' hoch (0/'+uploadTasks.length+')…';
+      try { await ensureField('App_Leistungsverzeichnisse', 'bilder_pool', 'multipleAttachments'); } catch(_){}
+      let done = 0;
+      const CONC = 4;
+      for (let i = 0; i < uploadTasks.length; i += CONC) {
+        const batch = uploadTasks.slice(i, i + CONC);
+        const results = await Promise.allSettled(batch.map(async (t, k) => {
+          const blob = await (await fetch(t.dataUrl)).blob();
+          const filename = 'pos'+(t.pi+1)+'-'+(t.bi+1)+'-'+Date.now()+'-'+(i+k)+'.jpg';
+          const att = await atBlobUpload(recId, 'bilder_pool', blob, filename, blob.type || 'image/jpeg');
+          // URL per Filename aus Response holen
+          let found = null;
+          if (att && att.fields) {
+            for (const fname of Object.keys(att.fields)) {
+              const val = att.fields[fname];
+              if (Array.isArray(val)) {
+                const m = val.find(a => a && a.filename === filename && a.url);
+                if (m) { found = m; break; }
+              }
+            }
+          }
+          if (!found && att?.fields?.bilder_pool && Array.isArray(att.fields.bilder_pool) && att.fields.bilder_pool.length) {
+            found = att.fields.bilder_pool[att.fields.bilder_pool.length - 1];
+          }
+          if (!found || !found.url) throw new Error('Upload OK, aber URL nicht im Response');
+          return { task: t, url: found.url };
+        }));
+        for (const r of results) {
+          if (r.status === 'fulfilled') {
+            s.positionen[r.value.task.pi].bilder[r.value.task.bi] = r.value.url;
+          } else {
+            console.warn('[LV-Save] Bild-Upload fehlgeschlagen:', r.reason?.message || r.reason);
+          }
+          done++;
+        }
+        if (btn) btn.textContent = '⏳ Lade Bilder hoch ('+done+'/'+uploadTasks.length+')…';
+      }
+      // Update positionen_json mit den fresh URLs
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Leistungsverzeichnisse/'+recId, {
+          method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ positionen_json: JSON.stringify(s.positionen) }}),
+        });
+      } catch(e) { console.warn('[LV-Save] positionen_json re-patch:', e.message); }
     }
     // PDF erzeugen + anhängen
     if (btn) btn.textContent = '⏳ Erzeuge PDF…';
