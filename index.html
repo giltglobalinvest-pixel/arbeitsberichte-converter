@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.56';
+const APP_VERSION = 'v6.57';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24456,11 +24456,11 @@ async function _extractAngebotFromDatenaufnahme(daRec, cps, typ, onProgress) {
     input_schema: {
       type:'object', required:['anschreiben'],
       properties: {
-        anschreiben:  { type:'string', description:'Formelles Anschreiben, 2-4 Sätze, mit Bezug zur Datenaufnahme. KEIN JSON, KEINE Tags, KEINE Liste der Positionen — nur Fließtext! Bsp: „Im Anschluss an unsere Bestandsaufnahme vom XYZ unterbreiten wir Ihnen das folgende Angebot zur Behebung der festgestellten Mängel. Die ausführliche Datenaufnahme mit Bilddokumentation finden Sie im Anhang."' },
-        kond_lieferzeit: { type:'string' },
-        kond_preisbasis: { type:'string' },
-        kond_zahlung:    { type:'string' },
-        kond_hinweise:   { type:'string' },
+        anschreiben:  { type:'string', description:'KURZES formelles Anschreiben, 2-3 Sätze, NUR Bezug zur konkreten Datenaufnahme. KEIN JSON, KEINE Tags, KEINE Liste der Positionen, KEINE Spekulationen, KEINE Erwähnung von Konkurrenz/Alternativangeboten, KEINE technischen Details die nicht in der DA stehen — nur sauberer Fließtext. Bsp: „Im Anschluss an unsere Bestandsaufnahme vom XYZ unterbreiten wir Ihnen das folgende Angebot zur Behebung der festgestellten Mängel. Die ausführliche Datenaufnahme mit Bilddokumentation finden Sie im Anhang."' },
+        kond_lieferzeit: { type:'string', description:'NUR ausfüllen wenn aus der Datenaufnahme explizit eine Lieferzeit hervorgeht. Sonst LEER (Default-Hinweis kommt aus den Firma-Defaults).' },
+        kond_preisbasis: { type:'string', description:'NUR ausfüllen wenn explizit in der DA erwähnt. Sonst LEER.' },
+        kond_zahlung:    { type:'string', description:'NUR ausfüllen wenn explizit in der DA erwähnt. Sonst LEER.' },
+        kond_hinweise:   { type:'string', description:'MUSS LEER bleiben, ES SEI DENN der User hat in der Auftragsbeschreibung oder den CP-Texten EXPLIZIT einen Hinweis genannt (z.B. „Mehrkosten möglich falls Y"). NIEMALS halluzinieren! VERBOTEN: Erwähnung von Konkurrenzangeboten, Alternativangeboten, fehlenden technischen Daten, Klärungsbedarf vor Bestellung, oder anderen frei erfundenen Details.' },
       },
     },
   };
@@ -24895,7 +24895,7 @@ async function _extractAngebotFromPrompt(promptText, typ) {
         kunde_name:          { type:'string', description:'Falls vom User erwähnt — Empfänger/Kunde-Firmenname' },
         kunde_adresse:       { type:'string', description:'Falls vom User erwähnt — Empfänger-Adresse' },
         kontakt_name:        { type:'string', description:'Falls vom User erwähnt — Name des Ansprechpartners (ohne Anrede)' },
-        anschreiben:         { type:'string', description:'Professionelles formelles Anschreiben mit Anrede ("Sehr geehrte Damen und Herren," oder Name falls bekannt), Bezug zum Anliegen, Verweis auf die folgenden Positionen, Schlussformel. KEINE Unterschrift/Grüße — die kommen aus dem Briefpapier.' },
+        anschreiben:         { type:'string', description:'KURZES professionelles Anschreiben (2-3 Sätze): Anrede ("Sehr geehrte Damen und Herren," oder Name falls bekannt), Bezug zum konkreten Anliegen des Users, Verweis auf die folgenden Positionen. KEINE Unterschrift/Grüße (kommen aus dem Briefpapier). KEINE Spekulationen, KEINE Erwähnung von Konkurrenz/Alternativangeboten, KEINE technischen Details die nicht vom User genannt wurden.' },
         positionen: {
           type: 'array',
           description: 'Pro klar abgrenzbarer Leistung eine eigene Position.',
@@ -24918,7 +24918,7 @@ async function _extractAngebotFromPrompt(promptText, typ) {
         kond_lieferzeit:     { type:'string', description:'Realistische Lieferzeit für die genannten Leistungen (z.B. "Werktägl. Verfügbarkeit nach Auftragsvergabe ca. 6-8 Wochen")' },
         kond_preisbasis:     { type:'string', description:'Standard: "Festpreis, gültig 60 Tage ab Angebotsdatum"' },
         kond_zahlung:        { type:'string', description:'Bei Reparatur: 14 Tage netto. Bei Modernisierung: 30% bei Auftrag / 60% nach Anlieferung / 10% nach Abnahme.' },
-        kond_hinweise:       { type:'string', description:'Optional — Hinweise zu Mehrkosten, Bauseits-Leistungen etc.' },
+        kond_hinweise:       { type:'string', description:'MUSS LEER bleiben, ES SEI DENN der User hat EXPLIZIT einen Hinweis genannt (z.B. „Anfahrt nach Aufwand", konkrete Bauseits-Leistung). NIEMALS halluzinieren! VERBOTEN: Erwähnung von Konkurrenzangeboten, Alternativangeboten, fehlenden technischen Daten, Klärungsbedarf vor Bestellung, oder anderen frei erfundenen Details. Im Zweifel LEER lassen.' },
       },
     },
   };
@@ -25470,7 +25470,7 @@ async function _extractKoneAngebot(file, anbieterHint, opts) {
         equipmentnummer:     { type:'string', description:'Equipment-/Anlagennummer beim Anbieter' },
         seriennummer:        { type:'string', description:'Seriennummer der Anlage (= Fabriknummer im ERP)' },
         anlage_adresse:      { type:'string', description:'Standort-Adresse der Anlage' },
-        anschreiben:         { type:'string', description:'Anrede + Einleitungstext bis zur Positionsübersicht. Original-Wortlaut beibehalten.' },
+        anschreiben:         { type:'string', description:'Anrede + Einleitungstext bis zur Positionsübersicht — Original-Wortlaut aus dem PDF EXAKT übernehmen. NICHTS erfinden, NICHTS ergänzen, NICHTS umformulieren. Wenn das PDF keinen Anschreiben-Text hat: LEER lassen.' },
         positionen: {
           type: 'array',
           description: 'Alle Angebotspositionen.',
@@ -25492,7 +25492,7 @@ async function _extractKoneAngebot(file, anbieterHint, opts) {
         kond_lieferzeit:     { type:'string', description:'Lieferzeit-Text aus dem Angebot' },
         kond_preisbasis:     { type:'string', description:'Preisbasis (Festpreis, Gültigkeit etc.)' },
         kond_zahlung:        { type:'string', description:'Zahlungsbedingungen' },
-        kond_hinweise:       { type:'string', description:'Hinweise (Mehrkosten, bauseits, etc.) — wie im Original' },
+        kond_hinweise:       { type:'string', description:'Hinweise NUR aus dem Original-PDF EXAKT übernehmen (z.B. „Mehrkosten möglich falls X", konkrete Bauseits-Leistung). NICHTS halluzinieren! Wenn im Original keine Hinweise stehen: LEER lassen. VERBOTEN: Erwähnung von Konkurrenzangeboten/Alternativangeboten/fehlenden Daten die nicht WÖRTLICH im PDF stehen.' },
       },
     },
   };
