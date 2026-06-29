@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.65';
+const APP_VERSION = 'v6.66';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24191,18 +24191,28 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
     .filter(Boolean)
     .join('\n---\n')
     .slice(0, 20000);
-  // Anhänge als base64 — max 10, max 5MB pro Datei (Claude-Limit)
+  // v6.66: Größeres Limit (Claude PDF-Support: 32MB total) + besseres Logging
+  //   damit silent-fails sichtbar werden. Vorher: 5MB pro Datei war zu konservativ
+  //   (typische Installationsberichte sind 1-15 MB), Fehler wurden geschluckt.
   const contentBlocks = [];
-  const atts = (ticketFull.attachments||[]).slice(0, 10);
-  let imgCount = 0, pdfCount = 0;
+  const atts = (ticketFull.attachments||[]).slice(0, 20);
+  let imgCount = 0, pdfCount = 0, skippedCount = 0, failedCount = 0;
+  const diag = []; // detailliertes Log pro Anhang
   for (let i = 0; i < atts.length; i++) {
     const a = atts[i];
-    if (progress) progress('📎 Lade Anhang '+(i+1)+'/'+atts.length+' ('+(a.name||'?')+')…');
-    if (a.size && a.size > 5*1024*1024) { console.log('[FD-Analyse] skip '+a.name+' ('+Math.round(a.size/1024)+' KB > 5MB)'); continue; }
+    const name = a.name || a.filename || ('Anhang-'+(i+1));
+    const sizeMB = (a.size||0)/(1024*1024);
+    if (progress) progress('📎 Lade Anhang '+(i+1)+'/'+atts.length+': '+name+' ('+sizeMB.toFixed(1)+' MB)…');
+    if (a.size && sizeMB > 25) {
+      diag.push('⏭ '+name+' ('+sizeMB.toFixed(1)+' MB > 25 MB)');
+      skippedCount++; continue;
+    }
     try {
       const url = a.attachment_url || a.url;
-      if (!url) continue;
-      const blob = await (await fetch(url)).blob();
+      if (!url) { diag.push('⚠ '+name+' (keine URL)'); failedCount++; continue; }
+      const resp = await fetch(url);
+      if (!resp.ok) { diag.push('⚠ '+name+' (fetch '+resp.status+')'); failedCount++; continue; }
+      const blob = await resp.blob();
       const b64 = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => res(String(r.result).split(',')[1]);
@@ -24210,15 +24220,30 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
         r.readAsDataURL(blob);
       });
       const mime = a.content_type || blob.type || '';
-      if (mime.startsWith('image/')) {
-        contentBlocks.push({ type:'image', source:{ type:'base64', media_type: mime, data: b64 }});
+      const lname = name.toLowerCase();
+      const isImage = mime.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/i.test(lname);
+      const isPdf   = mime === 'application/pdf' || /\.pdf$/i.test(lname);
+      if (isImage) {
+        const mt = mime.startsWith('image/') ? mime : (/\.png$/i.test(lname)?'image/png':'image/jpeg');
+        contentBlocks.push({ type:'image', source:{ type:'base64', media_type: mt, data: b64 }});
         imgCount++;
-      } else if (mime === 'application/pdf') {
+        diag.push('🖼 '+name+' ('+sizeMB.toFixed(1)+' MB)');
+      } else if (isPdf) {
         contentBlocks.push({ type:'document', source:{ type:'base64', media_type:'application/pdf', data: b64 }});
         pdfCount++;
+        diag.push('📄 '+name+' ('+sizeMB.toFixed(1)+' MB)');
+      } else {
+        diag.push('⏭ '+name+' (Typ '+(mime||'?')+' nicht unterstützt)');
+        skippedCount++;
       }
-    } catch(e) { console.warn('[FD-Analyse] Attachment-Load fail:', a.name, e.message); }
+    } catch(e) {
+      console.warn('[FD-Analyse] Attachment-Load fail:', name, e.message);
+      diag.push('❌ '+name+' (Fehler: '+(e.message||'?').slice(0,80)+')');
+      failedCount++;
+    }
   }
+  console.log('[FD-Analyse] Anhang-Diagnose:\n'+diag.join('\n'));
+  if (progress) progress('📎 '+imgCount+' Bilder + '+pdfCount+' PDFs an KI · '+failedCount+' Fehler · '+skippedCount+' übersprungen');
   // Text-Block am Ende
   contentBlocks.push({
     type:'text',
@@ -24286,7 +24311,7 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
   const data = await resp.json();
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block || !block.input) throw new Error('KI lieferte kein strukturiertes Ergebnis');
-  return { ...block.input, _attCounts: { images: imgCount, pdfs: pdfCount } };
+  return { ...block.input, _attCounts: { images: imgCount, pdfs: pdfCount, skipped: skippedCount, failed: failedCount, total: atts.length, diag } };
 }
 
 async function _fdMatchTicketData(analysis, firmaSlug) {
@@ -25204,9 +25229,24 @@ function _angWizardFdRenderResult() {
     : '<span style="background:#F59E0B;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">⚠ nicht im ERP — muss neu angelegt werden</span>';
   const posCount = Array.isArray(analysis.vorgeschlagene_positionen) ? analysis.vorgeschlagene_positionen.length : 0;
   const canContinue = !!match.anlage && !!match.kunde;
+  // v6.66: Anhang-Diagnose-Block (klappbar) — zeigt was an die KI ging
+  const ac = analysis._attCounts || {};
+  const totalSent = (ac.images||0) + (ac.pdfs||0);
+  const attBadge = (ac.total > 0)
+    ? (totalSent > 0
+        ? '<span style="background:#10B981;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">'+(ac.images||0)+' Bilder + '+(ac.pdfs||0)+' PDFs an KI</span>'
+        : '<span style="background:#DC2626;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">⚠ 0 Anhänge an KI ('+(ac.failed||0)+' Fehler · '+(ac.skipped||0)+' übersprungen)</span>')
+    : '<span style="background:#9CA3AF;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">keine Anhänge am Ticket</span>';
+  const diagHtml = (Array.isArray(ac.diag) && ac.diag.length)
+    ? '<details style="margin-top:8px;font-size:11px"><summary style="cursor:pointer;color:var(--txt2);font-weight:600">📎 Anhang-Diagnose ('+ac.total+' gesamt)</summary><div style="margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.5;background:#fff;border:1px solid var(--bdr);border-radius:4px;padding:6px 8px;white-space:pre-wrap">'+escapeHtml(ac.diag.join('\n'))+'</div></details>'
+    : '';
   result.innerHTML =
     '<div style="background:#fff;border:1px solid var(--bdr);border-radius:10px;padding:14px 16px">'+
-      '<div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px">🔍 Analyse-Ergebnis</div>'+
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;flex-wrap:wrap">'+
+        '<div style="font-size:13px;font-weight:700;color:var(--navy)">🔍 Analyse-Ergebnis</div>'+
+        attBadge+
+      '</div>'+
+      diagHtml+
       // Block 1: Match-Status
       '<div style="background:#F9FAFB;border-radius:6px;padding:10px 12px;margin-bottom:10px;display:grid;gap:8px">'+
         '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><span style="font-size:12px;font-weight:600;color:var(--txt2)">🛗 Anlage (Fabrik-Nr. '+escapeHtml(analysis.fabriknummer||'?')+')</span>'+anlageStatus+'</div>'+
