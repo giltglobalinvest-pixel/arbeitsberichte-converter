@@ -2347,7 +2347,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="auf-search-bar">
     <div class="auf-search-wrap">
       <span class="auf-search-ico">🔍</span>
-      <input type="text" class="auf-search-inp" id="auf-search" placeholder="Suchen nach Auftragsnummer, Standort, Fabrik-Nr, Kunde, Kontakt, Leistung … (Filter werden ignoriert)" oninput="renderAuftraegeList()">
+      <input type="text" class="auf-search-inp" id="auf-search" placeholder="Suchen nach Auftragsnummer, Standort, Fabrik-Nr, Kunde, Kontakt, Leistung … (innerhalb des aktiven Tabs)" oninput="renderAuftraegeList()">
     </div>
     <select id="auf-typ-filter" onchange="renderAuftraegeList()" title="Nach Angebots-Typ filtern (aus dem ERP-Angebot)" style="padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt);max-width:200px">
       <option value="">Alle Typen</option>
@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.51';
+const APP_VERSION = 'v6.52';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -6717,46 +6717,42 @@ function renderAuftraegeList() {
 
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
 
+  // v6.52: Suche respektiert den aktiven Tab + alle anderen Filter (User-Erwartung).
+  //   Vorher wurden Tab/Typ/Hide/Wartung-Filter bei aktiver Suche aufgeweicht —
+  //   das führte dazu, dass im "Offen"-Tab abgerechnete Aufträge auftauchten.
+  //   Falls 0 Treffer im aktuellen Tab: Cross-Tab-Hinweis am Ende.
   let filtered;
-  // ── Bei aktiver Suche werden Tab/Typ/Hide/Wartung-Filter aufgeweicht,
-  //    damit der gesuchte Auftrag IMMER gefunden wird, egal wo er steckt. ──
-  if (search) {
-    filtered = _auftragCache.slice();  // alles, auch hidden + auch abgerechnet
-  } else if (_auftragTab === 'all') {
-    // Alle außer abgerechnet
+  if (_auftragTab === 'all') {
     filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
     filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
   }
-  // Angebots-Typ-Filter + Wartung-Hide nur ohne Suche anwenden
-  if (!search) {
-    if (typFilter) {
-      if (typFilter === '__none__') {
-        filtered = filtered.filter(r => !r.fields.angebot_typ);
-      } else {
-        filtered = filtered.filter(r => String(r.fields.angebot_typ||'') === typFilter);
-      }
+  if (typFilter) {
+    if (typFilter === '__none__') {
+      filtered = filtered.filter(r => !r.fields.angebot_typ);
+    } else {
+      filtered = filtered.filter(r => String(r.fields.angebot_typ||'') === typFilter);
     }
-    const hideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
-    if (hideWartung) {
-      filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
-    }
-    // v5.41: Techniker-Filter
-    if (techFilter) {
-      if (techFilter === '__none__') {
-        filtered = filtered.filter(r => {
-          const ks = r.fields.techniker_keys;
-          if (!ks) return true;
-          try { return !(JSON.parse(ks)||[]).length; } catch(_) { return !String(ks).trim(); }
-        });
-      } else {
-        filtered = filtered.filter(r => {
-          try {
-            const keys = JSON.parse(r.fields.techniker_keys || '[]');
-            return keys.includes(techFilter);
-          } catch(_) { return false; }
-        });
-      }
+  }
+  const hideWartung = !!document.getElementById('auf-hide-wartung')?.checked;
+  if (hideWartung) {
+    filtered = filtered.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')));
+  }
+  // v5.41: Techniker-Filter
+  if (techFilter) {
+    if (techFilter === '__none__') {
+      filtered = filtered.filter(r => {
+        const ks = r.fields.techniker_keys;
+        if (!ks) return true;
+        try { return !(JSON.parse(ks)||[]).length; } catch(_) { return !String(ks).trim(); }
+      });
+    } else {
+      filtered = filtered.filter(r => {
+        try {
+          const keys = JSON.parse(r.fields.techniker_keys || '[]');
+          return keys.includes(techFilter);
+        } catch(_) { return false; }
+      });
     }
   }
   // Sortierung explizit anwenden (filtered erbt vom Cache, daher konsistent neu sortieren)
@@ -6805,16 +6801,42 @@ function renderAuftraegeList() {
     });
   }
 
+  // v6.52: Cross-Tab-Hinweis bauen — wieviele Treffer hätten andere Tabs?
+  let crossTabHits = 0;
+  if (search) {
+    const tokens = search.split(/\s+/).filter(Boolean);
+    crossTabHits = _auftragCache.filter(r => {
+      const f = r.fields;
+      const hay = [
+        String(f.auftrag_num||''), String(f.ext_vorgangsnummer||''), String(f.ext_id||''),
+        f.standort||'', f.fabriknummer||'', f.kontakt||'', f.kontakt_name||'', f.kontakt_telefon||'',
+        f.kunde_firmenname||'', f.leistungsbeschreibung||'', f.erlaeuterungen||'', f.notizen||'',
+        f.status||'', f.angebot_typ||'', f.techniker_namen||'', f.tmpl||'', f.priority||'',
+      ].join(' ').toLowerCase();
+      return tokens.every(t => hay.includes(t));
+    }).length;
+  }
+
   if (filtered.length === 0) {
-    list.innerHTML = '<div class="auf-empty">'+(search?'Keine Treffer für "'+search.replace(/</g,'&lt;')+'".':'Keine Aufträge in dieser Ansicht.')+'</div>';
+    let msg;
+    if (search) {
+      msg = 'Keine Treffer für „'+search.replace(/</g,'&lt;')+'" im Tab „'+_auftragTab+'".';
+      if (crossTabHits > 0) {
+        msg += '<br><br>💡 In anderen Tabs wären <strong>'+crossTabHits+' Treffer</strong> verfügbar — wechsle auf <strong>„Alle"</strong> oder <strong>„Abgerechnet"</strong>.';
+      }
+    } else {
+      msg = 'Keine Aufträge in dieser Ansicht.';
+    }
+    list.innerHTML = '<div class="auf-empty">'+msg+'</div>';
     return;
   }
-  // Bei aktiver Suche: Banner zeigen dass Filter aufgeweicht wurden + Treffer-Zahl
+  // Bei aktiver Suche: Banner mit Treffer-Zahl + Cross-Tab-Hinweis falls relevant
   if (search) {
-    const tabHint = _auftragTab === 'all' ? '' : ' (Tab "'+_auftragTab+'" wurde für die Suche ignoriert)';
+    const otherTabs = Math.max(0, crossTabHits - filtered.length);
+    const extra = otherTabs > 0 ? ' · <span style="color:var(--txt2)">'+otherTabs+' weitere in anderen Tabs</span>' : '';
     list.innerHTML =
       '<div style="background:#EFF6FF;border:1px solid #93C5FD;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12px;color:#1E3A8A">'+
-        '🔍 <strong>'+filtered.length+' Treffer</strong> für <code style="background:#fff;padding:1px 5px;border-radius:3px">'+search.replace(/</g,'&lt;')+'</code> in <strong>allen</strong> Aufträgen'+tabHint+
+        '🔍 <strong>'+filtered.length+' Treffer</strong> für <code style="background:#fff;padding:1px 5px;border-radius:3px">'+search.replace(/</g,'&lt;')+'</code> im Tab „'+_auftragTab+'"'+extra+
       '</div>'+
       filtered.map(_auftragCardHtml).join('');
   } else {
