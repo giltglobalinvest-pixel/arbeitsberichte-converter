@@ -2034,6 +2034,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <h2>📄 Angebote <span id="angebote-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
     <button class="btn" onclick="renderAngeboteView({force:true})">↻ Neu laden</button>
     <button class="btn" onclick="openAngLernModal()" title="KI-Lern-Beispiele verwalten — die KI nutzt aktive Beispiele beim Generieren neuer Angebote als Stilvorbild">📚 KI-Lern-Beispiele</button>
+    <button class="btn" id="angebote-anhang-vorl-btn" onclick="openAngVorlagenManager()" title="Anhang-Vorlagen verwalten — wiederverwendbare PDFs (Datenblätter, AGB etc.) die beim Angebot-Versand mitgeschickt werden" style="display:none">📎 Anhang-Vorlagen</button>
     <button class="btn prim" id="angebote-new-btn" onclick="openAngebotWizard()">+ Neues Angebot</button>
   </div>
   <div class="firma-body" id="angebote-list" style="padding:20px"></div>
@@ -2667,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.48';
+const APP_VERSION = 'v6.49';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23735,6 +23736,9 @@ async function renderAngeboteView(opts) {
   if (!list) return;
   const newBtn = document.getElementById('angebote-new-btn');
   if (newBtn) newBtn.style.display = hasPermission('tool_angebote') ? '' : 'none';
+  // v6.49: Anhang-Vorlagen-Button nur für Admins
+  const vorlBtn = document.getElementById('angebote-anhang-vorl-btn');
+  if (vorlBtn) vorlBtn.style.display = isAdmin() ? '' : 'none';
   const firmaSlug = getCurrentFirmaSlug();
   const fresh = !opts.force && _angeboteCache.firma === firmaSlug && _angeboteCache.items && (Date.now() - _angeboteCache.loadedAt) < 60_000;
   if (!fresh) {
@@ -25648,6 +25652,8 @@ async function openAngebotEditor(ctx) {
         equipmentnummer:    f.equipmentnummer || '',
         seriennummer:       f.seriennummer || '',
         anlage_adresse:     f.anlage_adresse || '',
+        // v6.49: Gespeicherte Anhang-Vorlagen rekonstruieren
+        anhang_vorlage_ids: (() => { try { return JSON.parse(f.anhang_vorlage_ids||'[]'); } catch(_){ return []; }})(),
       },
       typ: f.angebot_typ || 'sonstiges',
       anbieter: f.anbieter || '',
@@ -25745,6 +25751,8 @@ async function openAngebotEditor(ctx) {
     // Im Edit-Mode aus dem Record rekonstruieren
     _daId:    ctx.editMode ? ((_angeboteCache.items||[]).find(r=>r.id===ctx.recId)?.fields?.datenaufnahme_id || '') : '',
     _daNum:   ctx.editMode ? +((_angeboteCache.items||[]).find(r=>r.id===ctx.recId)?.fields?.datenaufnahme_da_num || 0) : 0,
+    // v6.49: Anhang-Vorlagen — Multi-Select pro Angebot, IDs aus App_Angebot_Anhang_Vorlagen
+    anhang_vorlage_ids: Array.isArray(ctx.extracted?.anhang_vorlage_ids) ? ctx.extracted.anhang_vorlage_ids.slice() : [],
   };
   const m = document.createElement('div');
   m.id = 'ang-editor';
@@ -26060,7 +26068,11 @@ function _angEditorRender() {
         '<textarea id="ang-fld-kond_zahlung" rows="2" oninput="_angEditorSet(\'kond_zahlung\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_zahlung)+'</textarea></div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Hinweise</label>'+
         '<textarea id="ang-fld-kond_hinweise" rows="2" oninput="_angEditorSet(\'kond_hinweise\',this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:#222;background:#fff;resize:vertical">'+escapeHtml(E.kond_hinweise)+'</textarea></div>'+
-    '</div>';
+    '</div>'+
+    // v6.49: Zusätzliche Anhang-Vorlagen (Multi-Select)
+    '<div id="ang-anhang-section" style="margin-bottom:14px"></div>';
+  // Vorlagen async laden + Section rendern (ändert State des Modals)
+  _angRenderAnhangSection().catch(e => console.warn('[Anhang-Picker] render:', e.message));
   // Wenn der Picker gerendert wurde, dessen Trefferliste initial befüllen
   if (!E.anlage_id) _angRenderAnlagePickerList();
   // Focus/Cursor wiederherstellen — Re-Render würde sonst aus dem aktiven Feld rauswerfen
@@ -26475,6 +26487,335 @@ function _angFindPreviousKundeAdresse(kundeNummer, excludeRecId, anlageAdresse) 
     }
   }
   return '';
+}
+
+/* ════════════════════════════════════════════════════════════
+   v6.49: Anhang-Vorlagen-Picker im Angebot-Editor
+   ──────────────────────────────────────────────────────────── */
+async function _angRenderAnhangSection() {
+  const sec = document.getElementById('ang-anhang-section');
+  const m   = document.getElementById('ang-editor');
+  if (!sec || !m || !m._state) return;
+  const E = m._state;
+  const firmaSlug = getCurrentFirmaSlug();
+  let vorlagen = [];
+  try { vorlagen = await _loadAngVorlagen(firmaSlug); } catch(_) {}
+  const picked = (E.anhang_vorlage_ids||[])
+    .map(id => vorlagen.find(v => v.id === id))
+    .filter(Boolean);
+  const available = vorlagen.filter(v => !(E.anhang_vorlage_ids||[]).includes(v.id));
+  const pickedHtml = picked.length
+    ? picked.map(v => {
+        const f = v.fields || {};
+        const pdfs = Array.isArray(f.pdfs) ? f.pdfs : [];
+        const pdfHtml = pdfs.length
+          ? pdfs.map(p => '<a href="'+escapeHtml(p.url||'#')+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#0369A1;text-decoration:none;background:#F0F9FF;border:1px solid #BAE6FD;padding:3px 8px;border-radius:4px;margin-right:6px;margin-top:4px">📄 '+escapeHtml(p.filename||'PDF')+' ('+Math.round((p.size||0)/1024)+' KB)</a>').join('')
+          : '<span style="font-size:11px;color:var(--err)">⚠ keine PDFs in dieser Vorlage</span>';
+        return '<div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:10px 12px;margin-top:6px">'+
+            '<div style="display:flex;align-items:center;gap:8px;justify-content:space-between">'+
+              '<div style="font-weight:700;color:#075985;font-size:13px">📎 '+escapeHtml(f.name||'(ohne Name)')+'</div>'+
+              '<button type="button" class="btn" onclick="_angRemoveAnhangVorlage(\''+escapeHtml(v.id)+'\')" style="font-size:11px;padding:3px 9px;color:var(--err);border-color:rgba(220,38,38,.35)" title="Entfernen">× Entfernen</button>'+
+            '</div>'+
+            (f.beschreibung ? '<div style="font-size:11px;color:var(--txt2);margin-top:3px">'+escapeHtml(f.beschreibung)+'</div>' : '')+
+            '<div>'+pdfHtml+'</div>'+
+          '</div>';
+      }).join('')
+    : '<div style="font-size:11px;color:var(--txt3);font-style:italic;padding:6px 0">— noch keine Anhang-Vorlage gewählt —</div>';
+  const dropdown = available.length
+    ? '<div style="display:flex;gap:6px;align-items:center;margin-top:10px;flex-wrap:wrap">'+
+        '<select id="ang-anhang-add" style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff">'+
+          '<option value="">— Vorlage auswählen…</option>'+
+          available.map(v => '<option value="'+escapeHtml(v.id)+'">'+escapeHtml(v.fields?.name||'(ohne Name)')+(Array.isArray(v.fields?.pdfs)?' · '+v.fields.pdfs.length+' PDF'+(v.fields.pdfs.length===1?'':'s'):'')+'</option>').join('')+
+        '</select>'+
+        '<button type="button" class="btn prim" onclick="_angAddAnhangVorlage()" style="font-size:12px;padding:8px 14px;white-space:nowrap">+ Hinzufügen</button>'+
+      '</div>'
+    : (vorlagen.length === 0
+        ? '<div style="font-size:11px;color:var(--txt3);font-style:italic;margin-top:8px">Noch keine Anhang-Vorlagen für diese Firma angelegt. Admin: Vorlagen unter Operativ → „Anhang-Vorlagen" verwalten.</div>'
+        : '<div style="font-size:11px;color:var(--txt3);font-style:italic;margin-top:8px">Alle verfügbaren Vorlagen sind bereits gewählt.</div>');
+  sec.innerHTML =
+    '<div style="background:#FFF;border:1px solid var(--bdr);border-radius:10px;padding:14px 16px">'+
+      '<div style="font-size:12px;font-weight:700;color:var(--navy);margin-bottom:8px;text-transform:uppercase;letter-spacing:.4px">📎 Zusätzliche Anhänge <span style="font-weight:500;color:var(--txt3);text-transform:none;letter-spacing:0">(werden beim Senden mitgeschickt)</span></div>'+
+      pickedHtml+
+      dropdown+
+    '</div>';
+}
+function _angAddAnhangVorlage() {
+  const sel = document.getElementById('ang-anhang-add');
+  const m = document.getElementById('ang-editor');
+  if (!sel || !sel.value || !m || !m._state) return;
+  if (!Array.isArray(m._state.anhang_vorlage_ids)) m._state.anhang_vorlage_ids = [];
+  if (!m._state.anhang_vorlage_ids.includes(sel.value)) m._state.anhang_vorlage_ids.push(sel.value);
+  _angRenderAnhangSection();
+}
+function _angRemoveAnhangVorlage(vid) {
+  const m = document.getElementById('ang-editor');
+  if (!m || !m._state || !Array.isArray(m._state.anhang_vorlage_ids)) return;
+  m._state.anhang_vorlage_ids = m._state.anhang_vorlage_ids.filter(x => x !== vid);
+  _angRenderAnhangSection();
+}
+
+/* ════════════════════════════════════════════════════════════
+   v6.49: Anhang-Vorlagen-Verwaltung (Admin)
+   Modal-basierte Liste + Editor zum CRUD der wiederverwendbaren PDFs.
+   ──────────────────────────────────────────────────────────── */
+async function openAngVorlagenManager() {
+  if (!isAdmin()) return toast('🔒 Nur Admins','err');
+  document.getElementById('ang-vorl-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-vorl-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:780px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>📎 Anhang-Vorlagen verwalten</span>'+
+        '<div style="display:flex;gap:8px">'+
+          '<button class="btn" onclick="_angVorlEditorOpen()" style="background:#10B981;color:#fff;border-color:#10B981">+ Neue Vorlage</button>'+
+          '<button onclick="document.getElementById(\'ang-vorl-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+        '</div>'+
+      '</div>'+
+      '<div id="ang-vorl-list" style="flex:1;overflow-y:auto;padding:14px 18px">'+
+        '<div style="text-align:center;color:var(--txt3);padding:30px"><div class="spinner" style="margin:0 auto 12px"></div>Lade Vorlagen…</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  await _angVorlRenderList();
+}
+
+async function _angVorlRenderList() {
+  const out = document.getElementById('ang-vorl-list');
+  if (!out) return;
+  const firmaSlug = getCurrentFirmaSlug();
+  // Wir wollen auch INAKTIVE in der Verwaltung sehen → manuell laden, nicht über _loadAngVorlagen (filtert aktiv)
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+  let items = [];
+  try {
+    const url = 'https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen'
+      + '?pageSize=100'
+      + '&filterByFormula='+encodeURIComponent('{firma}="'+firmaSlug+'"')
+      + '&sort[0][field]=name&sort[0][direction]=asc';
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (r.ok) { items = (await r.json()).records || []; }
+  } catch(e) { console.warn('[AngVorl] Liste-Load:', e.message); }
+  // Cache überschreiben (für andere Stellen die _angVorlagenCache lesen)
+  _angVorlagenCache = { firma: firmaSlug, items, loadedAt: Date.now(), loading:false };
+  if (items.length === 0) {
+    out.innerHTML = '<div style="text-align:center;color:var(--txt3);padding:40px">Noch keine Anhang-Vorlagen für diese Firma angelegt.<br><br>Klicke oben auf <strong>+ Neue Vorlage</strong>.</div>';
+    return;
+  }
+  out.innerHTML = items.map(v => {
+    const f = v.fields || {};
+    const aktiv = f.aktiv !== false;
+    const pdfs = Array.isArray(f.pdfs) ? f.pdfs : [];
+    const pdfHtml = pdfs.length
+      ? pdfs.map(p => '<a href="'+escapeHtml(p.url||'#')+'" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;color:#0369A1;text-decoration:none;background:#F0F9FF;border:1px solid #BAE6FD;padding:3px 8px;border-radius:4px;margin-right:6px;margin-top:4px">📄 '+escapeHtml(p.filename||'PDF')+' ('+Math.round((p.size||0)/1024)+' KB)</a>').join('')
+      : '<span style="font-size:11px;color:var(--err)">⚠ keine PDFs</span>';
+    return '<div style="background:'+(aktiv?'#fff':'#F9FAFB')+';border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:10px;'+(aktiv?'':'opacity:.65')+'">'+
+        '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">'+
+          '<div style="flex:1;min-width:200px">'+
+            '<div style="font-weight:700;color:var(--navy);font-size:14px">📎 '+escapeHtml(f.name||'(ohne Name)')+(aktiv?'':' <span style="background:#E5E7EB;color:#374151;font-size:10px;padding:2px 7px;border-radius:99px;font-weight:600">inaktiv</span>')+'</div>'+
+            (f.beschreibung ? '<div style="font-size:11px;color:var(--txt2);margin-top:3px">'+escapeHtml(f.beschreibung)+'</div>' : '')+
+          '</div>'+
+          '<div style="display:flex;gap:6px">'+
+            '<button class="btn" onclick="_angVorlToggleAktiv(\''+escapeHtml(v.id)+'\')" style="font-size:11px;padding:4px 10px" title="'+(aktiv?'Deaktivieren':'Aktivieren')+'">'+(aktiv?'⊘ Deaktivieren':'✓ Aktivieren')+'</button>'+
+            '<button class="btn" onclick="_angVorlEditorOpen(\''+escapeHtml(v.id)+'\')" style="font-size:11px;padding:4px 10px">✏ Bearbeiten</button>'+
+            '<button class="btn" onclick="_angVorlDelete(\''+escapeHtml(v.id)+'\')" style="font-size:11px;padding:4px 10px;color:var(--err);border-color:rgba(220,38,38,.35)">🗑 Löschen</button>'+
+          '</div>'+
+        '</div>'+
+        '<div style="margin-top:6px">'+pdfHtml+'</div>'+
+      '</div>';
+  }).join('');
+}
+
+function _angVorlEditorOpen(recId) {
+  const isEdit = !!recId;
+  const v = isEdit ? (_angVorlagenCache.items||[]).find(x => x.id === recId) : null;
+  const f = v?.fields || {};
+  document.getElementById('ang-vorl-editor')?.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-vorl-editor';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10800;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:560px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>'+(isEdit?'✏ Vorlage bearbeiten':'+ Neue Anhang-Vorlage')+'</span>'+
+        '<button onclick="document.getElementById(\'ang-vorl-editor\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto;display:grid;gap:12px">'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Name *</label>'+
+          '<input id="ang-vorl-name" type="text" value="'+escapeHtml(f.name||'')+'" placeholder="z.B. Frequenzumrichter Datenblatt" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Beschreibung <span style="color:var(--txt3);font-weight:500">(optional)</span></label>'+
+          '<textarea id="ang-vorl-besch" rows="2" placeholder="Kurze Erklärung für den User…" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;resize:vertical">'+escapeHtml(f.beschreibung||'')+'</textarea></div>'+
+        '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">PDF-Anhänge</label>'+
+          '<div id="ang-vorl-pdfs" style="background:#F9FAFB;border:1px solid var(--bdr);border-radius:6px;padding:10px;min-height:56px"></div>'+
+          '<input type="file" id="ang-vorl-pdf-input" accept="application/pdf" multiple style="display:none" onchange="_angVorlPdfPick(event)">'+
+          '<button class="btn" type="button" onclick="document.getElementById(\'ang-vorl-pdf-input\').click()" style="margin-top:6px;font-size:12px;padding:6px 12px">+ PDF hochladen</button>'+
+        '</div>'+
+        '<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">'+
+          '<input id="ang-vorl-aktiv" type="checkbox" '+(f.aktiv !== false ? 'checked':'')+' style="width:16px;height:16px;cursor:pointer">'+
+          '<span>Aktiv — im Angebot-Editor zur Auswahl anbieten</span>'+
+        '</label>'+
+      '</div>'+
+      '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px">'+
+        '<button class="btn" onclick="document.getElementById(\'ang-vorl-editor\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="ang-vorl-save-btn" onclick="_angVorlSave(\''+(recId||'')+'\')">💾 Speichern</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  // Initial-PDFs aus dem bestehenden Record + Buffer für neu hochgeladene
+  m._existingPdfs = Array.isArray(f.pdfs) ? f.pdfs.slice() : []; // [{url, filename, size, id}]
+  m._newFiles     = [];  // [File] (noch nicht hochgeladen)
+  m._removed      = new Set();   // Filenames die entfernt werden sollen
+  _angVorlRenderPdfList();
+  setTimeout(() => document.getElementById('ang-vorl-name')?.focus(), 60);
+}
+
+function _angVorlRenderPdfList() {
+  const m = document.getElementById('ang-vorl-editor');
+  const out = document.getElementById('ang-vorl-pdfs');
+  if (!m || !out) return;
+  const existing = (m._existingPdfs||[]).filter(p => !m._removed.has(p.filename));
+  const newOnes  = m._newFiles || [];
+  if (!existing.length && !newOnes.length) {
+    out.innerHTML = '<div style="font-size:11px;color:var(--txt3);font-style:italic">Noch keine PDFs hinterlegt — klicke auf „+ PDF hochladen".</div>';
+    return;
+  }
+  const exHtml = existing.map(p =>
+    '<div style="display:flex;align-items:center;gap:8px;padding:5px 0">'+
+      '<span style="font-size:16px">📄</span>'+
+      '<a href="'+escapeHtml(p.url||'#')+'" target="_blank" rel="noopener" style="flex:1;color:#0369A1;text-decoration:none;font-size:12px">'+escapeHtml(p.filename||'PDF')+' <span style="color:var(--txt3)">('+Math.round((p.size||0)/1024)+' KB)</span></a>'+
+      '<button type="button" onclick="_angVorlRemovePdf(\''+escapeHtml(p.filename)+'\')" style="background:transparent;border:1px solid rgba(220,38,38,.35);color:var(--err);border-radius:4px;font-size:11px;padding:2px 8px;cursor:pointer">× entfernen</button>'+
+    '</div>'
+  ).join('');
+  const newHtml = newOnes.map((file, idx) =>
+    '<div style="display:flex;align-items:center;gap:8px;padding:5px 0;background:#FFFBEB;border-radius:4px;padding-left:6px">'+
+      '<span style="font-size:16px">📄</span>'+
+      '<span style="flex:1;font-size:12px;color:#92400E">'+escapeHtml(file.name)+' <span style="color:var(--txt3)">('+Math.round((file.size||0)/1024)+' KB · wird beim Speichern hochgeladen)</span></span>'+
+      '<button type="button" onclick="_angVorlRemoveNewPdf('+idx+')" style="background:transparent;border:1px solid rgba(220,38,38,.35);color:var(--err);border-radius:4px;font-size:11px;padding:2px 8px;cursor:pointer">× entfernen</button>'+
+    '</div>'
+  ).join('');
+  out.innerHTML = exHtml + newHtml;
+}
+
+function _angVorlPdfPick(ev) {
+  const m = document.getElementById('ang-vorl-editor');
+  if (!m) return;
+  const files = Array.from(ev.target.files||[]).filter(f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+  if (!files.length) { toast('Bitte PDFs auswählen','warn'); return; }
+  m._newFiles.push(...files);
+  _angVorlRenderPdfList();
+  ev.target.value = '';
+}
+function _angVorlRemovePdf(filename) {
+  const m = document.getElementById('ang-vorl-editor');
+  if (!m) return;
+  m._removed.add(filename);
+  _angVorlRenderPdfList();
+}
+function _angVorlRemoveNewPdf(idx) {
+  const m = document.getElementById('ang-vorl-editor');
+  if (!m) return;
+  m._newFiles.splice(idx, 1);
+  _angVorlRenderPdfList();
+}
+
+async function _angVorlSave(recId) {
+  const m = document.getElementById('ang-vorl-editor');
+  if (!m) return;
+  const name  = (document.getElementById('ang-vorl-name')?.value||'').trim();
+  const besch = (document.getElementById('ang-vorl-besch')?.value||'').trim();
+  const aktiv = !!document.getElementById('ang-vorl-aktiv')?.checked;
+  if (!name) return toast('Bitte Namen vergeben','err');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableWriteKey;
+  if (!key) return toast('Kein Schreib-Token','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const btn = document.getElementById('ang-vorl-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichere …'; }
+  try {
+    // Bestehende PDFs filtern (Entfernte raus)
+    const keptPdfs = (m._existingPdfs||[]).filter(p => !m._removed.has(p.filename));
+    let id = recId || null;
+    if (id) {
+      const fields = {
+        name, beschreibung: besch, aktiv, firma: firmaSlug,
+        pdfs: keptPdfs.map(p => ({ url: p.url, filename: p.filename })),
+      };
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen/'+id, {
+        method:'PATCH', headers:{ 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      if (!r.ok) throw new Error('PATCH '+r.status+': '+(await r.text()).slice(0,200));
+    } else {
+      const fields = {
+        name, beschreibung: besch, aktiv, firma: firmaSlug,
+        erstellt_am:  new Date().toISOString().slice(0,10),
+        erstellt_von: APP_KEYS.user?.name || '',
+      };
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen', {
+        method:'POST', headers:{ 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+      if (!r.ok) throw new Error('POST '+r.status+': '+(await r.text()).slice(0,200));
+      id = (await r.json()).id;
+    }
+    // Neue PDFs hochladen
+    if (Array.isArray(m._newFiles) && m._newFiles.length) {
+      if (btn) btn.textContent = '⏳ Lade '+m._newFiles.length+' PDF'+(m._newFiles.length===1?'':'s')+' hoch…';
+      for (const file of m._newFiles) {
+        await atBlobUpload(id, 'pdfs', file, file.name, file.type || 'application/pdf');
+      }
+    }
+    toast('✅ Vorlage gespeichert','ok');
+    m.remove();
+    _angVorlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+    await _angVorlRenderList();
+  } catch(e) {
+    console.error('[AngVorl] Save:', e);
+    toast('❌ '+(e.message||'Fehler'),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; }
+  }
+}
+
+async function _angVorlDelete(recId) {
+  const v = (_angVorlagenCache.items||[]).find(x => x.id === recId);
+  if (!v) return;
+  if (!confirm('Vorlage „'+(v.fields?.name||'?')+'" wirklich löschen? Bereits abgesendete Angebote behalten ihre Kopie der PDFs nicht.')) return;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableWriteKey;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen/'+recId, {
+      method:'DELETE', headers:{ 'Authorization':'Bearer '+key },
+    });
+    if (!r.ok) throw new Error('DELETE '+r.status);
+    toast('🗑 Vorlage gelöscht','ok');
+    _angVorlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+    await _angVorlRenderList();
+  } catch(e) {
+    console.error('[AngVorl] Delete:', e);
+    toast('❌ '+(e.message||'Fehler'),'err');
+  }
+}
+
+async function _angVorlToggleAktiv(recId) {
+  const v = (_angVorlagenCache.items||[]).find(x => x.id === recId);
+  if (!v) return;
+  const newAktiv = !(v.fields?.aktiv !== false);
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key    = APP_KEYS.airtableWriteKey;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Anhang_Vorlagen/'+recId, {
+      method:'PATCH', headers:{ 'Authorization':'Bearer '+key, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ aktiv: newAktiv }}),
+    });
+    if (!r.ok) throw new Error('PATCH '+r.status);
+    _angVorlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
+    await _angVorlRenderList();
+  } catch(e) {
+    console.error('[AngVorl] Toggle:', e);
+    toast('❌ '+(e.message||'Fehler'),'err');
+  }
 }
 
 function _angClearAnlage() {
@@ -27055,6 +27396,16 @@ async function _angEditorSave() {
       kond_zahlung: E.kond_zahlung || '',
       kond_hinweise: E.kond_hinweise || '',
     };
+    // v6.49: Anhang-Vorlagen persistieren — IDs als JSON + Namen denormalisiert für spätere Anzeige
+    if (Array.isArray(E.anhang_vorlage_ids) && E.anhang_vorlage_ids.length) {
+      fields.anhang_vorlage_ids = JSON.stringify(E.anhang_vorlage_ids);
+      const vorl = (_angVorlagenCache?.items || []);
+      const names = E.anhang_vorlage_ids.map(id => (vorl.find(v => v.id === id)?.fields?.name || id)).join('\n');
+      fields.anhang_vorlage_namen = names;
+    } else {
+      fields.anhang_vorlage_ids   = '';
+      fields.anhang_vorlage_namen = '';
+    }
     // v6.19: DA-Verknüpfung persistieren (sowohl bei NEU als auch bei EDIT)
     if (E._daRec) {
       fields.datenaufnahme_id     = E._daRec.id;
@@ -28478,7 +28829,7 @@ window._angApplyFdPicker = function(firmaSlug, recId) {
   _angSendCustomerEmail(recId);
 };
 
-function _angOpenSendModal(recId) {
+async function _angOpenSendModal(recId) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
   const f = rec.fields;
@@ -28486,6 +28837,17 @@ function _angOpenSendModal(recId) {
   if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk nicht konfiguriert','err');
   const appPdf = f.app_pdf?.[0];
   if (!appPdf) return toast('Noch kein PDF erzeugt — bitte erst „Neu generieren"','err');
+
+  // v6.49: Anhang-Vorlagen-Cache warm laden, damit die Anhang-Liste im Modal sofort gefüllt ist.
+  //   Wir holen die einzelnen ausgewählten Vorlagen frisch nach (URLs sonst evtl. expired).
+  try {
+    const ids = JSON.parse(f.anhang_vorlage_ids||'[]');
+    if (Array.isArray(ids) && ids.length) {
+      await _loadAngVorlagen(firmaSlug);
+      // Pro ID einen frischen GET, damit die Attachment-URLs nicht expired sind
+      await Promise.allSettled(ids.map(id => _fetchAngVorlageFresh(id).catch(()=>{})));
+    }
+  } catch(_){}
 
   // Empfänger-Vorbelegung aus verfügbaren Feldern
   const defaultEmail = String(f.kontakt_email || f.kunde_email || '').trim();
@@ -28526,11 +28888,24 @@ function _angOpenSendModal(recId) {
         '<div>• Bearbeiter: <strong>'+(localStorage.getItem('fd_agent_id_'+firmaSlug)?'gespeicherte Auswahl':ANGEBOT_FD_RESPONDER_CANDIDATES[0])+'</strong></div>'+
         '<div>• Signatur: <strong>aus deinem Freshdesk-Profil</strong> (über /agents/me)</div>'+
       '</div>'+
-      // v6.43: PDF-Anhänge mit Vorschau-Buttons (Angebot + optional Datenaufnahme)
+      // v6.43/v6.49: PDF-Anhänge mit Vorschau-Buttons (Angebot + Datenaufnahme + Anhang-Vorlagen)
       (() => {
         const atts = [{ label:'Angebot', url:appPdf.url, filename:appPdf.filename||'Angebot.pdf', size:appPdf.size||0 }];
         const daAnh = f.da_anhang_pdf?.[0];
         if (daAnh?.url) atts.push({ label:'Datenaufnahme', url:daAnh.url, filename:daAnh.filename||'Datenaufnahme.pdf', size:daAnh.size||0 });
+        // v6.49: Anhang-Vorlagen-PDFs hinzufügen (frisch aus dem Cache aufgelöst, fresh URLs via _angVorlagenFreshById)
+        try {
+          const ids = JSON.parse(f.anhang_vorlage_ids||'[]');
+          for (const vid of (ids||[])) {
+            const vr = (_angVorlagenCache?.items||[]).find(v => v.id === vid);
+            const vname = vr?.fields?.name || '';
+            const pdfs = Array.isArray(vr?.fields?.pdfs) ? vr.fields.pdfs : [];
+            for (const p of pdfs) {
+              if (!p?.url) continue;
+              atts.push({ label: 'Anhang · '+vname, url:p.url, filename:p.filename||'Anhang.pdf', size:p.size||0 });
+            }
+          }
+        } catch(_){}
         return '<div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:10px 14px">'+
           '<div style="font-size:12px;font-weight:700;color:#075985;margin-bottom:6px">📎 '+atts.length+' Anhang'+(atts.length===1?'':'/Anhänge')+' werden mitgesendet:</div>'+
           atts.map(a =>
@@ -28795,8 +29170,31 @@ async function _angSendCustomerEmail(recId, btn) {
         console.warn('[Angebot-Send] DA-Anhang Fetch failed:', e.message);
       }
     }
-    // v6.28: Anhang-Größen-Check — Freshdesk-Limit ist 20MB pro Mail, harte Warnung ab 15MB
-    const totalSize = (pdfBlob?.size || 0) + (daBlob?.size || 0);
+    // v6.49: Anhang-Vorlagen-PDFs laden — pro Vorlage alle PDFs (Anzahl×Vorlagen begrenzen, default <=5 Vorlagen ist OK)
+    const extraBlobs = []; // [{ blob, filename }]
+    try {
+      const vorlagenIds = JSON.parse(f.anhang_vorlage_ids||'[]');
+      if (Array.isArray(vorlagenIds) && vorlagenIds.length) {
+        setProgress(20, '📥 Lade '+vorlagenIds.length+' Anhang-Vorlage'+(vorlagenIds.length===1?'':'n')+' …');
+        for (const vid of vorlagenIds) {
+          // Frisch holen, damit URLs nicht expired sind
+          let vr;
+          try { vr = await _fetchAngVorlageFresh(vid); } catch(_) { vr = (_angVorlagenCache?.items||[]).find(x => x.id === vid); }
+          const pdfs = Array.isArray(vr?.fields?.pdfs) ? vr.fields.pdfs : [];
+          for (const p of pdfs) {
+            if (!p?.url) continue;
+            try {
+              const b = await (await fetch(p.url)).blob();
+              extraBlobs.push({ blob: b, filename: p.filename || (vr?.fields?.name||'Anhang')+'.pdf' });
+              console.log('[Angebot-Send] Anhang-Vorlage geladen:', p.filename, Math.round(b.size/1024)+'KB');
+            } catch(e) { console.warn('[Angebot-Send] Anhang-Vorlage fail:', p.filename, e.message); }
+          }
+        }
+      }
+    } catch(e) { console.warn('[Angebot-Send] Vorlagen-Load:', e.message); }
+    // v6.28/v6.49: Anhang-Größen-Check — Freshdesk-Limit ist 20MB pro Mail, harte Warnung ab 15MB
+    const extraSize = extraBlobs.reduce((s, x) => s + (x.blob?.size||0), 0);
+    const totalSize = (pdfBlob?.size || 0) + (daBlob?.size || 0) + extraSize;
     const totalMB = totalSize / (1024*1024);
     console.log('[Angebot-Send] Anhang-Größe gesamt:', totalMB.toFixed(1)+'MB');
     if (totalMB > 15) {
@@ -28839,6 +29237,8 @@ async function _angSendCustomerEmail(recId, btn) {
       if (daBlob) {
         fdReply.append('attachments[]', daBlob, daAnhang.filename || ('Datenaufnahme-DA'+(f.datenaufnahme_da_num||'?')+'.pdf'));
       }
+      // v6.49: Anhang-Vorlagen-PDFs mit anhängen
+      for (const x of extraBlobs) fdReply.append('attachments[]', x.blob, x.filename);
       await erpEnsureSession();
       const replyUrl = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+replyTicketId+'/reply';
       const rR = await fetch(replyUrl, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fdReply });
@@ -29003,6 +29403,8 @@ async function _angSendCustomerEmail(recId, btn) {
     if (daBlob) {
       fd.append('attachments[]', daBlob, daAnhang.filename || ('Datenaufnahme-DA'+(f.datenaufnahme_da_num||'?')+'.pdf'));
     }
+    // v6.49: Anhang-Vorlagen-PDFs mit anhängen
+    for (const x of extraBlobs) fd.append('attachments[]', x.blob, x.filename);
     await erpEnsureSession();
     const url = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email';
     const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
