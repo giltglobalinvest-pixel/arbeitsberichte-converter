@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.69';
+const APP_VERSION = 'v6.70';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24338,6 +24338,14 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
 
 async function _fdMatchTicketData(analysis, firmaSlug) {
   const out = { anlage: null, kunde: null };
+  // Kunden-Cache schonmal laden (brauchen wir in beiden Pfaden)
+  if (!_kundenCache.items || _kundenCache.firma !== firmaSlug) {
+    try {
+      const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+      const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data))||[]);
+      _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+    } catch(e) { console.warn('[FD-Match] Kunden-Load:', e.message); }
+  }
   // Anlage per Fabriknummer im lokalen Cache
   if (analysis.fabriknummer) {
     if (!_anlagenCache.items || _anlagenCache.firma !== firmaSlug) {
@@ -24348,21 +24356,24 @@ async function _fdMatchTicketData(analysis, firmaSlug) {
       String(a.fabriknummer||'').trim().toLowerCase() === fabNorm
     ) || null;
   }
-  // Kunde per Firmenname im ERP-Kundencache
-  if (analysis.kunde_name) {
-    if (!_kundenCache.items || _kundenCache.firma !== firmaSlug) {
-      try {
-        const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
-        const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data))||[]);
-        _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
-      } catch(e) { console.warn('[FD-Match] Kunden-Load:', e.message); }
-    }
+  // v6.70: Wenn Anlage gefunden, Kunde aus Anlage ableiten (jede Anlage hängt im ERP an einem Kunden).
+  //   Wir nehmen das nested kunde-Objekt aus der Anlage und holen die volle Kunde-Record
+  //   aus dem Kunden-Cache (per ID oder Kundennummer-Match).
+  if (out.anlage && out.anlage.kunde) {
+    const ak = out.anlage.kunde;
+    const akId = ak.id != null ? String(ak.id) : null;
+    const akNr = ak.kundennummer != null ? String(ak.kundennummer) : null;
+    out.kunde = (_kundenCache.items||[]).find(k =>
+      (akId && String(k.id) === akId) ||
+      (akNr && String(k.kundennummer) === akNr)
+    ) || ak;  // Fallback: nested-Objekt direkt verwenden
+  }
+  // Sonst: Kunde per Firmenname im ERP-Kundencache suchen
+  if (!out.kunde && analysis.kunde_name) {
     const nameNorm = String(analysis.kunde_name).trim().toLowerCase();
-    // 1. Exakter Match
     out.kunde = (_kundenCache.items||[]).find(k =>
       String(k.firmenname||'').trim().toLowerCase() === nameNorm
     ) || null;
-    // 2. Fuzzy (Substring beidseitig)
     if (!out.kunde && nameNorm.length >= 5) {
       out.kunde = (_kundenCache.items||[]).find(k => {
         const n = String(k.firmenname||'').toLowerCase();
