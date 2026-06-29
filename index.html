@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.55';
+const APP_VERSION = 'v6.56';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9199,6 +9199,8 @@ function openAnlageDetail(idx) {
     } else {
       html += '<button class="btn" id="anl-archive-btn" onclick="_anlSetArchived(true, this)" style="color:#7F1D1D;border-color:rgba(220,38,38,.35);background:#FEF2F2" title="Anlage archivieren — bleibt erhalten, taucht aber nicht mehr in der normalen Liste auf">🗄 Archivieren</button>';
     }
+    // v6.56: Fabriknummer ändern — Bulk-Import hat manche Werte als Datum interpretiert (z.B. 260605 = 26.06.05)
+    html += '<button class="btn" id="anl-fab-btn" onclick="_anlEditFabriknummer(this)" style="color:#1E40AF;border-color:rgba(30,64,175,.45);background:#EFF6FF" title="Fabriknummer dieser Anlage ändern (im ERP)">🔧 Fabrik-Nr. ändern</button>';
   }
   if (hasPermission('auftraege_create') && !a.archived) {
     html += '<button class="btn prim" onclick="createAuftragForAnlage()">+ Auftrag für diese Anlage erstellen</button>';
@@ -9211,6 +9213,75 @@ function openAnlageDetail(idx) {
 function closeAnlageDetailModal() {
   document.getElementById('anl-detail-modal').classList.remove('show');
   if (!document.querySelector('.auf-modal.show')) document.body.classList.remove('has-modal');
+}
+
+/**
+ * v6.56: Fabriknummer einer Anlage ändern.
+ * Versucht mehrere Endpoint-Varianten (PATCH/PUT mit verschiedenen Schemas), bis eine funktioniert.
+ * Aktualisiert anschließend den lokalen Cache + Detail-Modal + Liste.
+ */
+async function _anlEditFabriknummer(btn) {
+  const a = _anlagenViewSelected;
+  if (!a || a.id == null) return toast('Keine Anlage ausgewählt','err');
+  const oldFab = String(a.fabriknummer || '');
+  const newFab = (window.prompt('Neue Fabriknummer für „'+(a.anzeigeAdresse||a.name||'?')+'":', oldFab) || '').trim();
+  if (!newFab) return;  // Cancel oder leer
+  if (newFab === oldFab) return toast('Unverändert','');
+  const firmaSlug = getCurrentFirmaSlug();
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
+  const tries = [];
+  try {
+    // 1) PATCH /api/anlagen/{id} mit { fabriknummer }
+    tries.push('PATCH '+`/api/anlagen/${a.id}`+' {fabriknummer}');
+    try {
+      await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
+        method:'PATCH', body:{ fabriknummer: newFab },
+      });
+      _anlApplyFabUpdate(a, newFab);
+      toast('✅ Fabriknummer geändert (PATCH)','ok');
+      return;
+    } catch(e) { console.warn('[Anlage-Fab] PATCH fail:', e.message); }
+    // 2) PUT /api/anlagen/{id} mit full object (vorher GET)
+    tries.push('PUT '+`/api/anlagen/${a.id}`+' (full object)');
+    try {
+      const current = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id));
+      if (current && typeof current === 'object') {
+        const updated = { ...current, fabriknummer: newFab };
+        await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
+          method:'PUT', body: updated,
+        });
+        _anlApplyFabUpdate(a, newFab);
+        toast('✅ Fabriknummer geändert (PUT)','ok');
+        return;
+      }
+    } catch(e) { console.warn('[Anlage-Fab] PUT /id fail:', e.message); }
+    // 3) PUT /api/anlagen (ohne ID-Pfad), Body inkl. id (Aufträge-Pattern)
+    tries.push('PUT /api/anlagen (kein ID-Pfad)');
+    try {
+      const current = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id));
+      const updated = { ...current, fabriknummer: newFab };
+      await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen', { method:'PUT', body: updated });
+      _anlApplyFabUpdate(a, newFab);
+      toast('✅ Fabriknummer geändert (PUT root)','ok');
+      return;
+    } catch(e) { console.warn('[Anlage-Fab] PUT root fail:', e.message); }
+    throw new Error('Alle Endpoint-Varianten fehlgeschlagen — getestet: '+tries.join(' · '));
+  } catch(e) {
+    console.error('[Anlage-Fab]', e);
+    toast('❌ '+(e.message||'Fehler'),'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+}
+
+function _anlApplyFabUpdate(a, newFab) {
+  a.fabriknummer = newFab;
+  const cached = (_anlagenCache.items||[]).find(x => String(x.id) === String(a.id));
+  if (cached) cached.fabriknummer = newFab;
+  _renderAnlagenList();
+  // Detail-Modal neu rendern damit die Anzeige stimmt
+  try { openAnlageDetail(_anlagenViewItems.findIndex(x => String(x.id) === String(a.id))); } catch(_){}
 }
 
 /**
