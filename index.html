@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.58';
+const APP_VERSION = 'v6.59';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -41158,23 +41158,26 @@ async function _buildLvPdf(rec, firmaSlug) {
   doc.setDrawColor(...NAVY); doc.line(ml, y+7.5, mr, y+7.5);
   y += 8;
 
-  // v6.55: Thumbnail-Layout pro Position — 4 Bilder pro Reihe in 35×26mm Slots, in der Leistungs-Spalte
+  // v6.55/v6.59: Thumbnail-Layout pro Position — 4 Bilder/Reihe (35×26mm). Bilder können
+  //   bei vielen Fotos pro Position über mehrere Seiten gehen (mit Fortsetzungs-Hinweis).
   const THUMB_PER_ROW = 4, THUMB_W = 35, THUMB_H = 26, THUMB_GAP = 2;
+  const MAX_Y = 270;  // Sicherheits-Y vor Footer (Footer-Trennlinie bei 276)
   positionen.forEach((p, idx) => {
     const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
     const beschLines = p.beschreibung ? doc.splitTextToSize(_sanPdf(p.beschreibung), colTitel-4) : [];
-    // Wie viele Bilder hat diese Position (nur die erfolgreich geladenen)?
     const bilder = Array.isArray(p.bilder) ? p.bilder : [];
     const posImgIndices = [];
     for (let bi = 0; bi < bilder.length; bi++) {
       const gi = imgGlobalIdx.get(idx+'-'+bi);
       if (gi !== undefined) posImgIndices.push(gi);
     }
-    const thumbRows = posImgIndices.length ? Math.ceil(posImgIndices.length / THUMB_PER_ROW) : 0;
-    const imgBlockH = thumbRows > 0 ? (thumbRows * (THUMB_H + THUMB_GAP) + 2) : 0;
-    const rowH = Math.max(10, titelLines.length*5 + beschLines.length*4 + 4 + imgBlockH);
-    if (y + rowH > 270) { doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L); y = 32; }
-    if (idx%2 === 0) { doc.setFillColor(250,250,250); doc.rect(ml, y, cw, rowH, 'F'); }
+    const textH = Math.max(10, titelLines.length*5 + beschLines.length*4 + 4);
+    // Page-Break wenn nicht mal der Text-Block + 1 Bild-Reihe passt
+    const minNeeded = textH + (posImgIndices.length ? (THUMB_H + THUMB_GAP + 2) : 0);
+    if (y + minNeeded > MAX_Y) { doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L); y = 32; }
+    // Hintergrund-Stripe nur über Text-Höhe (Bilder ohne Stripe damit Page-Breaks sauber aussehen)
+    if (idx%2 === 0) { doc.setFillColor(250,250,250); doc.rect(ml, y, cw, textH, 'F'); }
+    // Text rendern
     doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(10);
     doc.text(String(p.nr||(idx+1)), ml+2, y+5);
     doc.setFont('helvetica','bold');
@@ -41183,33 +41186,45 @@ async function _buildLvPdf(rec, firmaSlug) {
       doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
       beschLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
     }
-    // Thumbnails einfügen
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    const preisStr = (+p.preis||0) > 0 ? fmtEUR(p.preis) : '_______';
+    doc.text(preisStr, mr-2, y+5, { align:'right' });
+    // Bilder reihenweise rendern, ggf. mit Page-Breaks
+    let imgY = y + textH;
     if (posImgIndices.length) {
-      const baseImgY = y + 5 + titelLines.length*5 + beschLines.length*4 + 2;
       const baseImgX = ml + colNr + 2;
-      posImgIndices.forEach((gIdx, ix) => {
-        const r = Math.floor(ix / THUMB_PER_ROW);
+      for (let ix = 0; ix < posImgIndices.length; ix++) {
         const c = ix % THUMB_PER_ROW;
+        // Bei neuem Reihen-Start: prüfen ob die ganze Reihe noch passt
+        if (c === 0) {
+          if (imgY + THUMB_H + 2 > MAX_Y) {
+            // Trennlinie + neue Seite + Fortsetzungs-Hinweis
+            doc.setDrawColor(...GREY_X); doc.line(ml, imgY, mr, imgY);
+            doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L);
+            imgY = 32;
+            doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
+            doc.text(_sanPdf('Fortsetzung Position '+(p.nr||(idx+1))+(p.titel?' — '+p.titel:'')+' (weitere Bilder)'), ml+2, imgY+4);
+            imgY += 8;
+          }
+        }
         const tx = baseImgX + c * (THUMB_W + THUMB_GAP);
-        const ty = baseImgY + r * (THUMB_H + THUMB_GAP);
-        const im = allImages[gIdx].img;
-        if (!im) return;
-        // Aspect-Ratio: fit in THUMB_W × THUMB_H, zentriert
+        const ty = imgY;
+        const im = allImages[posImgIndices[ix]].img;
+        if (!im) continue;
         const ratio = Math.min(THUMB_W/im.w, THUMB_H/im.h);
         const fitW = im.w * ratio, fitH = im.h * ratio;
         const ox = tx + (THUMB_W - fitW)/2;
         const oy = ty + (THUMB_H - fitH)/2;
         try { doc.addImage(im.dataUrl, im.format, ox, oy, fitW, fitH); } catch(e) { console.warn('[LV-PDF] addImage thumb:', e.message); }
-        // Dünner Rahmen + Klick-Hinweis (Lupe-Cursor durch Link erkennbar)
         doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.rect(tx, ty, THUMB_W, THUMB_H);
-        // Thumb-Ref speichern (Page-Number wird beim Link-Setting aufgelöst)
-        thumbRefs.push({ page: doc.internal.getCurrentPageInfo().pageNumber, x: tx, y: ty, w: THUMB_W, h: THUMB_H, globalIdx: gIdx });
-      });
+        thumbRefs.push({ page: doc.internal.getCurrentPageInfo().pageNumber, x: tx, y: ty, w: THUMB_W, h: THUMB_H, globalIdx: posImgIndices[ix] });
+        // Nach Reihenende oder letztem Bild: y vorrücken
+        if (c === THUMB_PER_ROW - 1 || ix === posImgIndices.length - 1) {
+          imgY += THUMB_H + THUMB_GAP;
+        }
+      }
     }
-    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
-    const preisStr = (+p.preis||0) > 0 ? fmtEUR(p.preis) : '_______';
-    doc.text(preisStr, mr-2, y+5, { align:'right' });
-    y += rowH;
+    y = imgY + 2;
     doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
   });
 
@@ -41230,24 +41245,37 @@ async function _buildLvPdf(rec, firmaSlug) {
     doc.text(_sanPdf('Preise bitte pro Position eintragen — Summe wird vom Bieter gebildet.'), ml, y); y += 6;
   }
 
-  // v6.55: Full-Size-Seiten am Ende — pro Bild eine eigene A4-Seite mit max. Größe + Caption
+  // v6.55/v6.59: Full-Size-Seiten am Ende — Caption UNTER dem Header (statt drüber),
+  //   Bild-Bereich respektiert Footer bei y=276 (Footer-Trennlinie).
   const firstFullSizePage = doc.getNumberOfPages() + 1;
-  const PAGE_W = 210, PAGE_H = 297, FS_MARGIN_X = 12, FS_MARGIN_TOP = 18, FS_MARGIN_BOTTOM = 18;
-  const FS_MAX_W = PAGE_W - 2*FS_MARGIN_X;
-  const FS_MAX_H = PAGE_H - FS_MARGIN_TOP - FS_MARGIN_BOTTOM;
-  allImages.forEach((entry, gIdx) => {
+  const PAGE_W = 210, PAGE_H = 297;
+  const FS_CAPTION_Y    = 30;   // unter Header-Linie (22) mit Abstand
+  const FS_IMG_TOP      = 36;   // unter Caption
+  const FS_IMG_BOTTOM   = 272;  // über Footer-Trennlinie (276)
+  const FS_MARGIN_X     = 12;
+  const FS_MAX_W        = PAGE_W - 2*FS_MARGIN_X;
+  const FS_MAX_H        = FS_IMG_BOTTOM - FS_IMG_TOP;
+  // Pro Position die Bild-Anzahl vorberechnen (für Caption "Bild X / Y in dieser Position")
+  const posBildCount = new Map();
+  for (const e of allImages) {
+    if (!e.img) continue;
+    posBildCount.set(e.posIdx, (posBildCount.get(e.posIdx)||0) + 1);
+  }
+  allImages.forEach((entry) => {
     if (!entry.img) return;
     doc.addPage();
     _lvPdfHeader(doc, ml, mr, BR, GREY_L);
-    // Caption oben
+    // Caption (unter Header)
     doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...NAVY);
-    doc.text(_sanPdf('Position '+(entry.posIdx+1)+(entry.posTitel?' · '+entry.posTitel:'')+' — Bild '+(entry.bildIdx+1)+' / '+allImages.filter(x=>x.posIdx===entry.posIdx).length), PAGE_W/2, FS_MARGIN_TOP - 2, { align:'center' });
-    // Bild zentriert, maximal in den Print-Bereich passend
+    const totalPos = posBildCount.get(entry.posIdx) || 1;
+    const cap = 'Position '+(entry.posIdx+1)+(entry.posTitel?' · '+entry.posTitel:'')+' — Bild '+(entry.bildIdx+1)+' / '+totalPos;
+    doc.text(_sanPdf(cap), PAGE_W/2, FS_CAPTION_Y, { align:'center' });
+    // Bild zentriert im verfügbaren Bereich
     const im = entry.img;
     const ratio = Math.min(FS_MAX_W/im.w, FS_MAX_H/im.h);
     const fitW = im.w * ratio, fitH = im.h * ratio;
-    const x = (PAGE_W - fitW)/2;
-    const yImg = FS_MARGIN_TOP + (FS_MAX_H - fitH)/2;
+    const x    = (PAGE_W - fitW)/2;
+    const yImg = FS_IMG_TOP + (FS_MAX_H - fitH)/2;
     try { doc.addImage(im.dataUrl, im.format, x, yImg, fitW, fitH); } catch(e) { console.warn('[LV-PDF] addImage fullsize:', e.message); }
   });
   // Link-Annotations: Thumbnail → Full-Size-Seite (pageNumber-basiert)
