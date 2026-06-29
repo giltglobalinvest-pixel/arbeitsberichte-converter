@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.77';
+const APP_VERSION = 'v6.78';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -25355,21 +25355,23 @@ function _angWizardFdRenderResult() {
 function _angWizardFdCreateKunde() {
   const m = document.getElementById('ang-wizard');
   if (!m || !m._fdData) return;
-  const { analysis } = m._fdData;
+  const { analysis, ticketFull } = m._fdData;
   const firmaSlug = getCurrentFirmaSlug();
-  // v6.77: Robust-Fallbacks — wenn KI ein Feld leer ließ, anderen sinnvollen Wert nehmen.
-  //   Firmenname-Fallback: Domain aus Email (z.B. "digitalspine.io" → "Digitalspine") wenn nichts da
-  //   Adress-Fallback:     anlage_adresse falls kunde_adresse leer (oft selbe Adresse)
-  const emailDomain = (analysis.kontakt_email||'').split('@')[1] || '';
+  // v6.78: Requester (FD-Ticket-Absender) als robuster Fallback
+  const requester = ticketFull?.ticket?.requester || {};
+  const reqEmail = requester.email || '';
+  // v6.77: Robust-Fallbacks — Domain aus Email, Adress-Fallback auf Anlage-Adresse
+  const email = analysis.kontakt_email || reqEmail;
+  const emailDomain = (email||'').split('@')[1] || '';
   const domainAsName = emailDomain
     ? emailDomain.split('.')[0].charAt(0).toUpperCase()+emailDomain.split('.')[0].slice(1)
     : '';
   const preset = {
     firmaSlug,
-    presetFirmenname: analysis.kunde_name || domainAsName || '',
+    presetFirmenname: analysis.kunde_name || requester.company?.name || domainAsName || '',
     presetAdresse:    analysis.kunde_adresse || analysis.anlage_adresse || '',
-    presetEmail:      analysis.kontakt_email || '',
-    presetTelefon:    analysis.kontakt_telefon || '',
+    presetEmail:      email,
+    presetTelefon:    analysis.kontakt_telefon || requester.phone || requester.mobile || '',
   };
   console.log('[ANG-FD] openCreateKundeDialog mit Preset:', preset, '| analysis:', analysis);
   openCreateKundeDialog({
@@ -31853,12 +31855,25 @@ async function _nwvFdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
     return { ...fromNote, _source: 'fd-note' };
   }
   // 2) Live-KI mit Text-Only (Anhänge nicht möglich, siehe v6.69)
+  // v6.78: BUG-FIX — _fdLoadTicketFull returnt { ticket, conversations, attachments },
+  //   Subject/Body sitzen auf ticketFull.ticket.*, nicht direkt auf ticketFull.
+  //   Davor: KI bekam Subject+Body NIE — nur Conversations.
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key konfiguriert.');
-  const subject = ticketFull.subject || '';
-  const body    = _stripHtml(ticketFull.description_text || ticketFull.description || '');
+  const ticket = ticketFull.ticket || {};
+  const requester = ticket.requester || {};
+  const subject = ticket.subject || '';
+  const body    = _stripHtml(ticket.description_text || ticket.description || '');
   const convs   = (ticketFull.conversations||[]).filter(c => !c.private)
     .map(c => _stripHtml(c.body_text || c.body || '')).filter(Boolean).join('\n---\n');
-  const text = 'BETREFF: '+subject+'\n\nERSTNACHRICHT:\n'+body+(convs ? '\n\nWEITERER VERLAUF:\n'+convs : '');
+  // Requester-Daten (Absender des Tickets) als zusätzlicher Kontext für die KI
+  const reqInfo = (requester.name || requester.email || requester.phone)
+    ? '\n\nABSENDER (Freshdesk-Requester):\n'+
+      '• Name: '+(requester.name||'?')+'\n'+
+      '• Email: '+(requester.email||'?')+'\n'+
+      (requester.phone ? '• Telefon: '+requester.phone+'\n' : '')+
+      (requester.company?.name ? '• Firma: '+requester.company.name+'\n' : '')
+    : '';
+  const text = 'BETREFF: '+subject+'\n\nERSTNACHRICHT:\n'+body+(convs ? '\n\nWEITERER VERLAUF:\n'+convs : '')+reqInfo;
   if (progress) progress('🧠 KI analysiert Wartungsvertrag-Ticket…');
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method:'POST',
@@ -32317,19 +32332,23 @@ function _nwvFdContinue() {
 function _nwvFdCreateKunde() {
   const m = document.getElementById('nwv-modal');
   if (!m || !m._nwvFdData) return;
-  const { analysis } = m._nwvFdData;
+  const { analysis, ticketFull } = m._nwvFdData;
   const firmaSlug = m._firmaSlug || getCurrentFirmaSlug();
-  // v6.77: Robust-Fallbacks (siehe Reparatur-Pfad)
-  const emailDomain = (analysis.kontakt_email||'').split('@')[1] || '';
+  // v6.78: Requester (FD-Ticket-Absender) als robuster Fallback
+  const requester = ticketFull?.ticket?.requester || {};
+  const reqEmail = requester.email || '';
+  // v6.77: Robust-Fallbacks — Domain aus Email, Adress-Fallback auf Anlage-Adresse
+  const email = analysis.kontakt_email || reqEmail;
+  const emailDomain = (email||'').split('@')[1] || '';
   const domainAsName = emailDomain
     ? emailDomain.split('.')[0].charAt(0).toUpperCase()+emailDomain.split('.')[0].slice(1)
     : '';
   const preset = {
     firmaSlug,
-    presetFirmenname: analysis.kunde_name || domainAsName || '',
+    presetFirmenname: analysis.kunde_name || requester.company?.name || domainAsName || '',
     presetAdresse:    analysis.kunde_adresse || analysis.anlage_adresse || '',
-    presetEmail:      analysis.kontakt_email || '',
-    presetTelefon:    analysis.kontakt_telefon || '',
+    presetEmail:      email,
+    presetTelefon:    analysis.kontakt_telefon || requester.phone || requester.mobile || '',
   };
   console.log('[NWV-FD] openCreateKundeDialog mit Preset:', preset, '| analysis:', analysis);
   openCreateKundeDialog({
