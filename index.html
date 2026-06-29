@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.67';
+const APP_VERSION = 'v6.68';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24180,7 +24180,74 @@ async function _fdLoadTicketFull(firmaSlug, ticketId) {
   return { ticket, conversations, attachments };
 }
 
+/**
+ * v6.68: Vor-Analyse aus FD-Hero-Notiz extrahieren.
+ *   Wenn das Ticket eine PRIVATE Notiz mit einem ASZENDIO-ANALYSE-Block enthält,
+ *   übernehmen wir das JSON direkt — kein CORS-Problem mit Anhängen, deutlich schneller.
+ *
+ * Erwartetes Format in der internen FD-Notiz (eines davon):
+ *   1) HTML-Kommentar:
+ *        <!-- ASZENDIO-ANALYSE -->
+ *        { "fabriknummer":"53138", "kunde_name":"…", … }
+ *        <!-- /ASZENDIO-ANALYSE -->
+ *   2) Markdown code-fence:
+ *        ```json
+ *        { "fabriknummer":"53138", … }
+ *        ```
+ *   3) Inline marker:
+ *        ASZENDIO-ANALYSE:
+ *        { "fabriknummer":"53138", … }
+ *
+ * Felder im JSON: identisch zum live-KI-Schema (fabriknummer, kunde_name,
+ * kunde_adresse, anlage_adresse, kontakt_*, anliegen, angebot_typ,
+ * vorgeschlagene_positionen[{titel,beschreibung}], optional: confidence_notes).
+ */
+function _fdFindAnalysisNote(ticketFull) {
+  const convs = Array.isArray(ticketFull?.conversations) ? ticketFull.conversations : [];
+  for (const c of convs) {
+    if (!c || !c.private) continue;
+    const raw  = c.body_text || _stripHtml(c.body || '');
+    if (!raw || raw.length < 20) continue;
+    const text = raw;
+    const patterns = [
+      /<!--\s*ASZENDIO-ANALYSE[^>]*-->\s*([\s\S]*?)<!--\s*\/ASZENDIO-ANALYSE\s*-->/i,
+      /ASZENDIO-ANALYSE\s*[:\-]?\s*\n+([\s\S]*?)(?:\n---|\n###|$)/i,
+      /```(?:json)?\s*([\s\S]*?)```/i,
+    ];
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (!m || !m[1]) continue;
+      const jsonStr = m[1].trim()
+        .replace(/^[^{[]+/, '')          // alles vor erstem { oder [
+        .replace(/[^}\]]+$/, '');         // alles nach letztem } oder ]
+      if (!jsonStr) continue;
+      try {
+        const data = JSON.parse(jsonStr);
+        if (data && typeof data === 'object' && (data.fabriknummer || data.kunde_name || data.anliegen)) {
+          console.log('[FD-Analyse] Vor-Analyse aus FD-Notiz übernommen ('+Object.keys(data).length+' Felder)');
+          return data;
+        }
+      } catch(e) {
+        // nächstes Pattern probieren
+      }
+    }
+  }
+  return null;
+}
+
 async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
+  // v6.68: Vor-Analyse aus FD-Hero-Notiz vorrangig nutzen — vermeidet CORS-Probleme
+  //   und ist schneller (keine erneute KI-Analyse nötig).
+  const fromNote = _fdFindAnalysisNote(ticketFull);
+  if (fromNote) {
+    if (progress) progress('📋 Vor-Analyse aus FD-Notiz übernommen (FD-Hero) — keine erneute KI-Analyse nötig');
+    return {
+      ...fromNote,
+      _source: 'fd-note',
+      _attCounts: { images: 0, pdfs: 0, skipped: 0, failed: 0, total: (ticketFull.attachments||[]).length, diag: ['📋 Analyse aus FD-Notiz übernommen — Anhänge nicht re-analysiert'] },
+    };
+  }
+
   const ticket = ticketFull.ticket || {};
   const subject = ticket.subject || '';
   const descText = (ticket.description_text || _stripHtml(ticket.description || '')).slice(0, 12000);
@@ -24334,7 +24401,7 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
   const data = await resp.json();
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block || !block.input) throw new Error('KI lieferte kein strukturiertes Ergebnis');
-  return { ...block.input, _attCounts: { images: imgCount, pdfs: pdfCount, skipped: skippedCount, failed: failedCount, total: atts.length, diag } };
+  return { ...block.input, _source: 'live-ki', _attCounts: { images: imgCount, pdfs: pdfCount, skipped: skippedCount, failed: failedCount, total: atts.length, diag } };
 }
 
 async function _fdMatchTicketData(analysis, firmaSlug) {
@@ -25252,14 +25319,19 @@ function _angWizardFdRenderResult() {
     : '<span style="background:#F59E0B;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">⚠ nicht im ERP — muss neu angelegt werden</span>';
   const posCount = Array.isArray(analysis.vorgeschlagene_positionen) ? analysis.vorgeschlagene_positionen.length : 0;
   const canContinue = !!match.anlage && !!match.kunde;
-  // v6.66: Anhang-Diagnose-Block (klappbar) — zeigt was an die KI ging
+  // v6.66/v6.68: Status-Badge — Quelle (FD-Notiz vs Live-KI) + Anhang-Stats
   const ac = analysis._attCounts || {};
   const totalSent = (ac.images||0) + (ac.pdfs||0);
-  const attBadge = (ac.total > 0)
-    ? (totalSent > 0
-        ? '<span style="background:#10B981;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">'+(ac.images||0)+' Bilder + '+(ac.pdfs||0)+' PDFs an KI</span>'
-        : '<span style="background:#DC2626;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">⚠ 0 Anhänge an KI ('+(ac.failed||0)+' Fehler · '+(ac.skipped||0)+' übersprungen)</span>')
-    : '<span style="background:#9CA3AF;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">keine Anhänge am Ticket</span>';
+  let attBadge;
+  if (analysis._source === 'fd-note') {
+    attBadge = '<span style="background:#7C3AED;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">📋 aus FD-Notiz (FD-Hero)</span>';
+  } else if (ac.total > 0) {
+    attBadge = totalSent > 0
+      ? '<span style="background:#10B981;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">🧠 Live-KI · '+(ac.images||0)+' Bilder + '+(ac.pdfs||0)+' PDFs</span>'
+      : '<span style="background:#DC2626;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">⚠ 0 Anhänge an KI ('+(ac.failed||0)+' Fehler · '+(ac.skipped||0)+' übersprungen)</span>';
+  } else {
+    attBadge = '<span style="background:#9CA3AF;color:#fff;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600">🧠 Live-KI · keine Anhänge</span>';
+  }
   const diagHtml = (Array.isArray(ac.diag) && ac.diag.length)
     ? '<details style="margin-top:8px;font-size:11px"><summary style="cursor:pointer;color:var(--txt2);font-weight:600">📎 Anhang-Diagnose ('+ac.total+' gesamt)</summary><div style="margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;line-height:1.5;background:#fff;border:1px solid var(--bdr);border-radius:4px;padding:6px 8px;white-space:pre-wrap">'+escapeHtml(ac.diag.join('\n'))+'</div></details>'
     : '';
