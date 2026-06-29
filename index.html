@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.71';
+const APP_VERSION = 'v6.72';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -26723,7 +26723,11 @@ function _angEditorRender() {
     (E.abrechnung === 'aufwand' ? _angRenderStundensaetzeBlock(E) :
       // Positionen
       '<div style="margin-bottom:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><h3 style="margin:0;font-size:14px;color:var(--navy)">📋 Positionen ('+E.positionen.length+')</h3>'+
-        '<span style="font-size:11px;color:var(--txt3);flex:1;min-width:200px">'+(_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')+'</span>'+
+        '<span style="font-size:11px;color:var(--txt3);flex:1;min-width:200px">'+(
+          (E.abrechnung === 'pauschal' && E.preisanzeige_modus === 'gesamt')
+            ? 'Nur Titel + Beschreibung — der Pauschalpreis steht oben.'
+            : (_angIsManuell(E) ? 'Trage EK (interne Kalkulation) und VP (Verkaufspreis) ein.' : 'Trage rechts deinen Verkaufspreis (VP) ein — Default = '+(E.anbieter||'Anbieter')+'-EK × 1.20')
+        )+'</span>'+
         // v5.63: Position manuell hinzufügen — wichtig wenn KI nichts geliefert hat
         '<button type="button" class="btn prim" style="font-size:11px;padding:5px 10px" onclick="_angAddPosition()" title="Manuell eine neue Position anlegen — z.B. wenn die KI nichts geliefert hat oder eine fehlt">⊕ Position</button>'+
       '</div>'+
@@ -27730,23 +27734,30 @@ function _angRenderPositionRow(p, i, E) {
   const ekLabel = isManuell ? 'EK (manuell)' : 'EK ('+(E?.anbieter||'Anbieter')+')';
   const rowOpacity = isHidden ? '0.4' : '1';
   const rowBg = isHidden ? '#F3F4F6' : (i%2?'#FAFBFD':'#fff');
+  // v6.72: Bei "Nur Pauschalpreis" (preisanzeige_modus === 'gesamt') keine Preis-Spalten pro Position.
+  //   Die Positionen sind dann nur Beschreibungs-Items; der Verkaufspreis steht oben als Gesamtsumme.
+  const isPauschalGesamt = E.abrechnung === 'pauschal' && E.preisanzeige_modus === 'gesamt';
   // Bei manueller Eingabe: EK ist editierbar; sonst read-only Display.
-  const ekCell = isManuell
+  const ekCell = isPauschalGesamt ? '' : (isManuell
     ? '<div><label style="font-size:10px;color:#0E7490;font-weight:700;display:block">'+ekLabel+'</label>'+
         '<input type="number" step="0.01" min="0" id="ang-pos-ek-'+i+'" value="'+(p.ep_kone||'')+'" oninput="_angSetPos('+i+',\'ep_kone\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #67E8F9;border-radius:4px;font-size:12px;font-weight:600;color:#0E7490;text-align:right;background:#ECFEFF"></div>'
     : '<div><label style="font-size:10px;color:var(--txt3);display:block">'+ekLabel+'</label>'+
-        '<div style="font-size:12px;color:var(--txt2);padding:5px 0">'+fmt(p.ep_kone)+' €</div></div>';
+        '<div style="font-size:12px;color:var(--txt2);padding:5px 0">'+fmt(p.ep_kone)+' €</div></div>');
   // v6.08: VP-Zelle — wenn preis_aufwand: deaktiviert + "nach Aufwand"-Hinweis
-  const vpCell = isAufwand
+  const vpCell = isPauschalGesamt ? '' : (isAufwand
     ? '<div><label style="font-size:10px;color:#6B7280;font-weight:700;display:block">VP (deins)</label>'+
         '<div style="padding:5px 8px;border:1px dashed #D1D5DB;border-radius:4px;font-size:11px;color:#6B7280;text-align:center;background:#F9FAFB;font-style:italic">nach Aufwand</div></div>'
     : '<div><label style="font-size:10px;color:#9A3412;font-weight:700;display:block">VP (deins) *</label>'+
-        '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>';
+        '<input type="number" step="0.01" min="0" id="ang-pos-vp-'+i+'" value="'+(p.vp||'')+'" oninput="_angSetPos('+i+',\'vp\',this.value)" style="width:100%;padding:5px 8px;border:1px solid #FB923C;border-radius:4px;font-size:13px;font-weight:600;color:#9A3412;text-align:right;background:#FFF7ED"></div>');
+  const gesamtCell = isPauschalGesamt ? '' :
+    '<div><label style="font-size:10px;color:var(--txt3);display:block">Gesamt VP</label>'+
+      '<div id="ang-pos-sum-'+i+'" style="font-size:'+(isAufwand?'11':'13')+'px;font-weight:'+(isAufwand?'500':'700')+';color:'+(isAufwand?'#6B7280':'#7C2D12')+';padding:5px 0;text-align:right'+(isAufwand?';font-style:italic':'')+'">'+(isAufwand ? 'nach Aufwand' : fmt(gesamt)+' €')+'</div></div>';
+  const gridCols = isPauschalGesamt ? '30px 1fr 32px' : '30px 1fr 90px 130px 100px 32px';
   return '<div style="padding:12px 14px;border-bottom:1px solid var(--bdr);background:'+rowBg+';opacity:'+rowOpacity+';position:relative">'+
     (isHidden ? '<div style="position:absolute;top:8px;right:14px;background:#6B7280;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">👁‍🗨 NICHT IM ANGEBOT</div>' : '')+
-    (isAufwand && !isHidden ? '<div style="position:absolute;top:8px;right:14px;background:#0891B2;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">💧 NACH AUFWAND</div>' : '')+
-    '<div style="display:grid;grid-template-columns:30px 1fr 90px 130px 100px 32px;gap:10px;align-items:start">'+
-      '<div style="background:'+(isHidden?'#9CA3AF':(isAufwand?'#0891B2':'#2152A9'))+';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
+    (isAufwand && !isHidden && !isPauschalGesamt ? '<div style="position:absolute;top:8px;right:14px;background:#0891B2;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px">💧 NACH AUFWAND</div>' : '')+
+    '<div style="display:grid;grid-template-columns:'+gridCols+';gap:10px;align-items:start">'+
+      '<div style="background:'+(isHidden?'#9CA3AF':(isAufwand && !isPauschalGesamt?'#0891B2':'#2152A9'))+';color:#fff;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:11px">'+(p.nr||(i+1))+'</div>'+
       '<div>'+
         '<input id="ang-pos-titel-'+i+'" value="'+escapeHtml(p.titel||'')+'" oninput="_angSetPos('+i+',\'titel\',this.value)" style="width:100%;padding:5px 8px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-weight:600;color:#222;background:#fff;margin-bottom:4px'+(isHidden?';text-decoration:line-through':'')+'">'+
         // v6.07: Bullets als Textarea (jede Zeile = ein Bullet). Auto-Height via rows-Attribut.
@@ -27758,18 +27769,18 @@ function _angRenderPositionRow(p, i, E) {
         '</textarea>'+
         '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px">'+
           '<button onclick="_angSavePosAsLernbeispiel('+i+')" title="Diese Position als KI-Lern-Beispiel speichern — die KI nutzt sie als Stilvorbild bei künftigen Angeboten ('+escapeHtml(E.angebot_typ||'sonstiges')+')" style="background:#EEF2FF;border:1px solid #C7D2FE;color:#3730A3;font-size:10px;padding:4px 8px;border-radius:4px;cursor:pointer;font-weight:600">📚 Als Lern-Beispiel</button>'+
-          // v6.08: Preis-Aufwand-Checkbox
+          // v6.08: Preis-Aufwand-Checkbox (nur sinnvoll wenn Preise pro Position angezeigt werden)
+          (isPauschalGesamt ? '' :
           '<label style="display:inline-flex;align-items:center;gap:5px;font-size:10px;color:'+(isAufwand?'#0E7490':'var(--txt2)')+';cursor:pointer;'+(isAufwand?'background:#ECFEFF;border:1px solid #67E8F9;padding:3px 7px;border-radius:4px;font-weight:600':'')+'" title="Statt eines konkreten Preises wird im Angebot „nach Aufwand" angezeigt — die Position fließt nicht in die Summen ein.">'+
             '<input type="checkbox" '+(isAufwand?'checked':'')+' onchange="_angTogglePreisAufwand('+i+', this.checked)" style="margin:0;cursor:pointer">'+
             '💧 Preis ausblenden (nach Aufwand)'+
-          '</label>'+
+          '</label>')+
           '<span style="font-size:9px;color:var(--txt3)">'+(p.leistungsbeschreibung||[]).length+' Bullet'+((p.leistungsbeschreibung||[]).length===1?'':'s')+'</span>'+
         '</div>'+
       '</div>'+
       ekCell+
       vpCell+
-      '<div><label style="font-size:10px;color:var(--txt3);display:block">Gesamt VP</label>'+
-        '<div id="ang-pos-sum-'+i+'" style="font-size:'+(isAufwand?'11':'13')+'px;font-weight:'+(isAufwand?'500':'700')+';color:'+(isAufwand?'#6B7280':'#7C2D12')+';padding:5px 0;text-align:right'+(isAufwand?';font-style:italic':'')+'">'+(isAufwand ? 'nach Aufwand' : fmt(gesamt)+' €')+'</div></div>'+
+      gesamtCell+
       // Toggle-Button: Position aus dem PDF ausblenden
       '<div style="display:flex;flex-direction:column;gap:3px;align-items:center">'+
         '<button onclick="_angTogglePosHidden('+i+')" title="'+(isHidden?'Wieder in Angebot aufnehmen':'Aus dem Angebot ausblenden (Position bleibt erhalten)')+'" style="background:'+(isHidden?'#6B7280':'transparent')+';color:'+(isHidden?'#fff':'var(--txt3)')+';border:1px solid '+(isHidden?'#6B7280':'var(--bdr)')+';border-radius:4px;width:28px;height:28px;cursor:pointer;font-size:14px;padding:0">'+(isHidden?'👁':'🚫')+'</button>'+
