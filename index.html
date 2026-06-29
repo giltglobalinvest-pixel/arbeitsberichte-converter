@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.68';
+const APP_VERSION = 'v6.69';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24258,82 +24258,14 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
     .filter(Boolean)
     .join('\n---\n')
     .slice(0, 20000);
-  // v6.66: Größeres Limit (Claude PDF-Support: 32MB total) + besseres Logging
-  //   damit silent-fails sichtbar werden. Vorher: 5MB pro Datei war zu konservativ
-  //   (typische Installationsberichte sind 1-15 MB), Fehler wurden geschluckt.
+  // v6.69: Anhang-Download komplett entfernt. FD-S3-URLs haben kein CORS und der val.town-Proxy
+  //   hat keinen passenden Endpoint dafür. Stattdessen kommt die Vor-Analyse aus dem FD-Hero
+  //   per interner Notiz (siehe _fdFindAnalysisNote). Wenn die Notiz fehlt, analysiert die KI
+  //   hier nur den Ticket-Text — Anhänge werden bewusst übersprungen + im Diag-Log aufgeführt.
   const contentBlocks = [];
-  const atts = (ticketFull.attachments||[]).slice(0, 20);
-  let imgCount = 0, pdfCount = 0, skippedCount = 0, failedCount = 0;
-  const diag = []; // detailliertes Log pro Anhang
-  for (let i = 0; i < atts.length; i++) {
-    const a = atts[i];
-    const name = a.name || a.filename || ('Anhang-'+(i+1));
-    const sizeMB = (a.size||0)/(1024*1024);
-    if (progress) progress('📎 Lade Anhang '+(i+1)+'/'+atts.length+': '+name+' ('+sizeMB.toFixed(1)+' MB)…');
-    if (a.size && sizeMB > 25) {
-      diag.push('⏭ '+name+' ('+sizeMB.toFixed(1)+' MB > 25 MB)');
-      skippedCount++; continue;
-    }
-    try {
-      // v6.67: FD-Attachments sind S3-presigned URLs ohne CORS-Header → direkter Browser-Fetch
-      //   schlägt mit „blocked by CORS policy" fehl. Wir gehen über den val.town-Proxy
-      //   (/freshdesk/{slug}/api/v2/attachments/{id}), der die Auth + Download serverseitig macht.
-      //   Direkter URL nur als Fallback wenn keine Anhang-ID vorhanden ist.
-      let blob = null;
-      let lastErr = '';
-      const proxy = APP_KEYS.valtownProxyUrl;
-      if (a.id && proxy) {
-        try {
-          await erpEnsureSession();
-          const pUrl = proxy+'/freshdesk/'+firmaSlug+'/api/v2/attachments/'+encodeURIComponent(a.id);
-          const r = await fetch(pUrl, { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
-          if (r.ok) blob = await r.blob();
-          else lastErr = 'proxy HTTP '+r.status;
-        } catch(e) { lastErr = 'proxy: '+(e.message||'?'); }
-      }
-      if (!blob) {
-        const url = a.attachment_url || a.url;
-        if (!url) { diag.push('⚠ '+name+' (keine URL, '+lastErr+')'); failedCount++; continue; }
-        try {
-          const r2 = await fetch(url);
-          if (!r2.ok) { diag.push('⚠ '+name+' (direkt HTTP '+r2.status+(lastErr?' · '+lastErr:'')+')'); failedCount++; continue; }
-          blob = await r2.blob();
-        } catch(e2) {
-          diag.push('❌ '+name+' (direkt CORS/Fetch fail'+(lastErr?' · '+lastErr:'')+')');
-          failedCount++; continue;
-        }
-      }
-      const b64 = await new Promise((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(String(r.result).split(',')[1]);
-        r.onerror = rej;
-        r.readAsDataURL(blob);
-      });
-      const mime = a.content_type || blob.type || '';
-      const lname = name.toLowerCase();
-      const isImage = mime.startsWith('image/') || /\.(jpe?g|png|webp|gif)$/i.test(lname);
-      const isPdf   = mime === 'application/pdf' || /\.pdf$/i.test(lname);
-      if (isImage) {
-        const mt = mime.startsWith('image/') ? mime : (/\.png$/i.test(lname)?'image/png':'image/jpeg');
-        contentBlocks.push({ type:'image', source:{ type:'base64', media_type: mt, data: b64 }});
-        imgCount++;
-        diag.push('🖼 '+name+' ('+sizeMB.toFixed(1)+' MB)');
-      } else if (isPdf) {
-        contentBlocks.push({ type:'document', source:{ type:'base64', media_type:'application/pdf', data: b64 }});
-        pdfCount++;
-        diag.push('📄 '+name+' ('+sizeMB.toFixed(1)+' MB)');
-      } else {
-        diag.push('⏭ '+name+' (Typ '+(mime||'?')+' nicht unterstützt)');
-        skippedCount++;
-      }
-    } catch(e) {
-      console.warn('[FD-Analyse] Attachment-Load fail:', name, e.message);
-      diag.push('❌ '+name+' (Fehler: '+(e.message||'?').slice(0,80)+')');
-      failedCount++;
-    }
-  }
-  console.log('[FD-Analyse] Anhang-Diagnose:\n'+diag.join('\n'));
-  if (progress) progress('📎 '+imgCount+' Bilder + '+pdfCount+' PDFs an KI · '+failedCount+' Fehler · '+skippedCount+' übersprungen');
+  const atts = ticketFull.attachments || [];
+  const diag = atts.map(a => 'ℹ '+(a.name||a.filename||'Anhang')+' ('+Math.round((a.size||0)/1024)+' KB) — nicht analysiert (FD-Hero liefert Vor-Analyse als interne Notiz)');
+  if (atts.length && progress) progress('ℹ '+atts.length+' Anhang/Anhänge am Ticket — werden NICHT direkt analysiert (CORS). FD-Hero soll Vor-Analyse als interne Notiz liefern.');
   // Text-Block am Ende
   contentBlocks.push({
     type:'text',
@@ -24347,7 +24279,7 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
       '- Firma: '+(company.name||requester.company_name||'?')+'\n\n'+
       'TICKET-BESCHREIBUNG:\n'+descText+'\n\n'+
       (convTexts ? 'KONVERSATIONS-VERLAUF:\n'+convTexts+'\n\n' : '')+
-      'Anhänge: '+imgCount+' Bilder, '+pdfCount+' PDFs — bitte auch dort nach Fabriknummern (auf Typenschildern!) und Adressdetails suchen.',
+      (atts.length ? ('Hinweis: am Ticket sind '+atts.length+' Anhang/Anhänge, die HIER NICHT mitanalysiert werden konnten (CORS). Falls eine Fabriknummer/Adresse nur dort steht, lass das Feld LEER — der User soll später manuell ergänzen.') : 'Keine Anhänge am Ticket.'),
   });
   const tool = {
     name:'analyze_ticket',
@@ -24401,7 +24333,7 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
   const data = await resp.json();
   const block = (data.content||[]).find(b => b.type === 'tool_use');
   if (!block || !block.input) throw new Error('KI lieferte kein strukturiertes Ergebnis');
-  return { ...block.input, _source: 'live-ki', _attCounts: { images: imgCount, pdfs: pdfCount, skipped: skippedCount, failed: failedCount, total: atts.length, diag } };
+  return { ...block.input, _source: 'live-ki', _attCounts: { images: 0, pdfs: 0, skipped: atts.length, failed: 0, total: atts.length, diag } };
 }
 
 async function _fdMatchTicketData(analysis, firmaSlug) {
@@ -25358,15 +25290,71 @@ function _angWizardFdRenderResult() {
         row('Positionen', posCount + ' Position'+(posCount===1?'':'en')+' vorgeschlagen')+
         (analysis.confidence_notes ? row('⚠ KI-Hinweis', analysis.confidence_notes) : '')+
       '</div>'+
-      // Block 3: CTA
+      // Block 3: Anlegen-Buttons + CTA
       (canContinue
         ? '<button class="btn prim" onclick="_angWizardFdContinue()" style="width:100%;background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:12px;font-size:13px">→ Weiter zum Angebot-Editor (Daten übernehmen)</button>'
-        : '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:10px 12px;font-size:12px;color:#78350F">'+
-            '⚠ <strong>Phase 2 noch nicht implementiert:</strong> Fehlende Anlage/Kunde müssen aktuell noch manuell angelegt werden. Wenn du das gemacht hast, hier <strong>erneut analysieren</strong> klicken — dann findet die App alles und du kannst weiter.'+
-            '<br><br>'+
-            '<button class="btn" onclick="_angWizardFdContinue()" style="background:#fff;color:#78350F;border-color:#FCD34D">Trotzdem weiter (ohne Anlage/Kunde-Verknüpfung)</button>'+
+        : '<div style="display:grid;gap:8px">'+
+            '<div style="font-size:12px;color:var(--txt2);background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 12px"><strong>Fehlende Daten anlegen:</strong> Kunde zuerst (Anlage braucht Kunden-Nr), dann Anlage.</div>'+
+            (!match.kunde
+              ? '<button class="btn" onclick="_angWizardFdCreateKunde()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Kunde im ERP anlegen ('+escapeHtml((analysis.kunde_name||'?').slice(0,40))+')</button>'
+              : '<div style="font-size:11px;color:#065F46;padding:4px">✓ Kunde bereits vorhanden</div>')+
+            (match.kunde
+              ? '<button class="btn" onclick="_angWizardFdCreateAnlage()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Anlage im ERP anlegen'+(analysis.fabriknummer?' (Fabrik-Nr. '+escapeHtml(analysis.fabriknummer)+')':'')+'</button>'
+              : '<button class="btn" disabled style="opacity:.5;padding:10px;font-size:13px" title="Kunde muss zuerst angelegt werden">✚ Anlage im ERP anlegen (erst Kunde anlegen)</button>')+
+            '<button class="btn" onclick="_angWizardFdContinue()" style="background:#fff;color:var(--txt2);border-color:var(--bdr);padding:8px;font-size:12px">Trotzdem weiter (ohne ERP-Verknüpfung)</button>'+
           '</div>')+
     '</div>';
+}
+
+/* v6.69: Phase 2 — Kunde aus FD-Daten im ERP anlegen */
+function _angWizardFdCreateKunde() {
+  const m = document.getElementById('ang-wizard');
+  if (!m || !m._fdData) return;
+  const { analysis } = m._fdData;
+  const firmaSlug = getCurrentFirmaSlug();
+  openCreateKundeDialog({
+    firmaSlug,
+    presetFirmenname: analysis.kunde_name || '',
+    presetAdresse:    analysis.kunde_adresse || '',
+    presetEmail:      analysis.kontakt_email || '',
+    presetTelefon:    analysis.kontakt_telefon || '',
+    onCreated: async (kunde) => {
+      // Cache-Refresh + Match aktualisieren
+      try {
+        const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+        const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data))||[]);
+        _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+      } catch(_){}
+      // Match-State updaten + Result neu rendern
+      const fresh = (_kundenCache.items||[]).find(k => String(k.id) === String(kunde.id)) || kunde;
+      m._fdData.match.kunde = fresh;
+      _angWizardFdRenderResult();
+      toast('✅ Kunde übernommen — jetzt ggf. Anlage anlegen','ok');
+    },
+  });
+}
+
+/* v6.69: Phase 2 — Anlage aus FD-Daten im ERP anlegen */
+function _angWizardFdCreateAnlage() {
+  const m = document.getElementById('ang-wizard');
+  if (!m || !m._fdData) return;
+  const { analysis, match } = m._fdData;
+  if (!match.kunde) return toast('Bitte zuerst Kunde anlegen','warn');
+  _openCreateAnlageStandaloneForm(match.kunde, {
+    preset: {
+      adresse: analysis.anlage_adresse || analysis.kunde_adresse || '',
+      fabriknummer: analysis.fabriknummer || '',
+    },
+    onCreated: async (created) => {
+      // Anlagen-Cache invalidieren + neu laden
+      try { await _loadAnlagenForFirma(getCurrentFirmaSlug()); } catch(_){}
+      // Match-State updaten
+      const fresh = (_anlagenCache.items||[]).find(a => String(a.id) === String(created.id)) || created;
+      m._fdData.match.anlage = fresh;
+      _angWizardFdRenderResult();
+      toast('✅ Anlage übernommen — kannst jetzt zum Editor wechseln','ok');
+    },
+  });
 }
 
 function _angWizardFdContinue() {
@@ -33720,7 +33708,8 @@ function _proceedToAnlageForm(kunde) {
   _openCreateAnlageStandaloneForm(kunde);
 }
 
-async function _openCreateAnlageStandaloneForm(kunde) {
+async function _openCreateAnlageStandaloneForm(kunde, opts) {
+  opts = opts || {};
   const firmaSlug = getCurrentFirmaSlug();
   const adresseDefault = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
 
@@ -33781,6 +33770,16 @@ async function _openCreateAnlageStandaloneForm(kunde) {
   document.body.appendChild(m);
   m._kunde = kunde;
   m._firmaSlug = firmaSlug;
+  m._opts = opts;  // v6.69: { preset:{adresse, fabriknummer}, onCreated:fn }
+  // Preset-Werte überschreiben Defaults (z.B. aus FD-Ticket-Analyse)
+  if (opts.preset) {
+    setTimeout(() => {
+      const adr = document.getElementById('pl-new-adresse');
+      const fab = document.getElementById('pl-new-fabriknr');
+      if (adr && opts.preset.adresse)      adr.value = opts.preset.adresse;
+      if (fab && opts.preset.fabriknummer) fab.value = opts.preset.fabriknummer;
+    }, 0);
+  }
   m.onclick = (e) => { if (e.target === m) m.remove(); };
 }
 
@@ -33888,6 +33887,10 @@ async function _submitCreateAnlageStandalone() {
     _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
     toast('🚀 Anlage "'+adresse.slice(0,40)+'" im ERP angelegt.', 'ok');
     m.remove();
+    // v6.69: onCreated-Callback (FD-Ticket-Wizard nutzt das für Auto-Refresh)
+    if (m._opts && typeof m._opts.onCreated === 'function') {
+      try { m._opts.onCreated(created); } catch(e) { console.warn('[NeueAnlage] onCreated fail:', e.message); }
+    }
     // Wenn aktuell auf Anlagen-View: neu laden
     if (document.getElementById('anl-view')?.classList.contains('show')) {
       renderAnlagenView({ force:true });
