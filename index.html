@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.57';
+const APP_VERSION = 'v6.58';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9216,63 +9216,76 @@ function closeAnlageDetailModal() {
 }
 
 /**
- * v6.56: Fabriknummer einer Anlage ändern.
- * Versucht mehrere Endpoint-Varianten (PATCH/PUT mit verschiedenen Schemas), bis eine funktioniert.
- * Aktualisiert anschließend den lokalen Cache + Detail-Modal + Liste.
+ * v6.56/v6.58: Fabriknummer einer Anlage ändern.
+ * ERP-Endpoint: PUT /api/anlagen/{id} mit AnlageSETDTO (FLACH — kundenId/ansprechpartnerId als Number,
+ * NICHT nested wie in der AnlageGETDTO). Wir holen die GETDTO und konvertieren zur SETDTO.
  */
 async function _anlEditFabriknummer(btn) {
   const a = _anlagenViewSelected;
   if (!a || a.id == null) return toast('Keine Anlage ausgewählt','err');
   const oldFab = String(a.fabriknummer || '');
   const newFab = (window.prompt('Neue Fabriknummer für „'+(a.anzeigeAdresse||a.name||'?')+'":', oldFab) || '').trim();
-  if (!newFab) return;  // Cancel oder leer
+  if (!newFab) return;
   if (newFab === oldFab) return toast('Unverändert','');
   const firmaSlug = getCurrentFirmaSlug();
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
-  const tries = [];
   try {
-    // 1) PATCH /api/anlagen/{id} mit { fabriknummer }
-    tries.push('PATCH '+`/api/anlagen/${a.id}`+' {fabriknummer}');
-    try {
-      await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
-        method:'PATCH', body:{ fabriknummer: newFab },
-      });
-      _anlApplyFabUpdate(a, newFab);
-      toast('✅ Fabriknummer geändert (PATCH)','ok');
-      return;
-    } catch(e) { console.warn('[Anlage-Fab] PATCH fail:', e.message); }
-    // 2) PUT /api/anlagen/{id} mit full object (vorher GET)
-    tries.push('PUT '+`/api/anlagen/${a.id}`+' (full object)');
-    try {
-      const current = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id));
-      if (current && typeof current === 'object') {
-        const updated = { ...current, fabriknummer: newFab };
-        await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
-          method:'PUT', body: updated,
-        });
-        _anlApplyFabUpdate(a, newFab);
-        toast('✅ Fabriknummer geändert (PUT)','ok');
-        return;
-      }
-    } catch(e) { console.warn('[Anlage-Fab] PUT /id fail:', e.message); }
-    // 3) PUT /api/anlagen (ohne ID-Pfad), Body inkl. id (Aufträge-Pattern)
-    tries.push('PUT /api/anlagen (kein ID-Pfad)');
-    try {
-      const current = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id));
-      const updated = { ...current, fabriknummer: newFab };
-      await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen', { method:'PUT', body: updated });
-      _anlApplyFabUpdate(a, newFab);
-      toast('✅ Fabriknummer geändert (PUT root)','ok');
-      return;
-    } catch(e) { console.warn('[Anlage-Fab] PUT root fail:', e.message); }
-    throw new Error('Alle Endpoint-Varianten fehlgeschlagen — getestet: '+tries.join(' · '));
+    // 1) GETDTO holen
+    const cur = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id));
+    if (!cur || typeof cur !== 'object') throw new Error('GET liefert kein Anlage-Objekt');
+    // 2) GETDTO → SETDTO konvertieren (flach: nested-Objekte zu IDs)
+    const setDto = _anlBuildSetDto(cur);
+    setDto.fabriknummer = newFab;
+    console.log('[Anlage-Fab] PUT payload:', setDto);
+    // 3) PUT /api/anlagen/{id}
+    await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id), {
+      method: 'PUT', body: setDto,
+    });
+    _anlApplyFabUpdate(a, newFab);
+    toast('✅ Fabriknummer geändert','ok');
   } catch(e) {
     console.error('[Anlage-Fab]', e);
-    toast('❌ '+(e.message||'Fehler'),'err');
+    toast('❌ '+(e.message||'Fehler').slice(0,200),'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = origText; }
   }
+}
+
+/**
+ * v6.58: AnlageGETDTO → AnlageSETDTO konvertieren — Backend-Pattern: nested-Objekte
+ * werden durch ihre IDs ersetzt (kunde → kundenId, ansprechpartner → ansprechpartnerId).
+ * Alle anderen Felder bleiben gleich (rechnungsempfaenger, objektTyp, fabriknummer, …).
+ */
+function _anlBuildSetDto(cur) {
+  const kundenId = cur.kundenId
+    ?? cur.kunde?.id
+    ?? (cur.kunde?.kundennummer ? +cur.kunde.kundennummer : null);
+  const ansprechpartnerId = cur.ansprechpartnerId
+    ?? cur.ansprechpartner?.id
+    ?? cur.standardansprechpartnerId
+    ?? cur.standardAnsprechpartner?.id
+    ?? null;
+  // Adresse: ERP nutzt teils adresseId (=String der Adresse) oder anzeigeAdresse
+  const adresseId = cur.adresseId || cur.anzeigeAdresse || '';
+  return {
+    id:                  cur.id,
+    kundenId:            kundenId != null ? +kundenId : undefined,
+    ansprechpartnerId:   ansprechpartnerId != null ? +ansprechpartnerId : undefined,
+    adresseId:           adresseId,
+    anzeigeAdresse:      cur.anzeigeAdresse || '',
+    name:                cur.name || '',
+    kennung:             cur.kennung || '',
+    fabriknummer:        cur.fabriknummer || '',
+    objektTyp:           cur.objektTyp || '',
+    betreiberTyp:        cur.betreiberTyp || '',
+    anzahlAufzuege:      +cur.anzahlAufzuege || 1,
+    stundensatz:         +cur.stundensatz || 0,
+    einsatzPauschale:    +cur.einsatzPauschale || 0,
+    rechnungsempfaenger: cur.rechnungsempfaenger || '',
+    sonstigerHinweis:    cur.sonstigerHinweis || '',
+    archived:            !!cur.archived,
+  };
 }
 
 function _anlApplyFabUpdate(a, newFab) {
