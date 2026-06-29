@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.61';
+const APP_VERSION = 'v6.62';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24026,6 +24026,12 @@ function _renderAngeboteList() {
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
   if (!list) return;
+  // v6.62: Focus + Cursor merken — das innerHTML-Rebuild würde sonst aus dem aktiven
+  //   Such-/Filter-Feld rauswerfen (User muss dann nach jedem Tastendruck neu klicken).
+  const ae = document.activeElement;
+  const focusId = (ae && ae.id) ? ae.id : null;
+  const selStart = (focusId && typeof ae.selectionStart === 'number') ? ae.selectionStart : null;
+  const selEnd   = (focusId && typeof ae.selectionEnd   === 'number') ? ae.selectionEnd   : null;
   const items = _angeboteCache.items || [];
   // Archive-Toggle (Standard: aus = archivierte ausblenden)
   const showArchived = document.getElementById('ang-flt-archived')?.checked === true;
@@ -24077,6 +24083,19 @@ function _renderAngeboteList() {
   });
   // Sortierung: neueste zuerst (nach Angebots-Nr absteigend)
   filtered.sort((a,b) => (+b.fields?.app_angebot_num||0) - (+a.fields?.app_angebot_num||0));
+  // v6.62: Restore-Focus-Helper — nach jedem innerHTML-Rebuild den vorher fokussierten
+  //   Eintrag (Suchfeld, Filter-Selects) wieder fokussieren + Cursor-Position wiederherstellen.
+  const restoreFocus = () => {
+    if (!focusId) return;
+    const el = document.getElementById(focusId);
+    if (!el) return;
+    try {
+      el.focus({ preventScroll:true });
+      if (selStart !== null && typeof el.setSelectionRange === 'function') {
+        el.setSelectionRange(selStart, selEnd ?? selStart);
+      }
+    } catch(_){}
+  };
   // Liste
   if (filtered.length === 0) {
     list.innerHTML = filtBar +
@@ -24085,6 +24104,7 @@ function _renderAngeboteList() {
           ? 'Noch keine Angebote angelegt. Klick <strong>+ Neues Angebot</strong> oben.'
           : 'Keine Treffer für Filter/Suche.')+
       '</div>';
+    restoreFocus();
     return;
   }
   const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
@@ -24119,6 +24139,7 @@ function _renderAngeboteList() {
       '</div>';
   }).join('');
   list.innerHTML = filtBar + html;
+  restoreFocus();
 }
 
 /* ── WIZARD: Neues Angebot ───────────────────────────────────────────── */
