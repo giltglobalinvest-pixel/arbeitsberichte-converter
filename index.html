@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.76';
+const APP_VERSION = 'v6.77';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -25357,12 +25357,23 @@ function _angWizardFdCreateKunde() {
   if (!m || !m._fdData) return;
   const { analysis } = m._fdData;
   const firmaSlug = getCurrentFirmaSlug();
-  openCreateKundeDialog({
+  // v6.77: Robust-Fallbacks — wenn KI ein Feld leer ließ, anderen sinnvollen Wert nehmen.
+  //   Firmenname-Fallback: Domain aus Email (z.B. "digitalspine.io" → "Digitalspine") wenn nichts da
+  //   Adress-Fallback:     anlage_adresse falls kunde_adresse leer (oft selbe Adresse)
+  const emailDomain = (analysis.kontakt_email||'').split('@')[1] || '';
+  const domainAsName = emailDomain
+    ? emailDomain.split('.')[0].charAt(0).toUpperCase()+emailDomain.split('.')[0].slice(1)
+    : '';
+  const preset = {
     firmaSlug,
-    presetFirmenname: analysis.kunde_name || '',
-    presetAdresse:    analysis.kunde_adresse || '',
+    presetFirmenname: analysis.kunde_name || domainAsName || '',
+    presetAdresse:    analysis.kunde_adresse || analysis.anlage_adresse || '',
     presetEmail:      analysis.kontakt_email || '',
     presetTelefon:    analysis.kontakt_telefon || '',
+  };
+  console.log('[ANG-FD] openCreateKundeDialog mit Preset:', preset, '| analysis:', analysis);
+  openCreateKundeDialog({
+    ...preset,
     onCreated: async (kunde) => {
       // Cache-Refresh + Match aktualisieren
       try {
@@ -31861,6 +31872,10 @@ async function _nwvFdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
         'Du analysierst ein Freshdesk-Ticket für eine WARTUNGSVERTRAG-Anfrage (Aufzug).\n\n'+
         'STRIKTE REGELN:\n'+
         '• Erfinde NICHTS. Wenn etwas nicht eindeutig im Text steht: leer/0/false.\n'+
+        '• Achte besonders auf SIGNATUREN am Ende der Mails — dort stehen oft Firma/Name/Adresse/Telefon des Absenders.\n'+
+        '• kunde_name: Firmenname des Absenders/Anfragers (aus Signatur, Mail-Domain oder Body) — auch wenn nur als Hinweis. NUR komplett leer wenn wirklich GAR KEIN Hinweis im Text steht.\n'+
+        '• kontakt_name: Vor- und Nachname des Absenders (aus Signatur oder Anrede des Mailverlaufs).\n'+
+        '• kontakt_email + kontakt_telefon: aus Signatur extrahieren wenn vorhanden.\n'+
         '• anlagen_fabriknummern: ALLE im Text genannten Fabriknummern in das Array (bei Sammelvertrag mehrere!).\n'+
         '• anlage_adresse: WICHTIG als Fallback wenn keine Fabriknummern genannt sind — extrahiere die Standort-Adresse der Anlage (Straße + Hausnummer + PLZ + Ort), egal wo im Text sie steht (Betreff, Body, Signatur).\n'+
         '• jahres_pauschale_netto nur befüllen wenn KONKRETER Preis genannt wurde — NIEMALS schätzen oder ableiten.\n'+
@@ -32304,12 +32319,21 @@ function _nwvFdCreateKunde() {
   if (!m || !m._nwvFdData) return;
   const { analysis } = m._nwvFdData;
   const firmaSlug = m._firmaSlug || getCurrentFirmaSlug();
-  openCreateKundeDialog({
+  // v6.77: Robust-Fallbacks (siehe Reparatur-Pfad)
+  const emailDomain = (analysis.kontakt_email||'').split('@')[1] || '';
+  const domainAsName = emailDomain
+    ? emailDomain.split('.')[0].charAt(0).toUpperCase()+emailDomain.split('.')[0].slice(1)
+    : '';
+  const preset = {
     firmaSlug,
-    presetFirmenname: analysis.kunde_name || '',
-    presetAdresse:    analysis.kunde_adresse || '',
+    presetFirmenname: analysis.kunde_name || domainAsName || '',
+    presetAdresse:    analysis.kunde_adresse || analysis.anlage_adresse || '',
     presetEmail:      analysis.kontakt_email || '',
     presetTelefon:    analysis.kontakt_telefon || '',
+  };
+  console.log('[NWV-FD] openCreateKundeDialog mit Preset:', preset, '| analysis:', analysis);
+  openCreateKundeDialog({
+    ...preset,
     onCreated: async (kunde) => {
       try {
         const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
