@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.54';
+const APP_VERSION = 'v6.55';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -40111,36 +40111,12 @@ window._lvPushToFreshdesk = async function(recId, btn) {
   if (f.fd_ticket_id && !confirm('LV wurde bereits am '+(f.fd_pushed_at||'?').slice(0,16).replace('T',' ')+' als Ticket #'+f.fd_ticket_id+' gepusht.\n\nNochmal pushen (neues Ticket)?')) return;
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Push…'; }
   try {
-    // PDF holen
+    // PDF holen — enthält in v6.55 bereits die Bilder als Thumbnails + klickbare Full-Size-Seiten
     const pdfBlob = await (await fetch(pdfAtt.url)).blob();
-    // v6.53: Bilder pro Position als Mail-Anhänge laden — fresh GET damit URLs nicht expired sind
     let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
-    let bildBlobs = [];
-    try {
-      const fresh = await _lvFetchRecordFresh(recId);
-      const freshPos = (() => { try { return JSON.parse(fresh?.fields?.positionen_json||'[]'); } catch(_){ return []; }})();
-      // URL-Refresh aus bilder_pool damit wir die aktuellsten signierten URLs haben
-      _lvRefreshBilderFromPool(freshPos, fresh?.fields?.bilder_pool);
-      // Alle Bild-URLs flach sammeln (mit Position-Hinweis im Filename)
-      const tasks = [];
-      for (let pi = 0; pi < freshPos.length; pi++) {
-        const bilder = freshPos[pi].bilder;
-        if (!Array.isArray(bilder)) continue;
-        for (let bi = 0; bi < bilder.length; bi++) {
-          const u = bilder[bi];
-          if (typeof u !== 'string' || !u || u.startsWith('data:')) continue;
-          tasks.push({ url: u, name: 'Pos'+(pi+1)+'-'+(bi+1)+'.jpg' });
-        }
-      }
-      if (tasks.length) {
-        if (btn) btn.textContent = '⏳ Lade '+tasks.length+' Bild'+(tasks.length===1?'':'er')+'…';
-        const res = await Promise.allSettled(tasks.map(async t => {
-          const b = await (await fetch(t.url)).blob();
-          return { blob: b, name: t.name };
-        }));
-        bildBlobs = res.filter(r => r.status === 'fulfilled').map(r => r.value);
-      }
-    } catch(e) { console.warn('[LV-Push] Bilder-Load fail:', e.message); }
+    // Bild-Anzahl für Body-Hinweis (nicht für separate Anhänge)
+    let bildCount = 0;
+    for (const p of positionen) if (Array.isArray(p.bilder)) bildCount += p.bilder.filter(b => typeof b === 'string' && b && !b.startsWith('data:')).length;
     // Subject + Body
     const lvNum = f.lv_num ? 'LV-'+f.lv_num : 'LV';
     const titel = (f.titel||'').slice(0,80);
@@ -40151,7 +40127,7 @@ window._lvPushToFreshdesk = async function(recId, btn) {
     if (f.anlage_adresse)    lines.push('<p>📍 <strong>Standort:</strong> '+escapeHtml(String(f.anlage_adresse).replace(/\n/g,', '))+'</p>');
     if (f.anlage_fabriknummer) lines.push('<p>🔧 <strong>Fabriknummer:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</p>');
     lines.push('<p>📋 <strong>'+positionen.length+' Position'+(positionen.length===1?'':'en')+'</strong> im LV — Details siehe PDF im Anhang.</p>');
-    if (bildBlobs.length) lines.push('<p>📷 <strong>'+bildBlobs.length+' Foto'+(bildBlobs.length===1?'':'s')+'</strong> im Anhang.</p>');
+    if (bildCount) lines.push('<p>📷 <strong>'+bildCount+' Foto'+(bildCount===1?'':'s')+'</strong> im PDF eingebettet — als Thumbnails an der jeweiligen Position, Klick öffnet die hochauflösende Vollbild-Seite im PDF.</p>');
     if (f.vorbemerkung) lines.push('<hr><p><em>Vorbemerkung:</em></p><p>'+escapeHtml(f.vorbemerkung).replace(/\n/g,'<br>')+'</p>');
     lines.push('<p style="font-size:11px;color:#888">Dieses Ticket wurde automatisch aus der Elevator Servicebox erzeugt — bitte ggf. an Subunternehmer/Bieter weiterleiten.</p>');
     // Type per Firma
@@ -40165,8 +40141,6 @@ window._lvPushToFreshdesk = async function(recId, btn) {
     fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
     if (fdType) fd.append('type', fdType);
     fd.append('attachments[]', pdfBlob, (pdfAtt.filename || lvNum+'.pdf'));
-    // v6.53: Bilder als zusätzliche Anhänge
-    for (const x of bildBlobs) fd.append('attachments[]', x.blob, x.name);
     await erpEnsureSession();
     const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
     const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
@@ -41001,6 +40975,30 @@ window._lvSave = async function() {
 };
 
 /* ── PDF-Generator ──────────────────────────────────────────────────── */
+/** v6.55: Bild als data:URL holen + Dimensions ermitteln — für jsPDF.addImage. */
+async function _lvPdfLoadImage(url) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = rej;
+      r.readAsDataURL(blob);
+    });
+    const dims = await new Promise((res, rej) => {
+      const img = new Image();
+      img.onload = () => res({ w: img.naturalWidth, h: img.naturalHeight });
+      img.onerror = rej;
+      img.src = dataUrl;
+    });
+    const format = /^data:image\/png/i.test(dataUrl) ? 'PNG' : 'JPEG';
+    return { dataUrl, w: dims.w, h: dims.h, format };
+  } catch(e) {
+    console.warn('[LV-PDF] Image load fail:', url, e.message);
+    return null;
+  }
+}
+
 async function _buildLvPdf(rec, firmaSlug) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit:'mm', format:'a4' });
@@ -41010,6 +41008,29 @@ async function _buildLvPdf(rec, firmaSlug) {
   const f = rec.fields || {};
   const fmtEUR = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+  // v6.55: URL-Refresh + alle Bilder vorab als data:URL laden (für embed + addImage)
+  _lvRefreshBilderFromPool(positionen, f.bilder_pool);
+  // Flatten: Liste aller Bilder global durchnummeriert (für Full-Size-Seite-Reihenfolge am Ende)
+  const allImages = []; // [{ posIdx, bildIdx, url, img, posTitel }]
+  for (let pi = 0; pi < positionen.length; pi++) {
+    const bilder = Array.isArray(positionen[pi].bilder) ? positionen[pi].bilder : [];
+    for (let bi = 0; bi < bilder.length; bi++) {
+      const u = bilder[bi];
+      if (typeof u !== 'string' || !u || u.startsWith('data:')) continue;
+      allImages.push({ posIdx: pi, bildIdx: bi, url: u, img: null, posTitel: positionen[pi].titel||'' });
+    }
+  }
+  if (allImages.length) {
+    const loaded = await Promise.all(allImages.map(x => _lvPdfLoadImage(x.url)));
+    for (let i = 0; i < allImages.length; i++) allImages[i].img = loaded[i];
+  }
+  // Index für schnellen Lookup: posIdx-bildIdx → globalImgIdx
+  const imgGlobalIdx = new Map();
+  allImages.forEach((x, gIdx) => {
+    if (x.img) imgGlobalIdx.set(x.posIdx+'-'+x.bildIdx, gIdx);
+  });
+  // Thumbnail-Refs für Link-Annotations nach Full-Size-Pages
+  const thumbRefs = []; // [{ page, x, y, w, h, globalIdx }]
   const sumPreis = positionen.reduce((s,p) => s + (+p.preis||0), 0);
   const hasAnyPrice = positionen.some(p => (+p.preis||0) > 0);
 
@@ -41053,10 +41074,21 @@ async function _buildLvPdf(rec, firmaSlug) {
   doc.setDrawColor(...NAVY); doc.line(ml, y+7.5, mr, y+7.5);
   y += 8;
 
+  // v6.55: Thumbnail-Layout pro Position — 4 Bilder pro Reihe in 35×26mm Slots, in der Leistungs-Spalte
+  const THUMB_PER_ROW = 4, THUMB_W = 35, THUMB_H = 26, THUMB_GAP = 2;
   positionen.forEach((p, idx) => {
     const titelLines = doc.splitTextToSize(_sanPdf(p.titel||''), colTitel-4);
     const beschLines = p.beschreibung ? doc.splitTextToSize(_sanPdf(p.beschreibung), colTitel-4) : [];
-    const rowH = Math.max(10, titelLines.length*5 + beschLines.length*4 + 4);
+    // Wie viele Bilder hat diese Position (nur die erfolgreich geladenen)?
+    const bilder = Array.isArray(p.bilder) ? p.bilder : [];
+    const posImgIndices = [];
+    for (let bi = 0; bi < bilder.length; bi++) {
+      const gi = imgGlobalIdx.get(idx+'-'+bi);
+      if (gi !== undefined) posImgIndices.push(gi);
+    }
+    const thumbRows = posImgIndices.length ? Math.ceil(posImgIndices.length / THUMB_PER_ROW) : 0;
+    const imgBlockH = thumbRows > 0 ? (thumbRows * (THUMB_H + THUMB_GAP) + 2) : 0;
+    const rowH = Math.max(10, titelLines.length*5 + beschLines.length*4 + 4 + imgBlockH);
     if (y + rowH > 270) { doc.addPage(); _lvPdfHeader(doc, ml, mr, BR, GREY_L); y = 32; }
     if (idx%2 === 0) { doc.setFillColor(250,250,250); doc.rect(ml, y, cw, rowH, 'F'); }
     doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(10);
@@ -41066,6 +41098,29 @@ async function _buildLvPdf(rec, firmaSlug) {
     if (beschLines.length) {
       doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
       beschLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
+    }
+    // Thumbnails einfügen
+    if (posImgIndices.length) {
+      const baseImgY = y + 5 + titelLines.length*5 + beschLines.length*4 + 2;
+      const baseImgX = ml + colNr + 2;
+      posImgIndices.forEach((gIdx, ix) => {
+        const r = Math.floor(ix / THUMB_PER_ROW);
+        const c = ix % THUMB_PER_ROW;
+        const tx = baseImgX + c * (THUMB_W + THUMB_GAP);
+        const ty = baseImgY + r * (THUMB_H + THUMB_GAP);
+        const im = allImages[gIdx].img;
+        if (!im) return;
+        // Aspect-Ratio: fit in THUMB_W × THUMB_H, zentriert
+        const ratio = Math.min(THUMB_W/im.w, THUMB_H/im.h);
+        const fitW = im.w * ratio, fitH = im.h * ratio;
+        const ox = tx + (THUMB_W - fitW)/2;
+        const oy = ty + (THUMB_H - fitH)/2;
+        try { doc.addImage(im.dataUrl, im.format, ox, oy, fitW, fitH); } catch(e) { console.warn('[LV-PDF] addImage thumb:', e.message); }
+        // Dünner Rahmen + Klick-Hinweis (Lupe-Cursor durch Link erkennbar)
+        doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.rect(tx, ty, THUMB_W, THUMB_H);
+        // Thumb-Ref speichern (Page-Number wird beim Link-Setting aufgelöst)
+        thumbRefs.push({ page: doc.internal.getCurrentPageInfo().pageNumber, x: tx, y: ty, w: THUMB_W, h: THUMB_H, globalIdx: gIdx });
+      });
     }
     doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
     const preisStr = (+p.preis||0) > 0 ? fmtEUR(p.preis) : '_______';
@@ -41091,6 +41146,32 @@ async function _buildLvPdf(rec, firmaSlug) {
     doc.text(_sanPdf('Preise bitte pro Position eintragen — Summe wird vom Bieter gebildet.'), ml, y); y += 6;
   }
 
+  // v6.55: Full-Size-Seiten am Ende — pro Bild eine eigene A4-Seite mit max. Größe + Caption
+  const firstFullSizePage = doc.getNumberOfPages() + 1;
+  const PAGE_W = 210, PAGE_H = 297, FS_MARGIN_X = 12, FS_MARGIN_TOP = 18, FS_MARGIN_BOTTOM = 18;
+  const FS_MAX_W = PAGE_W - 2*FS_MARGIN_X;
+  const FS_MAX_H = PAGE_H - FS_MARGIN_TOP - FS_MARGIN_BOTTOM;
+  allImages.forEach((entry, gIdx) => {
+    if (!entry.img) return;
+    doc.addPage();
+    _lvPdfHeader(doc, ml, mr, BR, GREY_L);
+    // Caption oben
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...NAVY);
+    doc.text(_sanPdf('Position '+(entry.posIdx+1)+(entry.posTitel?' · '+entry.posTitel:'')+' — Bild '+(entry.bildIdx+1)+' / '+allImages.filter(x=>x.posIdx===entry.posIdx).length), PAGE_W/2, FS_MARGIN_TOP - 2, { align:'center' });
+    // Bild zentriert, maximal in den Print-Bereich passend
+    const im = entry.img;
+    const ratio = Math.min(FS_MAX_W/im.w, FS_MAX_H/im.h);
+    const fitW = im.w * ratio, fitH = im.h * ratio;
+    const x = (PAGE_W - fitW)/2;
+    const yImg = FS_MARGIN_TOP + (FS_MAX_H - fitH)/2;
+    try { doc.addImage(im.dataUrl, im.format, x, yImg, fitW, fitH); } catch(e) { console.warn('[LV-PDF] addImage fullsize:', e.message); }
+  });
+  // Link-Annotations: Thumbnail → Full-Size-Seite (pageNumber-basiert)
+  for (const ref of thumbRefs) {
+    if (!allImages[ref.globalIdx]?.img) continue;
+    doc.setPage(ref.page);
+    try { doc.link(ref.x, ref.y, ref.w, ref.h, { pageNumber: firstFullSizePage + ref.globalIdx }); } catch(e) { console.warn('[LV-PDF] link:', e.message); }
+  }
   // Footer auf allen Seiten
   const pageCount = doc.internal.getNumberOfPages();
   for (let p = 1; p <= pageCount; p++) {
