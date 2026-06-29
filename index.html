@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.66';
+const APP_VERSION = 'v6.67';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24208,11 +24208,34 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
       skippedCount++; continue;
     }
     try {
-      const url = a.attachment_url || a.url;
-      if (!url) { diag.push('⚠ '+name+' (keine URL)'); failedCount++; continue; }
-      const resp = await fetch(url);
-      if (!resp.ok) { diag.push('⚠ '+name+' (fetch '+resp.status+')'); failedCount++; continue; }
-      const blob = await resp.blob();
+      // v6.67: FD-Attachments sind S3-presigned URLs ohne CORS-Header → direkter Browser-Fetch
+      //   schlägt mit „blocked by CORS policy" fehl. Wir gehen über den val.town-Proxy
+      //   (/freshdesk/{slug}/api/v2/attachments/{id}), der die Auth + Download serverseitig macht.
+      //   Direkter URL nur als Fallback wenn keine Anhang-ID vorhanden ist.
+      let blob = null;
+      let lastErr = '';
+      const proxy = APP_KEYS.valtownProxyUrl;
+      if (a.id && proxy) {
+        try {
+          await erpEnsureSession();
+          const pUrl = proxy+'/freshdesk/'+firmaSlug+'/api/v2/attachments/'+encodeURIComponent(a.id);
+          const r = await fetch(pUrl, { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
+          if (r.ok) blob = await r.blob();
+          else lastErr = 'proxy HTTP '+r.status;
+        } catch(e) { lastErr = 'proxy: '+(e.message||'?'); }
+      }
+      if (!blob) {
+        const url = a.attachment_url || a.url;
+        if (!url) { diag.push('⚠ '+name+' (keine URL, '+lastErr+')'); failedCount++; continue; }
+        try {
+          const r2 = await fetch(url);
+          if (!r2.ok) { diag.push('⚠ '+name+' (direkt HTTP '+r2.status+(lastErr?' · '+lastErr:'')+')'); failedCount++; continue; }
+          blob = await r2.blob();
+        } catch(e2) {
+          diag.push('❌ '+name+' (direkt CORS/Fetch fail'+(lastErr?' · '+lastErr:'')+')');
+          failedCount++; continue;
+        }
+      }
       const b64 = await new Promise((res, rej) => {
         const r = new FileReader();
         r.onload = () => res(String(r.result).split(',')[1]);
