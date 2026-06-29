@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.74';
+const APP_VERSION = 'v6.75';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24336,8 +24336,28 @@ async function _fdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
   return { ...block.input, _source: 'live-ki', _attCounts: { images: 0, pdfs: 0, skipped: atts.length, failed: 0, total: atts.length, diag } };
 }
 
+/* v6.75: Normalisiert eine Adress-Zeile auf "straße+hausnummer" als Match-Key.
+ *   "Genslerstraße 18, 13055 Berlin"  → "genslerstr18"
+ *   "Gensler Str. 18a"                → "genslerstr18a"
+ *   "Genslerstrasse 18"               → "genslerstr18"
+ *   Robust gegen Schreibvarianten (str./straße/strasse, Leerzeichen, Großbuchstaben).
+ *   Wenn nichts Brauchbares: '' (matcht nie). */
+function _normStreetKey(addr) {
+  if (!addr) return '';
+  let s = String(addr).toLowerCase();
+  // Nur 1. Komma-Teil (Straße+Hausnummer) — PLZ/Ort kommen danach
+  s = s.split(',')[0].trim();
+  // Straßen-Suffix vereinheitlichen
+  s = s.replace(/stra[sß]e\b/g, 'str')
+       .replace(/strasse\b/g,   'str')
+       .replace(/str\./g,       'str');
+  // Alles außer Buchstaben + Zahlen (incl. Umlauten) weg
+  s = s.replace(/[^a-z0-9äöüß]/g, '');
+  return s;
+}
+
 async function _fdMatchTicketData(analysis, firmaSlug) {
-  const out = { anlage: null, kunde: null };
+  const out = { anlage: null, kunde: null, anlage_match_via: null };
   // Kunden-Cache schonmal laden (brauchen wir in beiden Pfaden)
   if (!_kundenCache.items || _kundenCache.firma !== firmaSlug) {
     try {
@@ -24346,15 +24366,28 @@ async function _fdMatchTicketData(analysis, firmaSlug) {
       _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
     } catch(e) { console.warn('[FD-Match] Kunden-Load:', e.message); }
   }
-  // Anlage per Fabriknummer im lokalen Cache
+  // Anlagen-Cache sicher laden (brauchen wir in beiden Pfaden)
+  if (!_anlagenCache.items || _anlagenCache.firma !== firmaSlug) {
+    try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+  }
+  // 1) Anlage per Fabriknummer
   if (analysis.fabriknummer) {
-    if (!_anlagenCache.items || _anlagenCache.firma !== firmaSlug) {
-      try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
-    }
     const fabNorm = String(analysis.fabriknummer).trim().toLowerCase();
     out.anlage = (_anlagenCache.items||[]).find(a =>
       String(a.fabriknummer||'').trim().toLowerCase() === fabNorm
     ) || null;
+    if (out.anlage) out.anlage_match_via = 'fabriknummer';
+  }
+  // 2) v6.75: Fallback per Adresse — wenn Fabriknummer nicht half (oder nicht im Ticket steht).
+  //    Vergleich auf normalisiertem Street+Hausnummer-Key. Mehrere Treffer → erster.
+  if (!out.anlage && analysis.anlage_adresse) {
+    const targetKey = _normStreetKey(analysis.anlage_adresse);
+    if (targetKey) {
+      out.anlage = (_anlagenCache.items||[]).find(a =>
+        _normStreetKey(_buildAnlageAdresse(a)) === targetKey
+      ) || null;
+      if (out.anlage) out.anlage_match_via = 'adresse';
+    }
   }
   // v6.70: Wenn Anlage gefunden, Kunde aus Anlage ableiten (jede Anlage hängt im ERP an einem Kunden).
   //   Wir nehmen das nested kunde-Objekt aus der Anlage und holen die volle Kunde-Record
@@ -25252,11 +25285,12 @@ function _angWizardFdRenderResult() {
       '<div style="font-size:11px;color:var(--txt3);min-width:130px;font-weight:600">'+label+'</div>'+
       '<div style="flex:1;font-size:12px;color:var(--txt)'+(ok===false?';color:var(--err)':'')+'">'+(val ? escapeHtml(val) : '<em style="color:var(--txt3)">— nicht erkannt —</em>')+'</div>'+
     '</div>';
+  const anlageVia = match.anlage_match_via === 'adresse' ? ' <span style="background:#FFF;color:#065F46;font-size:10px;padding:1px 6px;border-radius:6px;margin-left:4px;font-weight:700">via Adresse</span>' : '';
   const anlageStatus = match.anlage
-    ? '<span style="background:#10B981;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">✓ gefunden — '+escapeHtml(match.anlage.anzeigeAdresse||match.anlage.name||'?')+'</span>'
-    : (analysis.fabriknummer
+    ? '<span style="background:#10B981;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">✓ gefunden — '+escapeHtml(match.anlage.anzeigeAdresse||match.anlage.name||'?')+anlageVia+'</span>'
+    : ((analysis.fabriknummer || analysis.anlage_adresse)
         ? '<span style="background:#F59E0B;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">⚠ nicht im ERP — muss neu angelegt werden</span>'
-        : '<span style="background:#9CA3AF;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">— keine Fabrik-Nr erkannt —</span>');
+        : '<span style="background:#9CA3AF;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">— keine Fabrik-Nr / Adresse erkannt —</span>');
   const kundeStatus = match.kunde
     ? '<span style="background:#10B981;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">✓ gefunden — '+escapeHtml(match.kunde.firmenname||'?')+(match.kunde.kundennummer?' (Nr. '+match.kunde.kundennummer+')':'')+'</span>'
     : '<span style="background:#F59E0B;color:#fff;font-size:11px;padding:3px 9px;border-radius:99px;font-weight:600">⚠ nicht im ERP — muss neu angelegt werden</span>';
@@ -31777,6 +31811,7 @@ const NWV_FD_ANALYSIS_SCHEMA = {
   properties: {
     anlagen_fabriknummern: { type:'array', items:{ type:'string' },
       description: 'ALLE im Ticket genannten Fabriknummern — bei Sammelverträgen mehrere. NUR Werte die wörtlich im Text stehen. Sonst leeres Array.' },
+    anlage_adresse:  { type:'string', description: 'Standort-Adresse der Anlage(n) — Straße + Hausnummer + PLZ + Ort. Wichtig als Fallback wenn keine Fabriknummern genannt sind. Leer wenn nicht klar.' },
     kunde_name:      { type:'string', description: 'Firma/Betreiber. Leer wenn nicht klar.' },
     kunde_adresse:   { type:'string', description: 'Adresse des Kunden (Rechnungsempfänger). Leer wenn nicht klar.' },
     kontakt_name:    { type:'string', description: 'Vor- und Nachname des Ansprechpartners. Leer wenn nicht klar.' },
@@ -31827,6 +31862,7 @@ async function _nwvFdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
         'STRIKTE REGELN:\n'+
         '• Erfinde NICHTS. Wenn etwas nicht eindeutig im Text steht: leer/0/false.\n'+
         '• anlagen_fabriknummern: ALLE im Text genannten Fabriknummern in das Array (bei Sammelvertrag mehrere!).\n'+
+        '• anlage_adresse: WICHTIG als Fallback wenn keine Fabriknummern genannt sind — extrahiere die Standort-Adresse der Anlage (Straße + Hausnummer + PLZ + Ort), egal wo im Text sie steht (Betreff, Body, Signatur).\n'+
         '• jahres_pauschale_netto nur befüllen wenn KONKRETER Preis genannt wurde — NIEMALS schätzen oder ableiten.\n'+
         '• laufzeit_jahre / kuendigungsfrist_monate: NUR wenn explizit genannt.\n'+
         '• zues_komplett: true wenn TÜV/ZÜS-Prüfung explizit gewünscht; sonst false.\n'+
@@ -31844,7 +31880,7 @@ async function _nwvFdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
 }
 
 async function _nwvFdMatchTicketData(analysis, firmaSlug) {
-  const out = { anlagen: [], anlagen_missing: [], kunde: null };
+  const out = { anlagen: [], anlagen_missing: [], kunde: null, anlagen_via_adresse_ids: [] };
   // Kunden-Cache laden
   if (!_kundenCache.items || _kundenCache.firma !== firmaSlug) {
     try {
@@ -31857,13 +31893,31 @@ async function _nwvFdMatchTicketData(analysis, firmaSlug) {
   if (!_anlagenCache.items || _anlagenCache.firma !== firmaSlug) {
     try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
   }
-  // Alle Fabriknummern matchen
+  // 1) Alle Fabriknummern matchen
   const fabs = (analysis.anlagen_fabriknummern||[]).map(f => String(f||'').trim()).filter(Boolean);
   for (const fab of fabs) {
     const fabNorm = fab.toLowerCase();
     const a = (_anlagenCache.items||[]).find(x => String(x.fabriknummer||'').trim().toLowerCase() === fabNorm);
     if (a) out.anlagen.push(a);
     else   out.anlagen_missing.push(fab);
+  }
+  // 2) v6.75: Adress-Fallback — alle Anlagen am gleichen Standort dazu nehmen.
+  //    Hilft besonders wenn (a) keine Fabriknummern im Ticket genannt sind, oder
+  //    (b) bei Sammelverträgen weitere Anlagen am gleichen Standort dazu sollen.
+  //    Duplikate (Fabriknummer-Match + gleicher Standort) werden ausgefiltert.
+  if (analysis.anlage_adresse) {
+    const targetKey = _normStreetKey(analysis.anlage_adresse);
+    if (targetKey) {
+      const seenIds = new Set(out.anlagen.map(a => String(a.id || a.anlageId || '')));
+      const adrMatches = (_anlagenCache.items||[]).filter(a =>
+        _normStreetKey(_buildAnlageAdresse(a)) === targetKey &&
+        !seenIds.has(String(a.id || a.anlageId || ''))
+      );
+      for (const a of adrMatches) {
+        out.anlagen.push(a);
+        out.anlagen_via_adresse_ids.push(String(a.id || a.anlageId || ''));
+      }
+    }
   }
   // Kunde: bevorzugt aus der ersten gefundenen Anlage; sonst per Firmenname
   if (out.anlagen[0] && out.anlagen[0].kunde) {
@@ -32118,8 +32172,14 @@ function _nwvFdRenderResult() {
   const fmtFab = f => (match.anlagen.find(a => String(a.fabriknummer||'').trim().toLowerCase() === String(f).trim().toLowerCase())
     ? '<span style="color:#166534;font-weight:600">✓ '+escapeHtml(f)+'</span>'
     : '<span style="color:#9A3412;font-weight:600">⚠ '+escapeHtml(f)+'</span>');
+  // v6.75: Liste die per Adresse zusätzlich gefundenen Anlagen separat zeigen
+  const viaAdresseList = (match.anlagen_via_adresse_ids||[]);
+  const adrAnlagen = match.anlagen.filter(a => viaAdresseList.includes(String(a.id || a.anlageId || '')));
   const allFabs = (analysis.anlagen_fabriknummern||[]);
-  const canContinue = match.kunde && allFabs.length > 0 && match.anlagen.length === allFabs.length;
+  // v6.75: canContinue auch wenn Adress-Match Anlagen lieferte (kein Fabrik-Match nötig)
+  const fabsAllFound = allFabs.length > 0 && match.anlagen_missing.length === 0;
+  const onlyViaAdresse = allFabs.length === 0 && adrAnlagen.length > 0;
+  const canContinue = match.kunde && (fabsAllFound || onlyViaAdresse);
   const row = (label, value) => '<div style="display:grid;grid-template-columns:120px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px"><div style="color:var(--txt3)">'+label+'</div><div>'+(value||'<span style="color:var(--txt3)">—</span>')+'</div></div>';
   result.innerHTML = ''+
     '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:14px">'+
@@ -32131,14 +32191,19 @@ function _nwvFdRenderResult() {
           '<div>'+(match.kunde
             ? '<span style="background:#DCFCE7;color:#166534;padding:3px 10px;border-radius:6px;font-weight:600">✓ '+escapeHtml(match.kunde.firmenname || match.kunde.kundennummer || '?')+(match.kunde.kundennummer ? ' (Kd-Nr. '+escapeHtml(String(match.kunde.kundennummer))+')' : '')+'</span>'
             : '<span style="background:#FED7AA;color:#9A3412;padding:3px 10px;border-radius:6px;font-weight:600">⚠ nicht im ERP — muss neu angelegt werden</span>')+'</div>'+
-          '<div>🛗 <strong>Anlagen ('+match.anlagen.length+'/'+allFabs.length+')</strong></div>'+
+          '<div>🛗 <strong>Anlagen</strong></div>'+
           '<div>'+(allFabs.length
-            ? allFabs.map(fmtFab).join(' &nbsp;·&nbsp; ')
-            : '<span style="color:var(--txt3)">— keine Fabriknummern im Ticket genannt</span>')+'</div>'+
+            ? '<div>Per Fabrik-Nr: '+allFabs.map(fmtFab).join(' &nbsp;·&nbsp; ')+'</div>'
+            : '<span style="color:var(--txt3)">— keine Fabriknummern im Ticket genannt</span>')+
+            (adrAnlagen.length
+              ? '<div style="margin-top:4px;font-size:11px;color:#065F46"><strong>+ '+adrAnlagen.length+' via Adresse:</strong> '+adrAnlagen.map(a => escapeHtml(_buildAnlageAdresse(a)||a.fabriknummer||'?')).join(' &nbsp;·&nbsp; ')+'</div>'
+              : '')+
+          '</div>'+
         '</div>'+
       '</div>'+
       // Daten-Block
       '<div style="background:#fff;border:1px solid var(--bdr);border-radius:8px;padding:10px;margin-bottom:10px">'+
+        row('Anlage-Adresse', escapeHtml(analysis.anlage_adresse||''))+
         row('Kunde',          escapeHtml(analysis.kunde_name||''))+
         row('Kunde-Adresse',  escapeHtml(analysis.kunde_adresse||''))+
         row('Kontakt',        escapeHtml([analysis.kontakt_name, analysis.kontakt_email].filter(Boolean).join(' · ')))+
@@ -32271,7 +32336,8 @@ function _nwvFdCreateNextAnlage() {
   const nextFab = match.anlagen_missing[0];
   _openCreateAnlageStandaloneForm(match.kunde, {
     preset: {
-      adresse: analysis.kunde_adresse || '',
+      // v6.75: bevorzugt Anlage-Adresse aus FD (richtige Standort-Adresse), Fallback Kunde-Adresse
+      adresse: analysis.anlage_adresse || analysis.kunde_adresse || '',
       fabriknummer: nextFab,
     },
     onCreated: async (created) => {
