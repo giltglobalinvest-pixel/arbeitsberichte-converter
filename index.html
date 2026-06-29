@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.73';
+const APP_VERSION = 'v6.74';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -31768,8 +31768,127 @@ async function _buildGbuPdf(d, opts) {
 }
 
 /* ════════════════════════════════════════════════════════════
+   v6.74: NWV — FD-Ticket-Pfad (Wartungsvertrag aus Freshdesk-Ticket)
+   KI extrahiert: alle Anlagen-Fabriknummern, Kunde, Kontakt, Wartungs-Optionen
+   ════════════════════════════════════════════════════════════ */
+const NWV_FD_ANALYSIS_SCHEMA = {
+  type: 'object',
+  required: [],
+  properties: {
+    anlagen_fabriknummern: { type:'array', items:{ type:'string' },
+      description: 'ALLE im Ticket genannten Fabriknummern — bei Sammelverträgen mehrere. NUR Werte die wörtlich im Text stehen. Sonst leeres Array.' },
+    kunde_name:      { type:'string', description: 'Firma/Betreiber. Leer wenn nicht klar.' },
+    kunde_adresse:   { type:'string', description: 'Adresse des Kunden (Rechnungsempfänger). Leer wenn nicht klar.' },
+    kontakt_name:    { type:'string', description: 'Vor- und Nachname des Ansprechpartners. Leer wenn nicht klar.' },
+    kontakt_email:   { type:'string' },
+    kontakt_telefon: { type:'string' },
+    anliegen:        { type:'string', description: 'Kurzbeschreibung was angefragt wird (1-2 Sätze).' },
+    wartung_typ:     { type:'string', enum:['inspektion','wartung','vollwartung','vollabdeckung',''],
+      description: 'Wartungsumfang: inspektion (nur Sichtkontrolle), wartung (Standard), vollwartung (inkl. Verschleißteile), vollabdeckung (alles inkl. Reparaturen). Leer wenn unklar.' },
+    zues_komplett:   { type:'boolean', description: 'ZÜS-Prüfung (Zugelassene Überwachungsstelle / TÜV-Hauptprüfung) ausdrücklich gewünscht? Default false.' },
+    notruf_inkl:     { type:'boolean', description: 'Notruf-Service/24h-Bereitschaft im Vertrag eingeschlossen? Default false.' },
+    wartungen_pro_jahr:      { type:'number', description: 'Anzahl Wartungen pro Jahr (typisch 2 oder 4). 0 wenn nicht genannt.' },
+    laufzeit_jahre:          { type:'number', description: 'Vertragslaufzeit in Jahren. 0 wenn nicht genannt.' },
+    kuendigungsfrist_monate: { type:'number', description: 'Kündigungsfrist in Monaten. 0 wenn nicht genannt.' },
+    jahres_pauschale_netto:  { type:'number', description: 'Konkret im Ticket genannter Jahres-Wunschpreis netto in EUR. 0 wenn KEIN Preis genannt — NICHT raten.' },
+    sonstige_optionen:       { type:'array', items:{ type:'string' },
+      description: 'Sonderwünsche/Optionen aus dem Ticket-Text (z.B. "Originalersatzteile", "Reaktionszeit 4h", "Schmierfett inklusive"). Nur was wirklich im Text steht.' },
+  },
+};
+
+async function _nwvFdTicketAnalyzeKi(ticketFull, firmaSlug, progress) {
+  // 1) Vorrang: FD-Hero hat bereits eine interne Notiz erstellt
+  const fromNote = _fdFindAnalysisNote(ticketFull);
+  if (fromNote && (fromNote.kunde_name || (Array.isArray(fromNote.anlagen_fabriknummern) && fromNote.anlagen_fabriknummern.length) || fromNote.fabriknummer)) {
+    // Reparatur-Schema (fabriknummer single) → ins NWV-Schema mappen
+    if (!Array.isArray(fromNote.anlagen_fabriknummern) && fromNote.fabriknummer) {
+      fromNote.anlagen_fabriknummern = [fromNote.fabriknummer];
+    }
+    return { ...fromNote, _source: 'fd-note' };
+  }
+  // 2) Live-KI mit Text-Only (Anhänge nicht möglich, siehe v6.69)
+  if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key konfiguriert.');
+  const subject = ticketFull.subject || '';
+  const body    = _stripHtml(ticketFull.description_text || ticketFull.description || '');
+  const convs   = (ticketFull.conversations||[]).filter(c => !c.private)
+    .map(c => _stripHtml(c.body_text || c.body || '')).filter(Boolean).join('\n---\n');
+  const text = 'BETREFF: '+subject+'\n\nERSTNACHRICHT:\n'+body+(convs ? '\n\nWEITERER VERLAUF:\n'+convs : '');
+  if (progress) progress('🧠 KI analysiert Wartungsvertrag-Ticket…');
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST',
+    headers:{ 'content-type':'application/json', 'x-api-key':APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      tools: [{ name:'extract_wartungsvertrag_data', description:'Extrahiert Wartungsvertrags-Anfrage-Daten.', input_schema: NWV_FD_ANALYSIS_SCHEMA }],
+      tool_choice: { type:'tool', name:'extract_wartungsvertrag_data' },
+      messages: [{ role:'user', content:[{ type:'text', text:
+        'Du analysierst ein Freshdesk-Ticket für eine WARTUNGSVERTRAG-Anfrage (Aufzug).\n\n'+
+        'STRIKTE REGELN:\n'+
+        '• Erfinde NICHTS. Wenn etwas nicht eindeutig im Text steht: leer/0/false.\n'+
+        '• anlagen_fabriknummern: ALLE im Text genannten Fabriknummern in das Array (bei Sammelvertrag mehrere!).\n'+
+        '• jahres_pauschale_netto nur befüllen wenn KONKRETER Preis genannt wurde — NIEMALS schätzen oder ableiten.\n'+
+        '• laufzeit_jahre / kuendigungsfrist_monate: NUR wenn explizit genannt.\n'+
+        '• zues_komplett: true wenn TÜV/ZÜS-Prüfung explizit gewünscht; sonst false.\n'+
+        '• notruf_inkl: true wenn 24h-Bereitschaft/Notruf explizit gewünscht; sonst false.\n'+
+        '• sonstige_optionen: alle expliziten Sonderwünsche kurz auflisten.\n\n'+
+        text
+      }]}],
+    }),
+  });
+  if (!r.ok) throw new Error('KI HTTP '+r.status+': '+(await r.text()).slice(0,200));
+  const j = await r.json();
+  const block = (j.content||[]).find(b => b.type === 'tool_use');
+  if (!block) throw new Error('KI lieferte kein tool_use.');
+  return { ...block.input, _source: 'live-ki' };
+}
+
+async function _nwvFdMatchTicketData(analysis, firmaSlug) {
+  const out = { anlagen: [], anlagen_missing: [], kunde: null };
+  // Kunden-Cache laden
+  if (!_kundenCache.items || _kundenCache.firma !== firmaSlug) {
+    try {
+      const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+      const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data))||[]);
+      _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+    } catch(e) { console.warn('[NWV-Match] Kunden-Load:', e.message); }
+  }
+  // Anlagen-Cache laden
+  if (!_anlagenCache.items || _anlagenCache.firma !== firmaSlug) {
+    try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+  }
+  // Alle Fabriknummern matchen
+  const fabs = (analysis.anlagen_fabriknummern||[]).map(f => String(f||'').trim()).filter(Boolean);
+  for (const fab of fabs) {
+    const fabNorm = fab.toLowerCase();
+    const a = (_anlagenCache.items||[]).find(x => String(x.fabriknummer||'').trim().toLowerCase() === fabNorm);
+    if (a) out.anlagen.push(a);
+    else   out.anlagen_missing.push(fab);
+  }
+  // Kunde: bevorzugt aus der ersten gefundenen Anlage; sonst per Firmenname
+  if (out.anlagen[0] && out.anlagen[0].kunde) {
+    const ak = out.anlagen[0].kunde;
+    out.kunde = (_kundenCache.items||[]).find(k =>
+      (ak.id != null && String(k.id) === String(ak.id)) ||
+      (ak.kundennummer != null && String(k.kundennummer) === String(ak.kundennummer))
+    ) || ak;
+  } else if (analysis.kunde_name) {
+    const nn = String(analysis.kunde_name).trim().toLowerCase();
+    out.kunde = (_kundenCache.items||[]).find(k => String(k.firmenname||'').trim().toLowerCase() === nn) || null;
+    if (!out.kunde && nn.length >= 5) {
+      out.kunde = (_kundenCache.items||[]).find(k => {
+        const n = String(k.firmenname||'').toLowerCase();
+        return n && n.length >= 5 && (n.includes(nn) || nn.includes(n));
+      }) || null;
+    }
+  }
+  return out;
+}
+
+/* ════════════════════════════════════════════════════════════
    NEUER-VERTRAG-WIZARD
    Alle Schritte in einem Modal: Typ → Kunde → Anlagen → Konditionen → Submit
+   v6.74: Optional vorher Tab "🎫 FD-Ticket" — KI-Analyse + Match + Vorbefüllung
    ════════════════════════════════════════════════════════════ */
 async function openNeuerVertragWizard() {
   if (!isAdmin()) return toast('🔒 Nur für Admin','err');
@@ -31804,7 +31923,15 @@ async function openNeuerVertragWizard() {
         '<span>📑 Neuer Wartungsvertrag</span>'+
         '<button onclick="document.getElementById(\'nwv-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
-      '<div style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px">'+
+      // v6.74: Tab-Switch — Manuell vs FD-Ticket
+      '<div style="display:flex;gap:0;background:#F3F4F6;border-bottom:1px solid var(--bdr);flex-wrap:wrap">'+
+        '<button id="nwv-tab-btn-manuell" type="button" onclick="_nwvSetTab(\'manuell\')" style="flex:1;min-width:140px;padding:11px 8px;background:#fff;border:none;border-bottom:3px solid var(--navy);font-size:12px;font-weight:700;color:var(--navy);cursor:pointer">📋 Manuell</button>'+
+        (freshdeskIsConfigured(firmaSlug) ? '<button id="nwv-tab-btn-fd" type="button" onclick="_nwvSetTab(\'fd\')" style="flex:1;min-width:140px;padding:11px 8px;background:transparent;border:none;border-bottom:3px solid transparent;font-size:12px;font-weight:600;color:var(--txt2);cursor:pointer">🎫 FD-Ticket</button>' : '')+
+      '</div>'+
+      // FD-Ticket-Tab (Container; Inhalt wird onTab-Switch gemountet)
+      '<div id="nwv-tab-fd" style="display:none;padding:18px 22px;flex:1;overflow-y:auto;font-size:13px"></div>'+
+      // Manuell-Tab (Default)
+      '<div id="nwv-tab-manuell" style="padding:18px 22px;flex:1;overflow-y:auto;font-size:13px">'+
         // Typ
         '<div style="margin-bottom:14px">'+
           '<div style="font-weight:600;margin-bottom:6px">1. Vertragstyp</div>'+
@@ -31901,6 +32028,263 @@ async function openNeuerVertragWizard() {
   _nwvOnTypChange();
   _nwvFilterKunden();  // Initiale Liste rendern (alle Kunden)
   _nwvUpdateVorlagen(); // Vorlage-Dropdown initial füllen
+}
+
+/* ════════════════════════════════════════════════════════════
+ * v6.74: NWV-Wizard FD-Ticket-Tab
+ * ════════════════════════════════════════════════════════════ */
+function _nwvSetTab(tab) {
+  const tManuell = document.getElementById('nwv-tab-manuell');
+  const tFd      = document.getElementById('nwv-tab-fd');
+  const bManuell = document.getElementById('nwv-tab-btn-manuell');
+  const bFd      = document.getElementById('nwv-tab-btn-fd');
+  const isManuell = tab !== 'fd';
+  if (tManuell) tManuell.style.display = isManuell ? 'block' : 'none';
+  if (tFd)      tFd.style.display      = isManuell ? 'none' : 'block';
+  if (bManuell) {
+    bManuell.style.background = isManuell ? '#fff' : 'transparent';
+    bManuell.style.borderBottomColor = isManuell ? 'var(--navy)' : 'transparent';
+    bManuell.style.color = isManuell ? 'var(--navy)' : 'var(--txt2)';
+    bManuell.style.fontWeight = isManuell ? '700' : '600';
+  }
+  if (bFd) {
+    bFd.style.background = isManuell ? 'transparent' : '#fff';
+    bFd.style.borderBottomColor = isManuell ? 'transparent' : 'var(--navy)';
+    bFd.style.color = isManuell ? 'var(--txt2)' : 'var(--navy)';
+    bFd.style.fontWeight = isManuell ? '600' : '700';
+  }
+  // Initial-Mount des FD-Tabs (nur einmal)
+  if (!isManuell && tFd && !tFd._mounted) {
+    tFd.innerHTML = _nwvFdTabMarkup();
+    tFd._mounted = true;
+  }
+}
+
+function _nwvFdTabMarkup() {
+  return ''+
+    '<div style="background:#FEF2F2;border-left:3px solid #DC2626;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;color:#7F1D1D">'+
+      '🎫 Gib eine Freshdesk-Ticket-Nr ein. Die KI extrahiert <strong>alle Anlagen-Fabriknummern, Kunde, Kontakt, Wartungs-Optionen</strong> (ZÜS, Notruf, Wartungen/Jahr, Laufzeit, sonstige Wünsche). Anlage(n) + Kunde werden im ERP gesucht — fehlende kannst du direkt anlegen. Danach „Übernehmen" → Felder im Manuell-Tab sind vorbefüllt.'+
+    '</div>'+
+    '<div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;margin-bottom:10px">'+
+      '<div>'+
+        '<label style="display:block;font-weight:600;font-size:12px;margin-bottom:4px">🎫 Freshdesk-Ticket-Nr</label>'+
+        '<input type="text" id="nwv-fd-ticket-nr" placeholder="z.B. 2567" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '</div>'+
+      '<button id="nwv-fd-go" class="btn prim" onclick="_nwvFdAnalyze()" style="background:#DC2626;border-color:#DC2626;padding:9px 16px;font-size:13px">🤖 Analysieren</button>'+
+    '</div>'+
+    '<div id="nwv-fd-status" style="font-size:12px;color:var(--txt3);margin-bottom:10px"></div>'+
+    '<div id="nwv-fd-result"></div>';
+}
+
+async function _nwvFdAnalyze() {
+  const m = document.getElementById('nwv-modal');
+  if (!m) return;
+  const tnr = (document.getElementById('nwv-fd-ticket-nr')?.value || '').trim();
+  if (!tnr) return toast('Bitte Ticket-Nr eingeben','err');
+  const firmaSlug = m._firmaSlug || getCurrentFirmaSlug();
+  const status = document.getElementById('nwv-fd-status');
+  const result = document.getElementById('nwv-fd-result');
+  const goBtn  = document.getElementById('nwv-fd-go');
+  const progress = msg => { if (status) status.innerHTML = msg; };
+  if (goBtn) { goBtn.disabled = true; goBtn.textContent = '⏳ analysiert…'; }
+  if (result) result.innerHTML = '';
+  progress('📥 Lade Ticket #'+tnr+'…');
+  try {
+    const ticketFull = await _fdLoadTicketFull(tnr, firmaSlug);
+    progress('🧠 Analysiere…');
+    const analysis = await _nwvFdTicketAnalyzeKi(ticketFull, firmaSlug, progress);
+    progress('🔍 Match Kunde + Anlagen im ERP…');
+    const match = await _nwvFdMatchTicketData(analysis, firmaSlug);
+    m._nwvFdData = { analysis, match, ticketFull };
+    const src = analysis._source === 'fd-note'
+      ? '<span style="background:#EDE9FE;color:#5B21B6;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">📋 aus FD-Notiz (FD-Hero)</span>'
+      : '<span style="background:#DCFCE7;color:#166534;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700">🧠 Live-KI · Text-Only</span>';
+    progress('✅ Analyse fertig — siehe unten '+src);
+    _nwvFdRenderResult();
+  } catch(e) {
+    console.error('[NWV-FD] Analyse fehlgeschlagen:', e);
+    progress('❌ Fehler: '+(e.message||e).slice(0,200));
+  } finally {
+    if (goBtn) { goBtn.disabled = false; goBtn.textContent = '🤖 Erneut analysieren'; }
+  }
+}
+
+function _nwvFdRenderResult() {
+  const m = document.getElementById('nwv-modal');
+  if (!m || !m._nwvFdData) return;
+  const { analysis, match } = m._nwvFdData;
+  const result = document.getElementById('nwv-fd-result');
+  if (!result) return;
+  const fmtFab = f => (match.anlagen.find(a => String(a.fabriknummer||'').trim().toLowerCase() === String(f).trim().toLowerCase())
+    ? '<span style="color:#166534;font-weight:600">✓ '+escapeHtml(f)+'</span>'
+    : '<span style="color:#9A3412;font-weight:600">⚠ '+escapeHtml(f)+'</span>');
+  const allFabs = (analysis.anlagen_fabriknummern||[]);
+  const canContinue = match.kunde && allFabs.length > 0 && match.anlagen.length === allFabs.length;
+  const row = (label, value) => '<div style="display:grid;grid-template-columns:120px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px"><div style="color:var(--txt3)">'+label+'</div><div>'+(value||'<span style="color:var(--txt3)">—</span>')+'</div></div>';
+  result.innerHTML = ''+
+    '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:14px">'+
+      '<div style="font-weight:700;color:var(--navy);font-size:13px;margin-bottom:8px">🔍 Analyse-Ergebnis</div>'+
+      // Match-Block
+      '<div style="background:#fff;border:1px solid var(--bdr);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px">'+
+        '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center">'+
+          '<div>🏢 <strong>Kunde</strong></div>'+
+          '<div>'+(match.kunde
+            ? '<span style="background:#DCFCE7;color:#166534;padding:3px 10px;border-radius:6px;font-weight:600">✓ '+escapeHtml(match.kunde.firmenname || match.kunde.kundennummer || '?')+(match.kunde.kundennummer ? ' (Kd-Nr. '+escapeHtml(String(match.kunde.kundennummer))+')' : '')+'</span>'
+            : '<span style="background:#FED7AA;color:#9A3412;padding:3px 10px;border-radius:6px;font-weight:600">⚠ nicht im ERP — muss neu angelegt werden</span>')+'</div>'+
+          '<div>🛗 <strong>Anlagen ('+match.anlagen.length+'/'+allFabs.length+')</strong></div>'+
+          '<div>'+(allFabs.length
+            ? allFabs.map(fmtFab).join(' &nbsp;·&nbsp; ')
+            : '<span style="color:var(--txt3)">— keine Fabriknummern im Ticket genannt</span>')+'</div>'+
+        '</div>'+
+      '</div>'+
+      // Daten-Block
+      '<div style="background:#fff;border:1px solid var(--bdr);border-radius:8px;padding:10px;margin-bottom:10px">'+
+        row('Kunde',          escapeHtml(analysis.kunde_name||''))+
+        row('Kunde-Adresse',  escapeHtml(analysis.kunde_adresse||''))+
+        row('Kontakt',        escapeHtml([analysis.kontakt_name, analysis.kontakt_email].filter(Boolean).join(' · ')))+
+        row('Anliegen',       escapeHtml(analysis.anliegen||''))+
+        row('Wartungs-Typ',   escapeHtml(analysis.wartung_typ||''))+
+        row('ZÜS / Notruf',   (analysis.zues_komplett?'✓ ZÜS':'✗ ZÜS')+' &nbsp;·&nbsp; '+(analysis.notruf_inkl?'✓ Notruf':'✗ Notruf'))+
+        row('Wartungen/Jahr', analysis.wartungen_pro_jahr ? String(analysis.wartungen_pro_jahr) : '')+
+        row('Laufzeit',       analysis.laufzeit_jahre ? (analysis.laufzeit_jahre+' Jahre') : '')+
+        row('Kündigungsfrist',analysis.kuendigungsfrist_monate ? (analysis.kuendigungsfrist_monate+' Monate') : '')+
+        row('Jahres-Pauschale',analysis.jahres_pauschale_netto ? (Number(analysis.jahres_pauschale_netto).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' EUR netto') : '')+
+        row('Sonstige Optionen', (analysis.sonstige_optionen||[]).length ? (analysis.sonstige_optionen||[]).map(escapeHtml).join('<br>') : '')+
+      '</div>'+
+      // CTA-Block: Übernehmen oder Anlegen
+      (canContinue
+        ? '<button class="btn prim" onclick="_nwvFdContinue()" style="width:100%;background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:12px;font-size:13px">→ Daten in Manuell-Tab übernehmen</button>'
+        : '<div style="display:grid;gap:8px">'+
+            '<div style="font-size:12px;color:var(--txt2);background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 12px"><strong>Fehlende Daten anlegen:</strong> Kunde zuerst, dann fehlende Anlagen.</div>'+
+            (!match.kunde
+              ? '<button class="btn" onclick="_nwvFdCreateKunde()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Kunde im ERP anlegen ('+escapeHtml((analysis.kunde_name||'?').slice(0,40))+')</button>'
+              : '<div style="font-size:11px;color:#065F46;padding:4px">✓ Kunde bereits vorhanden</div>')+
+            (match.anlagen_missing.length
+              ? (match.kunde
+                  ? '<button class="btn" onclick="_nwvFdCreateNextAnlage()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Fehlende Anlage anlegen ('+match.anlagen_missing.length+' offen · nächste: '+escapeHtml(match.anlagen_missing[0])+')</button>'
+                  : '<button class="btn" disabled style="opacity:.5;padding:10px;font-size:13px" title="Kunde muss zuerst angelegt werden">✚ Fehlende Anlagen ('+match.anlagen_missing.length+') — erst Kunde anlegen</button>')
+              : (allFabs.length ? '<div style="font-size:11px;color:#065F46;padding:4px">✓ Alle Anlagen vorhanden</div>' : ''))+
+            (match.kunde
+              ? '<button class="btn" onclick="_nwvFdContinue()" style="background:#fff;color:var(--txt2);border-color:var(--bdr);padding:8px;font-size:12px">Trotzdem weiter ('+(allFabs.length ? 'ohne fehlende Anlagen' : 'ohne Anlage-Vorauswahl')+')</button>'
+              : '')+
+          '</div>')+
+    '</div>';
+}
+
+/* Übernimmt die FD-Analyse-Daten in den Manuell-Tab + wechselt dorthin. */
+function _nwvFdContinue() {
+  const m = document.getElementById('nwv-modal');
+  if (!m || !m._nwvFdData) return;
+  const { analysis, match } = m._nwvFdData;
+  // Typ: Sammel wenn >1 Anlagen, sonst Einzel
+  const typ = (match.anlagen.length > 1) ? 'sammel' : 'einzel';
+  const radio = document.querySelector('input[name="nwv-typ"][value="'+typ+'"]');
+  if (radio) radio.checked = true;
+  _nwvOnTypChange();
+  // Kunde setzen (über Index in _kundenCache)
+  if (match.kunde) {
+    const idx = (_kundenCache.items||[]).findIndex(k =>
+      (match.kunde.id != null && String(k.id) === String(match.kunde.id)) ||
+      (match.kunde.kundennummer != null && String(k.kundennummer) === String(match.kunde.kundennummer))
+    );
+    if (idx >= 0) {
+      _nwvSelectKunde(String(idx));
+    }
+  }
+  // Anlagen vorab markieren (nach _nwvSelectKunde ist die Liste gerendert)
+  setTimeout(() => {
+    const ids = match.anlagen.map(a => String(a.id || a.anlageId || '')).filter(Boolean);
+    m._selectedAnlagen = ids.slice();
+    // Checkboxen visuell setzen
+    document.querySelectorAll('input[data-anlage-idx]').forEach(cb => {
+      cb.checked = ids.includes(String(cb.dataset.anlageIdx));
+    });
+    if (typeof _nwvOnTypChange === 'function') _nwvOnTypChange();
+  }, 200);
+  // Konditionen
+  const wpa = document.getElementById('nwv-wpa');
+  if (wpa && analysis.wartungen_pro_jahr) wpa.value = analysis.wartungen_pro_jahr;
+  const lzInput = document.getElementById('nwv-laufzeit');
+  if (lzInput && analysis.laufzeit_jahre) lzInput.value = analysis.laufzeit_jahre * 12;
+  // Titel
+  const titel = document.getElementById('nwv-titel');
+  if (titel && !titel.value) {
+    const jahr = new Date().getFullYear();
+    titel.value = (analysis.wartung_typ ? analysis.wartung_typ.charAt(0).toUpperCase()+analysis.wartung_typ.slice(1) : 'Wartungsvertrag')+' '+jahr;
+  }
+  // Vorgangs-Hinweise: alles was die KI extra extrahiert hat
+  const extra = document.getElementById('nwv-vorgang-extra');
+  if (extra) {
+    const lines = [];
+    if (analysis.anliegen)            lines.push('Anliegen: '+analysis.anliegen);
+    if (analysis.wartung_typ)         lines.push('Wartungsumfang: '+analysis.wartung_typ);
+    if (analysis.zues_komplett)       lines.push('ZÜS-Prüfung komplett übernehmen');
+    if (analysis.notruf_inkl)         lines.push('Notruf/24h-Bereitschaft einschließen');
+    if (analysis.kuendigungsfrist_monate) lines.push('Kündigungsfrist: '+analysis.kuendigungsfrist_monate+' Monate');
+    if (analysis.jahres_pauschale_netto)  lines.push('Wunschpreis Kunde: '+Number(analysis.jahres_pauschale_netto).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' EUR netto/Jahr');
+    for (const o of (analysis.sonstige_optionen||[])) lines.push('• '+o);
+    if (lines.length) {
+      const existing = extra.value ? extra.value+'\n\n' : '';
+      extra.value = existing+'— Aus FD-Ticket übernommen —\n'+lines.join('\n');
+    }
+  }
+  // Zum Manuell-Tab wechseln
+  _nwvSetTab('manuell');
+  toast('✅ Daten in Manuell-Tab übernommen','ok');
+}
+
+/* Kunde aus FD-Analyse im ERP anlegen */
+function _nwvFdCreateKunde() {
+  const m = document.getElementById('nwv-modal');
+  if (!m || !m._nwvFdData) return;
+  const { analysis } = m._nwvFdData;
+  const firmaSlug = m._firmaSlug || getCurrentFirmaSlug();
+  openCreateKundeDialog({
+    firmaSlug,
+    presetFirmenname: analysis.kunde_name || '',
+    presetAdresse:    analysis.kunde_adresse || '',
+    presetEmail:      analysis.kontakt_email || '',
+    presetTelefon:    analysis.kontakt_telefon || '',
+    onCreated: async (kunde) => {
+      try {
+        const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+        const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data))||[]);
+        _kundenCache = { firma: firmaSlug, items: list, loadedAt: Date.now() };
+      } catch(_){}
+      const fresh = (_kundenCache.items||[]).find(k => String(k.id) === String(kunde.id)) || kunde;
+      m._nwvFdData.match.kunde = fresh;
+      _nwvFdRenderResult();
+      // Kunden-Liste im Manuell-Tab refreshen (damit Kunde dort auch wählbar wäre)
+      if (typeof _nwvFilterKunden === 'function') _nwvFilterKunden();
+      toast('✅ Kunde übernommen — jetzt ggf. Anlagen anlegen','ok');
+    },
+  });
+}
+
+/* Legt die NÄCHSTE fehlende Anlage an, anschließend rekursiv weiter via Render. */
+function _nwvFdCreateNextAnlage() {
+  const m = document.getElementById('nwv-modal');
+  if (!m || !m._nwvFdData) return;
+  const { analysis, match } = m._nwvFdData;
+  if (!match.kunde) return toast('Bitte zuerst Kunde anlegen','warn');
+  if (!match.anlagen_missing.length) return toast('Alle Anlagen bereits vorhanden','ok');
+  const nextFab = match.anlagen_missing[0];
+  _openCreateAnlageStandaloneForm(match.kunde, {
+    preset: {
+      adresse: analysis.kunde_adresse || '',
+      fabriknummer: nextFab,
+    },
+    onCreated: async (created) => {
+      try { await _loadAnlagenForFirma(m._firmaSlug || getCurrentFirmaSlug()); } catch(_){}
+      // Match neu rechnen
+      try {
+        const newMatch = await _nwvFdMatchTicketData(m._nwvFdData.analysis, m._firmaSlug || getCurrentFirmaSlug());
+        m._nwvFdData.match = newMatch;
+      } catch(e) { console.warn('[NWV-FD] Re-Match fail:', e.message); }
+      _nwvFdRenderResult();
+      toast('✅ Anlage '+nextFab+' angelegt','ok');
+    },
+  });
 }
 
 /* Filtert Vorlagen nach gewähltem Typ und befüllt das Dropdown. Auto-select bei 1 Treffer. */
