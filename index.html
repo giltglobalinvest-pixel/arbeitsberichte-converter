@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.90';
+const APP_VERSION = 'v6.91';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -9201,6 +9201,8 @@ function openAnlageDetail(idx) {
     }
     // v6.56: Fabriknummer ändern — Bulk-Import hat manche Werte als Datum interpretiert (z.B. 260605 = 26.06.05)
     html += '<button class="btn" id="anl-fab-btn" onclick="_anlEditFabriknummer(this)" style="color:#1E40AF;border-color:rgba(30,64,175,.45);background:#EFF6FF" title="Fabriknummer dieser Anlage ändern (im ERP)">🔧 Fabrik-Nr. ändern</button>';
+    // v6.91: Kunde dieser Anlage ändern — z.B. nach Eigentümerwechsel oder bei falscher Zuordnung
+    html += '<button class="btn" id="anl-kunde-btn" onclick="_anlEditKunde(this)" style="color:#5B21B6;border-color:rgba(91,33,182,.45);background:#F5F3FF" title="Kunde dieser Anlage ändern (im ERP)">👤 Kunde ändern</button>';
   }
   if (hasPermission('auftraege_create') && !a.archived) {
     html += '<button class="btn prim" onclick="createAuftragForAnlage()">+ Auftrag für diese Anlage erstellen</button>';
@@ -9250,6 +9252,124 @@ async function _anlEditFabriknummer(btn) {
     toast('❌ '+(e.message||'Fehler').slice(0,200),'err');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+}
+
+/**
+ * v6.91: Kunde einer Anlage ändern — z.B. nach Eigentümerwechsel.
+ *   Öffnet einen einfachen Picker (Suche + Kundenliste). Nach Auswahl + Bestätigung
+ *   wird die Anlage via PUT /api/anlagen mit neuer kundenId aktualisiert.
+ *   ansprechpartnerId wird auf null gesetzt (alter Ansprechpartner gehört zum alten Kunden).
+ */
+async function _anlEditKunde(btn) {
+  const a = _anlagenViewSelected;
+  if (!a || a.id == null) return toast('Keine Anlage ausgewählt','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const origText = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ lade Kunden…'; }
+  try {
+    if (!_kundenCache.items || _kundenCache.firma !== firmaSlug) {
+      const res = await _erpTryPaths(firmaSlug, ['api/kunden','kunden']);
+      const items = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+      _kundenCache = { firma: firmaSlug, items, loadedAt: Date.now() };
+    }
+  } catch(e) {
+    toast('❌ Kunden laden: '+(e.message||'?').slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+    return;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = origText; }
+  _anlOpenKundePicker(a);
+}
+
+function _anlOpenKundePicker(anlage) {
+  document.getElementById('anl-kunde-picker')?.remove();
+  const m = document.createElement('div');
+  m.id = 'anl-kunde-picker';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10800;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;max-height:88vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#5B21B6;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>👤 Kunde für Anlage ändern</span>'+
+        '<button onclick="document.getElementById(\'anl-kunde-picker\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:14px 18px;border-bottom:1px solid var(--bdr);font-size:12px">'+
+        '<div style="margin-bottom:6px"><strong>Anlage:</strong> '+escapeHtml(anlage.anzeigeAdresse || anlage.name || '?')+
+          (anlage.fabriknummer ? ' &nbsp;·&nbsp; Fabr.-Nr. '+escapeHtml(anlage.fabriknummer) : '')+'</div>'+
+        '<div><strong>Aktueller Kunde:</strong> '+escapeHtml(anlage.kunde?.firmenname || '—')+
+          (anlage.kunde?.kundennummer ? ' (Kd-Nr. '+escapeHtml(String(anlage.kunde.kundennummer))+')' : '')+'</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;border-bottom:1px solid var(--bdr)">'+
+        '<input type="text" id="anl-kp-search" placeholder="🔍 Suchen nach Firmenname, Kunden-Nr…" oninput="_anlKpFilter()" autocomplete="off" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '</div>'+
+      '<div id="anl-kp-list" style="flex:1;overflow-y:auto;padding:6px 14px"></div>'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);font-size:11px;color:var(--txt3)">⚠ Nach Auswahl wird die Anlage sofort im ERP umgehängt. Der Ansprechpartner wird zurückgesetzt (gehört zum alten Kunden).</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._anlage = anlage;
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _anlKpFilter();
+}
+
+window._anlKpFilter = function() {
+  const m = document.getElementById('anl-kunde-picker'); if (!m) return;
+  const q = String(document.getElementById('anl-kp-search')?.value||'').trim().toLowerCase();
+  const list = document.getElementById('anl-kp-list'); if (!list) return;
+  const items = (_kundenCache.items||[]);
+  const filtered = q ? items.filter(k => {
+    const hay = [k.firmenname, String(k.kundennummer||''), k.email, k.ort].filter(Boolean).join(' ').toLowerCase();
+    return hay.includes(q);
+  }) : items;
+  if (!filtered.length) { list.innerHTML = '<div style="padding:14px;text-align:center;color:var(--txt3);font-size:12px">Keine Treffer</div>'; return; }
+  list.innerHTML = filtered.slice(0,200).map((k, idx) => {
+    const i = items.indexOf(k);
+    return '<div data-kp-idx="'+i+'" onclick="_anlKpSelect('+i+')" style="padding:9px 10px;border-bottom:1px solid var(--bdr);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'rgba(91,33,182,.06)\'" onmouseout="this.style.background=\'transparent\'">'+
+      '<div style="font-weight:600">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
+      '<div style="color:var(--txt3);font-size:11px;margin-top:2px">Kd-Nr. '+escapeHtml(String(k.kundennummer||k.id||'?'))+
+        (k.ort ? ' &nbsp;·&nbsp; '+escapeHtml(k.ort) : '')+
+        (k.email ? ' &nbsp;·&nbsp; '+escapeHtml(k.email) : '')+'</div>'+
+    '</div>';
+  }).join('');
+  if (filtered.length > 200) list.innerHTML += '<div style="padding:8px;text-align:center;color:var(--txt3);font-size:11px">… '+(filtered.length-200)+' weitere — bitte präziser suchen</div>';
+};
+
+window._anlKpSelect = async function(idx) {
+  const m = document.getElementById('anl-kunde-picker'); if (!m) return;
+  const newKunde = (_kundenCache.items||[])[+idx];
+  if (!newKunde) return toast('Kunde nicht gefunden','err');
+  const oldKundeName = m._anlage?.kunde?.firmenname || '—';
+  const newName = newKunde.firmenname || ('Kunde '+newKunde.kundennummer);
+  if (!window.confirm('Kunde dieser Anlage ändern?\n\nAlt: '+oldKundeName+'\nNeu: '+newName+'\n\n(Ansprechpartner wird zurückgesetzt.)')) return;
+  await _anlApplyKundeChange(m._anlage, newKunde);
+  m.remove();
+};
+
+async function _anlApplyKundeChange(a, newKunde) {
+  const firmaSlug = getCurrentFirmaSlug();
+  try {
+    // 1) GETDTO holen
+    const cur = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(a.id));
+    if (!cur || typeof cur !== 'object') throw new Error('GET liefert kein Anlage-Objekt');
+    // 2) GETDTO → SETDTO konvertieren, kundenId überschreiben, ansprechpartnerId reset
+    const setDto = _anlBuildSetDto(cur);
+    setDto.kundenId = +newKunde.id || +newKunde.kundennummer;
+    setDto.ansprechpartnerId = undefined;  // gehört zum alten Kunden
+    console.log('[Anlage-Kunde] PUT payload:', setDto);
+    await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen', { method:'PUT', body: setDto });
+    // 3) lokalen Cache + Anlagen-Objekt aktualisieren
+    a.kunde = {
+      id: newKunde.id, kundennummer: newKunde.kundennummer,
+      firmenname: newKunde.firmenname, email: newKunde.email,
+    };
+    a.ansprechpartner = null;
+    const cached = (_anlagenCache.items||[]).find(x => String(x.id) === String(a.id));
+    if (cached) { cached.kunde = a.kunde; cached.ansprechpartner = null; }
+    _renderAnlagenList();
+    try { openAnlageDetail(_anlagenViewItems.findIndex(x => String(x.id) === String(a.id))); } catch(_){}
+    toast('✅ Kunde der Anlage geändert','ok');
+  } catch(e) {
+    console.error('[Anlage-Kunde]', e);
+    toast('❌ '+(e.message||'Fehler').slice(0,200),'err');
   }
 }
 
