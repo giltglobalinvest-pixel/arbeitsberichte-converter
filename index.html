@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.84';
+const APP_VERSION = 'v6.85';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -32781,7 +32781,7 @@ async function _nwvSubmit() {
   await _nwvAutoAdoptFdIfNeeded();
   const modal = document.getElementById('nwv-modal');
   if (!modal) return;
-  const typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';
+  let typ = document.querySelector('input[name="nwv-typ"]:checked')?.value || 'sammel';  // v6.85: let, da Auto-Upgrade möglich
   const kundeIdxStr = document.getElementById('nwv-kunde-id').value;
   const kundeIdx = parseInt(kundeIdxStr, 10);
   const kundeFromCache = (_kundenCache.items||[])[kundeIdx];
@@ -32809,7 +32809,15 @@ async function _nwvSubmit() {
   const sel = modal._selectedAnlagen || [];
   if (!kundeId) return toast('Bitte Kunden wählen.','err');
   if (!sel.length) return toast('Bitte mindestens eine Anlage wählen.','err');
-  if (typ === 'einzel' && sel.length > 1) return toast('Einzelvertrag erlaubt nur 1 Anlage. Sammelvertrag wählen oder Anlagen reduzieren.','err');
+  // v6.85: Auto-Upgrade Einzel → Sammel wenn mehrere Anlagen ausgewählt (statt Hard-Stop)
+  if (typ === 'einzel' && sel.length > 1) {
+    const sammelRadio = document.querySelector('input[name="nwv-typ"][value="sammel"]');
+    if (sammelRadio) sammelRadio.checked = true;
+    typ = 'sammel';
+    if (typeof _nwvOnTypChange === 'function') _nwvOnTypChange();
+    if (typeof _nwvUpdateVorlagen === 'function') _nwvUpdateVorlagen();
+    toast('ℹ '+sel.length+' Anlagen ausgewählt → automatisch auf Sammelvertrag umgestellt','');
+  }
   if (!vorlageId) return toast('Bitte Vorlage wählen (Schritt 4).','err');
   const btn = document.getElementById('nwv-submit');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ erstelle…'; }
