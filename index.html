@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.87';
+const APP_VERSION = 'v6.88';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28607,25 +28607,41 @@ async function _buildAngebotPdf(rec) {
     doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
     y += 10;
   } else {
-    const ustBetrag = sumNetto * ust/100;
-    const brutto = sumNetto + ustBetrag;
-    const sumX = ml + cw - 80;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-    doc.text('Gesamtnettopreis', sumX, y+4);
-    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
-    doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+4, { align:'right' });
-    y += 5.5;
-    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
-    doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
-    doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
-    y += 6;
-    doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
-    y += 5;
-    doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
-    doc.text('Gesamtbruttopreis', sumX, y);
-    doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
-    doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
-    y += 10;
+    // v6.88: Wenn ALLE sichtbaren Positionen "nach Aufwand" → keine 0-EUR-Summen,
+    //   sondern prominenter Hinweis dass die Gesamtsumme nach Aufwand abgerechnet wird.
+    const visiblePos = (rec.positionen||[]).filter(p => !p.hidden);
+    const allAufwand = visiblePos.length > 0 && visiblePos.every(p => !!p.preis_aufwand);
+    if (allAufwand) {
+      if (y + 14 > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+      const sumX = ml + cw - 80;
+      doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
+      y += 5;
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
+      doc.text('Gesamtsumme', sumX, y);
+      doc.text('nach Aufwand', mr-2, y, { align:'right' });
+      doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
+      y += 10;
+    } else {
+      const ustBetrag = sumNetto * ust/100;
+      const brutto = sumNetto + ustBetrag;
+      const sumX = ml + cw - 80;
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+      doc.text('Gesamtnettopreis', sumX, y+4);
+      doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+      doc.text(fmtEUR(sumNetto)+' EUR', mr-2, y+4, { align:'right' });
+      y += 5.5;
+      doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
+      doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
+      doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
+      y += 6;
+      doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
+      y += 5;
+      doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
+      doc.text('Gesamtbruttopreis', sumX, y);
+      doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
+      doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
+      y += 10;
+    }
   }
   } // ende Pauschal-Block (v5.50)
   // v5.19: EINE einheitliche Konditionen-Sektion (boxed) — keine doppelte
