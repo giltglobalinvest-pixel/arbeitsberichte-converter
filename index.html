@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.92';
+const APP_VERSION = 'v6.93';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -28308,7 +28308,11 @@ async function _angEditorSave() {
       }
     }
     const ust = +E.ust_prozent || 19;
-    const sumBrutto = sumVp * (1 + ust/100);
+    // v6.93: Im Pauschal-Gesamt-Modus ist der eingegebene Pauschalpreis der maßgebliche VP,
+    //   nicht die Positions-Summe. Wir speichern ihn in summe_netto_vp damit Detail-Anzeige + Liste stimmen.
+    const isPauschalGesamt = (E.abrechnung === 'pauschal' && E.preisanzeige_modus === 'gesamt');
+    const effektivVp = (isPauschalGesamt && +E.pauschalpreis_netto) ? (+E.pauschalpreis_netto) : sumVp;
+    const sumBrutto = effektivVp * (1 + ust/100);
     const fields = {
       app_angebot_num: angebotNum,
       firma: firmaSlug,
@@ -28338,7 +28342,7 @@ async function _angEditorSave() {
       positionen_json: isAufwand ? '[]' : JSON.stringify(E.positionen),
       ust_prozent: ust,
       summe_netto_kone: Math.round(sumKone*100)/100,
-      summe_netto_vp: Math.round(sumVp*100)/100,
+      summe_netto_vp: Math.round(effektivVp*100)/100,  // v6.93: Pauschalpreis (wenn isPauschalGesamt) sonst Positions-Summe
       summe_brutto_vp: Math.round(sumBrutto*100)/100,
       kond_lieferzeit: E.kond_lieferzeit || '',
       kond_preisbasis: E.kond_preisbasis || '',
