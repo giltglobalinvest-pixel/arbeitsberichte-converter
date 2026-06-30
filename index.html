@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.89';
+const APP_VERSION = 'v6.90';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -29701,8 +29701,34 @@ async function _angOpenSendModal(recId) {
   const angNum = f.app_angebot_num || '?';
   const standort = String(f.anlage_adresse || '').split(/[,\n]/)[0] || '';
   const defaultSubject = 'Angebot ANG-'+angNum+(standort ? ' · '+standort : '');
+  // v6.90: Echte Briefanrede aus ERP-Kontakt holen (gleiche Logik wie v6.73 für Angebots-PDF).
+  //   ERP-Kontakte haben anrede als komplette Brief-Anrede ("Sehr geehrter Herr Müller").
+  //   Match-Reihenfolge: Email → Nachname.
+  let erpAnrede = '';
+  const kdNr = f.kunden_nummer || f.kundennummer || '';
+  if (kdNr) {
+    try {
+      const kontakte = await _bulkLoadKontaktList(firmaSlug, kdNr);
+      const emailNorm = String(f.kontakt_email||'').trim().toLowerCase();
+      let k = emailNorm ? kontakte.find(c => String(c.email||'').trim().toLowerCase() === emailNorm) : null;
+      if (!k && f.kontakt_name) {
+        const ln = String(f.kontakt_name).replace(/^(Sehr geehrter? (Herr|Frau)\s+)/i,'').trim().split(/\s+/).slice(-1)[0].toLowerCase();
+        if (ln) k = kontakte.find(c => String(c.nachname||'').trim().toLowerCase() === ln);
+      }
+      if (k && k.anrede) {
+        const a = String(k.anrede).trim().replace(/[,!]+$/,'');
+        if (/^sehr\s+geehrte?[rn]?\s+/i.test(a)) {
+          erpAnrede = a + ','; // ERP enthält schon volle Briefanrede inkl. Name
+        } else {
+          const nn = (k.nachname||'').trim();
+          if (/^frau$/i.test(a))      erpAnrede = 'Sehr geehrte Frau '+nn+',';
+          else if (/^herr$/i.test(a)) erpAnrede = 'Sehr geehrter Herr '+nn+',';
+        }
+      }
+    } catch(e) { console.warn('[ANG-Send] Kontakt-Lookup für Anrede:', e.message); }
+  }
   const kontaktName = String(f.kontakt_name || '').replace(/^(Sehr geehrter? (Herr|Frau)\s+)/i,'').trim();
-  const anrede = kontaktName ? ('Sehr geehrte/r '+kontaktName+',') : 'Sehr geehrte Damen und Herren,';
+  const anrede = erpAnrede || (kontaktName ? ('Sehr geehrte/r '+kontaktName+',') : 'Sehr geehrte Damen und Herren,');
   const defaultBody = anrede+'\n\nanbei erhalten Sie unser Angebot ANG-'+angNum+(standort ? ' zu '+standort : '')+'.\n\nFür Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nMit freundlichen Grüßen';
 
   document.getElementById('ang-send-modal')?.remove();
