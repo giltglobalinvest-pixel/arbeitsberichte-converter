@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.80';
+const APP_VERSION = 'v6.81';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -32202,18 +32202,30 @@ function _nwvFdRenderResult() {
   const fmtFab = f => (match.anlagen.find(a => String(a.fabriknummer||'').trim().toLowerCase() === String(f).trim().toLowerCase())
     ? '<span style="color:#166534;font-weight:600">✓ '+escapeHtml(f)+'</span>'
     : '<span style="color:#9A3412;font-weight:600">⚠ '+escapeHtml(f)+'</span>');
-  // v6.75: Liste die per Adresse zusätzlich gefundenen Anlagen separat zeigen
   const viaAdresseList = (match.anlagen_via_adresse_ids||[]);
   const adrAnlagen = match.anlagen.filter(a => viaAdresseList.includes(String(a.id || a.anlageId || '')));
   const allFabs = (analysis.anlagen_fabriknummern||[]);
-  // v6.75: canContinue auch wenn Adress-Match Anlagen lieferte (kein Fabrik-Match nötig)
   const fabsAllFound = allFabs.length > 0 && match.anlagen_missing.length === 0;
   const onlyViaAdresse = allFabs.length === 0 && adrAnlagen.length > 0;
-  const canContinue = match.kunde && (fabsAllFound || onlyViaAdresse);
-  const row = (label, value) => '<div style="display:grid;grid-template-columns:120px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px"><div style="color:var(--txt3)">'+label+'</div><div>'+(value||'<span style="color:var(--txt3)">—</span>')+'</div></div>';
+  // v6.81: hasAnyAnlage erlaubt Weiter auch nach manueller Prov-Anlage
+  const hasAnyAnlage = match.anlagen.length > 0;
+  const canContinue = match.kunde && (fabsAllFound || onlyViaAdresse || hasAnyAnlage);
+  // Read-only-Zeile
+  const row = (label, value) => '<div style="display:grid;grid-template-columns:130px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px"><div style="color:var(--txt3)">'+label+'</div><div>'+(value||'<span style="color:var(--txt3)">—</span>')+'</div></div>';
+  // v6.81: Editierbare Zeilen — schreiben direkt in analysis (kein Re-Render, sonst Fokus weg)
+  const rowNum = (label, key, suffix) => '<div style="display:grid;grid-template-columns:130px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px;align-items:center"><div style="color:var(--txt3)">'+label+'</div><div><input type="number" step="any" min="0" value="'+(analysis[key]||'')+'" oninput="_nwvFdEdit(\''+key+'\', this.value, \'num\')" style="width:100px;padding:3px 6px;border:1px solid var(--bdr);border-radius:4px;font-size:12px"> <span style="color:var(--txt3);font-size:11px">'+(suffix||'')+'</span></div></div>';
+  const rowSelect = (label, key, options) => '<div style="display:grid;grid-template-columns:130px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px;align-items:center"><div style="color:var(--txt3)">'+label+'</div><div><select onchange="_nwvFdEdit(\''+key+'\', this.value, \'str\')" style="padding:3px 6px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;background:#fff">'+
+    options.map(o => '<option value="'+escapeHtml(o.value)+'"'+(String(analysis[key]||'')===o.value?' selected':'')+'>'+escapeHtml(o.label)+'</option>').join('')+
+    '</select></div></div>';
+  const rowBool = (label, key, hint) => '<div style="display:grid;grid-template-columns:130px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px;align-items:center"><div style="color:var(--txt3)">'+label+'</div><div><label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:11px"><input type="checkbox" '+(analysis[key]?'checked':'')+' onchange="_nwvFdEdit(\''+key+'\', this.checked, \'bool\')" style="margin:0">'+escapeHtml(hint||'')+'</label></div></div>';
+  const rowTextarea = (label, key, placeholder) => {
+    const arr = Array.isArray(analysis[key]) ? analysis[key] : [];
+    const val = arr.join('\n');
+    return '<div style="display:grid;grid-template-columns:130px 1fr;padding:5px 0;border-bottom:1px dashed var(--bdr);font-size:12px"><div style="color:var(--txt3);padding-top:4px">'+label+'</div><div><textarea rows="2" oninput="_nwvFdEdit(\''+key+'\', this.value, \'arr\')" placeholder="'+escapeHtml(placeholder||'')+'" style="width:100%;padding:4px 6px;border:1px solid var(--bdr);border-radius:4px;font-size:12px;font-family:inherit;line-height:1.4;resize:vertical">'+escapeHtml(val)+'</textarea></div></div>';
+  };
   result.innerHTML = ''+
     '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:14px;margin-bottom:14px">'+
-      '<div style="font-weight:700;color:var(--navy);font-size:13px;margin-bottom:8px">🔍 Analyse-Ergebnis</div>'+
+      '<div style="font-weight:700;color:var(--navy);font-size:13px;margin-bottom:8px">🔍 Analyse-Ergebnis <span style="font-size:10px;font-weight:400;color:var(--txt3)">— Felder unten editierbar</span></div>'+
       // Match-Block
       '<div style="background:#fff;border:1px solid var(--bdr);border-radius:8px;padding:10px;margin-bottom:10px;font-size:12px">'+
         '<div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center">'+
@@ -32228,29 +32240,41 @@ function _nwvFdRenderResult() {
             (adrAnlagen.length
               ? '<div style="margin-top:4px;font-size:11px;color:#065F46"><strong>+ '+adrAnlagen.length+' via Adresse:</strong> '+adrAnlagen.map(a => escapeHtml(_buildAnlageAdresse(a)||a.fabriknummer||'?')).join(' &nbsp;·&nbsp; ')+'</div>'
               : '')+
+            // v6.81: provisorisch angelegte Anlagen (PROV-Prefix) markieren
+            (match.anlagen.filter(a => String(a.fabriknummer||'').toUpperCase().startsWith('PROV-')).length
+              ? '<div style="margin-top:4px;font-size:11px;color:#5B21B6"><strong>📝 Provisorisch:</strong> '+match.anlagen.filter(a => String(a.fabriknummer||'').toUpperCase().startsWith('PROV-')).map(a => escapeHtml(a.fabriknummer)).join(' &nbsp;·&nbsp; ')+' <em>(Fabriknummer später im ERP korrigieren)</em></div>'
+              : '')+
           '</div>'+
         '</div>'+
       '</div>'+
-      // Daten-Block
+      // Daten-Block — Anlage/Kunde-Daten READ-ONLY, Wartungs-Details EDITIERBAR
       '<div style="background:#fff;border:1px solid var(--bdr);border-radius:8px;padding:10px;margin-bottom:10px">'+
         row('Anlage-Adresse', escapeHtml(analysis.anlage_adresse||''))+
         row('Kunde',          escapeHtml(analysis.kunde_name||''))+
         row('Kunde-Adresse',  escapeHtml(analysis.kunde_adresse||''))+
         row('Kontakt',        escapeHtml([analysis.kontakt_name, analysis.kontakt_email].filter(Boolean).join(' · ')))+
         row('Anliegen',       escapeHtml(analysis.anliegen||''))+
-        row('Wartungs-Typ',   escapeHtml(analysis.wartung_typ||''))+
-        row('ZÜS / Notruf',   (analysis.zues_komplett?'✓ ZÜS':'✗ ZÜS')+' &nbsp;·&nbsp; '+(analysis.notruf_inkl?'✓ Notruf':'✗ Notruf'))+
-        row('Wartungen/Jahr', analysis.wartungen_pro_jahr ? String(analysis.wartungen_pro_jahr) : '')+
-        row('Laufzeit',       analysis.laufzeit_jahre ? (analysis.laufzeit_jahre+' Jahre') : '')+
-        row('Kündigungsfrist',analysis.kuendigungsfrist_monate ? (analysis.kuendigungsfrist_monate+' Monate') : '')+
-        row('Jahres-Pauschale',analysis.jahres_pauschale_netto ? (Number(analysis.jahres_pauschale_netto).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' EUR netto') : '')+
-        row('Sonstige Optionen', (analysis.sonstige_optionen||[]).length ? (analysis.sonstige_optionen||[]).map(escapeHtml).join('<br>') : '')+
+        // v6.81: ab hier alles editierbar
+        rowSelect('Wartungs-Typ', 'wartung_typ', [
+          {value:'', label:'— bitte wählen —'},
+          {value:'inspektion', label:'Inspektion (Sichtkontrolle)'},
+          {value:'wartung', label:'Wartung (Standard)'},
+          {value:'vollwartung', label:'Vollwartung (inkl. Verschleißteile)'},
+          {value:'vollabdeckung', label:'Vollabdeckung (alles inkl. Reparaturen)'},
+        ])+
+        rowBool('ZÜS', 'zues_komplett', 'ZÜS/TÜV-Hauptprüfung komplett übernehmen')+
+        rowBool('Notruf', 'notruf_inkl', '24h-Notruf / Bereitschaft eingeschlossen')+
+        rowNum('Wartungen/Jahr',  'wartungen_pro_jahr',      'pro Jahr (typisch 2 oder 4)')+
+        rowNum('Laufzeit',        'laufzeit_jahre',          'Jahre')+
+        rowNum('Kündigungsfrist', 'kuendigungsfrist_monate', 'Monate')+
+        rowNum('Jahres-Pauschale','jahres_pauschale_netto',  'EUR netto/Jahr')+
+        rowTextarea('Sonstige Optionen', 'sonstige_optionen', 'Eine Zeile = eine Option (z.B. „Originalersatzteile", „Reaktionszeit 4h")')+
       '</div>'+
-      // CTA-Block: Übernehmen oder Anlegen
+      // CTA-Block
       (canContinue
         ? '<button class="btn prim" onclick="_nwvFdContinue()" style="width:100%;background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:12px;font-size:13px">→ Daten in Manuell-Tab übernehmen</button>'
         : '<div style="display:grid;gap:8px">'+
-            '<div style="font-size:12px;color:var(--txt2);background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 12px"><strong>Fehlende Daten anlegen:</strong> Kunde zuerst, dann fehlende Anlagen.</div>'+
+            '<div style="font-size:12px;color:var(--txt2);background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 12px"><strong>Fehlende Daten anlegen:</strong> Kunde zuerst, dann Anlage(n).</div>'+
             (!match.kunde
               ? '<button class="btn" onclick="_nwvFdCreateKunde()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Kunde im ERP anlegen ('+escapeHtml((analysis.kunde_name||'?').slice(0,40))+')</button>'
               : '<div style="font-size:11px;color:#065F46;padding:4px">✓ Kunde bereits vorhanden</div>')+
@@ -32258,12 +32282,79 @@ function _nwvFdRenderResult() {
               ? (match.kunde
                   ? '<button class="btn" onclick="_nwvFdCreateNextAnlage()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Fehlende Anlage anlegen ('+match.anlagen_missing.length+' offen · nächste: '+escapeHtml(match.anlagen_missing[0])+')</button>'
                   : '<button class="btn" disabled style="opacity:.5;padding:10px;font-size:13px" title="Kunde muss zuerst angelegt werden">✚ Fehlende Anlagen ('+match.anlagen_missing.length+') — erst Kunde anlegen</button>')
-              : (allFabs.length ? '<div style="font-size:11px;color:#065F46;padding:4px">✓ Alle Anlagen vorhanden</div>' : ''))+
-            (match.kunde
-              ? '<button class="btn" onclick="_nwvFdContinue()" style="background:#fff;color:var(--txt2);border-color:var(--bdr);padding:8px;font-size:12px">Trotzdem weiter ('+(allFabs.length ? 'ohne fehlende Anlagen' : 'ohne Anlage-Vorauswahl')+')</button>'
               : '')+
+            // v6.81: NEUER Button — provisorische Anlage anlegen wenn keine Fabriknummer im Ticket
+            (match.kunde && allFabs.length === 0
+              ? '<button class="btn" onclick="_nwvFdCreateProvAnlage()" style="background:#5B21B6;border-color:#5B21B6;color:#fff;font-weight:700;padding:10px;font-size:13px">✚ Anlage anlegen (ohne Fabrik-Nr — <em>provisorische Nummer wird generiert</em>)</button>'
+              : '')+
+            (match.kunde && hasAnyAnlage
+              ? '<button class="btn prim" onclick="_nwvFdContinue()" style="background:#10B981;border-color:#10B981;color:#fff;font-weight:700;padding:10px;font-size:13px">→ Mit den '+match.anlagen.length+' vorhandenen Anlagen weiter</button>'
+              : (match.kunde
+                  ? '<button class="btn" onclick="_nwvFdContinue()" style="background:#fff;color:var(--txt2);border-color:var(--bdr);padding:8px;font-size:12px">Trotzdem weiter (ohne Anlage)</button>'
+                  : ''))+
           '</div>')+
     '</div>';
+}
+
+/* v6.81: Inline-Edit-Setter für analysis-Felder. Kein Re-Render — würde Eingabe-Fokus zerstören.
+ *   Beim Klick auf „Übernehmen" werden die geänderten Werte sowieso in den Manuell-Tab gemapped. */
+window._nwvFdEdit = function(key, val, type) {
+  const m = document.getElementById('nwv-modal');
+  if (!m || !m._nwvFdData) return;
+  if (type === 'num') {
+    const n = Number(val);
+    m._nwvFdData.analysis[key] = isFinite(n) ? n : 0;
+  } else if (type === 'bool') {
+    m._nwvFdData.analysis[key] = !!val;
+  } else if (type === 'arr') {
+    m._nwvFdData.analysis[key] = String(val||'').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  } else {
+    m._nwvFdData.analysis[key] = String(val||'');
+  }
+};
+
+/* v6.81: Generiert eine provisorische Fabriknummer mit PROV-Präfix, eindeutig im Anlagen-Cache. */
+function _nwvGenProvFabriknummer() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  const datePart = ''+d.getFullYear()+pad(d.getMonth()+1)+pad(d.getDate());
+  const existing = new Set((_anlagenCache.items||[]).map(a => String(a.fabriknummer||'').trim().toUpperCase()));
+  for (let i = 0; i < 256; i++) {
+    const rand = Math.floor(Math.random()*65536).toString(16).toUpperCase().padStart(4,'0');
+    const candidate = 'PROV-'+datePart+'-'+rand;
+    if (!existing.has(candidate)) return candidate;
+  }
+  // Extrem-Fallback wenn 256 Versuche nichts Eindeutiges liefern
+  return 'PROV-'+datePart+'-'+Date.now().toString(36).slice(-6).toUpperCase();
+}
+
+/* v6.81: Legt Anlage ohne echte Fabriknummer an — provisorische Nummer generiert. */
+function _nwvFdCreateProvAnlage() {
+  const m = document.getElementById('nwv-modal');
+  if (!m || !m._nwvFdData) return;
+  const { analysis, match } = m._nwvFdData;
+  if (!match.kunde) return toast('Bitte zuerst Kunde anlegen','warn');
+  const provNum = _nwvGenProvFabriknummer();
+  _openCreateAnlageStandaloneForm(match.kunde, {
+    preset: {
+      adresse: analysis.anlage_adresse || analysis.kunde_adresse || '',
+      fabriknummer: provNum,
+    },
+    onCreated: async (created) => {
+      try { await _loadAnlagenForFirma(m._firmaSlug || getCurrentFirmaSlug()); } catch(_){}
+      try {
+        const newMatch = await _nwvFdMatchTicketData(m._nwvFdData.analysis, m._firmaSlug || getCurrentFirmaSlug());
+        // Wenn die neue Anlage nicht im Match (weil keine Fabriknummern im Ticket) — manuell hinzufügen
+        const newAnlage = (_anlagenCache.items||[]).find(a => String(a.id) === String(created.id));
+        if (newAnlage && !newMatch.anlagen.find(a => String(a.id) === String(newAnlage.id))) {
+          newMatch.anlagen.push(newAnlage);
+        }
+        m._nwvFdData.match = newMatch;
+      } catch(e) { console.warn('[NWV-FD] Re-Match fail:', e.message); }
+      _nwvFdRenderResult();
+      toast('✅ Anlage angelegt ('+provNum+') — Fabriknummer später im ERP korrigieren!','ok');
+    },
+  });
 }
 
 /* Übernimmt die FD-Analyse-Daten in den Manuell-Tab + wechselt dorthin. */
