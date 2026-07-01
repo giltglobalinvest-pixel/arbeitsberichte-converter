@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.95';
+const APP_VERSION = 'v6.96';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -25855,7 +25855,8 @@ async function _extractAngebotFromPrompt(promptText, typ) {
       // (</anschreiben><parameter name="positionen">...), Positionen waren leer.
       // v5.92: 16000 reichte bei v5.90-Standard-Modernisierungs-Vorlage (5 Komponenten × 5-7 Bullets
       // + Optional-Block + Konditionen + Empfänger-Slots) nicht — auf 32000 erhöht.
-      max_tokens: 32000,
+      // v6.96: bei Modernisierungs-Prompts mit ausführlichem User-Text + Lern-Vorbildern reichte 32k noch nicht → 64k.
+      max_tokens: 64000,
       tools:[tool],
       tool_choice:{ type:'tool', name:'generate_angebot' },
       messages:[{ role:'user', content:[
@@ -25878,9 +25879,21 @@ async function _extractAngebotFromPrompt(promptText, typ) {
     throw new Error('KI-Antwort wurde abgeschnitten (zu viele Positionen/zu lange Beschreibung). Bitte den Prompt verkürzen oder in mehrere Angebote aufteilen.');
   }
   const anschreiben = String(block.input.anschreiben || '');
+  // v6.96: Sanitize statt harter Fehler — wenn Anschreiben Tool-Tags enthält aber Positionen komplett sind,
+  //   schneiden wir das Anschreiben vor dem ersten Tag ab und geben zurück. Nur wenn Positionen fehlen → Fehler.
   if (/<\/anschreiben>|<parameter\s+name=/i.test(anschreiben)) {
-    console.warn('[Angebot-Prompt] Anschreiben enthält Tool-Use-Tags — Truncation erkannt.');
-    throw new Error('KI-Antwort kam unvollständig zurück (rohe Tool-Use-Tags im Anschreiben). Bitte erneut „Generieren" klicken oder den Prompt kürzer fassen.');
+    const hasPositionen = Array.isArray(block.input.positionen) && block.input.positionen.length > 0;
+    if (!hasPositionen) {
+      console.warn('[Angebot-Prompt] Anschreiben trunkiert + Positionen leer — Fehler.');
+      throw new Error('KI-Antwort kam unvollständig zurück (Positionen fehlen). Bitte erneut „Generieren" klicken oder den Prompt kürzer fassen.');
+    }
+    console.warn('[Angebot-Prompt] Anschreiben enthielt Tool-Tags — abgeschnitten. Positionen sind vollständig.');
+    block.input.anschreiben = anschreiben.replace(/<\/anschreiben>[\s\S]*$/i, '').replace(/<parameter\s+name=[\s\S]*$/i, '').trim();
+    // Falls jetzt leer: freundlicher Default statt Müll
+    if (!block.input.anschreiben) {
+      block.input.anschreiben = 'Sehr geehrte Damen und Herren,\n\nvielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen das folgende Angebot.\n\nBei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+    }
+    toast('⚠ Anschreiben wurde von der KI abgeschnitten — im Editor bitte kurz prüfen','warn');
   }
   if (!block.input.anbieter) block.input.anbieter = companyShort;
   if (!block.input.kone_angebot_datum) block.input.kone_angebot_datum = today;
