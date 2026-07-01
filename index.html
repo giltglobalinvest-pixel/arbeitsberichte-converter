@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.94';
+const APP_VERSION = 'v6.95';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21607,6 +21607,8 @@ function _daRenderCheckpunkte() {
         '</div>'+
         '<button class="btn" onclick="_daGenerateKiBeschreibungen()" style="background:#7C3AED;border-color:#7C3AED;color:#fff;font-weight:600;font-size:12px" title="Für alle Checkpunkte (oder leere) Beschreibungen mit Konsequenzen generieren">'+(hasAnyDescription?'↻ Neu generieren':'🤖 KI generieren')+'</button>'+
         (hasAnyDescription ? '<button class="btn" onclick="_daCorrectKiBeschreibungen()" style="background:#FEF3C7;border-color:#FCD34D;color:#92400E;font-weight:600;font-size:12px" title="KI politiert bestehende Beschreibungen anhand deiner Anweisungen">✏ Korrigieren</button>' : '')+
+        // v6.95: Zahnrad → Standard-Prompt bearbeiten
+        '<button class="btn" onclick="_daOpenKiPromptEditor()" style="background:#fff;border-color:#C4B5FD;color:#5B21B6;font-size:12px" title="Standard-Prompt für die KI-Generierung bearbeiten">⚙</button>'+
       '</div>'
     : '';
   c.innerHTML = (
@@ -21875,6 +21877,80 @@ async function _daSaveAsVorlageSubmit() {
 /** v5.97/v6.00: Ruft Claude mit tool-use, gibt {beschreibungen: [{nr, text}]} zurück.
  *  Wenn correctionInstr gesetzt → KI politiert bestehende Texte, sonst generiert sie neu.
  *  v6.00: ctx={anlageInfo, vorlagenKontext} optional — für DA-Vorlagen-Kontext (ohne konkrete Anlage). */
+/* v6.95: Standard-Prompt für DA-KI-Beschreibungen (editierbar via _daOpenKiPromptEditor).
+ *   Platzhalter: {cpsCount} — automatisch ersetzt.
+ *   User kann per Zahnrad in der KI-Bar überschreiben (localStorage-Persist pro Firma). */
+const DA_KI_PROMPT_DEFAULT =
+  'AUFGABE: Für JEDEN der {cpsCount} Checkpunkte EINE fachliche Beschreibung mit:\n'+
+  '• Konsequenz für die Aufzugsanlage (was passiert wenn man nichts tut?)\n'+
+  '• Risiko (Sicherheit, Ausfall, Folgeschaden, Personenbefreiung, BetrSichV-Konformität)\n'+
+  '• Dringlichkeit (sofort / mittelfristig / vorbeugend)\n\n'+
+  'STIL: 2-4 Sätze pro Checkpunkt, sachlich, ohne Marketing-Sprache, verständlich für Hausverwaltungs-Laien.\n'+
+  'Keine Preise, keine Terminangaben. Auf Deutsch (Sie-Anrede vermeiden — reine Sach-Beschreibung).\n\n'+
+  'Falls IST-Zustand und Maßnahme leer sind, leite aus dem Titel die typische Konsequenz ab.';
+
+function _daKiPromptKey(firmaSlug) { return 'da_ki_prompt_'+(firmaSlug||'default'); }
+function _daGetKiPrompt(firmaSlug) {
+  try { const v = localStorage.getItem(_daKiPromptKey(firmaSlug)); if (v && v.trim()) return v; } catch(_){}
+  return DA_KI_PROMPT_DEFAULT;
+}
+function _daSetKiPrompt(firmaSlug, prompt) {
+  try { localStorage.setItem(_daKiPromptKey(firmaSlug), String(prompt||'')); } catch(_){}
+}
+function _daResetKiPrompt(firmaSlug) {
+  try { localStorage.removeItem(_daKiPromptKey(firmaSlug)); } catch(_){}
+}
+
+window._daOpenKiPromptEditor = function() {
+  const firmaSlug = getCurrentFirmaSlug();
+  const current = _daGetKiPrompt(firmaSlug);
+  const isCustom = current !== DA_KI_PROMPT_DEFAULT;
+  document.getElementById('da-ki-prompt-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'da-ki-prompt-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML = '<div style="background:var(--surf);max-width:760px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="padding:14px 18px;background:#7C3AED;color:#fff;font-weight:700;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>⚙ Standard-Prompt für DA-KI-Beschreibungen</span>'+
+      '<button onclick="document.getElementById(\'da-ki-prompt-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:16px 20px;flex:1;overflow-y:auto">'+
+      '<div style="background:#EDE9FE;border:1px solid #C4B5FD;padding:10px 12px;border-radius:6px;font-size:11px;color:#5B21B6;margin-bottom:12px;line-height:1.5">'+
+        '💡 Dieser Prompt wird bei jedem „🤖 KI generieren"-Klick verwendet. Rolle (Aufzugstechnik-Sachverständige/r), Anlagen-Kontext und die Checkpunkte-Liste werden automatisch davor/dahinter angehängt. Platzhalter <code style="background:#fff;padding:1px 5px;border-radius:3px">{cpsCount}</code> wird durch die Anzahl der Checkpunkte ersetzt.'+
+      '</div>'+
+      '<label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Prompt-Text '+(isCustom?'<span style="color:#10B981;font-weight:600">✓ angepasst</span>':'<span style="color:var(--txt3);font-weight:400">(Standard)</span>')+'</label>'+
+      '<textarea id="da-ki-prompt-text" rows="16" style="width:100%;padding:10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.5;resize:vertical">'+escapeHtml(current)+'</textarea>'+
+      '<details style="margin-top:12px"><summary style="font-size:11px;color:var(--txt3);cursor:pointer">📋 Standard-Prompt anzeigen (zum Kopieren)</summary>'+
+        '<pre style="background:var(--bg);padding:10px;border-radius:6px;font-size:11px;white-space:pre-wrap;margin-top:6px;max-height:200px;overflow:auto">'+escapeHtml(DA_KI_PROMPT_DEFAULT)+'</pre>'+
+      '</details>'+
+    '</div>'+
+    '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
+      '<button class="btn" onclick="_daKiPromptResetClick()" style="color:var(--err);border-color:rgba(220,38,38,.3)" title="Auf Standard-Prompt zurücksetzen">↺ Auf Standard zurücksetzen</button>'+
+      '<div style="display:flex;gap:8px">'+
+        '<button class="btn" onclick="document.getElementById(\'da-ki-prompt-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" onclick="_daKiPromptSave()" style="background:#7C3AED;border-color:#7C3AED">💾 Speichern</button>'+
+      '</div>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById('da-ki-prompt-text')?.focus(), 80);
+};
+window._daKiPromptSave = function() {
+  const firmaSlug = getCurrentFirmaSlug();
+  const val = (document.getElementById('da-ki-prompt-text')?.value || '').trim();
+  if (!val) return toast('Prompt darf nicht leer sein','err');
+  if (val === DA_KI_PROMPT_DEFAULT) _daResetKiPrompt(firmaSlug);
+  else _daSetKiPrompt(firmaSlug, val);
+  document.getElementById('da-ki-prompt-modal')?.remove();
+  toast('✅ Prompt gespeichert','ok');
+  _daRenderCheckpunkte();
+};
+window._daKiPromptResetClick = function() {
+  if (!confirm('Prompt auf Standard-Vorschlag zurücksetzen?')) return;
+  const ta = document.getElementById('da-ki-prompt-text');
+  if (ta) ta.value = DA_KI_PROMPT_DEFAULT;
+};
+
 async function _daKiCallGenerate(cps, correctionInstr, ctx) {
   ctx = ctx || {};
   const firmaSlug = ctx.firmaSlug || getCurrentFirmaSlug();
@@ -21921,17 +21997,15 @@ async function _daKiCallGenerate(cps, correctionInstr, ctx) {
     },
   };
   const isVorlage = !!ctx.vorlagenKontext;
+  // v6.95: User-editierbaren Standard-Prompt einsetzen (Platzhalter {cpsCount})
+  const customPromptTemplate = _daGetKiPrompt(firmaSlug);
+  const customPrompt = String(customPromptTemplate).replace(/\{cpsCount\}/g, String(cps.length));
   let promptText =
     'Du bist Aufzugstechnik-Sachverständiger bei '+companyShort+' und schreibst die fachlichen Konsequenzen pro Checkpunkt.\n\n'+
     (isVorlage
       ? 'KONTEXT: Diese Beschreibungen werden als WIEDERVERWENDBARE VORLAGE gespeichert — formuliere allgemein für eine typische Aufzugsanlage in einem Wohngebäude, ohne anlagespezifische Details (kein konkretes Baujahr, keine Fabriknummer, keine konkrete Etagenzahl).\n\n'
       : 'ANLAGE: '+(anlageInfo||'(keine Angabe)')+'\n\n')+
-    'AUFGABE: Für JEDEN der unten genannten '+cps.length+' Checkpunkte EINE Beschreibung mit:\n'+
-    '• Konsequenz für die Aufzugsanlage (was passiert wenn man nichts tut?)\n'+
-    '• Risiko (Sicherheit, Ausfall, Folgeschaden, Personenbefreiung, BetrSichV-Konformität)\n'+
-    '• Dringlichkeit (sofort / mittelfristig / vorbeugend)\n'+
-    'Länge: 2-4 Sätze, sachlich, ohne Marketing, verständlich für Hausverwaltungs-Laien.\n'+
-    'Falls IST-Zustand und Maßnahme leer sind, leite aus dem Titel die typische Konsequenz ab.\n\n';
+    customPrompt + '\n\n';
   if (correctionInstr) {
     promptText += 'KORREKTUR-ANWEISUNGEN — bestehende Beschreibungen behutsam überarbeiten:\n'+correctionInstr+'\n\n';
   }
