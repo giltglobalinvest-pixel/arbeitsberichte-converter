@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.93';
+const APP_VERSION = 'v6.94';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21656,13 +21656,22 @@ function _daRenderCheckpunktItem(cp, i, editable) {
         '<span style="font-size:11px;color:#9A3412">€ netto</span>'+
       '</div>'
     : '';
+  // v6.94: Ausblenden-Feature — hidden CPs erscheinen NICHT im PDF, bleiben aber im Editor
+  const isHidden = !!cp.hidden;
+  const containerStyle = isHidden ? 'background:#F3F4F6;border:1px dashed #9CA3AF;opacity:.55' : 'background:var(--surf);border:1px solid var(--bdr)';
+  const hiddenBadge = isHidden ? '<span style="background:#6B7280;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;margin-left:auto;margin-right:6px">👁‍🗨 NICHT IM PDF</span>' : '';
+  const toggleBtn = editable
+    ? '<button onclick="_daToggleCpHidden('+i+')" title="'+(isHidden?'Wieder in PDF aufnehmen':'Aus dem PDF ausblenden (Nummerierung wird angepasst)')+'" style="background:'+(isHidden?'#6B7280':'transparent')+';color:'+(isHidden?'#fff':'var(--txt3)')+';border:1px solid '+(isHidden?'#6B7280':'var(--bdr)')+';border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer">'+(isHidden?'👁':'🚫')+'</button>'
+    : '';
   return (
-    '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:14px 16px;margin-bottom:12px">'+
+    '<div style="'+containerStyle+';border-radius:10px;padding:14px 16px;margin-bottom:12px">'+
       '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">'+
-        '<div style="background:#2152A9;color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+(i+1)+'</div>'+
+        '<div style="background:'+(isHidden?'#9CA3AF':'#2152A9')+';color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px">'+(i+1)+'</div>'+
         '<input id="da-cp-titel-'+i+'" type="text" placeholder="Titel des Checkpunkts (z.B. Steuerung, Antrieb, Türen…)" value="'+esc(cp.titel||'')+'" '+dis+
-          ' oninput="_daUpdateCp('+i+',\'titel\',this.value)" style="flex:1;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;font-weight:600">'+
-        (editable?'<button onclick="_daRemoveCp('+i+')" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer">🗑</button>':'')+
+          ' oninput="_daUpdateCp('+i+',\'titel\',this.value)" style="flex:1;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:14px;font-weight:600'+(isHidden?';text-decoration:line-through':'')+'">'+
+        hiddenBadge+
+        toggleBtn+
+        (editable?'<button onclick="_daRemoveCp('+i+')" style="background:transparent;border:1px solid rgba(220,38,38,.3);color:var(--err);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;margin-left:6px">🗑</button>':'')+
       '</div>'+
       // IST-Zustand: Titel + Galerie (mehrere Bilder) + Textarea
       '<div style="margin-bottom:12px">'+
@@ -22090,6 +22099,16 @@ function _daRemoveCp(i) {
   _daMarkDirty(m);
   _daRenderCheckpunkte();
 }
+
+/* v6.94: Checkpunkt aus dem PDF ausblenden (Punkt bleibt erhalten, nur nicht im PDF).
+ *   Nummerierung im PDF bleibt durchgehend — visible CPs werden im PDF-Renderer neu nummeriert. */
+window._daToggleCpHidden = function(i) {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps || !m._cps[i]) return;
+  m._cps[i].hidden = !m._cps[i].hidden;
+  _daMarkDirty(m);
+  _daRenderCheckpunkte();
+};
 
 /**
  * Bild zum IST-Zustand des Checkpunkts i hinzufügen.
@@ -23169,8 +23188,12 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
   }
 
   // === CHECKPUNKTE ===
+  // v6.94: hidden CPs überspringen, sichtbare durchgehend nummerieren (visibleNr statt i+1)
+  let visibleNr = 0;
   for (let i = 0; i < cps.length; i++) {
     const cp = cps[i];
+    if (cp && cp.hidden) continue;  // Ausgeblendete CPs erscheinen NICHT im PDF
+    visibleNr++;
     // Migration für ältere Records, die das PDF direkt nach dem Laden bauen
     _daNormalizeCp(cp);
     if (y > 230) { doc.addPage(); y = 22; _daPdfHeader(doc, ml, mr, GREY_L, GREY_X, BR); y = 30; }
@@ -23181,9 +23204,9 @@ async function _buildDatenaufnahmePdf(rec, cps, opts) {
     doc.setFillColor(...ACCENT);
     doc.roundedRect(ml, y-3, pillW, pillH, 1.5, 1.5, 'F');
     doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(9);
-    doc.text(String(i+1), ml + pillW/2, y+1.2, { align:'center' });
+    doc.text(String(visibleNr), ml + pillW/2, y+1.2, { align:'center' });
     doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(12);
-    doc.text(_sanPdf('Checkpunkt '+(i+1)+(cp.titel?': '+cp.titel:'')), ml + pillW + 3, y+1.2);
+    doc.text(_sanPdf('Checkpunkt '+visibleNr+(cp.titel?': '+cp.titel:'')), ml + pillW + 3, y+1.2);
     y += 6;
     doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, y, mr, y);
     // v6.04: mehr Luft zwischen Trennlinie und dem nächsten Block (Konsequenzen-Box / Bilder / IST-Text)
