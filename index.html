@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.97';
+const APP_VERSION = 'v6.98';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -34547,9 +34547,28 @@ function _normalizeRechnung(r, erpHost, today) {
  * sowohl Place-IDs als auch Adress-Text (Geocoding) und liefert formatted_address + place_id.
  * ════════════════════════════════════════════════════════════ */
 async function _gmapsLookupAddress(firmaSlug, query) {
-  const enc = encodeURIComponent(String(query||'').trim());
+  const q = String(query||'').trim();
+  const enc = encodeURIComponent(q);
   if (!enc) return [];
+  // v6.98: adresse/{id} akzeptiert NUR Place-IDs (Text → 404). Für Text-Suche
+  //   probieren wir alle plausiblen Autocomplete/Such-Endpoint-Varianten durch.
   const candidates = [
+    // Autocomplete-Varianten (Google Places Autocomplete Proxy)
+    'api/google/maps/autocomplete/'+enc,
+    'api/users/me/google/maps/autocomplete/'+enc,
+    'api/google/maps/autocomplete?input='+enc,
+    'api/google/maps/autocomplete?query='+enc,
+    // Such-Varianten
+    'api/google/maps/suche/'+enc,
+    'api/google/maps/search/'+enc,
+    'api/google/maps/adressen/'+enc,
+    'api/users/me/google/maps/adressen/'+enc,
+    'api/google/maps/predictions/'+enc,
+    // Query-Param auf adresse
+    'api/google/maps/adresse?query='+enc,
+    'api/google/maps/adresse?suche='+enc,
+    'api/google/maps/adresse?input='+enc,
+    // Direkte Pfade (falls Endpoint doch Text kann)
     'api/google/maps/adresse/'+enc,
     'api/users/me/google/maps/adresse/'+enc,
     'api/google/maps/places/'+enc,
@@ -34560,19 +34579,24 @@ async function _gmapsLookupAddress(firmaSlug, query) {
       const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
       if (!res) continue;
       console.log('[GMaps] Lookup via '+path+':', res);
-      // Normalisieren: Array | {results:[]} | {result:{}} | direktes Objekt
+      // Normalisieren: Array | {results:[]} | {predictions:[]} | {result:{}} | direktes Objekt
       let items = [];
       if (Array.isArray(res)) items = res;
       else if (Array.isArray(res.results)) items = res.results;
+      else if (Array.isArray(res.predictions)) items = res.predictions;
+      else if (Array.isArray(res.items)) items = res.items;
       else if (res.result) items = [res.result];
       else if (typeof res === 'object' && Object.keys(res).length) items = [res];
       const norm = items.map(r => ({
         placeId: r.place_id || r.placeId || r.id || '',
-        label:   r.formatted_address || r.formattedAddress || r.adresse || r.name || r.beschreibung || r.description || '',
-      })).filter(x => x.placeId);
-      if (norm.length) return norm;
+        label:   r.formatted_address || r.formattedAddress || r.adresse || r.description || r.beschreibung || r.name || '',
+      })).filter(x => x.placeId && /^ChIJ|^Ei|^Gh/.test(String(x.placeId)));
+      if (norm.length) {
+        console.log('[GMaps] ✅ Funktionierender Endpoint: '+path);
+        return norm;
+      }
     } catch(e) {
-      if (e.status && e.status !== 404 && e.status !== 405) console.warn('[GMaps] '+path+':', e.status);
+      if (e.status && e.status !== 404 && e.status !== 405 && e.status !== 400) console.warn('[GMaps] '+path+':', e.status);
     }
   }
   return [];
@@ -34595,7 +34619,18 @@ window._gmapsSearchFor = async function(modalId, inputId, boxId, btn) {
   try {
     const results = await _gmapsLookupAddress(firmaSlug, query);
     if (!results.length) {
-      box.innerHTML = '<div style="padding:8px 10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;font-size:11px;color:#7F1D1D">❌ Keine Google-Maps-Adresse gefunden. Bitte Adresse präzisieren (Straße + Hausnummer + PLZ + Ort).</div>';
+      // v6.98: Manueller Fallback — Google-Maps-Link zum Nachschlagen + Place-ID-Eingabefeld
+      const gmapsUrl = 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(query);
+      box.innerHTML =
+        '<div style="padding:8px 10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;font-size:11px;color:#7F1D1D;margin-bottom:6px">'+
+          '❌ Kein Such-Endpoint im ERP gefunden (Details in der Console). Zwei Möglichkeiten:'+
+          '<br>1. Adresse präzisieren (Straße + Hausnummer + PLZ + Ort) und erneut suchen.'+
+          '<br>2. Place-ID manuell eintragen: <a href="'+gmapsUrl+'" target="_blank" rel="noopener" style="color:#1E40AF;font-weight:600">Adresse auf Google Maps öffnen ↗</a> — die Place-ID (beginnt mit „ChIJ…") findest du in der URL oder über den Place-ID-Finder.'+
+        '</div>'+
+        '<div style="display:flex;gap:6px">'+
+          '<input id="'+boxId+'-manual" type="text" placeholder="Place-ID manuell (ChIJ…)" style="flex:1;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:monospace">'+
+          '<button type="button" onclick="var v=(document.getElementById(\''+boxId+'-manual\').value||\'\').trim(); if(!v){toast(\'Bitte Place-ID eintragen\',\'warn\');return;} _gmapsSelectResult(\''+modalId+'\',\''+boxId+'\',{placeId:v,label:\'(manuell eingetragen)\'})" style="background:#1E40AF;border:none;color:#fff;font-size:11px;padding:6px 12px;border-radius:5px;cursor:pointer;font-weight:600">Übernehmen</button>'+
+        '</div>';
       return;
     }
     if (results.length === 1) {
