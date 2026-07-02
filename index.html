@@ -2188,6 +2188,27 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <div class="intg-hint">"🔬 Testen" ruft <code>/api/auftraege?limit=1</code> ab und zeigt HTTP-Status + Antwort-Body. Damit siehst du sofort, ob Key+Tenant passen.</div>
     </div>
 
+    <!-- GOOGLE MAPS (v7.02) -->
+    <div class="intg-card">
+      <h3>🗺 Google Maps <span id="intg-gmaps-status"><span class="intg-status">…</span></span></h3>
+      <p class="intg-desc">
+        Für das Anlegen von Kunden und Anlagen braucht das ERP eine <strong>Google-Place-ID</strong> als Adresse.
+        Mit einem Google-API-Key (Geocoding API) findet die App die Place-ID automatisch aus der eingetippten Adresse — inkl. Karten-Vorschau.
+      </p>
+      <div class="intg-label">Google Maps API-Key (Geocoding API)</div>
+      <div class="intg-row">
+        <input type="password" class="intg-input" id="intg-gmaps-key" placeholder="AIza…" autocomplete="off">
+        <button class="btn prim" onclick="gmapsSaveKey(this)">💾 Speichern</button>
+        <button class="btn" onclick="gmapsTestKey(this)">🔬 Testen</button>
+      </div>
+      <div class="intg-hint">
+        Key erstellen: <a href="https://console.cloud.google.com/apis/library/geocoding-backend.googleapis.com" target="_blank" rel="noopener" style="color:var(--amber);font-weight:600">Google Cloud Console ↗</a>
+        → „Geocoding API" aktivieren → APIs &amp; Dienste → Anmeldedaten → API-Key erstellen.
+        „🔬 Testen" geocodiert eine Beispiel-Adresse und zeigt Status + Place-ID.
+      </div>
+      <div class="intg-log" id="intg-gmaps-log" style="display:none"></div>
+    </div>
+
     <!-- GEPLANTER SYNC (CRON) -->
     <div class="intg-card">
       <h3>🕐 Geplanter Sync (Cron) <span id="intg-cron-status"><span class="intg-status">…</span></span></h3>
@@ -2668,7 +2689,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.01';
+const APP_VERSION = 'v7.02';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -37712,6 +37733,54 @@ async function erpSaveKey(btn) {
   }
 }
 
+/* ── v7.02: Google-Maps-Key (Geocoding API) — Speichern + Testen aus den Integrationen ── */
+async function gmapsSaveKey(btn) {
+  const inp = document.getElementById('intg-gmaps-key');
+  const newKey = (inp?.value || '').trim();
+  if (!newKey) return toast('Bitte API-Key eintragen (AIza…).', 'err');
+  if (newKey === APP_KEYS.googleMapsKey) return toast('Key unverändert.', '');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ speichere…'; }
+  try {
+    const mk = await loadMasterKeys();
+    await writeMasterBaseKey('googleMapsKey', newKey, mk['googleMapsKey']?.id);
+    APP_KEYS.googleMapsKey = newKey;
+    toast('✅ Google-Maps-Key gespeichert — gilt sofort auf allen Geräten.', 'ok');
+    const st = document.getElementById('intg-gmaps-status');
+    if (st) st.innerHTML = '<span class="intg-status ok">✓ konfiguriert</span>';
+  } catch(e) {
+    console.error('gmapsSaveKey:', e); toast('❌ '+(e.message||'Fehler').slice(0,200), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '💾 Speichern'; }
+  }
+}
+
+async function gmapsTestKey(btn) {
+  const inp = document.getElementById('intg-gmaps-key');
+  const key = (inp?.value || '').trim() || APP_KEYS.googleMapsKey || '';
+  const log = document.getElementById('intg-gmaps-log');
+  if (!key) return toast('Kein Key — bitte erst eintragen.', 'err');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ teste…'; }
+  if (log) { log.style.display = 'block'; log.innerHTML = 'Teste Geocoding mit „Boschstr. 10, 73734 Esslingen"…'; }
+  try {
+    const r = await fetch('https://maps.googleapis.com/maps/api/geocode/json?address='+encodeURIComponent('Boschstr. 10, 73734 Esslingen am Neckar')+'&language=de&region=de&key='+encodeURIComponent(key));
+    const j = await r.json();
+    if (j.status === 'OK' && j.results?.length) {
+      const res = j.results[0];
+      if (log) log.innerHTML = '✅ Geocoding funktioniert!<br>Adresse: '+escapeHtml(res.formatted_address||'')+'<br>Place-ID: <code>'+escapeHtml(res.place_id||'')+'</code>';
+      toast('✅ Key funktioniert', 'ok');
+    } else {
+      if (log) log.innerHTML = '❌ Status: '+escapeHtml(j.status||'?')+(j.error_message ? '<br>'+escapeHtml(j.error_message) : '')+
+        (j.status === 'REQUEST_DENIED' ? '<br><br>💡 Häufigste Ursachen: „Geocoding API" nicht aktiviert, Key-Einschränkungen (HTTP-Referrer) blockieren diese Domain, oder Abrechnung im Google-Projekt nicht eingerichtet.' : '');
+      toast('❌ Geocoding: '+(j.status||'Fehler'), 'err');
+    }
+  } catch(e) {
+    if (log) log.innerHTML = '❌ '+escapeHtml(e.message||'Netzwerkfehler');
+    toast('❌ '+(e.message||'Fehler').slice(0,150), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '🔬 Testen'; }
+  }
+}
+
 /* ── ERP-API-Key updaten – pro Firma ── */
 /* ── FRESHDESK Setup-Helpers ─────────────────── */
 async function freshdeskSaveFirma(firmaSlug, btn) {
@@ -39547,6 +39616,16 @@ function renderIntegrationView() {
   if (eA && keys.aufzug)              eA.value = keys.aufzug;
   if (eZ && keys.aszendio)            eZ.value = keys.aszendio;
   if (eG && APP_KEYS.aufzugApiKey)    eG.value = APP_KEYS.aufzugApiKey;
+
+  // v7.02: Google Maps — Status + Vorbefüllung
+  const gmStatusEl = document.getElementById('intg-gmaps-status');
+  if (gmStatusEl) {
+    gmStatusEl.innerHTML = APP_KEYS.googleMapsKey
+      ? '<span class="intg-status ok">✓ konfiguriert</span>'
+      : '<span class="intg-status warn">⚠ Kein Key — Adress-Suche nutzt Fallbacks</span>';
+  }
+  const gmInput = document.getElementById('intg-gmaps-key');
+  if (gmInput && APP_KEYS.googleMapsKey) gmInput.value = APP_KEYS.googleMapsKey;
 
   // Freshdesk: pro Firma Domain/Key/Email vorbefüllen + Status
   ['aufzug','aszendio'].forEach(slug => {
