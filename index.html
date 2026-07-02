@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.00';
+const APP_VERSION = 'v7.01';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3044,6 +3044,7 @@ async function loginWithUserKey(userKey) {
     if (rec.fields.key_name==='valtownKey')      APP_KEYS.valtownKey      = rec.fields.key_value;
     if (rec.fields.key_name==='valtownValId')    APP_KEYS.valtownValId    = rec.fields.key_value;
     if (rec.fields.key_name==='syncSecret')      APP_KEYS.syncSecret      = rec.fields.key_value;
+    if (rec.fields.key_name==='googleMapsKey')   APP_KEYS.googleMapsKey   = rec.fields.key_value;  // v7.01: Geocoding API
     if (rec.fields.key_name==='valtownProxyUrl') {
       const raw = rec.fields.key_value;
       const normalized = (typeof _normalizeProxyUrl === 'function') ? _normalizeProxyUrl(raw) : raw;
@@ -34567,6 +34568,28 @@ function _gmapsQueryVariants(q) {
 async function _gmapsLookupAddress(firmaSlug, query, onProgress) {
   const variants = _gmapsQueryVariants(query);
   if (!variants.length) return [];
+  // v7.01: BEVORZUGT — Google Geocoding API direkt (CORS-fähig, liefert place_id).
+  //   Das ERP hat keinen Text-Suchendpunkt (Suche läuft dort im Frontend-SDK).
+  //   Key kommt aus der Keys-Tabelle (key_name: googleMapsKey).
+  if (APP_KEYS.googleMapsKey) {
+    if (onProgress) onProgress('Google Geocoding…');
+    try {
+      const r = await fetch('https://maps.googleapis.com/maps/api/geocode/json?address='+encodeURIComponent(String(query||'').trim())+'&language=de&region=de&key='+encodeURIComponent(APP_KEYS.googleMapsKey));
+      const j = await r.json();
+      console.log('[GMaps] Geocoding-Status:', j.status, '· Treffer:', (j.results||[]).length);
+      if (j.status === 'OK' && Array.isArray(j.results) && j.results.length) {
+        return j.results.slice(0, 5).map(res => ({
+          placeId: res.place_id,
+          label:   res.formatted_address || '',
+        })).filter(x => x.placeId);
+      }
+      if (j.status === 'REQUEST_DENIED') {
+        console.warn('[GMaps] Geocoding REQUEST_DENIED:', j.error_message);
+        toast('⚠ Google-Maps-Key abgelehnt: '+(j.error_message||'').slice(0,120),'warn');
+      }
+      // ZERO_RESULTS → weiter zu den ERP-Fallbacks (bringen aber vermutlich auch nichts)
+    } catch(e) { console.warn('[GMaps] Geocoding-Fehler:', e.message); }
+  }
   // Reduzierte Endpoint-Liste — mit bereinigter Query matchen die Routen jetzt.
   const endpoints = [
     q => 'api/google/maps/adresse/'+encodeURIComponent(q),
@@ -34631,9 +34654,17 @@ window._gmapsSearchFor = async function(modalId, inputId, boxId, btn) {
     if (!results.length) {
       // v6.98: Manueller Fallback — Google-Maps-Link zum Nachschlagen + Place-ID-Eingabefeld
       const gmapsUrl = 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(query);
+      const keyHint = !APP_KEYS.googleMapsKey
+        ? '<div style="padding:8px 10px;background:#FFFBEB;border:1px solid #FCD34D;border-radius:6px;font-size:11px;color:#78350F;margin-bottom:6px">'+
+            '💡 <strong>Empfehlung:</strong> Google-Maps-API-Key hinterlegen, dann findet die Suche Adressen automatisch. '+
+            'In der Airtable Keys-Tabelle einen Eintrag <code style="background:#fff;padding:1px 4px;border-radius:3px">googleMapsKey</code> anlegen '+
+            '(Google Cloud Console → „Geocoding API" aktivieren → API-Key erstellen). Danach App neu laden.'+
+          '</div>'
+        : '';
       box.innerHTML =
+        keyHint+
         '<div style="padding:8px 10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;font-size:11px;color:#7F1D1D;margin-bottom:6px">'+
-          '❌ Kein Such-Endpoint im ERP gefunden (Details in der Console). Zwei Möglichkeiten:'+
+          '❌ Keine Adresse gefunden (Details in der Console). Möglichkeiten:'+
           '<br>1. Adresse präzisieren (Straße + Hausnummer + PLZ + Ort) und erneut suchen.'+
           '<br>2. Place-ID manuell eintragen: <a href="'+gmapsUrl+'" target="_blank" rel="noopener" style="color:#1E40AF;font-weight:600">Adresse auf Google Maps öffnen ↗</a> — die Place-ID (beginnt mit „ChIJ…") findest du in der URL oder über den Place-ID-Finder.'+
         '</div>'+
