@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.99';
+const APP_VERSION = 'v7.00';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -34546,57 +34546,63 @@ function _normalizeRechnung(r, erpHost, today) {
  * KEINEN Adress-Text. Endpoint: /api/google/maps/adresse/{query} — akzeptiert
  * sowohl Place-IDs als auch Adress-Text (Geocoding) und liefert formatted_address + place_id.
  * ════════════════════════════════════════════════════════════ */
-async function _gmapsLookupAddress(firmaSlug, query) {
-  const q = String(query||'').trim();
-  const enc = encodeURIComponent(q);
-  if (!enc) return [];
-  // v6.98: adresse/{id} akzeptiert NUR Place-IDs (Text → 404). Für Text-Suche
-  //   probieren wir alle plausiblen Autocomplete/Such-Endpoint-Varianten durch.
-  const candidates = [
-    // Autocomplete-Varianten (Google Places Autocomplete Proxy)
-    'api/google/maps/autocomplete/'+enc,
-    'api/users/me/google/maps/autocomplete/'+enc,
-    'api/google/maps/autocomplete?input='+enc,
-    'api/google/maps/autocomplete?query='+enc,
-    // Such-Varianten
-    'api/google/maps/suche/'+enc,
-    'api/google/maps/search/'+enc,
-    'api/google/maps/adressen/'+enc,
-    'api/users/me/google/maps/adressen/'+enc,
-    'api/google/maps/predictions/'+enc,
-    // Query-Param auf adresse
-    'api/google/maps/adresse?query='+enc,
-    'api/google/maps/adresse?suche='+enc,
-    'api/google/maps/adresse?input='+enc,
-    // Direkte Pfade (falls Endpoint doch Text kann)
-    'api/google/maps/adresse/'+enc,
-    'api/users/me/google/maps/adresse/'+enc,
-    'api/google/maps/places/'+enc,
-    'api/google/maps/place/'+enc,
+/* v7.00: Query-Varianten für die Maps-Suche.
+ * KERN-ERKENNTNIS aus den 404-Traces: Spring matcht die Route NICHT wenn die
+ * Pfad-Variable Punkte/Kommas enthält ("Ludwig-Pfau-Str. 17, 70176" → No static resource).
+ * Die Place-ID (ohne Sonderzeichen) funktioniert am selben Endpoint.
+ * → Wir generieren bereinigte Varianten: ohne Punkte/Kommas, "Str." expandiert. */
+function _gmapsQueryVariants(q) {
+  const base = String(q||'').trim().replace(/\n/g, ' ').replace(/\s+/g, ' ');
+  const out = [];
+  const push = v => { v = v.replace(/\s+/g,' ').trim(); if (v && !out.includes(v)) out.push(v); };
+  // 1) "Str." → "Straße" expandiert + Punkte/Kommas raus (beste Chance)
+  push(base.replace(/\bstr\.?(?=\s|$)/gi, 'Straße').replace(/[.,;]/g, ''));
+  // 2) Nur Punkte/Kommas raus
+  push(base.replace(/[.,;]/g, ''));
+  // 3) Original (falls Backend doch damit klarkommt)
+  push(base);
+  return out;
+}
+
+async function _gmapsLookupAddress(firmaSlug, query, onProgress) {
+  const variants = _gmapsQueryVariants(query);
+  if (!variants.length) return [];
+  // Reduzierte Endpoint-Liste — mit bereinigter Query matchen die Routen jetzt.
+  const endpoints = [
+    q => 'api/google/maps/adresse/'+encodeURIComponent(q),
+    q => 'api/users/me/google/maps/adresse/'+encodeURIComponent(q),
+    q => 'api/google/maps/place/'+encodeURIComponent(q),
+    q => 'api/google/maps/places/'+encodeURIComponent(q),
+    q => 'api/google/maps/autocomplete/'+encodeURIComponent(q),
   ];
-  for (const path of candidates) {
-    try {
-      const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
-      if (!res) continue;
-      console.log('[GMaps] Lookup via '+path+':', res);
-      // Normalisieren: Array | {results:[]} | {predictions:[]} | {result:{}} | direktes Objekt
-      let items = [];
-      if (Array.isArray(res)) items = res;
-      else if (Array.isArray(res.results)) items = res.results;
-      else if (Array.isArray(res.predictions)) items = res.predictions;
-      else if (Array.isArray(res.items)) items = res.items;
-      else if (res.result) items = [res.result];
-      else if (typeof res === 'object' && Object.keys(res).length) items = [res];
-      const norm = items.map(r => ({
-        placeId: r.place_id || r.placeId || r.id || '',
-        label:   r.formatted_address || r.formattedAddress || r.adresse || r.description || r.beschreibung || r.name || '',
-      })).filter(x => x.placeId && /^ChIJ|^Ei|^Gh/.test(String(x.placeId)));
-      if (norm.length) {
-        console.log('[GMaps] ✅ Funktionierender Endpoint: '+path);
-        return norm;
+  for (let vi = 0; vi < variants.length; vi++) {
+    const v = variants[vi];
+    if (onProgress) onProgress('Variante '+(vi+1)+'/'+variants.length+': „'+v+'"…');
+    for (const ep of endpoints) {
+      const path = ep(v);
+      try {
+        const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
+        if (!res) continue;
+        console.log('[GMaps] Lookup via '+path+':', res);
+        // Normalisieren: Array | {results:[]} | {predictions:[]} | {result:{}} | direktes Objekt
+        let items = [];
+        if (Array.isArray(res)) items = res;
+        else if (Array.isArray(res.results)) items = res.results;
+        else if (Array.isArray(res.predictions)) items = res.predictions;
+        else if (Array.isArray(res.items)) items = res.items;
+        else if (res.result) items = [res.result];
+        else if (typeof res === 'object' && Object.keys(res).length) items = [res];
+        const norm = items.map(r => ({
+          placeId: r.place_id || r.placeId || r.googlePlaceId || r.id || '',
+          label:   r.formatted_address || r.formattedAddress || r.adresse || r.description || r.beschreibung || r.name || '',
+        })).filter(x => x.placeId && /^(ChIJ|Ei|Gh)/.test(String(x.placeId)));
+        if (norm.length) {
+          console.log('[GMaps] ✅ Funktionierender Endpoint: '+path+' (Query-Variante: „'+v+'")');
+          return norm;
+        }
+      } catch(e) {
+        if (e.status && e.status !== 404 && e.status !== 405 && e.status !== 400) console.warn('[GMaps] '+path+':', e.status);
       }
-    } catch(e) {
-      if (e.status && e.status !== 404 && e.status !== 405 && e.status !== 400) console.warn('[GMaps] '+path+':', e.status);
     }
   }
   return [];
@@ -34614,10 +34620,14 @@ window._gmapsSearchFor = async function(modalId, inputId, boxId, btn) {
   const firmaSlug = modal._firmaSlug || getCurrentFirmaSlug();
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ sucht…'; }
-  box.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--txt3)">🔍 Suche Google-Maps-Adresse…</div>';
+  box.innerHTML = '<div id="'+boxId+'-progress" style="padding:8px;font-size:11px;color:var(--txt3)">🔍 Suche Google-Maps-Adresse…</div>';
   modal._placeId = null; modal._placeLabel = null;
   try {
-    const results = await _gmapsLookupAddress(firmaSlug, query);
+    // v7.00: Live-Fortschritt — zeigt welche Query-Variante gerade geprüft wird
+    const results = await _gmapsLookupAddress(firmaSlug, query, (msg) => {
+      const p = document.getElementById(boxId+'-progress');
+      if (p) p.innerHTML = '🔍 '+escapeHtml(msg);
+    });
     if (!results.length) {
       // v6.98: Manueller Fallback — Google-Maps-Link zum Nachschlagen + Place-ID-Eingabefeld
       const gmapsUrl = 'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(query);
