@@ -2689,7 +2689,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.02';
+const APP_VERSION = 'v7.03';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -34727,6 +34727,41 @@ window._gmapsSelectResult = function(modalId, boxId, r) {
     '<iframe src="https://maps.google.com/maps?q='+mapsQ+'&output=embed" style="width:100%;height:180px;border:1px solid var(--bdr);border-radius:8px" loading="lazy"></iframe>';
 };
 
+/* v7.03: Maps-Suche für den Rechnungsempfänger-Block im Kunde-Modal.
+ * Setzt modal._rePlaceId (separat von der Kunde-Place-ID). */
+window._gmapsSearchForRe = async function(btn) {
+  const modal = document.getElementById('kde-create-modal');
+  const input = document.getElementById('kde-re-adresse');
+  const box   = document.getElementById('kde-re-gmaps-box');
+  if (!modal || !input || !box) return;
+  const query = (input.value||'').trim().replace(/\n/g, ', ');
+  if (query.length < 5) return toast('Bitte erst die RE-Adresse eintragen','warn');
+  const firmaSlug = modal._firmaSlug || getCurrentFirmaSlug();
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ sucht…'; }
+  box.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--txt3)">🔍 Suche…</div>';
+  modal._rePlaceId = null;
+  try {
+    const results = await _gmapsLookupAddress(firmaSlug, query);
+    if (!results.length) {
+      box.innerHTML = '<div style="padding:8px 10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;font-size:11px;color:#7F1D1D">❌ Keine Adresse gefunden — bitte präzisieren.</div>';
+      return;
+    }
+    const r = results[0];
+    modal._rePlaceId = r.placeId;
+    box.innerHTML =
+      '<div style="padding:8px 10px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;font-size:11px;color:#065F46;margin-bottom:6px">'+
+        '✅ <strong>'+escapeHtml(r.label||'Adresse gefunden')+'</strong><br>'+
+        '<span style="font-family:monospace;font-size:10px;color:#047857">Place-ID: '+escapeHtml(r.placeId)+'</span>'+
+      '</div>'+
+      '<iframe src="https://maps.google.com/maps?q='+encodeURIComponent(r.label||r.placeId)+'&output=embed" style="width:100%;height:140px;border:1px solid var(--bdr);border-radius:8px" loading="lazy"></iframe>';
+  } catch(e) {
+    box.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--err)">❌ '+escapeHtml((e.message||'Fehler').slice(0,150))+'</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+};
+
 /* Wiederverwendbarer HTML-Block: Such-Button + Ergebnis-Box unter einem Adress-Feld */
 function _gmapsPickerHtml(modalId, inputId, boxId) {
   return '<div style="margin-top:6px">'+
@@ -35113,7 +35148,7 @@ function openCreateKundeDialog(opts) {
       '</div>'+
       '<div style="padding:16px 20px;flex:1;overflow-y:auto;font-size:13px">'+
         '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:10px;font-size:11px;color:#78350F;margin-bottom:14px">'+
-          '⚠ Kunde wird sofort im ERP angelegt (POST /api/kunden). Pflichtfelder: Firmenname, E-Mail, Anschrift. Rechnungsempfänger = identisch (lässt sich später im ERP anpassen).'+
+          '⚠ Kunde wird sofort im ERP angelegt (POST /api/kunden). Pflichtfelder: Firmenname, E-Mail, Anschrift.'+
         '</div>'+
         '<div style="display:grid;gap:10px">'+
           '<div><strong>Firmenname *</strong><br><input id="kde-firmenname" type="text" value="'+escapeHtml(opts.presetFirmenname||'')+'" placeholder="z.B. Mustermann Hausverwaltung GmbH" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
@@ -35121,8 +35156,30 @@ function openCreateKundeDialog(opts) {
             '<div><strong>E-Mail *</strong><br><input id="kde-email" type="email" value="'+escapeHtml(opts.presetEmail||'')+'" placeholder="info@kunde.de" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
             '<div><strong>Telefon *</strong><br><input id="kde-telefon" type="tel" value="'+escapeHtml(opts.presetTelefon||'')+'" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '</div>'+
+          // v7.03: Fax (im ERP-Formular vorhanden, DB NOT NULL — leer erlaubt)
+          '<div><strong>Fax</strong> <span style="font-size:10px;color:var(--txt3)">(optional)</span><br><input id="kde-fax" type="tel" value="" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '<div><strong>Anschrift *</strong><br><textarea id="kde-adresse" placeholder="Straße + Nr.&#10;PLZ + Ort" oninput="var m=document.getElementById(\'kde-create-modal\');if(m){m._placeId=null;m._placeLabel=null;var b=document.getElementById(\'kde-gmaps-box\');if(b)b.innerHTML=\'\';}" style="width:100%;min-height:55px;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit">'+escapeHtml(opts.presetAdresse||'')+'</textarea>'+
             _gmapsPickerHtml('kde-create-modal', 'kde-adresse', 'kde-gmaps-box')+
+          '</div>'+
+          // v7.03: Rechnungsempfänger — default identisch, per Checkbox eigener Block
+          '<div style="border-top:1px solid var(--bdr);padding-top:10px;margin-top:4px">'+
+            '<label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;font-weight:600">'+
+              '<input type="checkbox" id="kde-re-same" checked onchange="document.getElementById(\'kde-re-block\').style.display = this.checked ? \'none\' : \'grid\'" style="margin:0;cursor:pointer">'+
+              '🧾 Rechnungsempfänger identisch mit Kunde'+
+            '</label>'+
+            '<div id="kde-re-block" style="display:none;gap:10px;margin-top:10px;background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px">'+
+              '<div><strong>Firmenname (Rechnungsempfänger) *</strong><br><input id="kde-re-firmenname" type="text" value="" placeholder="z.B. WEG Musterstraße 1 c/o Verwaltung GmbH" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+              '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+                '<div><strong>E-Mail (RE)</strong><br><input id="kde-re-email" type="email" value="" placeholder="rechnung@…" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+                '<div><strong>Telefon (RE)</strong><br><input id="kde-re-telefon" type="tel" value="" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+              '</div>'+
+              '<div><strong>Adresse (Rechnungsempfänger) *</strong><br><textarea id="kde-re-adresse" placeholder="Straße + Nr.&#10;PLZ + Ort" oninput="var m=document.getElementById(\'kde-create-modal\');if(m){m._rePlaceId=null;var b=document.getElementById(\'kde-re-gmaps-box\');if(b)b.innerHTML=\'\';}" style="width:100%;min-height:55px;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit"></textarea>'+
+                '<div style="margin-top:6px">'+
+                  '<button type="button" onclick="_gmapsSearchForRe(this)" style="background:#EFF6FF;border:1px solid #93C5FD;color:#1E40AF;font-size:11px;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600">🗺 RE-Adresse suchen</button>'+
+                  '<div id="kde-re-gmaps-box" style="margin-top:6px"></div>'+
+                '</div>'+
+              '</div>'+
+            '</div>'+
           '</div>'+
         '</div>'+
       '</div>'+
@@ -35148,6 +35205,17 @@ async function _submitCreateKunde() {
   if (!adresse)    return toast('Bitte Anschrift eintragen.','err');
   if (!telefon)    return toast('Bitte Telefon eintragen.','err');
 
+  // v7.03: Fax + separater Rechnungsempfänger-Block
+  const fax    = (document.getElementById('kde-fax')?.value || '').trim();
+  const reSame = document.getElementById('kde-re-same')?.checked !== false;
+  const reFirmenname = (document.getElementById('kde-re-firmenname')?.value || '').trim();
+  const reEmail      = (document.getElementById('kde-re-email')?.value || '').trim();
+  const reTelefon    = (document.getElementById('kde-re-telefon')?.value || '').trim();
+  const reAdresse    = (document.getElementById('kde-re-adresse')?.value || '').trim().replace(/\n/g, ', ');
+  if (!reSame) {
+    if (!reFirmenname) return toast('Bitte Firmenname des Rechnungsempfängers eintragen.','err');
+    if (!reAdresse)    return toast('Bitte Adresse des Rechnungsempfängers eintragen.','err');
+  }
   const btn = document.getElementById('kde-create-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ legt an…'; }
   try {
@@ -35169,19 +35237,35 @@ async function _submitCreateKunde() {
         return toast('❌ Keine Google-Maps-Adresse gefunden — bitte Adresse präzisieren und über „🗺 suchen" prüfen','err');
       }
     }
+    // v7.03: RE-Place-ID auflösen wenn eigener Rechnungsempfänger
+    let rePlaceId = placeId;
+    if (!reSame) {
+      rePlaceId = m._rePlaceId || '';
+      if (!rePlaceId) {
+        if (btn) btn.textContent = '⏳ suche RE-Adresse…';
+        const reResults = await _gmapsLookupAddress(m._firmaSlug, reAdresse);
+        if (reResults.length >= 1) {
+          rePlaceId = reResults[0].placeId;
+          console.log('[Kunde-Create] RE-Auto-Lookup Place-ID:', rePlaceId, reResults[0].label);
+        } else {
+          if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlegen'; }
+          return toast('❌ RE-Adresse nicht gefunden — bitte präzisieren und über „🗺 RE-Adresse suchen" prüfen','err');
+        }
+      }
+    }
     if (btn) btn.textContent = '⏳ legt an…';
     const payload = {
       firmenname:               firmenname,
       adresseId:                placeId,   // v6.97: Google-Place-ID statt Text
       email:                    email,
       telefon:                  telefon,
-      fax:                      '',       // v6.80: ERP-DB NOT NULL — leerer String OK
+      fax:                      fax,       // v7.03: aus Feld (DB NOT NULL — leer OK)
       rechnungsversand:         'EMAIL',  // v6.79: ERP-Pflichtfeld (DB: NOT NULL)
       defaultrechnungsempfaenger: {
-        firmenname:    firmenname,
-        adresseId:     placeId,   // v6.97: Google-Place-ID statt Text
-        email:         email,
-        telefonnummer: telefon,
+        firmenname:    reSame ? firmenname : reFirmenname,
+        adresseId:     rePlaceId,   // v7.03: eigene Place-ID wenn separater RE
+        email:         reSame ? email   : (reEmail || email),
+        telefonnummer: reSame ? telefon : (reTelefon || telefon),
         rechnungsversand: 'EMAIL',  // v6.79: DB-NOT-NULL — Default Email
       },
     };
