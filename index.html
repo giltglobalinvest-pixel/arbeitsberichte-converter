@@ -2668,7 +2668,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v6.96';
+const APP_VERSION = 'v6.97';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -34540,6 +34540,104 @@ function _normalizeRechnung(r, erpHost, today) {
   };
 }
 
+/* ════════════════════════════════════════════════════════════
+ * v6.97: Google-Maps-Adress-Lookup für Kunde-/Anlage-Anlegen.
+ * Das ERP erwartet in adresseId eine Google-Place-ID (z.B. ChIJVbShew2KvkcR-Z1pBkWcL80),
+ * KEINEN Adress-Text. Endpoint: /api/google/maps/adresse/{query} — akzeptiert
+ * sowohl Place-IDs als auch Adress-Text (Geocoding) und liefert formatted_address + place_id.
+ * ════════════════════════════════════════════════════════════ */
+async function _gmapsLookupAddress(firmaSlug, query) {
+  const enc = encodeURIComponent(String(query||'').trim());
+  if (!enc) return [];
+  const candidates = [
+    'api/google/maps/adresse/'+enc,
+    'api/users/me/google/maps/adresse/'+enc,
+    'api/google/maps/places/'+enc,
+    'api/google/maps/place/'+enc,
+  ];
+  for (const path of candidates) {
+    try {
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/'+path);
+      if (!res) continue;
+      console.log('[GMaps] Lookup via '+path+':', res);
+      // Normalisieren: Array | {results:[]} | {result:{}} | direktes Objekt
+      let items = [];
+      if (Array.isArray(res)) items = res;
+      else if (Array.isArray(res.results)) items = res.results;
+      else if (res.result) items = [res.result];
+      else if (typeof res === 'object' && Object.keys(res).length) items = [res];
+      const norm = items.map(r => ({
+        placeId: r.place_id || r.placeId || r.id || '',
+        label:   r.formatted_address || r.formattedAddress || r.adresse || r.name || r.beschreibung || r.description || '',
+      })).filter(x => x.placeId);
+      if (norm.length) return norm;
+    } catch(e) {
+      if (e.status && e.status !== 404 && e.status !== 405) console.warn('[GMaps] '+path+':', e.status);
+    }
+  }
+  return [];
+}
+
+/* Sucht Adresse → rendert Ergebnis(se) + Maps-Vorschau in die Box.
+ * Setzt modal._placeId + modal._placeLabel bei Auswahl. */
+window._gmapsSearchFor = async function(modalId, inputId, boxId, btn) {
+  const modal = document.getElementById(modalId);
+  const input = document.getElementById(inputId);
+  const box   = document.getElementById(boxId);
+  if (!modal || !input || !box) return;
+  const query = (input.value||'').trim().replace(/\n/g, ', ');
+  if (query.length < 5) return toast('Bitte erst eine Adresse eintragen','warn');
+  const firmaSlug = modal._firmaSlug || getCurrentFirmaSlug();
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ sucht…'; }
+  box.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--txt3)">🔍 Suche Google-Maps-Adresse…</div>';
+  modal._placeId = null; modal._placeLabel = null;
+  try {
+    const results = await _gmapsLookupAddress(firmaSlug, query);
+    if (!results.length) {
+      box.innerHTML = '<div style="padding:8px 10px;background:#FEF2F2;border:1px solid #FECACA;border-radius:6px;font-size:11px;color:#7F1D1D">❌ Keine Google-Maps-Adresse gefunden. Bitte Adresse präzisieren (Straße + Hausnummer + PLZ + Ort).</div>';
+      return;
+    }
+    if (results.length === 1) {
+      _gmapsSelectResult(modalId, boxId, results[0]);
+    } else {
+      // Mehrere Treffer → Auswahl-Liste
+      modal._gmapsResults = results;
+      box.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--navy);margin-bottom:4px">'+results.length+' Treffer — bitte wählen:</div>'+
+        results.slice(0,5).map((r, i) =>
+          '<div onclick="_gmapsSelectResult(\''+modalId+'\',\''+boxId+'\', document.getElementById(\''+modalId+'\')._gmapsResults['+i+'])" style="padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;margin-bottom:4px;cursor:pointer;font-size:12px;background:#fff" onmouseover="this.style.background=\'#EFF6FF\'" onmouseout="this.style.background=\'#fff\'">📍 '+escapeHtml(r.label||r.placeId)+'</div>'
+        ).join('');
+    }
+  } catch(e) {
+    box.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--err)">❌ '+escapeHtml((e.message||'Fehler').slice(0,150))+'</div>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig; }
+  }
+};
+
+window._gmapsSelectResult = function(modalId, boxId, r) {
+  const modal = document.getElementById(modalId);
+  const box   = document.getElementById(boxId);
+  if (!modal || !box || !r) return;
+  modal._placeId = r.placeId;
+  modal._placeLabel = r.label || '';
+  const mapsQ = encodeURIComponent(r.label || r.placeId);
+  box.innerHTML =
+    '<div style="padding:8px 10px;background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;font-size:11px;color:#065F46;margin-bottom:6px">'+
+      '✅ <strong>'+escapeHtml(r.label||'Adresse gefunden')+'</strong><br>'+
+      '<span style="font-family:monospace;font-size:10px;color:#047857">Place-ID: '+escapeHtml(r.placeId)+'</span>'+
+    '</div>'+
+    '<iframe src="https://maps.google.com/maps?q='+mapsQ+'&output=embed" style="width:100%;height:180px;border:1px solid var(--bdr);border-radius:8px" loading="lazy"></iframe>';
+};
+
+/* Wiederverwendbarer HTML-Block: Such-Button + Ergebnis-Box unter einem Adress-Feld */
+function _gmapsPickerHtml(modalId, inputId, boxId) {
+  return '<div style="margin-top:6px">'+
+    '<button type="button" onclick="_gmapsSearchFor(\''+modalId+'\',\''+inputId+'\',\''+boxId+'\', this)" style="background:#EFF6FF;border:1px solid #93C5FD;color:#1E40AF;font-size:11px;padding:6px 12px;border-radius:6px;cursor:pointer;font-weight:600">🗺 Google-Maps-Adresse suchen (Pflicht fürs ERP)</button>'+
+    '<div id="'+boxId+'" style="margin-top:6px"></div>'+
+  '</div>';
+}
+
 function _openNewKontaktFromKundeDetail() {
   const modal = document.getElementById('kde-detail-modal');
   if (!modal) return;
@@ -34720,7 +34818,9 @@ async function _openCreateAnlageStandaloneForm(kunde, opts) {
           '✓ Kunde: <strong>'+escapeHtml(kunde.firmenname||'?')+'</strong>'+(kunde.kundennummer?' (Kd-Nr. '+escapeHtml(String(kunde.kundennummer))+')':'')+'</div>'+
         '<div style="display:grid;gap:10px">'+
           '<div><strong>Standort / Anzeige-Adresse *</strong><br>'+
-            '<input id="pl-new-adresse" type="text" value="'+escapeHtml(adresseDefault)+'" placeholder="Straße + Nr., PLZ + Ort" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
+            '<input id="pl-new-adresse" type="text" value="'+escapeHtml(adresseDefault)+'" placeholder="Straße + Nr., PLZ + Ort" oninput="var m=document.getElementById(\'pl-create-anlage\');if(m){m._placeId=null;m._placeLabel=null;var b=document.getElementById(\'pl-gmaps-box\');if(b)b.innerHTML=\'\';}" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px">'+
+            _gmapsPickerHtml('pl-create-anlage', 'pl-new-adresse', 'pl-gmaps-box')+
+          '</div>'+
           '<div><strong>Fabriknummer</strong><br>'+
             '<input id="pl-new-fabriknr" type="text" placeholder="z.B. 12345" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
@@ -34804,10 +34904,28 @@ async function _submitCreateAnlageStandalone() {
     }
   }
 
+  const btn = document.getElementById('pl-new-save-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ suche Maps-Adresse…'; }
+  // v6.97: adresseId muss Google-Place-ID sein — Auto-Lookup wenn User nicht über Such-Button ging
+  let placeId = m._placeId || '';
+  if (!placeId) {
+    const results = await _gmapsLookupAddress(firmaSlug, adresse);
+    if (results.length === 1) {
+      placeId = results[0].placeId;
+      console.log('[Anlage-Create] Auto-Lookup Place-ID:', placeId, results[0].label);
+    } else if (results.length > 1) {
+      if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlage im ERP anlegen'; }
+      _gmapsSelectResult('pl-create-anlage', 'pl-gmaps-box', results[0]);
+      return toast('⚠ Mehrere Maps-Treffer — bitte Vorschau prüfen und erneut „Anlegen" klicken','warn');
+    } else {
+      if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlage im ERP anlegen'; }
+      return toast('❌ Keine Google-Maps-Adresse gefunden — bitte Adresse präzisieren und über „🗺 suchen" prüfen','err');
+    }
+  }
   const kundenId = kunde.kundennummer || kunde.id;
   const payload = {
     kundenId:           +kundenId,
-    adresseId:          adresse,
+    adresseId:          placeId,   // v6.97: Google-Place-ID statt Text
     anzeigeAdresse:     adresse,
     anzahlAufzuege:     1,
     stundensatz:        stundensatz,
@@ -34819,8 +34937,7 @@ async function _submitCreateAnlageStandalone() {
     sonstigerHinweis:   hinweis,
     archived:           false,
   };
-  const btn = document.getElementById('pl-new-save-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '⏳ erstelle im ERP…'; }
+  if (btn) btn.textContent = '⏳ erstelle im ERP…';
   try {
     // v6.46: ERP wirft NullPointerException im AnsprechpartnerController wenn beim
     //   POST kein Ansprechpartner mitgegeben wird (siehe AnlageFetcher.fetchAttributes).
@@ -34907,7 +35024,9 @@ function openCreateKundeDialog(opts) {
             '<div><strong>E-Mail *</strong><br><input id="kde-email" type="email" value="'+escapeHtml(opts.presetEmail||'')+'" placeholder="info@kunde.de" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
             '<div><strong>Telefon *</strong><br><input id="kde-telefon" type="tel" value="'+escapeHtml(opts.presetTelefon||'')+'" placeholder="+49 …" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px"></div>'+
           '</div>'+
-          '<div><strong>Anschrift *</strong><br><textarea id="kde-adresse" placeholder="Straße + Nr.&#10;PLZ + Ort" style="width:100%;min-height:55px;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit">'+escapeHtml(opts.presetAdresse||'')+'</textarea></div>'+
+          '<div><strong>Anschrift *</strong><br><textarea id="kde-adresse" placeholder="Straße + Nr.&#10;PLZ + Ort" oninput="var m=document.getElementById(\'kde-create-modal\');if(m){m._placeId=null;m._placeLabel=null;var b=document.getElementById(\'kde-gmaps-box\');if(b)b.innerHTML=\'\';}" style="width:100%;min-height:55px;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;font-family:inherit">'+escapeHtml(opts.presetAdresse||'')+'</textarea>'+
+            _gmapsPickerHtml('kde-create-modal', 'kde-adresse', 'kde-gmaps-box')+
+          '</div>'+
         '</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
@@ -34935,16 +35054,35 @@ async function _submitCreateKunde() {
   const btn = document.getElementById('kde-create-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ legt an…'; }
   try {
+    // v6.97: adresseId muss eine Google-Place-ID sein (ChIJ…), kein Adress-Text.
+    //   Wenn der User nicht über den Such-Button gegangen ist → Auto-Lookup beim Submit.
+    let placeId = m._placeId || '';
+    if (!placeId) {
+      if (btn) btn.textContent = '⏳ suche Maps-Adresse…';
+      const results = await _gmapsLookupAddress(m._firmaSlug, adresse);
+      if (results.length === 1) {
+        placeId = results[0].placeId;
+        console.log('[Kunde-Create] Auto-Lookup Place-ID:', placeId, results[0].label);
+      } else if (results.length > 1) {
+        if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlegen'; }
+        _gmapsSelectResult('kde-create-modal', 'kde-gmaps-box', results[0]);  // besten Treffer vorschlagen
+        return toast('⚠ Mehrere Maps-Treffer — bitte Vorschau prüfen und erneut „Anlegen" klicken','warn');
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '🚀 Anlegen'; }
+        return toast('❌ Keine Google-Maps-Adresse gefunden — bitte Adresse präzisieren und über „🗺 suchen" prüfen','err');
+      }
+    }
+    if (btn) btn.textContent = '⏳ legt an…';
     const payload = {
       firmenname:               firmenname,
-      adresseId:                adresse,
+      adresseId:                placeId,   // v6.97: Google-Place-ID statt Text
       email:                    email,
       telefon:                  telefon,
       fax:                      '',       // v6.80: ERP-DB NOT NULL — leerer String OK
       rechnungsversand:         'EMAIL',  // v6.79: ERP-Pflichtfeld (DB: NOT NULL)
       defaultrechnungsempfaenger: {
         firmenname:    firmenname,
-        adresseId:     adresse,
+        adresseId:     placeId,   // v6.97: Google-Place-ID statt Text
         email:         email,
         telefonnummer: telefon,
         rechnungsversand: 'EMAIL',  // v6.79: DB-NOT-NULL — Default Email
