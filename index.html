@@ -2707,7 +2707,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.05';
+const APP_VERSION = 'v7.06';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -20893,6 +20893,28 @@ async function deleteDaVorlage(recId) {
 let _daCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _daTableEnsured = false;
 
+/* v7.06: Zentrales DA-Status-Modell — Reihenfolge = Fortschritt.
+ *   Auto-Übergänge: Anlegen→entwurf/in_aufnahme, Speichern mit Daten→in_aufnahme,
+ *   Abschließen→abgeschlossen, Freshdesk-Ticket→gepusht. Manuell per Dropdown überschreibbar. */
+const DA_STATUS = [
+  { value:'entwurf',      label:'Entwurf',        icon:'📝', bg:'#6b7280', bgSoft:'#F3F4F6', fg:'#6B7280', done:false },
+  { value:'zugewiesen',   label:'Zugewiesen',     icon:'👤', bg:'#3730A3', bgSoft:'#EEF2FF', fg:'#3730A3', done:false },
+  { value:'in_aufnahme',  label:'In Aufnahme',    icon:'🔧', bg:'#FB923C', bgSoft:'#FFF7ED', fg:'#9A3412', done:false },
+  { value:'abgeschlossen',label:'Abgeschlossen',  icon:'✅', bg:'#10b981', bgSoft:'#ECFDF5', fg:'#065F46', done:true  },
+  { value:'gepusht',      label:'An Freshdesk übergeben', icon:'🎫', bg:'#2152A9', bgSoft:'#EFF6FF', fg:'#1E40AF', done:true },
+];
+function _daNormStatus(s) {
+  const v = String(s||'').trim().toLowerCase();
+  if (v === 'fertig') return 'abgeschlossen';  // Legacy
+  return DA_STATUS.some(x => x.value === v) ? v : 'entwurf';
+}
+function _daStatusMeta(s) { const n = _daNormStatus(s); return DA_STATUS.find(x => x.value === n) || DA_STATUS[0]; }
+function _daStatusRank(s) { const n = _daNormStatus(s); const i = DA_STATUS.findIndex(x => x.value === n); return i < 0 ? 0 : i; }
+function _daStatusBadgeHtml(s) {
+  const m = _daStatusMeta(s);
+  return '<span style="font-size:10px;font-weight:700;background:'+m.bg+';color:#fff;padding:2px 8px;border-radius:99px">'+m.icon+' '+escapeHtml(m.label)+'</span>';
+}
+
 const DA_TABLE_FIELDS = [
   { name:'da_num',                 type:'number', options:{ precision:0 } },
   { name:'firma',                  type:'singleLineText' },
@@ -21438,7 +21460,7 @@ function _renderDaList() {
   const items = _daCache.items || [];
   const filtered = items.filter(rec => {
     const f = rec.fields || {};
-    const isFertig = f.status === 'fertig';
+    const isFertig = _daStatusMeta(f.status).done;  // v7.06: abgeschlossen ODER gepusht = fertig
     if (isFertig && !showFertig) return false;
     if (!isFertig && !showOffen) return false;
     if (onlyMine && !_daIsAssignedToMe(f)) return false;  // v7.04
@@ -21460,12 +21482,7 @@ function _renderDaList() {
     const f = rec.fields || {};
     let cps = [];
     try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}
-    const status = f.status || 'entwurf';
-    const statusBadge = status === 'fertig'
-      ? '<span style="font-size:10px;font-weight:700;background:#D1FAE5;color:#065F46;padding:2px 8px;border-radius:99px">✅ Fertig</span>'
-      : status === 'in_aufnahme'
-      ? '<span style="font-size:10px;font-weight:700;background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:99px">📋 In Aufnahme</span>'
-      : '<span style="font-size:10px;font-weight:700;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:99px">✏ Entwurf</span>';
+    const statusBadge = _daStatusBadgeHtml(f.status);  // v7.06: zentrales Status-Modell
     // v7.04: Zuweisungs-Badge — hervorgehoben wenn dem aktuellen User zugewiesen
     const assignedBadge = f.zugewiesen_an
       ? (_daIsAssignedToMe(f)
@@ -21687,7 +21704,7 @@ async function _daCreateRecord() {
       kunde_name:           a.kunde?.firmenname || '',
       kunde_nummer:         String(a.kunde?.kundennummer || ''),
       beschreibung:         beschreibung,
-      status:               checkpunkte.length > 0 ? 'in_aufnahme' : 'entwurf',
+      status:               checkpunkte.length > 0 ? 'in_aufnahme' : (zuwId ? 'zugewiesen' : 'entwurf'),  // v7.06: Auto-Status
       checkpunkte_json:     JSON.stringify(checkpunkte),
       erstellt_am:          new Date().toISOString().slice(0,10),
       erstellt_von:         APP_KEYS.user?.name || '',
@@ -21786,6 +21803,8 @@ async function _daSaveAssignment(recId) {
     if (zuwId && notify && rec) {
       _daNotifyAssignment(rec, zuwName).catch(e => console.warn('[DA-Assign] FD:', e.message));
     }
+    // v7.06: Auto-Status → 'zugewiesen' (nur vorwärts, überschreibt nicht in_aufnahme/abgeschlossen/gepusht)
+    if (zuwId) { _daAdvanceStatus(recId, 'zugewiesen').catch(()=>{}); }
     // Detail + Liste neu rendern
     if (document.getElementById('da-detail')) openDaDetail(recId);
     _renderDaList();
@@ -21835,6 +21854,53 @@ async function _daNotifyAssignment(rec, zuwName) {
         toast('🎫 Freshdesk-Ticket #'+result.ticketId+' erstellt','ok');
       }
     } catch(e) { console.warn('[DA-Assign] Ticket-Erstellung:', e.message); }
+  }
+}
+
+/* v7.06: Status manuell setzen (aus dem Detail-Dropdown). PATCH + Cache + Re-Render.
+ *   Beim Erreichen von 'abgeschlossen'/'gepusht' werden aufgenommen_am/von gesetzt falls leer. */
+async function _daSetStatus(recId, newStatus, opts) {
+  opts = opts || {};
+  const norm = _daNormStatus(newStatus);
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  const f = rec.fields || {};
+  if (_daNormStatus(f.status) === norm) return;  // unverändert
+  const patch = { status: norm };
+  const meta = _daStatusMeta(norm);
+  if (meta.done && !f.aufgenommen_am) {
+    patch.aufgenommen_am = new Date().toISOString().slice(0,10);
+    patch.aufgenommen_von = f.aufgenommen_von || APP_KEYS.user?.name || '';
+  }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: patch }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    rec.fields = Object.assign(rec.fields||{}, patch);
+    if (!opts.silent) toast('✅ Status: '+meta.icon+' '+meta.label,'ok');
+    if (document.getElementById('da-detail') && !opts.noReopen) openDaDetail(recId);
+    try { _renderDaList(); } catch(_){}
+  } catch(e) {
+    if (!opts.silent) toast('❌ Status: '+(e.message||'Fehler').slice(0,150),'err');
+    // Dropdown zurücksetzen
+    const sel = document.getElementById('da-status-select');
+    if (sel) sel.value = _daNormStatus(f.status);
+  }
+}
+
+/* v7.06: Status automatisch fortschreiben — nur vorwärts (nie ein 'done' zurückstufen).
+ *   targetStatus wird nur gesetzt wenn es weiter fortgeschritten ist als der aktuelle. */
+async function _daAdvanceStatus(recId, targetStatus) {
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return;
+  const cur = _daNormStatus(rec.fields?.status);
+  if (_daStatusRank(targetStatus) > _daStatusRank(cur)) {
+    await _daSetStatus(recId, targetStatus, { silent:true, noReopen:true });
   }
 }
 
@@ -21949,7 +22015,7 @@ async function openDaDetail(recId) {
       '</div>'+
       // Stammdaten
       (() => {
-        const isDone = f.status === 'abgeschlossen';
+        const isDone = _daStatusMeta(f.status).done;  // v7.06: abgeschlossen ODER gepusht
         const fdConfigured = freshdeskIsConfigured(f.firma || getCurrentFirmaSlug());
         return '<div style="padding:14px 20px;background:'+(isDone?'#ECFDF5':'#EFF6FF')+';border-bottom:1px solid var(--bdr);font-size:12px">'+
           '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
@@ -21967,14 +22033,14 @@ async function openDaDetail(recId) {
             '<div style="flex:1"><strong>📝 Auftrag:</strong> '+(f.beschreibung ? escapeHtml(f.beschreibung) : '<em style="color:var(--txt3)">— nicht erfasst —</em>')+'</div>'+
             '<button onclick="_daEditBeschreibung(\''+recId+'\')" title="Auftragsbeschreibung bearbeiten" style="background:#fff;border:1px solid var(--bdr);color:var(--txt2);padding:3px 9px;border-radius:5px;font-size:11px;cursor:pointer;flex-shrink:0">✏️ Bearbeiten</button>'+
           '</div>'+
-          // Status-Badge: abgeschlossen / in_aufnahme / entwurf
+          // v7.06: Status — Dropdown (manuell setzbar) für Edit-Berechtigte, sonst Badge
           '<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'+
             '<strong>Status:</strong> '+
-            (isDone
-              ? '<span style="background:#10b981;color:#fff;font-weight:600;padding:3px 10px;border-radius:99px;font-size:11px">✅ Abgeschlossen</span>'
-              : (f.status === 'in_aufnahme'
-                  ? '<span style="background:#FB923C;color:#fff;font-weight:600;padding:3px 10px;border-radius:99px;font-size:11px">🔧 In Aufnahme</span>'
-                  : '<span style="background:#6b7280;color:#fff;font-weight:600;padding:3px 10px;border-radius:99px;font-size:11px">📝 Entwurf</span>'))+
+            (hasPermission('datenaufnahmen_edit')
+              ? '<select id="da-status-select" onchange="_daSetStatus(\''+recId+'\', this.value)" style="padding:4px 10px;border:1px solid '+_daStatusMeta(f.status).bg+';border-radius:99px;font-size:12px;font-weight:600;color:'+_daStatusMeta(f.status).fg+';background:'+_daStatusMeta(f.status).bgSoft+';cursor:pointer">'+
+                  DA_STATUS.map(s => '<option value="'+s.value+'"'+(_daNormStatus(f.status)===s.value?' selected':'')+'>'+s.icon+' '+s.label+'</option>').join('')+
+                '</select>'
+              : _daStatusBadgeHtml(f.status))+
             (isDone && f.aufgenommen_am ? '<span style="color:var(--txt3);font-size:11px">am '+escapeHtml(f.aufgenommen_am)+(f.aufgenommen_von?' von '+escapeHtml(f.aufgenommen_von):'')+'</span>' : '')+
           '</div>'+
           // Freshdesk-Ticket: groß und sichtbar wenn vorhanden
@@ -22907,13 +22973,18 @@ async function _daSave(recId) {
       if (strippedCount) console.warn('[DA-Save] JSON zu groß — '+strippedCount+' nicht-hochgeladene DataURL(s) gestrippt');
     }
 
-    // Status NICHT überschreiben, wenn DA bereits abgeschlossen ist —
-    // sonst würde "Speichern" eine abgeschlossene DA wieder auf in_aufnahme zurücksetzen.
+    // v7.06: Status NICHT zurückstufen. Ein 'done'-Status (abgeschlossen/gepusht) bleibt.
+    //   Ansonsten Kandidat aus Checkpunkt-Anzahl bilden, aber nie hinter den aktuellen
+    //   Status zurückfallen (z.B. eine 'zugewiesen'-DA ohne Checkpunkte bleibt 'zugewiesen').
     const rec = (_daCache.items||[]).find(x => x.id === recId);
-    const currentStatus = rec?.fields?.status || '';
-    const status = currentStatus === 'abgeschlossen'
-      ? 'abgeschlossen'
-      : ((data.length > 0) ? 'in_aufnahme' : 'entwurf');
+    const currentStatus = _daNormStatus(rec?.fields?.status || '');
+    let status;
+    if (_daStatusMeta(currentStatus).done) {
+      status = currentStatus;
+    } else {
+      const candidate = (data.length > 0) ? 'in_aufnahme' : (currentStatus || 'entwurf');
+      status = _daStatusRank(candidate) >= _daStatusRank(currentStatus) ? candidate : currentStatus;
+    }
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
@@ -23043,6 +23114,8 @@ async function _daComplete(recId, btn) {
         fdResult = await freshdeskCreateTicketForDA(recForFd, { pdfBlob, pdfUrl: pdfUrlForTicket });
         if (fdResult?.ticketId) {
           await _daPersistFdTicketLink(recId, fdResult.ticketId, fdResult.ticketUrl);
+          // v7.06: nach erfolgreichem Push → Status 'gepusht' (überschreibt nicht die Erfolgs-Overlay dank noReopen)
+          await _daAdvanceStatus(recId, 'gepusht');
         }
       } catch(fde) {
         fdError = fde;
