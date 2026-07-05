@@ -2014,6 +2014,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:12px">
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="da-flt-offen" checked onchange="_renderDaList()"> ✏ Offen</label>
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="da-flt-fertig" checked onchange="_renderDaList()"> ✅ Fertig</label>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer;background:#EEF2FF;border:1px solid #C7D2FE;border-radius:6px;padding:3px 8px;color:#3730A3;font-weight:600"><input type="checkbox" id="da-flt-mine" onchange="_renderDaList()"> 👤 Nur mir zugewiesen</label>
     </div>
   </div>
   <div class="firma-body" id="da-list" style="padding:20px"></div>
@@ -2689,7 +2690,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.03';
+const APP_VERSION = 'v7.04';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3042,6 +3043,7 @@ async function loginWithUserKey(userKey) {
   console.log('[Login] User-Records:', userData.records?.length ?? 0);
   if (!userData.records || !userData.records.length) throw new Error('Ungültiger oder inaktiver Key');
   APP_KEYS.user = userData.records[0].fields;
+  APP_KEYS.userRecordId = userData.records[0].id;  // v7.04: für DA-Zuweisung ('Mir zugewiesen')
 
   // Step 2: Project Keys
   const projUrl = 'https://api.airtable.com/v0/'+APP_CONFIG.MASTER_BASE_ID+'/Keys?filterByFormula='+encodeURIComponent("{project_id}='"+APP_CONFIG.PROJECT_ID+"'");
@@ -20885,6 +20887,10 @@ const DA_TABLE_FIELDS = [
   { name:'erstellt_von',           type:'singleLineText' },
   { name:'aufgenommen_am',         type:'singleLineText' },
   { name:'aufgenommen_von',        type:'singleLineText' },
+  // v7.04: Zuweisung an Techniker/User (offene Aufgaben)
+  { name:'zugewiesen_an',          type:'singleLineText' },   // Name des zugewiesenen Users
+  { name:'zugewiesen_an_id',       type:'singleLineText' },   // Airtable-Record-ID des Users (robust bei Namensänderung)
+  { name:'zugewiesen_am',          type:'singleLineText' },
   // Freshdesk-Verknüpfung
   { name:'fd_ticket_id',           type:'number', options:{ precision:0 } },
   { name:'fd_ticket_url',          type:'singleLineText' },
@@ -20963,7 +20969,12 @@ async function freshdeskCreateTicketForDA(daRec, opts) {
 
   // Intro: was zu tun ist + Link
   const introLines = [];
-  introLines.push('<p><strong>Neue Datenaufnahme erstellt — bitte Pauschalpreise eintragen und Angebot finalisieren.</strong></p>');
+  // v7.04: Wenn aus Zuweisung erstellt → Techniker prominent nennen
+  if (opts.assigneeName) {
+    introLines.push('<p><strong>👤 Datenaufnahme wurde '+escapeHtml(opts.assigneeName)+' zur Erledigung zugewiesen.</strong></p>');
+  } else {
+    introLines.push('<p><strong>Neue Datenaufnahme erstellt — bitte Pauschalpreise eintragen und Angebot finalisieren.</strong></p>');
+  }
   if (standort) {
     introLines.push('<p>📍 <strong>Standort der Anlage:</strong><br>'+escapeHtml(standort).replace(/\n/g,'<br>')+'</p>');
   }
@@ -21087,6 +21098,7 @@ async function renderDatenaufnahmenView(opts) {
   if (newBtn) newBtn.style.display = hasPermission('datenaufnahmen_create') ? '' : 'none';
 
   if (opts.force) _daCache = { firma:null, items:null, loadedAt:0, loading:false };
+  _loadAppUsers(opts.force).catch(()=>{});  // v7.04: User-Liste vorwärmen (für Zuweisung + Badge)
   if (!_daCache.items || _daCache.firma !== firmaSlug) {
     list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Datenaufnahmen…</div>';
     // Tabelle sicherstellen — silent bei Nicht-Admin
@@ -21105,6 +21117,34 @@ async function renderDatenaufnahmenView(opts) {
     }
   }
   _renderDaList();
+}
+
+/* v7.04: Aktive App-User laden (für DA-Zuweisung). 5-Min-Cache. */
+let _appUsersCache = { items:null, loadedAt:0 };
+async function _loadAppUsers(force) {
+  if (!force && _appUsersCache.items && (Date.now() - _appUsersCache.loadedAt) < 300000) return _appUsersCache.items;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey || APP_CONFIG.AIRTABLE_READ_KEY;
+  if (!key) return [];
+  try {
+    const url = 'https://api.airtable.com/v0/'+baseId+'/User?pageSize=100&filterByFormula='+encodeURIComponent("{status}='aktiv'");
+    const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+    if (!r.ok) { console.warn('[AppUsers] HTTP '+r.status); return _appUsersCache.items || []; }
+    const d = await r.json();
+    const items = (d.records||[]).map(rec => ({ id: rec.id, name: (rec.fields?.name||'').trim(), email: (rec.fields?.email||'').trim() }))
+      .filter(u => u.name)
+      .sort((a,b) => a.name.localeCompare(b.name));
+    _appUsersCache = { items, loadedAt: Date.now() };
+    return items;
+  } catch(e) { console.warn('[AppUsers] Load:', e.message); return _appUsersCache.items || []; }
+}
+/* Ist die DA dem aktuellen User zugewiesen? Match per Record-ID (robust), Fallback Name. */
+function _daIsAssignedToMe(f) {
+  const myId   = APP_KEYS.userRecordId || '';
+  const myName = (APP_KEYS.user?.name || '').trim().toLowerCase();
+  if (myId && String(f.zugewiesen_an_id||'') === String(myId)) return true;
+  if (myName && String(f.zugewiesen_an||'').trim().toLowerCase() === myName) return true;
+  return false;
 }
 
 async function _loadDatenaufnahmen(firmaSlug) {
@@ -21142,14 +21182,16 @@ function _renderDaList() {
   const q = (document.getElementById('da-search')?.value || '').toLowerCase().trim();
   const showOffen  = document.getElementById('da-flt-offen')?.checked !== false;
   const showFertig = document.getElementById('da-flt-fertig')?.checked !== false;
+  const onlyMine   = document.getElementById('da-flt-mine')?.checked === true;  // v7.04
   const items = _daCache.items || [];
   const filtered = items.filter(rec => {
     const f = rec.fields || {};
     const isFertig = f.status === 'fertig';
     if (isFertig && !showFertig) return false;
     if (!isFertig && !showOffen) return false;
+    if (onlyMine && !_daIsAssignedToMe(f)) return false;  // v7.04
     if (q) {
-      const hay = [f.anlage_fabriknummer, f.anlage_adresse, f.kunde_name, f.kunde_nummer, f.beschreibung].filter(Boolean).join(' ').toLowerCase();
+      const hay = [f.anlage_fabriknummer, f.anlage_adresse, f.kunde_name, f.kunde_nummer, f.beschreibung, f.zugewiesen_an].filter(Boolean).join(' ').toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -21172,11 +21214,18 @@ function _renderDaList() {
       : status === 'in_aufnahme'
       ? '<span style="font-size:10px;font-weight:700;background:#DBEAFE;color:#1E40AF;padding:2px 8px;border-radius:99px">📋 In Aufnahme</span>'
       : '<span style="font-size:10px;font-weight:700;background:#FEF3C7;color:#92400E;padding:2px 8px;border-radius:99px">✏ Entwurf</span>';
+    // v7.04: Zuweisungs-Badge — hervorgehoben wenn dem aktuellen User zugewiesen
+    const assignedBadge = f.zugewiesen_an
+      ? (_daIsAssignedToMe(f)
+          ? '<span style="font-size:10px;font-weight:700;background:#3730A3;color:#fff;padding:2px 8px;border-radius:99px">👤 Mir zugewiesen</span>'
+          : '<span style="font-size:10px;font-weight:700;background:#EEF2FF;color:#3730A3;padding:2px 8px;border-radius:99px">👤 '+escapeHtml(f.zugewiesen_an)+'</span>')
+      : '';
     return (
       '<div onclick="openDaDetail(\''+rec.id+'\')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,.06)\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.boxShadow=\'none\'">'+
         '<div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:6px">'+
           '<div style="font-weight:700;color:var(--navy);font-size:14px">🔍 DA-'+(f.da_num||'?')+'</div>'+
           statusBadge+
+          assignedBadge+
           '<div style="margin-left:auto;font-size:11px;color:var(--txt3)">'+escapeHtml(cps.length+' Checkpunkt'+(cps.length===1?'':'e'))+'</div>'+
         '</div>'+
         '<div style="font-size:13px;color:var(--txt);margin-bottom:3px">'+
@@ -21247,6 +21296,11 @@ async function openDaWizard() {
           '<label class="auf-label">📝 Beschreibung — warum ist die Datenaufnahme nötig?</label>'+
           '<textarea class="auf-textarea" id="da-beschreibung" rows="3" placeholder="z.B. Modernisierung gewünscht. Bestandsaufnahme der Steuerung, Antrieb, Kabine, Türen."></textarea>'+
         '</div>'+
+        // v7.04: ZUWEISEN AN (Techniker/User)
+        '<div class="auf-field" style="margin-top:14px">'+
+          '<label class="auf-label">👤 Zuweisen an <span style="font-weight:400;color:var(--txt3);font-size:11px">(optional — Techniker der die Aufnahme erledigt)</span></label>'+
+          '<select id="da-zuweisen" class="auf-input" style="cursor:pointer"><option value="">— niemandem zuweisen —</option></select>'+
+        '</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
         '<button class="btn" onclick="document.getElementById(\'da-wizard\').remove()">Abbrechen</button>'+
@@ -21258,6 +21312,13 @@ async function openDaWizard() {
   m._vorlagen = vorlagen;
   m._selectedAnlage = null;
   m._selectedVorlageId = '';
+  // v7.04: Zuweisen-Dropdown mit aktiven Usern befüllen (async)
+  _loadAppUsers().then(users => {
+    const sel = document.getElementById('da-zuweisen');
+    if (!sel || !users.length) return;
+    sel.innerHTML = '<option value="">— niemandem zuweisen —</option>'+
+      users.map(u => '<option value="'+u.id+'" data-name="'+escapeHtml(u.name)+'">'+escapeHtml(u.name)+'</option>').join('');
+  }).catch(()=>{});
 }
 
 function _daWizardOnVorlageChange() {
@@ -21324,6 +21385,10 @@ async function _daCreateRecord() {
   const a = m._selectedAnlage;
   if (!a) return toast('Bitte Anlage wählen','err');
   const beschreibung = document.getElementById('da-beschreibung').value.trim();
+  // v7.04: Zuweisung aus Dropdown
+  const zuwSel  = document.getElementById('da-zuweisen');
+  const zuwId   = zuwSel?.value || '';
+  const zuwName = zuwId ? (zuwSel.options[zuwSel.selectedIndex]?.dataset.name || zuwSel.options[zuwSel.selectedIndex]?.textContent || '') : '';
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   const btn = document.getElementById('da-wizard-create');
   btn.disabled = true; btn.textContent = '⏳ Tabelle prüfen…';
@@ -21375,6 +21440,12 @@ async function _daCreateRecord() {
       erstellt_am:          new Date().toISOString().slice(0,10),
       erstellt_von:         APP_KEYS.user?.name || '',
     };
+    // v7.04: Zuweisung mitspeichern
+    if (zuwId) {
+      fields.zugewiesen_an    = zuwName;
+      fields.zugewiesen_an_id = zuwId;
+      fields.zugewiesen_am    = new Date().toISOString().slice(0,10);
+    }
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen', {
       method:'POST',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
@@ -21382,8 +21453,10 @@ async function _daCreateRecord() {
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.message||'Fehler');
-    toast('✅ Datenaufnahme angelegt','ok');
+    toast('✅ Datenaufnahme angelegt'+(zuwName?' · zugewiesen an '+zuwName:''),'ok');
     m.remove();
+    // v7.04: Bei Zuweisung Freshdesk benachrichtigen (fire-and-forget)
+    if (zuwId) { _daNotifyAssignment({ id: d.id, fields }, zuwName).catch(e => console.warn('[DA-Assign] FD:', e.message)); }
     // Cache invalidieren + neu laden + Detail öffnen
     _daCache = { firma:null, items:null, loadedAt:0, loading:false };
     await renderDatenaufnahmenView({ force:true });
@@ -21394,6 +21467,122 @@ async function _daCreateRecord() {
   } catch(e) {
     toast('❌ '+e.message,'err');
     btn.disabled = false; btn.textContent = '🚀 Datenaufnahme anlegen';
+  }
+}
+
+/* ── v7.04: DA-Zuweisung — Picker im Detail + PATCH + Freshdesk-Benachrichtigung ── */
+async function _daOpenAssignPicker(recId) {
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Datenaufnahme nicht gefunden','err');
+  const f = rec.fields || {};
+  const users = await _loadAppUsers();
+  document.getElementById('da-assign-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'da-assign-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10800;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:420px;width:100%;border-radius:14px;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#3730A3;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>👤 Datenaufnahme zuweisen</span>'+
+        '<button onclick="document.getElementById(\'da-assign-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:16px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;font-size:13px">'+
+        '<div style="font-size:12px;color:var(--txt2);margin-bottom:10px">DA-'+(f.da_num||'?')+' · '+escapeHtml(f.anlage_adresse||f.anlage_fabriknummer||'')+'</div>'+
+        '<label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Techniker / User</label>'+
+        '<select id="da-assign-select" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;cursor:pointer">'+
+          '<option value="">— niemandem zuweisen —</option>'+
+          users.map(u => '<option value="'+u.id+'" data-name="'+escapeHtml(u.name)+'"'+(String(f.zugewiesen_an_id||'')===String(u.id)?' selected':'')+'>'+escapeHtml(u.name)+'</option>').join('')+
+        '</select>'+
+        (freshdeskIsConfigured(f.firma||getCurrentFirmaSlug())
+          ? '<label style="display:inline-flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;cursor:pointer"><input type="checkbox" id="da-assign-notify" checked style="margin:0"> 🎫 Techniker per Freshdesk benachrichtigen</label>'
+          : '<div style="margin-top:10px;font-size:11px;color:var(--txt3)">ℹ Freshdesk für diese Firma nicht konfiguriert — keine Benachrichtigung.</div>')+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'da-assign-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="da-assign-save" onclick="_daSaveAssignment(\''+recId+'\')" style="background:#3730A3;border-color:#3730A3">💾 Übernehmen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+async function _daSaveAssignment(recId) {
+  const sel   = document.getElementById('da-assign-select');
+  const notify = document.getElementById('da-assign-notify')?.checked;
+  const zuwId  = sel?.value || '';
+  const zuwName = zuwId ? (sel.options[sel.selectedIndex]?.dataset.name || sel.options[sel.selectedIndex]?.textContent || '') : '';
+  const btn = document.getElementById('da-assign-save');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const patchFields = zuwId
+      ? { zugewiesen_an: zuwName, zugewiesen_an_id: zuwId, zugewiesen_am: new Date().toISOString().slice(0,10) }
+      : { zugewiesen_an: '', zugewiesen_an_id: '', zugewiesen_am: '' };
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: patchFields }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error.message||'Fehler');
+    // Cache aktualisieren
+    const rec = (_daCache.items||[]).find(x => x.id === recId);
+    if (rec) { rec.fields = Object.assign(rec.fields||{}, patchFields); }
+    document.getElementById('da-assign-modal')?.remove();
+    toast(zuwId ? ('✅ Zugewiesen an '+zuwName) : '✅ Zuweisung entfernt','ok');
+    // FD-Benachrichtigung
+    if (zuwId && notify && rec) {
+      _daNotifyAssignment(rec, zuwName).catch(e => console.warn('[DA-Assign] FD:', e.message));
+    }
+    // Detail + Liste neu rendern
+    if (document.getElementById('da-detail')) openDaDetail(recId);
+    _renderDaList();
+  } catch(e) {
+    toast('❌ '+(e.message||'Fehler').slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Übernehmen'; }
+  }
+}
+
+/* Benachrichtigt den zugewiesenen Techniker via Freshdesk.
+ * Wenn die DA schon ein Ticket hat → private Notiz. Sonst → neues Ticket. */
+async function _daNotifyAssignment(rec, zuwName) {
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return;
+  const proxy = APP_KEYS.valtownProxyUrl;
+  if (!proxy) return;
+  await erpEnsureSession();
+  const auth = { 'Authorization':'Bearer '+erpGetSessionToken(), 'Content-Type':'application/json' };
+  const daNum = f.da_num ? ('DA-'+f.da_num) : 'DA-?';
+  const deepLink = _daAppDeepLink(rec.id);
+  const noteHtml =
+    '<p><strong>👤 Datenaufnahme '+daNum+' wurde '+escapeHtml(zuwName)+' zugewiesen.</strong></p>'+
+    (f.anlage_adresse ? '<p>📍 <strong>Standort:</strong> '+escapeHtml(f.anlage_adresse).replace(/\n/g,'<br>')+'</p>' : '')+
+    (f.anlage_fabriknummer ? '<p>🛗 <strong>Fabrik-Nr.:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</p>' : '')+
+    (f.beschreibung ? '<p>📝 <strong>Auftrag:</strong> '+escapeHtml(f.beschreibung)+'</p>' : '')+
+    '<p>🔗 <strong>In der App öffnen:</strong> <a href="'+escapeHtml(deepLink)+'">'+escapeHtml(deepLink)+'</a></p>'+
+    '<p style="color:#6b7280;font-size:12px">Zugewiesen von '+escapeHtml(APP_KEYS.user?.name||'?')+' am '+new Date().toLocaleDateString('de-DE')+'</p>';
+  if (f.fd_ticket_id) {
+    // Bestehendes Ticket → private Notiz
+    const url = proxy+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+encodeURIComponent(f.fd_ticket_id)+'/notes';
+    const res = await fetch(url, { method:'POST', headers:auth, body: JSON.stringify({ body: noteHtml, private: true }) });
+    if (res.ok) toast('🎫 Notiz an Ticket #'+f.fd_ticket_id+' hinzugefügt','ok');
+    else console.warn('[DA-Assign] Notiz HTTP '+res.status, await res.text());
+  } else {
+    // Kein Ticket → neues erstellen (nutzt bestehende DA-Ticket-Funktion)
+    try {
+      const result = await freshdeskCreateTicketForDA(rec, { assigneeName: zuwName });
+      if (result && result.ticketId) {
+        // Ticket-ID in den Record zurückschreiben
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+rec.id, {
+          method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields: { fd_ticket_id: result.ticketId, fd_ticket_url: result.ticketUrl||'' }}),
+        }).catch(()=>{});
+        if (rec.fields) { rec.fields.fd_ticket_id = result.ticketId; rec.fields.fd_ticket_url = result.ticketUrl||''; }
+        toast('🎫 Freshdesk-Ticket #'+result.ticketId+' erstellt','ok');
+      }
+    } catch(e) { console.warn('[DA-Assign] Ticket-Erstellung:', e.message); }
   }
 }
 
@@ -21513,6 +21702,14 @@ async function openDaDetail(recId) {
         return '<div style="padding:14px 20px;background:'+(isDone?'#ECFDF5':'#EFF6FF')+';border-bottom:1px solid var(--bdr);font-size:12px">'+
           '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.anlage_fabriknummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
           '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'')+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
+          // v7.04: Zuweisung — Anzeige + Umweisen-Button
+          '<div style="margin-top:6px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">'+
+            '<strong>👤 Zugewiesen:</strong> '+
+            (f.zugewiesen_an
+              ? '<span style="background:#EEF2FF;color:#3730A3;font-weight:600;padding:2px 10px;border-radius:99px;font-size:11px">'+escapeHtml(f.zugewiesen_an)+'</span>'+(f.zugewiesen_am?'<span style="color:var(--txt3);font-size:10px">seit '+escapeHtml(f.zugewiesen_am)+'</span>':'')
+              : '<em style="color:var(--txt3)">— niemandem —</em>')+
+            (hasPermission('datenaufnahmen_edit') ? '<button onclick="_daOpenAssignPicker(\''+recId+'\')" title="Techniker zuweisen / ändern" style="background:#fff;border:1px solid var(--bdr);color:var(--txt2);padding:2px 9px;border-radius:5px;font-size:11px;cursor:pointer">'+(f.zugewiesen_an?'↻ Ändern':'+ Zuweisen')+'</button>' : '')+
+          '</div>'+
           // v6.29: Auftrag/Beschreibung editierbar — Edit-Button rechts, auch sichtbar wenn leer (damit erstmal-Eintragen möglich ist)
           '<div style="margin-top:6px;display:flex;align-items:flex-start;gap:6px">'+
             '<div style="flex:1"><strong>📝 Auftrag:</strong> '+(f.beschreibung ? escapeHtml(f.beschreibung) : '<em style="color:var(--txt3)">— nicht erfasst —</em>')+'</div>'+
