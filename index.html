@@ -613,6 +613,12 @@ body.has-modal .topbar{pointer-events:auto}
 .bf-info-row .v{font-weight:500;text-align:right;word-break:break-word}
 .bf-foot{padding:12px 14px;background:var(--surf);border-top:1px solid var(--bdr);display:flex;gap:10px;flex-shrink:0;box-shadow:0 -2px 6px rgba(0,0,0,.05)}
 .bf-foot .btn{flex:1;padding:11px 14px;font-size:14px;font-weight:600}
+/* Persistentes Fehler-Banner im Bericht-Formular (mobil sichtbar, bleibt bis geschlossen) */
+.bf-err-banner{margin:0 14px 10px;padding:12px 14px;background:#FEF2F2;border:1px solid #FCA5A5;border-left:4px solid #DC2626;border-radius:8px;color:#991B1B;font-size:13px;line-height:1.5;flex-shrink:0;max-height:40vh;overflow:auto;-webkit-overflow-scrolling:touch}
+.bf-err-banner .t{font-weight:700;margin-bottom:5px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.bf-err-banner .x{background:none;border:none;color:#991B1B;font-size:20px;cursor:pointer;padding:0 2px;line-height:1;font-family:inherit;flex-shrink:0}
+.bf-err-banner .msg{word-break:break-word;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:rgba(153,27,27,.06);border-radius:5px;padding:6px 8px}
+.bf-err-banner .hint{margin-top:7px;font-size:12px;color:#7F1D1D}
 
 /* "KI"-Badge im Bericht-Formular ausblenden (Techniker fuellt manuell, keine AI-Extraktion) */
 .bf-view .ai-b{display:none}
@@ -2591,6 +2597,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
   </div>
   <div class="bf-body" id="bf-body"></div>
+  <div class="bf-err-banner" id="bf-error" style="display:none" role="alert"></div>
   <div class="bf-foot">
     <button class="btn" onclick="closeBerichtForm()">Abbrechen</button>
     <button class="btn succ" id="bf-save-btn" onclick="saveBerichtFromForm()">💾 Abschließen &amp; PDF</button>
@@ -2707,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.06';
+const APP_VERSION = 'v7.07';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -12228,6 +12235,58 @@ class SignaturePad {
 let _sigTechnikerPad = null;
 let _sigKundePad = null;
 
+/* v7.07: Unterschrift verkleinern.
+ *   Die Signatur-Pads erzeugen bei hohem devicePixelRatio (iPhone = 3) sehr große
+ *   PNG-DataURLs (Canvas ~1050×480 px). Werden BEIDE Signaturen (Techniker + Kunde)
+ *   als DataURL ins data_json geschrieben, sprengt das schnell Airtables Limit von
+ *   100.000 Zeichen pro Zelle → der Bericht lässt sich nicht speichern. Genau das
+ *   passiert, wenn der Kunde unterschreibt, aber ohne Kundenunterschrift funktioniert.
+ *   Wir zeichnen die Signatur auf ein kleines Canvas neu (max. Breite maxW) → das PNG
+ *   wird ~5–15 kB statt 30–80 kB, ohne im PDF sichtbaren Qualitätsverlust. */
+function _downscaleSignatureDataUrl(dataUrl, maxW = 440) {
+  return new Promise(resolve => {
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) return resolve(dataUrl || null);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = img.width > maxW ? maxW / img.width : 1;
+        if (scale >= 1) return resolve(dataUrl); // schon klein genug
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const small = c.toDataURL('image/png');
+        // Nur übernehmen, wenn wirklich kleiner (sonst Original behalten)
+        resolve(small.length < dataUrl.length ? small : dataUrl);
+      } catch(e) { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/* v7.07: Persistentes, gut sichtbares Fehler-Banner im Bericht-Formular.
+ *   Ersetzt die flüchtige 4-Sekunden-Toast-Meldung (auf dem Handy leicht zu übersehen)
+ *   durch eine bleibende Meldung direkt über den Buttons — inkl. Schritt + Klartext-Ursache. */
+function _bfClearError() {
+  const el = document.getElementById('bf-error');
+  if (el) { el.style.display = 'none'; el.innerHTML = ''; }
+}
+function _bfShowError(step, err, hint) {
+  const msg = String((err && (err.message || err)) || 'Unbekannter Fehler');
+  const el = document.getElementById('bf-error');
+  if (!el) { toast('❌ '+(step?step+': ':'')+msg, 'err'); return; }
+  el.innerHTML =
+    '<div class="t"><span>❌ Speichern fehlgeschlagen'+(step ? ' – '+escapeHtml(step) : '')+'</span>'+
+      '<button class="x" onclick="_bfClearError()" title="Schließen" aria-label="Schließen">×</button></div>'+
+    '<div class="msg">'+escapeHtml(msg)+'</div>'+
+    (hint ? '<div class="hint">💡 '+escapeHtml(hint)+'</div>' : '');
+  el.style.display = 'block';
+  try { el.scrollIntoView({ block:'nearest', behavior:'smooth' }); } catch(_){}
+}
+
 /* ──────────────────────────────────────────────────────────────
    BERICHT-FORMULAR (Mobile-first)
    ────────────────────────────────────────────────────────────── */
@@ -12247,6 +12306,7 @@ async function openBerichtForm(auftragId, berichtId) {
   }
   _currentBerichtAuftragId = auftragId;
   closeAuftragDetail();
+  _bfClearError();  // v7.07: evtl. altes Fehler-Banner aus vorheriger Session entfernen
   const f = rec.fields;
   const tmpl = T[f.tmpl];
   if (!tmpl) return toast('Vorlage unbekannt: '+(f.tmpl||'(leer)'), 'err');
@@ -13074,10 +13134,19 @@ async function saveBerichtFromForm() {
   btn.disabled = true;
   const isEdit = _bfMode === 'edit';
   btn.textContent = '☁ Generiere PDF…';
+  _bfClearError();  // v7.07: altes Fehler-Banner entfernen
+  let step = 'Vorbereiten';  // v7.07: aktueller Schritt für aussagekräftige Fehlermeldung
 
   try {
     const firmaSlug = getCurrentFirmaSlug();
     const baseId   = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+
+    // v7.07: Unterschriften verkleinern, BEVOR sie ins PDF + data_json wandern
+    //   (verhindert Airtable-100k-Zeichen-Limit-Fehler bei Kundenunterschrift).
+    step = 'Unterschriften verarbeiten';
+    btn.textContent = '☁ Verarbeite Unterschriften…';
+    sigs.sigTechURL  = await _downscaleSignatureDataUrl(sigs.sigTechURL);
+    sigs.sigKundeURL = await _downscaleSignatureDataUrl(sigs.sigKundeURL);
 
     // Bericht-Nummer: bei NEU firma-scoped, bei EDIT bestehende behalten
     let berichtNum;
@@ -13099,6 +13168,7 @@ async function saveBerichtFromForm() {
     }
 
     // PDF generieren (Vorlage + Inline-Sigs + Bilder als Anhang-Seiten)
+    step = 'PDF erzeugen';
     const doc = tmpl.pdf(data, berichtNum, sigs);
     // Bilder die im PDF auftauchen sollen: kept-existing (Airtable-URLs → blob → dataUrl) + newly added (dataUrls)
     const pdfImageSources = [];
@@ -13125,13 +13195,26 @@ async function saveBerichtFromForm() {
     }
     const pdfBlob = doc.output('blob');
     const fname = berichtNum + '_' + (data.standort||'Bericht').replace(/[^a-zA-Z0-9]/g,'_').slice(0,40) + '.pdf';
-    const dataJsonStr = JSON.stringify(Object.assign({}, data, {
+    // v7.07: verkleinerte Signaturen aus sigs verwenden (nicht die rohen sigTechURL/sigKundeURL)
+    let dataJsonStr = JSON.stringify(Object.assign({}, data, {
       tech_name: techName, kunde_name: sigs.kundeName, kunde_abwesend: kundeAbwesend,
-      sig_tech: sigTechURL, sig_kunde: sigKundeURL
+      sig_tech: sigs.sigTechURL, sig_kunde: sigs.sigKundeURL
     }));
+    // v7.07: Sicherheitsnetz gegen Airtables 100k-Zeichen-Limit pro Zelle.
+    //   Falls das JSON trotz Verkleinerung zu groß ist, Signaturen aus dem JSON
+    //   entfernen — sie bleiben im PDF (out_pdf) erhalten, nur separat nicht mehr editierbar.
+    if (dataJsonStr.length > 95000) {
+      console.warn('[Bericht] data_json '+dataJsonStr.length+' Zeichen > 95k — entferne Signaturen aus JSON (bleiben im PDF).');
+      dataJsonStr = JSON.stringify(Object.assign({}, data, {
+        tech_name: techName, kunde_name: sigs.kundeName, kunde_abwesend: kundeAbwesend,
+        sig_tech: null, sig_kunde: null
+      }));
+      toast('⚠ Unterschriften sind im PDF gespeichert, aus Platzgründen aber nicht separat editierbar.', '');
+    }
 
     if (isEdit) {
       // ── EDIT: bestehenden Record patchen, Anhänge ersetzen ─────
+      step = 'Bericht aktualisieren (Airtable)';
       btn.textContent = '☁ Aktualisiere Bericht…';
       // Schritt 1: Felder + bilder-keep + out_pdf:[] (Anhang vorbereiten)
       await fetch('https://api.airtable.com/v0/'+baseId+'/Berichte/'+recId, {
@@ -13149,6 +13232,7 @@ async function saveBerichtFromForm() {
         }}),
       }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message||'PATCH-Fehler'); });
 
+      step = 'PDF hochladen';
       btn.textContent = '☁ Neues PDF hochladen…';
       await atBlobUpload(recId, 'out_pdf', pdfBlob, fname, 'application/pdf');
 
@@ -13164,6 +13248,7 @@ async function saveBerichtFromForm() {
       toast('✅ Bericht Nr. '+berichtNum+' aktualisiert.', 'ok');
     } else {
       // ── NEU: Record + Auftrag abschließen ─────────────────────
+      step = 'Bericht speichern (Airtable)';
       btn.textContent = '☁ Speichere Bericht…';
       const rec = await atWrite('Berichte', {
         firma:        firmaSlug,
@@ -13184,6 +13269,7 @@ async function saveBerichtFromForm() {
       });
       recId = rec.id;
 
+      step = 'PDF hochladen';
       btn.textContent = '☁ Lade PDF hoch…';
       await atBlobUpload(recId, 'out_pdf', pdfBlob, fname, 'application/pdf');
 
@@ -13225,8 +13311,19 @@ async function saveBerichtFromForm() {
     closeBerichtForm();
     await loadAuftraegeAndRender();
   } catch(e) {
-    console.error('saveBerichtFromForm:', e);
-    toast('❌ '+(e.message||e), 'err');
+    console.error('saveBerichtFromForm @ '+step+':', e);
+    // v7.07: Fehler dauerhaft + gut sichtbar im Formular anzeigen (statt nur 4-Sek.-Toast).
+    const m = String(e?.message || e || '').toLowerCase();
+    let hint = 'Deine Eingaben bleiben erhalten. Bitte erneut auf „Speichern" tippen.';
+    if (m.includes('too large') || m.includes('maximum length') || m.includes('request entity') || m.includes('413')) {
+      hint = 'Der Bericht war zu groß (meist durch die Unterschriften). Die App verkleinert Unterschriften jetzt automatisch — bitte einfach erneut speichern.';
+    } else if (m.includes('failed to fetch') || m.includes('load failed') || m.includes('network') || m.includes('networkerror')) {
+      hint = 'Netzwerkproblem — bitte Internet/WLAN prüfen und erneut speichern. Deine Eingaben bleiben erhalten.';
+    } else if (m.includes('token') || m.includes('unauthorized') || m.includes('401') || m.includes('403')) {
+      hint = 'Anmeldung/Berechtigung abgelaufen — bitte App neu laden (aus dem Home-Screen schließen und wieder öffnen) und erneut speichern.';
+    }
+    _bfShowError(step, e, hint);
+    toast('❌ Speichern fehlgeschlagen ('+step+')', 'err');
   } finally {
     btn.disabled = false;
     btn.textContent = (_bfMode==='edit') ? '💾 Bericht aktualisieren' : '💾 Abschließen & PDF';
