@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.07';
+const APP_VERSION = 'v7.08';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -26394,7 +26394,9 @@ async function _angWizardGoFromPrompt() {
   const go = document.getElementById('ang-w-go');
   go.disabled = true; go.textContent = '⏳ KI generiert…';
   try {
-    const extracted = await _extractAngebotFromPrompt(promptText, typ);
+    const extracted = await _extractAngebotFromPrompt(promptText, typ, (n, total) => {
+      go.textContent = '🔁 Antwort unvollständig — Versuch '+n+'/'+total+'…';
+    });
     console.log('[Angebote] aus Prompt generiert:', extracted);
     m.remove();
     openAngebotEditor({ extracted, typ, koneFile: null, matchedAnlage: null, anbieter: 'manuell' });
@@ -26406,7 +26408,7 @@ async function _angWizardGoFromPrompt() {
 }
 
 /* ── KI-Generierung: NUR aus User-Beschreibung (ohne PDF) v5.14 ──── */
-async function _extractAngebotFromPrompt(promptText, typ) {
+async function _extractAngebotFromPrompt(promptText, typ, onProgress) {
   if (!APP_KEYS.anthropicKey) throw new Error('Kein Anthropic-API-Key');
   const firmaSlug = getCurrentFirmaSlug();
   const BR = (typeof _daFirmaBranding === 'function') ? _daFirmaBranding(firmaSlug) : { company:'Aszendio Aufzugservice GmbH' };
@@ -26480,65 +26482,94 @@ async function _extractAngebotFromPrompt(promptText, typ) {
     lernBlock+
     '\nUSER-BESCHREIBUNG:\n'+
     promptText;
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method:'POST',
-    headers:{
-      'Content-Type':'application/json',
-      'x-api-key': APP_KEYS.anthropicKey,
-      'anthropic-version':'2023-06-01',
-      'anthropic-dangerous-direct-browser-access':'true',
-    },
-    body: JSON.stringify({
-      model:'claude-sonnet-4-6',
-      // v5.64: 8000 war zu knapp — bei detaillierten Modernisierungs-Prompts (z.B. Schindler 3300
-      // mit 4 Positionen × je 5 Bullets + langem Anschreiben) wurde das Tool-Use mid-output
-      // abgebrochen. Das Resultat: anschreiben enthielt den Anfang + rohe Tool-Use-Tags
-      // (</anschreiben><parameter name="positionen">...), Positionen waren leer.
-      // v5.92: 16000 reichte bei v5.90-Standard-Modernisierungs-Vorlage (5 Komponenten × 5-7 Bullets
-      // + Optional-Block + Konditionen + Empfänger-Slots) nicht — auf 32000 erhöht.
-      // v6.96: bei Modernisierungs-Prompts mit ausführlichem User-Text + Lern-Vorbildern reichte 32k noch nicht → 64k.
-      max_tokens: 64000,
-      tools:[tool],
-      tool_choice:{ type:'tool', name:'generate_angebot' },
-      messages:[{ role:'user', content:[
-        { type:'text', text: prompt },
-      ]}],
-    }),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error?.message || ('API-Fehler '+resp.status));
-  }
-  const data = await resp.json();
-  const block = (data.content||[]).find(b => b.type === 'tool_use');
-  if (!block || !block.input) throw new Error('Kein strukturiertes Tool-Resultat von der KI');
-  // v5.64: Truncation-Erkennung — wenn KI mid-output abgebrochen hat, ist der Tool-Use
-  // partial und enthält oft rohe XML-Tags im anschreiben (z.B. "</anschreiben><parameter ").
-  // → klar nach außen melden statt User mit Müll im Anschreiben rumlaufen zu lassen.
-  if (data.stop_reason === 'max_tokens') {
-    console.warn('[Angebot-Prompt] KI-Output abgebrochen (max_tokens) — Prompt war zu komplex.');
-    throw new Error('KI-Antwort wurde abgeschnitten (zu viele Positionen/zu lange Beschreibung). Bitte den Prompt verkürzen oder in mehrere Angebote aufteilen.');
-  }
-  const anschreiben = String(block.input.anschreiben || '');
-  // v6.96: Sanitize statt harter Fehler — wenn Anschreiben Tool-Tags enthält aber Positionen komplett sind,
-  //   schneiden wir das Anschreiben vor dem ersten Tag ab und geben zurück. Nur wenn Positionen fehlen → Fehler.
-  if (/<\/anschreiben>|<parameter\s+name=/i.test(anschreiben)) {
+  // v7.08: Ein einzelner API-Call + Parsing. Wirft bei "reparierbaren" Fehlern eine
+  //   Error mit .retryable=true, damit die Schleife darunter automatisch neu versucht.
+  //   Bekanntes Fehlerbild: das Modell leakt das alte XML-Tool-Format in das erste
+  //   Textfeld (anschreiben → "…</anschreiben><parameter name=…"), 'positionen' bleibt
+  //   dadurch leer. Das ist sampling-abhängig und verschwindet fast immer beim erneuten
+  //   Versuch — deshalb NICHT mehr hart abbrechen, sondern automatisch wiederholen.
+  const _callOnce = async (extraInstruction) => {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{
+        'Content-Type':'application/json',
+        'x-api-key': APP_KEYS.anthropicKey,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true',
+      },
+      body: JSON.stringify({
+        model:'claude-sonnet-4-6',
+        // max_tokens großzügig (64k), damit auch detaillierte Modernisierungs-Angebote
+        // mit vielen Positionen + Bullets nicht mid-output abgeschnitten werden.
+        max_tokens: 64000,
+        tools:[tool],
+        tool_choice:{ type:'tool', name:'generate_angebot' },
+        messages:[{ role:'user', content:[
+          { type:'text', text: prompt + (extraInstruction || '') },
+        ]}],
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      const e = new Error(err.error?.message || ('API-Fehler '+resp.status));
+      e.retryable = (resp.status === 429 || resp.status >= 500);  // Rate-Limit / Overload / Serverfehler
+      throw e;
+    }
+    const data = await resp.json();
+    const block = (data.content||[]).find(b => b.type === 'tool_use');
+    if (!block || !block.input) { const e = new Error('Kein strukturiertes Tool-Resultat von der KI'); e.retryable = true; throw e; }
     const hasPositionen = Array.isArray(block.input.positionen) && block.input.positionen.length > 0;
-    if (!hasPositionen) {
-      console.warn('[Angebot-Prompt] Anschreiben trunkiert + Positionen leer — Fehler.');
-      throw new Error('KI-Antwort kam unvollständig zurück (Positionen fehlen). Bitte erneut „Generieren" klicken oder den Prompt kürzer fassen.');
+    // Output mid-generation abgeschnitten → erneut versuchen (bzw. am Ende Hinweis „Prompt kürzen").
+    if (data.stop_reason === 'max_tokens' && !hasPositionen) {
+      const e = new Error('KI-Antwort abgeschnitten (max_tokens)'); e.retryable = true; e.truncated = true; throw e;
     }
-    console.warn('[Angebot-Prompt] Anschreiben enthielt Tool-Tags — abgeschnitten. Positionen sind vollständig.');
-    block.input.anschreiben = anschreiben.replace(/<\/anschreiben>[\s\S]*$/i, '').replace(/<parameter\s+name=[\s\S]*$/i, '').trim();
-    // Falls jetzt leer: freundlicher Default statt Müll
-    if (!block.input.anschreiben) {
-      block.input.anschreiben = 'Sehr geehrte Damen und Herren,\n\nvielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen das folgende Angebot.\n\nBei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+    const anschreiben = String(block.input.anschreiben || '');
+    // Rohe Tool-Tags im Anschreiben = geleaktes XML-Format.
+    if (/<\/anschreiben>|<parameter\s+name=/i.test(anschreiben)) {
+      if (!hasPositionen) {
+        // Positionen fehlen → nicht rettbar, erneut versuchen.
+        const e = new Error('Anschreiben trunkiert + Positionen leer'); e.retryable = true; throw e;
+      }
+      // Positionen sind vollständig → Anschreiben nur säubern (vor dem ersten Tag abschneiden).
+      console.warn('[Angebot-Prompt] Anschreiben enthielt Tool-Tags — abgeschnitten. Positionen sind vollständig.');
+      block.input.anschreiben = anschreiben.replace(/<\/anschreiben>[\s\S]*$/i, '').replace(/<parameter\s+name=[\s\S]*$/i, '').trim();
+      if (!block.input.anschreiben) {
+        block.input.anschreiben = 'Sehr geehrte Damen und Herren,\n\nvielen Dank für Ihre Anfrage. Gerne unterbreiten wir Ihnen das folgende Angebot.\n\nBei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+      }
+      toast('⚠ Anschreiben wurde von der KI abgeschnitten — im Editor bitte kurz prüfen','warn');
     }
-    toast('⚠ Anschreiben wurde von der KI abgeschnitten — im Editor bitte kurz prüfen','warn');
+    // Ohne Positionen ist das Angebot wertlos → erneut versuchen.
+    if (!hasPositionen) { const e = new Error('KI-Antwort ohne Positionen'); e.retryable = true; throw e; }
+    if (!block.input.anbieter) block.input.anbieter = companyShort;
+    if (!block.input.kone_angebot_datum) block.input.kone_angebot_datum = today;
+    return block.input;
+  };
+
+  // Auto-Retry: bis zu 3 Versuche. Ab Versuch 2 mit verschärfter Struktur-Anweisung.
+  const MAX_ATTEMPTS = 3;
+  const _retryNudge =
+    '\n\n────────\nWICHTIG (Ausgabeformat): Gib das Ergebnis AUSSCHLIESSLICH über die strukturierten '+
+    'Tool-Argumente zurück. Fülle insbesondere "positionen" als echtes Array von Positions-Objekten '+
+    '(mindestens eine Position). Schreibe NIEMALS XML-Tags wie </anschreiben> oder <parameter …> in ein '+
+    'Textfeld. Halte das Anschreiben bewusst kurz (2-4 Sätze) und stecke die Details in die Positionen.';
+  let lastErr = null;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      if (typeof onProgress === 'function' && attempt > 1) onProgress(attempt, MAX_ATTEMPTS);
+      return await _callOnce(attempt > 1 ? _retryNudge : '');
+    } catch(e) {
+      lastErr = e;
+      if (!e.retryable || attempt === MAX_ATTEMPTS) break;
+      console.warn('[Angebot-Prompt] Versuch '+attempt+'/'+MAX_ATTEMPTS+' fehlgeschlagen ('+(e.message||e)+') — neuer Versuch…');
+      await new Promise(r => setTimeout(r, 500 + attempt*400));
+    }
   }
-  if (!block.input.anbieter) block.input.anbieter = companyShort;
-  if (!block.input.kone_angebot_datum) block.input.kone_angebot_datum = today;
-  return block.input;
+  // Alle Versuche erschöpft — verständliche Endmeldung.
+  if (lastErr && lastErr.truncated) {
+    throw new Error('Die KI-Antwort war zu lang und wurde abgeschnitten. Bitte den Prompt kürzer fassen oder in zwei Angebote aufteilen.');
+  }
+  if (lastErr && !lastErr.retryable) throw lastErr;  // echter API-Fehler (z.B. falscher Key) unverändert weiterreichen
+  throw new Error('Die KI-Antwort kam auch nach '+MAX_ATTEMPTS+' Versuchen unvollständig zurück (Positionen fehlen). Bitte „Generieren" erneut klicken oder den Prompt kürzer/klarer fassen.');
 }
 
 // ─── v5.14: Prompt-Vorlagen ──────────────────────────────────────────
