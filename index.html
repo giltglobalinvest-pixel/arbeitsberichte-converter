@@ -2038,7 +2038,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <span class="anl-search-ico">🔍</span>
       <input type="text" class="anl-search-inp" id="galerie-search" placeholder="Suchen nach Fabrik-Nr., Adresse, Kunde…" oninput="_renderGalerieList()">
     </div>
-    <div style="font-size:11px;color:var(--txt3)">Bilder aus Datenaufnahmen, Aufträgen &amp; Leistungsverzeichnissen — pro Anlage gebündelt, ohne Duplikate.</div>
+    <div style="font-size:11px;color:var(--txt3)">Bilder aus Datenaufnahmen, Aufträgen, Leistungsverzeichnissen &amp; direkten Uploads — pro Anlage gebündelt, ohne Duplikate. Pro Anlage kannst du Fotos hochladen und einen Freigabe-Link zum Versenden erzeugen.</div>
   </div>
   <div class="firma-body" id="galerie-list" style="padding:20px"></div>
 </div>
@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.08';
+const APP_VERSION = 'v7.09';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4957,6 +4957,13 @@ function renderTmplSelector() {
    INIT
    ════════════════════════════════════════════════════════════ */
 async function init() {
+  // v7.09: Öffentlicher Galerie-Viewer bei #g/<token> — VOR jedem Login rendern.
+  const sh = String(location.hash||'').match(/^#g\/([^/?&#]+)/);
+  if (sh) {
+    try { await _galeriePublicView(decodeURIComponent(sh[1])); }
+    catch(e) { console.warn('[Galerie-Public]', e); }
+    return;  // kein Auto-Login, keine App
+  }
   const ok=await tryAutoLogin();
   if(ok) await showApp();
   // else: login screen already visible
@@ -9245,6 +9252,10 @@ function openAnlageDetail(idx) {
   html += '<button class="btn" onclick="openAnlDetailSettings()" title="Welche Felder werden hier angezeigt?">⚙ Felder</button>';
   // v7.05: Bilder dieser Anlage (aus DA, Aufträgen, LVs) anschauen
   html += '<button class="btn" onclick="_galerieOpenForAnlage(_anlagenViewSelected, this)" style="color:#3730A3;border-color:rgba(55,48,163,.4);background:#EEF2FF" title="Alle Fotos zu dieser Anlage aus Datenaufnahmen, Aufträgen und Leistungsverzeichnissen anzeigen">📷 Bilder anzeigen</button>';
+  // v7.09: Fotos direkt zu dieser Anlage hochladen + Freigabe-Link zum Versenden
+  if (APP_KEYS.airtableWriteKey && (isAdmin() || hasPermission('auftraege_edit') || hasPermission('datenaufnahmen_edit'))) {
+    html += '<button class="btn" onclick="_galerieOpenForAnlageUpload()" style="color:#065F46;border-color:rgba(16,185,129,.4);background:#ECFDF5" title="Fotos direkt zu dieser Anlage hochladen und einen Freigabe-Link erhalten, den du extern versenden kannst">⬆ Fotos hochladen &amp; Link</button>';
+  }
   // v6.14: Folge-Arbeiten / Anfrage als Freshdesk-Ticket pushen
   if (freshdeskIsConfigured(getCurrentFirmaSlug()) && !a.archived) {
     html += '<button class="btn" onclick="openAnlageFolgeTicketModal(_anlagenViewSelected)" style="color:#1E40AF;border-color:rgba(30,64,175,.45);background:#EFF6FF" title="Folge-Arbeiten / Anfrage zu dieser Anlage als Freshdesk-Ticket erstellen (Beschreibung, Fotos, Sprachnachricht, Video)">🎫 Folge-Arbeiten / Anfrage</button>';
@@ -21269,10 +21280,11 @@ async function _galerieLoadAll(firmaSlug, force) {
       } while (offset && out.length < 3000);
       return out;
     }
-    const [daRecs, aufRecs, lvRecs] = await Promise.all([
+    const [daRecs, aufRecs, lvRecs, galRecs] = await Promise.all([
       loadTable('Datenaufnahmen').catch(()=>[]),
       loadTable('Auftraege').catch(()=>[]),
       loadTable('App_Leistungsverzeichnisse').catch(()=>[]),
+      loadTable('Galerie').catch(()=>[]),  // v7.09: direkte Uploads (evtl. noch nicht vorhanden → [])
     ]);
     const groups = new Map();  // key → group
     const groupKey = (fab, anlageId) => _galerieNormFab(fab) || ('id:'+String(anlageId||'')) || null;
@@ -21324,6 +21336,14 @@ async function _galerieLoadAll(firmaSlug, force) {
       const g = ensureGroup(k, f.anlage_fabriknummer, f.anlage_adresse, f.kunde_name, f.anlage_id);
       addAttachments(g, f.bilder_pool, 'lv', 'LV-'+(f.lv_num||'?'), f.erstellt_am||'');
     }
+    // v7.09: Galerie (direkte Uploads) → bilder
+    for (const rec of galRecs) {
+      const f = rec.fields || {};
+      const k = groupKey(f.fabriknummer, f.anlage_id);
+      if (!k) continue;
+      const g = ensureGroup(k, f.fabriknummer, f.adresse, f.kunde, f.anlage_id);
+      addAttachments(g, f.bilder, 'upload', 'Upload', f.created_at||'');
+    }
     // Nur Gruppen mit Bildern, sortiert nach Bildanzahl desc
     const result = Array.from(groups.values()).filter(g => g.images.length > 0);
     result.forEach(g => { delete g._seen; g.images.sort((a,b)=>String(b.date).localeCompare(String(a.date))); });
@@ -21362,6 +21382,7 @@ function _renderGalerieList() {
     list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer.':'Noch keine Bilder in Datenaufnahmen, Aufträgen oder LVs erfasst.')+'</div>';
     return;
   }
+  const canUpload = APP_KEYS.airtableWriteKey && (isAdmin() || hasPermission('auftraege_edit') || hasPermission('datenaufnahmen_edit'));
   list.innerHTML = '<div style="display:grid;gap:10px">'+filtered.map((g,gi) => {
     const realIdx = groups.indexOf(g);
     const preview = g.images.slice(0,5).map(img =>
@@ -21370,7 +21391,10 @@ function _renderGalerieList() {
     return '<div onclick="_galerieOpenGroup('+realIdx+')" style="background:var(--surf);border:1px solid var(--bdr);border-radius:10px;padding:12px 16px;cursor:pointer;transition:all .15s" onmouseover="this.style.borderColor=\'rgba(33,82,169,.35)\';this.style.boxShadow=\'0 2px 8px rgba(0,0,0,.06)\'" onmouseout="this.style.borderColor=\'var(--bdr)\';this.style.boxShadow=\'none\'">'+
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px">'+
         '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(g.fabriknummer?'🛗 '+escapeHtml(g.fabriknummer)+' · ':'')+escapeHtml(g.adresse||'(ohne Adresse)')+'</div>'+
-        '<span style="font-size:11px;font-weight:700;background:#EEF2FF;color:#3730A3;padding:2px 10px;border-radius:99px">📷 '+g.images.length+' Bilder</span>'+
+        '<div style="display:flex;align-items:center;gap:6px">'+
+          '<span style="font-size:11px;font-weight:700;background:#EEF2FF;color:#3730A3;padding:2px 10px;border-radius:99px">📷 '+g.images.length+' Bilder</span>'+
+          (canUpload?'<button onclick="event.stopPropagation();_galerieUploadFromGroup('+realIdx+')" class="btn" style="font-size:11px;padding:2px 9px;color:#065F46;border-color:rgba(16,185,129,.4);background:#ECFDF5" title="Fotos hochladen &amp; Freigabe-Link für diese Anlage">⬆ Hochladen &amp; Link</button>':'')+
+        '</div>'+
       '</div>'+
       (g.kunde ? '<div style="font-size:11px;color:var(--txt2);margin-bottom:8px">👥 '+escapeHtml(g.kunde)+'</div>' : '')+
       '<div style="display:flex;gap:6px;overflow:hidden">'+preview+(g.images.length>5?'<div style="width:56px;height:56px;border-radius:6px;background:var(--bg);border:1px dashed var(--bdr);display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--txt3);flex-shrink:0">+'+(g.images.length-5)+'</div>':'')+'</div>'+
@@ -21438,8 +21462,9 @@ function _galerieOpenModal(images, titel, kunde) {
 /* Lightbox: einzelnes Bild groß, mit Vor/Zurück */
 window._galerieLightbox = function(i) {
   const modal = document.getElementById('galerie-modal');
-  if (!modal || !modal._images) return;
-  const images = modal._images;
+  // v7.09: im öffentlichen Viewer gibt es kein galerie-modal → Fallback auf globale Liste
+  const images = (modal && modal._images) || window._galPublicImages;
+  if (!images || !images.length) return;
   if (i < 0) i = images.length-1; if (i >= images.length) i = 0;
   const img = images[i];
   document.getElementById('galerie-lightbox')?.remove();
@@ -21458,6 +21483,349 @@ window._galerieLightbox = function(i) {
   lb.onclick = (e) => { if (e.target === lb) lb.remove(); };
   document.body.appendChild(lb);
 };
+
+/* ══════════════════════════════════════════════════════════════
+   v7.09: DIREKT-UPLOAD zu einer Anlage + öffentlicher Freigabe-Link
+   ────────────────────────────────────────────────────────────────
+   - Neue Airtable-Tabelle "Galerie": pro Anlage 1 Record mit Bildern +
+     zufälligem share_token.
+   - Upload läuft über atBlobUpload (append) — Bilder werden vorher auf
+     max. 2200px verkleinert.
+   - Öffentlicher Viewer: <App-URL>#g/<token> wird beim Boot VOR dem Login
+     erkannt (init()) und rendert eine login-freie Bild-Ansicht. Er nutzt
+     den ohnehin im Client vorhandenen Read-Key und frischt die Airtable-
+     Attachment-URLs bei jedem Öffnen (sie laufen sonst ab).
+   - Der Link zeigt ALLE Bilder der Anlage (Uploads + DA + Aufträge + LVs).
+   ════════════════════════════════════════════════════════════ */
+let _galUp = { anlage:null, rec:null, files:[] };
+let _galerieTableEnsured = false;
+
+const _GALERIE_FIELDS = [
+  { name:'firma',        type:'singleLineText' },
+  { name:'fabriknummer', type:'singleLineText' },
+  { name:'anlage_id',    type:'singleLineText' },
+  { name:'adresse',      type:'singleLineText' },
+  { name:'kunde',        type:'singleLineText' },
+  { name:'titel',        type:'singleLineText' },
+  { name:'bilder',       type:'multipleAttachments' },
+  { name:'share_token',  type:'singleLineText' },
+  { name:'created_by',   type:'singleLineText' },
+  { name:'created_at',   type:'singleLineText' },
+];
+async function _ensureGalerieTable() {
+  if (_galerieTableEnsured) return;
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Schreib-Zugriff zum Anlegen der Galerie-Tabelle');
+  await ensureTable('Galerie', _GALERIE_FIELDS);
+  for (const fld of _GALERIE_FIELDS) { try { await ensureField('Galerie', fld.name, fld.type); } catch(_){} }
+  _galerieTableEnsured = true;
+}
+
+function _galerieRandToken() {
+  try {
+    const a = new Uint8Array(16); crypto.getRandomValues(a);
+    return Array.from(a, b => b.toString(16).padStart(2,'0')).join('');
+  } catch(_) { return 'g'+Date.now().toString(36)+Math.random().toString(36).slice(2,12); }
+}
+function _galerieShareLink(token) {
+  return location.origin + location.pathname + '#g/' + encodeURIComponent(token);
+}
+
+/* Galerie-Records einer Firma laden (JS-seitiges Matching, da fabriknummer
+   normalisiert verglichen wird). */
+async function _galerieFindRecord(firmaSlug, fabriknummer, anlageId) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey || APP_CONFIG.AIRTABLE_READ_KEY;
+  let out = [], offset = '';
+  do {
+    let url = 'https://api.airtable.com/v0/'+baseId+'/Galerie?pageSize=100&filterByFormula='+encodeURIComponent('{firma}="'+firmaSlug+'"');
+    if (offset) url += '&offset='+encodeURIComponent(offset);
+    let r; try { r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key } }); } catch(_){ break; }
+    if (!r.ok) break;  // Tabelle evtl. noch nicht vorhanden
+    const d = await r.json(); out = out.concat(d.records||[]); offset = d.offset || '';
+  } while (offset && out.length < 2000);
+  const fabNorm = _galerieNormFab(fabriknummer); const idStr = String(anlageId||'');
+  return out.find(r => {
+    const f = r.fields||{};
+    return (fabNorm && _galerieNormFab(f.fabriknummer)===fabNorm) || (idStr && String(f.anlage_id||'')===idStr);
+  }) || null;
+}
+
+async function _galerieRecordByToken(token, key, baseId) {
+  key = key || APP_CONFIG.AIRTABLE_READ_KEY; baseId = baseId || APP_CONFIG.APP_BASE_ID;
+  const safe = String(token||'').replace(/["'\\]/g,'');
+  if (!safe) return null;
+  const url = 'https://api.airtable.com/v0/'+baseId+'/Galerie?maxRecords=1&filterByFormula='+encodeURIComponent('{share_token}="'+safe+'"');
+  let r; try { r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key } }); } catch(_){ return null; }
+  if (!r.ok) return null;
+  const d = await r.json();
+  return (d.records||[])[0] || null;
+}
+
+/* Galerie-Record für eine Anlage finden oder anlegen (mit share_token). */
+async function _galerieEnsureRecord(anlage) {
+  const firmaSlug = getCurrentFirmaSlug();
+  await _ensureGalerieTable();
+  let rec = await _galerieFindRecord(firmaSlug, anlage.fabriknummer, anlage.id);
+  if (rec) {
+    if (!rec.fields?.share_token) {
+      const token = _galerieRandToken();
+      await atUpdate('Galerie', rec.id, { share_token: token });
+      rec.fields = Object.assign(rec.fields||{}, { share_token: token });
+    }
+    return rec;
+  }
+  const token = _galerieRandToken();
+  const created = await atWrite('Galerie', {
+    firma: firmaSlug,
+    fabriknummer: String(anlage.fabriknummer||''),
+    anlage_id: String(anlage.id||''),
+    adresse: String(anlage.adresse||''),
+    kunde: String(anlage.kunde||''),
+    titel: String(anlage.titel||''),
+    share_token: token,
+    created_by: APP_KEYS.user?.name || '',
+    created_at: new Date().toISOString(),
+  });
+  return created;
+}
+
+/* Bild vor Upload auf max. 2200px verkleinern (JPEG) — spart Upload-Zeit + Speicher. */
+function _galerieDownscaleFile(file, maxDim = 2200, quality = 0.85) {
+  return new Promise((resolve) => {
+    if (!/^image\//.test(file.type||'')) return resolve(file);
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        if (scale >= 1 && file.size < 1.5*1024*1024) { URL.revokeObjectURL(url); return resolve(file); }
+        const w = Math.max(1, Math.round(img.width*scale)), h = Math.max(1, Math.round(img.height*scale));
+        const c = document.createElement('canvas'); c.width=w; c.height=h;
+        c.getContext('2d').drawImage(img, 0, 0, w, h);
+        c.toBlob(b => { URL.revokeObjectURL(url); resolve(b || file); }, 'image/jpeg', quality);
+      } catch(_) { URL.revokeObjectURL(url); resolve(file); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
+/* ── Upload-/Teilen-Modal ── */
+function _galerieOpenForAnlageUpload() {
+  const a = _anlagenViewSelected;
+  if (!a) return toast('Keine Anlage ausgewählt','err');
+  _galerieOpenUpload({ fabriknummer:a.fabriknummer, id:a.id, adresse:a.anzeigeAdresse||a.adresse||'', kunde:(a.kunde||a.kunde_name||a.betreiber||'') });
+}
+function _galerieUploadFromGroup(idx) {
+  const g = (_galerieCache.groups||[])[idx];
+  if (!g) return;
+  _galerieOpenUpload({ fabriknummer:g.fabriknummer, id:g.anlageId, adresse:g.adresse, kunde:g.kunde });
+}
+
+function _galerieOpenUpload(anlage) {
+  if (!anlage) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Schreib-Zugriff','err');
+  const A = {
+    fabriknummer: anlage.fabriknummer||'',
+    id: anlage.id||anlage.anlageId||'',
+    adresse: anlage.adresse||anlage.anzeigeAdresse||'',
+    kunde: anlage.kunde||anlage.kunde_name||'',
+    titel: anlage.titel||'',
+  };
+  _galUp = { anlage:A, rec:null, files:[] };
+  document.getElementById('gal-upload-modal')?.remove();
+  const sub = (A.fabriknummer?'🛗 '+escapeHtml(A.fabriknummer)+' · ':'')+escapeHtml(A.adresse||'(ohne Adresse)');
+  const m = document.createElement('div');
+  m.id='gal-upload-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11200;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:560px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#3730A3;color:#fff;display:flex;justify-content:space-between;align-items:center;gap:10px">'+
+        '<div><div style="font-size:14px;font-weight:600">📷 Fotos hochladen &amp; teilen</div><div style="font-size:11px;opacity:.85">'+sub+'</div></div>'+
+        '<button onclick="document.getElementById(\'gal-upload-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto">'+
+        '<div id="gal-up-drop" style="border:2px dashed var(--bdr);border-radius:10px;padding:22px;text-align:center;cursor:pointer;background:var(--bg)">'+
+          '<div style="font-size:30px">⬆</div>'+
+          '<div style="font-size:13px;font-weight:600;color:var(--txt2);margin-top:4px">Bilder hierher ziehen oder tippen</div>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:2px">Mehrere gleichzeitig möglich · JPG/PNG/HEIC</div>'+
+          '<input type="file" id="gal-up-inp" accept="image/*" multiple style="display:none" onchange="_galUpPick(event)">'+
+        '</div>'+
+        '<div id="gal-up-files" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px"></div>'+
+        '<button class="btn prim" id="gal-up-dobtn" disabled onclick="_galUpDoUpload(this)" style="width:100%;margin-top:12px">⬆ Hochladen</button>'+
+        '<div style="border-top:1px solid var(--bdr);margin:16px 0 12px"></div>'+
+        '<div id="gal-up-share"><div style="font-size:12px;color:var(--txt3)">Lade den Freigabe-Link…</div></div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick=(e)=>{ if(e.target===m) m.remove(); };
+  const drop=document.getElementById('gal-up-drop'), inp=document.getElementById('gal-up-inp');
+  drop.addEventListener('click',()=>inp.click());
+  drop.addEventListener('dragover',e=>{e.preventDefault();drop.style.borderColor='#3730A3';});
+  drop.addEventListener('dragleave',()=>{drop.style.borderColor='';});
+  drop.addEventListener('drop',e=>{e.preventDefault();drop.style.borderColor='';_galUpPick(Array.from(e.dataTransfer.files||[]));});
+  // Bestehenden Link laden (falls die Anlage schon eine Galerie hat)
+  (async()=>{
+    try {
+      const rec = await _galerieFindRecord(getCurrentFirmaSlug(), A.fabriknummer, A.id);
+      const box = document.getElementById('gal-up-share');
+      if (!box) return;
+      if (rec && rec.fields?.share_token) { _galUp.rec = rec; box.innerHTML = _galerieShareBoxHtml(rec); }
+      else box.innerHTML = '<div style="font-size:12px;color:var(--txt3)">🔗 Der Freigabe-Link wird automatisch erzeugt, sobald du die ersten Bilder hochlädst.</div>';
+    } catch(_){}
+  })();
+}
+
+function _galUpPick(e) {
+  const files = Array.from((e && e.target) ? e.target.files : (e||[]));
+  for (const f of files) { if (/^image\//.test(f.type||'')) _galUp.files.push(f); }
+  if (e && e.target) e.target.value='';
+  _galUpRenderFiles();
+}
+function _galUpRemove(i) { _galUp.files.splice(i,1); _galUpRenderFiles(); }
+function _galUpRenderFiles() {
+  const wrap = document.getElementById('gal-up-files');
+  const btn  = document.getElementById('gal-up-dobtn');
+  if (!wrap) return;
+  const files = _galUp.files;
+  wrap.innerHTML = files.map((f,i)=>{
+    const u = URL.createObjectURL(f);
+    return '<div style="position:relative;width:70px;height:70px;border-radius:8px;overflow:hidden;border:1px solid var(--bdr)">'+
+      '<img src="'+u+'" style="width:100%;height:100%;object-fit:cover">'+
+      '<button onclick="_galUpRemove('+i+')" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);border:none;color:#fff;width:20px;height:20px;border-radius:50%;font-size:13px;cursor:pointer;line-height:1;padding:0">×</button>'+
+    '</div>';
+  }).join('');
+  if (btn) {
+    btn.disabled = !files.length;
+    btn.textContent = files.length ? ('⬆ '+files.length+' Bild'+(files.length===1?'':'er')+' hochladen') : '⬆ Hochladen';
+  }
+}
+async function _galUpDoUpload(btn) {
+  const files = _galUp.files.slice();
+  if (!files.length) return toast('Bitte zuerst Bilder auswählen','');
+  if (btn) btn.disabled = true;
+  const shareBox = document.getElementById('gal-up-share');
+  try {
+    if (btn) btn.textContent='⏳ Bereite vor…';
+    const rec = await _galerieEnsureRecord(_galUp.anlage);
+    _galUp.rec = rec;
+    let done=0;
+    for (const file of files) {
+      if (btn) btn.textContent='⬆ Lade '+(done+1)+'/'+files.length+'…';
+      try {
+        const blob = await _galerieDownscaleFile(file);
+        const fname = (file.name||('foto-'+Date.now()+'.jpg')).replace(/[^\w.\-]/g,'_');
+        await atBlobUpload(rec.id, 'bilder', blob, fname, blob.type||file.type||'image/jpeg');
+      } catch(e){ console.warn('[Galerie-Upload]', e.message); }
+      done++;
+    }
+    _galUp.files = []; _galUpRenderFiles();
+    _galerieCache = { firma:null, groups:null, loadedAt:0, loading:false };  // Galerie-Ansicht neu laden
+    if (shareBox) shareBox.innerHTML = _galerieShareBoxHtml(rec);
+    toast('✅ '+done+' Bild'+(done===1?'':'er')+' hochgeladen','ok');
+  } catch(e) {
+    toast('❌ Upload fehlgeschlagen: '+(e.message||e).slice(0,180),'err');
+    if (btn) btn.disabled = false;
+  }
+}
+
+function _galerieShareBoxHtml(rec) {
+  const token = rec?.fields?.share_token || '';
+  if (!token) return '<div style="font-size:12px;color:var(--txt3)">Noch kein Freigabe-Link. Lade Bilder hoch — der Link wird automatisch erzeugt.</div>';
+  const link = _galerieShareLink(token);
+  const linkEsc = escapeHtml(link);
+  const jsLink = link.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return ''+
+    '<div style="font-size:12px;font-weight:600;color:var(--txt2);margin-bottom:6px">🔗 Freigabe-Link (öffnet die Bilder ohne Login)</div>'+
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+      '<input type="text" readonly value="'+linkEsc+'" onclick="this.select()" style="flex:1;min-width:180px;font-size:12px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;background:var(--bg);font-family:ui-monospace,monospace">'+
+      '<button class="btn" onclick="_galerieCopyLink(\''+jsLink+'\')" style="font-size:12px">📋 Kopieren</button>'+
+      '<button class="btn" onclick="_galerieShareNative(\''+jsLink+'\')" style="font-size:12px">🔗 Teilen</button>'+
+      '<a class="btn" href="'+linkEsc+'" target="_blank" rel="noopener" style="font-size:12px;text-decoration:none">↗ Öffnen</a>'+
+      '<button class="btn" onclick="_galerieRegenToken(\''+rec.id+'\')" style="font-size:12px;color:#7F1D1D;border-color:rgba(220,38,38,.35)" title="Neuen Link erzeugen — der alte wird ungültig">↻ Neu</button>'+
+    '</div>'+
+    '<div style="font-size:10px;color:var(--txt3);margin-top:6px">Jeder mit dem Link sieht die Bilder. „↻ Neu" macht den alten Link ungültig.</div>';
+}
+function _galerieCopyLink(link) {
+  const ok = ()=>toast('📋 Link kopiert','ok');
+  if (navigator.clipboard?.writeText) { navigator.clipboard.writeText(link).then(ok).catch(()=>_galerieCopyFallback(link)); }
+  else _galerieCopyFallback(link);
+}
+function _galerieCopyFallback(link) {
+  try { const t=document.createElement('textarea'); t.value=link; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); toast('📋 Link kopiert','ok'); }
+  catch(_){ toast('Kopieren nicht möglich — Link manuell markieren','err'); }
+}
+async function _galerieShareNative(link) {
+  if (navigator.share) { try { await navigator.share({ title:'Aufzug-Fotos', url:link }); return; } catch(_){ return; } }
+  _galerieCopyLink(link);
+}
+async function _galerieRegenToken(recId) {
+  if (!confirm('Neuen Freigabe-Link erzeugen?\n\nDer bisherige Link wird damit ungültig.')) return;
+  try {
+    const token = _galerieRandToken();
+    await atUpdate('Galerie', recId, { share_token: token });
+    if (_galUp.rec && _galUp.rec.id === recId) _galUp.rec.fields = Object.assign(_galUp.rec.fields||{}, { share_token: token });
+    const box = document.getElementById('gal-up-share');
+    if (box && _galUp.rec) box.innerHTML = _galerieShareBoxHtml(_galUp.rec);
+    toast('🔗 Neuer Link erzeugt — alter ist ungültig','ok');
+  } catch(e) { toast('❌ '+(e.message||e).slice(0,150),'err'); }
+}
+
+/* ── Öffentlicher Viewer (ohne Login) ── */
+function _galeriePublicMsg(icon,title,text) {
+  return '<div style="max-width:440px;margin:80px auto;background:#1e293b;color:#e2e8f0;border-radius:14px;padding:32px 24px;text-align:center;font-family:system-ui,-apple-system,sans-serif">'+
+    '<div style="font-size:40px;margin-bottom:10px">'+icon+'</div>'+
+    '<div style="font-size:17px;font-weight:700;margin-bottom:8px">'+escapeHtml(title)+'</div>'+
+    '<div style="font-size:13px;color:#94a3b8;line-height:1.5">'+escapeHtml(text)+'</div>'+
+  '</div>';
+}
+function _galeriePublicGridHtml(company, titel, kunde, images) {
+  if (!images.length) return _galeriePublicMsg('📷','Noch keine Bilder','Zu dieser Anlage wurden noch keine Fotos hochgeladen.');
+  const grid = images.map((img,i) =>
+    '<div onclick="_galerieLightbox('+i+')" style="aspect-ratio:1;border-radius:10px;overflow:hidden;cursor:zoom-in;background:#1e293b">'+
+      '<img src="'+escapeHtml(img.thumb||img.url)+'" loading="lazy" style="width:100%;height:100%;object-fit:cover">'+
+    '</div>'
+  ).join('');
+  return ''+
+    '<div style="max-width:1000px;margin:0 auto;padding:22px 16px 60px;font-family:system-ui,-apple-system,sans-serif">'+
+      '<div style="text-align:center;color:#f1f5f9;margin-bottom:20px">'+
+        '<div style="font-size:12px;color:#94a3b8;letter-spacing:.6px;text-transform:uppercase">'+escapeHtml(company)+'</div>'+
+        '<div style="font-size:20px;font-weight:700;margin-top:5px">'+escapeHtml(titel)+'</div>'+
+        (kunde?'<div style="font-size:13px;color:#94a3b8;margin-top:3px">'+escapeHtml(kunde)+'</div>':'')+
+        '<div style="font-size:12px;color:#64748b;margin-top:8px">'+images.length+' Foto'+(images.length===1?'':'s')+' · zum Vergrößern tippen</div>'+
+      '</div>'+
+      '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px">'+grid+'</div>'+
+    '</div>';
+}
+async function _galeriePublicView(token) {
+  const loginEl = document.getElementById('login-screen'); if (loginEl) loginEl.style.display='none';
+  let host = document.getElementById('galerie-public-view');
+  if (!host) { host = document.createElement('div'); host.id='galerie-public-view'; document.body.appendChild(host); }
+  host.style.cssText='position:fixed;inset:0;z-index:9000;background:#0f172a;overflow:auto;-webkit-overflow-scrolling:touch';
+  host.innerHTML='<div style="color:#cbd5e1;text-align:center;padding:70px 20px;font-family:system-ui,-apple-system,sans-serif"><div style="width:40px;height:40px;border:3px solid rgba(255,255,255,.2);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite;margin:0 auto 16px"></div>Lade Bilder…</div>';
+  let rec=null;
+  try { rec = await _galerieRecordByToken(token); } catch(_){}
+  if (!rec) { host.innerHTML = _galeriePublicMsg('🔒','Link nicht gefunden','Dieser Freigabe-Link ist ungültig oder wurde zurückgezogen.'); return; }
+  const f = rec.fields||{};
+  const firma = f.firma||'';
+  let BR = {};
+  try { if (typeof _daFirmaBranding==='function') BR = _daFirmaBranding(firma) || {}; } catch(_){}
+  const company = BR.company || 'Aufzugservice';
+  let images=[];
+  try {
+    const groups = await _galerieLoadAll(firma, true);
+    const fabNorm=_galerieNormFab(f.fabriknummer), idStr=String(f.anlage_id||'');
+    const g = groups.find(x => (fabNorm && _galerieNormFab(x.fabriknummer)===fabNorm) || (idStr && String(x.anlageId)===idStr));
+    if (g) images = g.images.slice();
+  } catch(_){}
+  if (!images.length && Array.isArray(f.bilder)) {
+    for (const a of f.bilder) { if (a&&a.url) images.push({ id:a.id||a.filename, url:a.url, thumb:(a.thumbnails?.large?.url||a.url), filename:a.filename||'', sourceLabel:'', date:'' }); }
+  }
+  window._galPublicImages = images;
+  const titel = (f.fabriknummer?'🛗 '+f.fabriknummer+' · ':'')+(f.adresse||f.titel||'Bilder');
+  try { document.title = company+' · Fotos '+(f.fabriknummer||''); } catch(_){}
+  host.innerHTML = _galeriePublicGridHtml(company, titel, f.kunde, images);
+}
 
 async function renderDatenaufnahmenView(opts) {
   opts = opts || {};
