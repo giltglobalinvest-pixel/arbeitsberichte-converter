@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.10';
+const APP_VERSION = 'v7.11';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -24623,6 +24623,8 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'seriennummer',            type:'singleLineText' },
   { name:'anlage_id',               type:'singleLineText' },
   { name:'anlage_adresse',          type:'multilineText'  },
+  // v7.11: Gesamtangebot über mehrere Aufzüge — [{fabriknummer, adresse, anlage_id}] (weitere neben der Hauptanlage)
+  { name:'aufzuege_json',           type:'multilineText'  },
   // Endkunde
   { name:'kunde_name',              type:'singleLineText' },
   { name:'kunde_nummer',            type:'singleLineText' },
@@ -25486,6 +25488,8 @@ function _renderAngeboteList() {
               '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+'</div>'+
             '</div>'+
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
+              // v7.11: Gesamtangebot-Badge (mehrere Aufzüge)
+              ((()=>{ try { const n = JSON.parse(f.aufzuege_json||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length; return n>0 ? '<span title="Gesamtangebot über mehrere Aufzüge (kein ERP-Vorgang)" style="background:#3730A3;color:#fff;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700">🛗 '+(n+1)+' Aufzüge</span>' : ''; } catch(_){ return ''; } })())+
               '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'+
               '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'+
               (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')+
@@ -27823,6 +27827,8 @@ async function openAngebotEditor(ctx) {
         equipmentnummer:    f.equipmentnummer || '',
         seriennummer:       f.seriennummer || '',
         anlage_adresse:     f.anlage_adresse || '',
+        // v7.11: weitere Aufzüge (Gesamtangebot) rekonstruieren
+        aufzuege:           (() => { try { return JSON.parse(f.aufzuege_json||'[]'); } catch(_){ return []; }})(),
         // v6.49: Gespeicherte Anhang-Vorlagen rekonstruieren
         anhang_vorlage_ids: (() => { try { return JSON.parse(f.anhang_vorlage_ids||'[]'); } catch(_){ return []; }})(),
       },
@@ -27929,6 +27935,13 @@ async function openAngebotEditor(ctx) {
     _daNum:   ctx.editMode ? +((_angeboteCache.items||[]).find(r=>r.id===ctx.recId)?.fields?.datenaufnahme_da_num || 0) : 0,
     // v6.49: Anhang-Vorlagen — Multi-Select pro Angebot, IDs aus App_Angebot_Anhang_Vorlagen
     anhang_vorlage_ids: Array.isArray(ctx.extracted?.anhang_vorlage_ids) ? ctx.extracted.anhang_vorlage_ids.slice() : [],
+    // v7.11: weitere Aufzüge (Gesamtangebot) + Such-State für den ERP-Picker
+    aufzuege: Array.isArray(ctx.extracted?.aufzuege) ? ctx.extracted.aufzuege.map(a => ({
+      fabriknummer: String(a.fabriknummer||''),
+      adresse:      String(a.adresse||''),
+      anlage_id:    String(a.anlage_id||''),
+    })) : [],
+    _aufzugSearch: '',
   };
   const m = document.createElement('div');
   m.id = 'ang-editor';
@@ -28185,6 +28198,8 @@ function _angEditorRender() {
   body.innerHTML =
     anlageBlock+
     kontaktBlock+
+    // v7.11: Weitere Aufzüge (Gesamtangebot) — nur sichtbar wenn Hauptanlage gewählt
+    (E.anlage_id ? _angRenderAufzuegeSection(E) : '')+
     // Nur Bearbeiter ist hier editierbar — alles andere kommt aus der Anlage
     '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Bearbeiter (VP) *</label>'+
@@ -29503,6 +29518,87 @@ function _angEditorSet(field, value) {
   if (!m || !m._state) return;
   m._state[field] = value;
 }
+
+/* ── v7.11: Gesamtangebot über mehrere Aufzüge ──────────────────────────
+   Listet weitere Aufzüge (neben der Hauptanlage) für EIN kombiniertes PDF.
+   Preise laufen über die vorhandene Mechanik (Gesamt-Pauschale ODER eine
+   Position pro Aufzug). Sobald ≥1 Aufzug hier steht → kein ERP-Push. */
+function _angRenderAufzuegeSection(E) {
+  const list = Array.isArray(E.aufzuege) ? E.aufzuege : [];
+  const q = String(E._aufzugSearch||'').toLowerCase().trim();
+  let pickerHtml = '';
+  if (q.length >= 1) {
+    const matches = (_anlagenCache.items||[]).filter(a => {
+      const hay = [a.fabriknummer, a.anzeigeAdresse, a.adresse].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(q);
+    }).slice(0, 8);
+    pickerHtml = '<div style="border:1px solid var(--bdr);border-radius:6px;margin-top:6px;max-height:200px;overflow:auto;background:#fff">'+
+      (matches.length ? matches.map(a =>
+        '<div onclick="_angAufzugAddFromErp(\''+escapeHtml(String(a.id))+'\')" style="padding:8px 10px;border-bottom:1px solid var(--bg);cursor:pointer;font-size:12px" onmouseover="this.style.background=\'#EEF2FF\'" onmouseout="this.style.background=\'\'">'+
+          '<strong>'+escapeHtml(a.fabriknummer||'(ohne Fabrik-Nr.)')+'</strong> · '+escapeHtml(a.anzeigeAdresse||a.adresse||'')+
+        '</div>'
+      ).join('') : '<div style="padding:8px 10px;font-size:12px;color:var(--txt3)">Keine Anlage gefunden</div>')+
+    '</div>';
+  }
+  const rows = list.map((a,i) =>
+    '<div style="display:grid;grid-template-columns:130px 1fr 28px;gap:6px;align-items:center;margin-bottom:6px">'+
+      '<input value="'+escapeHtml(a.fabriknummer||'')+'" placeholder="Fabrik-Nr." oninput="_angAufzugSet('+i+',\'fabriknummer\',this.value)" style="padding:6px 8px;border:1px solid var(--bdr);border-radius:5px;font-size:12px">'+
+      '<input value="'+escapeHtml(a.adresse||'')+'" placeholder="Standort / Adresse" oninput="_angAufzugSet('+i+',\'adresse\',this.value)" style="padding:6px 8px;border:1px solid var(--bdr);border-radius:5px;font-size:12px">'+
+      '<button onclick="_angAufzugRemove('+i+')" title="Aufzug entfernen" style="background:none;border:1px solid var(--bdr);color:var(--err);border-radius:5px;cursor:pointer;padding:6px 0;font-size:13px">×</button>'+
+    '</div>'
+  ).join('');
+  return ''+
+    '<div style="border:1px solid #C7D2FE;background:#F5F7FF;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
+        '<h3 style="margin:0;font-size:14px;color:#3730A3">🛗 Weitere Aufzüge (Gesamtangebot)</h3>'+
+        (list.length ? '<span style="font-size:11px;font-weight:700;background:#3730A3;color:#fff;padding:2px 9px;border-radius:99px">'+(list.length+1)+' Aufzüge gesamt</span>' : '')+
+      '</div>'+
+      '<div style="font-size:11px;color:#4338CA;margin-bottom:8px;line-height:1.55">Die oben gewählte Anlage ist <strong>Aufzug 1</strong>. Hier weitere Aufzüge <strong>desselben Kunden</strong> für ein kombiniertes Angebot ergänzen.<br>'+
+        '💶 <strong>Preis:</strong> Gesamt-Pauschale → oben „Preisdarstellung: Gesamtpreis" + Pauschalpreis. · Preis pro Aufzug → je Aufzug <strong>eine Position</strong> anlegen.<br>'+
+        '⚠ Sobald hier Aufzüge stehen, wird <strong>kein ERP-Vorgang</strong> angelegt (nicht abbildbar) — Versand per <strong>Freshdesk</strong>.</div>'+
+      (list.length ? rows : '<div style="font-size:12px;color:var(--txt3);padding:4px 0 8px">Noch keine weiteren Aufzüge — nur die Hauptanlage.</div>')+
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">'+
+        '<button type="button" class="btn" style="font-size:11px;padding:5px 10px" onclick="_angAufzugAddManual()">➕ Aufzug (manuell)</button>'+
+        '<input id="ang-aufzug-search" value="'+escapeHtml(E._aufzugSearch||'')+'" oninput="_angAufzugSearchInput(this.value)" placeholder="🔎 Aufzug aus ERP suchen (Fabrik-Nr. / Adresse)" style="flex:1;min-width:220px;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px">'+
+      '</div>'+
+      pickerHtml+
+    '</div>';
+}
+function _angAufzugAddManual() {
+  const m = document.getElementById('ang-editor'); if (!m||!m._state) return;
+  m._state.aufzuege = m._state.aufzuege || [];
+  m._state.aufzuege.push({ fabriknummer:'', adresse:'', anlage_id:'' });
+  _angEditorRender();
+}
+function _angAufzugAddFromErp(anlageId) {
+  const m = document.getElementById('ang-editor'); if (!m||!m._state) return;
+  const a = (_anlagenCache.items||[]).find(x => String(x.id) === String(anlageId));
+  if (!a) return;
+  m._state.aufzuege = m._state.aufzuege || [];
+  // Doppelte vermeiden
+  if (m._state.aufzuege.some(x => String(x.anlage_id||'') === String(a.id||'')) || String(m._state.anlage_id||'') === String(a.id||'')) {
+    toast('Dieser Aufzug ist bereits im Angebot','');
+    m._state._aufzugSearch = ''; _angEditorRender(); return;
+  }
+  m._state.aufzuege.push({ fabriknummer:String(a.fabriknummer||''), adresse:String(a.anzeigeAdresse||a.adresse||''), anlage_id:String(a.id||'') });
+  m._state._aufzugSearch = '';
+  _angEditorRender();
+}
+function _angAufzugRemove(i) {
+  const m = document.getElementById('ang-editor'); if (!m||!m._state) return;
+  (m._state.aufzuege||[]).splice(i,1);
+  _angEditorRender();
+}
+function _angAufzugSet(i, key, val) {
+  const m = document.getElementById('ang-editor'); if (!m||!m._state) return;
+  const a = (m._state.aufzuege||[])[i]; if (!a) return;
+  a[key] = val;  // kein Re-Render → Fokus im Feld bleibt erhalten
+}
+function _angAufzugSearchInput(val) {
+  const m = document.getElementById('ang-editor'); if (!m||!m._state) return;
+  m._state._aufzugSearch = val;
+  _angEditorRender();
+}
 function _angSetPos(i, field, value) {
   const m = document.getElementById('ang-editor');
   if (!m || !m._state || !m._state.positionen[i]) return;
@@ -29568,6 +29664,11 @@ async function _angEditorSave() {
     // Summen finalisieren — ausgeblendete (hidden) Positionen ignorieren
     // v5.50: Im Aufwand-Modus sind alle Summen 0 (keine Endpreis-Schätzung)
     const isAufwand = E.abrechnung === 'aufwand';
+    // v7.11: weitere Aufzüge (Gesamtangebot) — leere Zeilen wegfiltern
+    const angAufzuege = (Array.isArray(E.aufzuege) ? E.aufzuege : [])
+      .filter(a => String(a.fabriknummer||'').trim() || String(a.adresse||'').trim())
+      .map(a => ({ fabriknummer:String(a.fabriknummer||'').trim(), adresse:String(a.adresse||'').trim(), anlage_id:String(a.anlage_id||'') }));
+    const istGesamtangebot = angAufzuege.length > 0;
     let sumKone = 0, sumVp = 0;
     if (!isAufwand) {
       for (const p of E.positionen) {
@@ -29594,6 +29695,7 @@ async function _angEditorSave() {
       seriennummer: E.seriennummer || '',
       anlage_id: E.anlage_id || '',
       anlage_adresse: E.anlage_adresse || '',
+      aufzuege_json: JSON.stringify(angAufzuege),  // v7.11: Gesamtangebot über mehrere Aufzüge
       kunde_name: E.kunde_name || '',
       kunde_nummer: E.kunde_nummer || '',
       kunde_adresse: E.kunde_adresse || '',
@@ -29709,7 +29811,11 @@ async function _angEditorSave() {
     // Fehler hier blockieren NICHT die App-Angebot-Speicherung.
     let anfrageInfo = null, anfrageErr = null;
     // v5.50: Bei Aufwand-Angeboten KEINE ERP-Anfrage anlegen (ERP versteht nur Pauschal-Schema)
-    if (!E.editMode && !isAufwand) {
+    // v7.11: Bei Gesamtangebot über mehrere Aufzüge KEINE ERP-Anfrage — im ERP nicht abbildbar (1 Anfrage = 1 Anlage)
+    if (istGesamtangebot) {
+      toast('🛗 Gesamtangebot über '+(angAufzuege.length+1)+' Aufzüge — kein ERP-Vorgang. Versand per Freshdesk aus dem Angebot-Detail.','');
+    }
+    if (!E.editMode && !isAufwand && !istGesamtangebot) {
       if (btn) btn.textContent = '⏳ ERP-Anfrage anlegen…';
       try {
         const recForAnfrage = { id: recId, fields };
@@ -29870,6 +29976,37 @@ async function _buildAngebotPdf(rec) {
     y += Math.max(5, lines.length*4.5);
   });
   y += 4;
+  // v7.11: Gesamtangebot — Liste aller Aufzüge (Hauptanlage = Aufzug 1)
+  let _angAuf = [];
+  try { _angAuf = JSON.parse(rec.aufzuege_json||'[]'); } catch(_){}
+  _angAuf = (_angAuf||[]).filter(a => String(a.fabriknummer||'').trim() || String(a.adresse||'').trim());
+  if (_angAuf.length) {
+    if (y > 250) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    const rowsAuf = [{ fab: rec.seriennummer||'', adr: rec.anlage_adresse||'' }]
+      .concat(_angAuf.map(a => ({ fab:a.fabriknummer||'', adr:a.adresse||'' })));
+    doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...NAVY);
+    doc.text(_sanPdf('Dieses Angebot umfasst '+rowsAuf.length+' Aufzüge:'), ml, y); y += 6;
+    doc.setFillColor(245,247,255); doc.rect(ml, y, cw, 6.5, 'F');
+    doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(...GREY_L);
+    const cN2 = 9, cFab2 = 36;
+    doc.text('NR.', ml+2, y+4.5);
+    doc.text('FABRIK-NR.', ml+cN2+1, y+4.5);
+    doc.text('STANDORT', ml+cN2+cFab2+1, y+4.5);
+    y += 6.5;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+    rowsAuf.forEach((r, i) => {
+      if (y > 275) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+      const adrLines = doc.splitTextToSize(_sanPdf(r.adr||'—'), cw - cN2 - cFab2 - 3);
+      const rowH = Math.max(5.2, adrLines.length*4.2);
+      doc.setTextColor(...GREY);
+      doc.text(String(i+1)+'.', ml+2, y+4);
+      doc.text(_sanPdf(r.fab||'—'), ml+cN2+1, y+4);
+      adrLines.forEach((l,li)=> doc.text(l, ml+cN2+cFab2+1, y+4+li*4.2));
+      doc.setDrawColor(...GREY_X); doc.setLineWidth(0.1); doc.line(ml, y+rowH, mr, y+rowH);
+      y += rowH;
+    });
+    y += 6;
+  }
   // ANSCHREIBEN
   if (rec.anschreiben) {
     doc.setFontSize(10); doc.setTextColor(...GREY);
