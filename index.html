@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.09';
+const APP_VERSION = 'v7.10';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -14061,6 +14061,10 @@ async function _ensurePreislistenTable() {
     ]);
     // Falls Tabelle bereits existiert: fehlende Felder ergänzen (idempotent)
     try { await ensureField('Preislisten', 'anlagen_json', 'multilineText'); } catch(_){}
+    // v7.10: Freshdesk-Versand-Felder
+    try { await ensureField('Preislisten', 'fd_ticket_id',  'singleLineText'); } catch(_){}
+    try { await ensureField('Preislisten', 'fd_ticket_url', 'singleLineText'); } catch(_){}
+    try { await ensureField('Preislisten', 'versendet_am',  'singleLineText'); } catch(_){}
   } catch(e) {
     console.warn('[Preislisten] Tabellen-Setup:', e.message);
   }
@@ -14101,10 +14105,12 @@ async function renderPreislistenView() {
               '<span>'+escapeHtml(created)+'</span>'+
               (f.kunde_nummer?'<span>· Kd-Nr. '+escapeHtml(f.kunde_nummer)+'</span>':'')+
               anlagenBadge+
+              (f.fd_ticket_id?'<span style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:99px;background:#ECFDF5;color:#065F46;border:1px solid #6EE7B7">🎫 versendet'+(f.fd_ticket_id?' #'+escapeHtml(String(f.fd_ticket_id)):'')+'</span>':'')+
             '</div>'+
           '</div>'+
           '<div style="display:flex;gap:6px;flex-wrap:wrap" onclick="event.stopPropagation()">'+
             (pdfUrl ? '<a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(pdfUrl)+'">📄 PDF</a>' : '')+
+            ((pdfUrl && freshdeskIsConfigured(f.firma||firmaSlug)) ? '<button class="btn" style="color:#065F46;border-color:rgba(16,185,129,.4);background:#ECFDF5" onclick="sendPreislisteViaFreshdesk(\''+r.id+'\')" title="Preisliste per Freshdesk-Ticket an den Kunden versenden">✉ Versenden</button>' : '')+
             '<button class="btn" onclick="reeditPreisliste(\''+r.id+'\')">✏ Bearbeiten</button>'+
             '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deletePreisliste(\''+r.id+'\')">🗑</button>'+
           '</div>'+
@@ -14171,6 +14177,8 @@ function _renderPreislisteDetailModal(rec) {
         '<button class="btn" onclick="document.getElementById(\'pl-detail-modal\').remove()">Schließen</button>'+
         (pdfUrl?'<a class="btn" target="_blank" rel="noopener" href="'+escapeHtml(pdfUrl)+'">📄 Preisliste-PDF</a>':'')+
         '<button class="btn" onclick="document.getElementById(\'pl-detail-modal\').remove();reeditPreisliste(\''+rec.id+'\')">✏ Preisliste bearbeiten</button>'+
+        // v7.10: Freshdesk-Versand der Preisliste mit editierbarem Anschreiben
+        ((pdfUrl && freshdeskIsConfigured(f.firma||getCurrentFirmaSlug())) ? '<button class="btn prim" onclick="sendPreislisteViaFreshdesk(\''+rec.id+'\')">✉ Per Freshdesk versenden</button>' : '')+
       '</div>'+
     '</div>';
   document.body.appendChild(modal);
@@ -16453,6 +16461,117 @@ async function sendVertragViaFreshdesk(vertragId, preislisteId) {
     }
     toast('🎫 Ticket #'+(d.id||'?')+' erstellt — Vertrag versendet.','ok');
   } catch(e) { console.error('sendVertrag:', e); toast('❌ '+e.message,'err'); }
+}
+
+/* ── v7.10: Kundenpreisliste per Freshdesk versenden (mit editierbarem Anschreiben) ── */
+async function sendPreislisteViaFreshdesk(recId) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  let rec;
+  try {
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+recId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
+    rec = await r.json(); if (rec.error) throw new Error(rec.error.message);
+  } catch(e) { return toast('❌ '+e.message,'err'); }
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert.','err');
+  const pdfMeta = f.pdf && f.pdf[0];
+  if (!pdfMeta) return toast('Kein Preislisten-PDF vorhanden — bitte erst „💾 Speichern + PDF".','err');
+  const kundeName = f.kunde_name || f.empfaenger_name || '';
+  let company = 'Aszendio Aufzugservice GmbH';
+  try { if (typeof _daFirmaBranding==='function') company = (_daFirmaBranding(firmaSlug)||{}).company || company; } catch(_){}
+  const defaultAnschreiben =
+    'Sehr geehrte Damen und Herren,\n\n'+
+    'anbei erhalten Sie unsere aktuelle Wartungspreisliste'+(f.gueltig_bis?' (gültig bis '+f.gueltig_bis+')':'')+'.\n\n'+
+    'Für Rückfragen oder ein persönliches Angebot stehen wir Ihnen jederzeit gerne zur Verfügung.\n\n'+
+    'Mit freundlichen Grüßen\n'+company;
+  _plSendOpenDialog(recId, {
+    firma:   firmaSlug,
+    email:   f.kontakt_email || '',
+    subject: 'Wartungspreisliste'+(kundeName?' · '+kundeName:''),
+    anschreiben: defaultAnschreiben,
+    pdfName: pdfMeta.filename || 'Wartungspreisliste.pdf',
+  });
+}
+
+function _plSendOpenDialog(recId, o) {
+  document.getElementById('pl-send-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'pl-send-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11000;display:flex;align-items:center;justify-content:center;padding:14px';
+  m._recId = recId; m._firma = o.firma; m._pdfName = o.pdfName;
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:600px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy);color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>✉ Preisliste per Freshdesk versenden</span>'+
+        '<button onclick="document.getElementById(\'pl-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="margin-bottom:10px"><strong>Empfänger-Email</strong><br><input type="email" id="pl-send-email" value="'+escapeHtml(o.email||'')+'" placeholder="kunde@example.de" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box"></div>'+
+        '<div style="margin-bottom:10px"><strong>Betreff</strong><br><input type="text" id="pl-send-subject" value="'+escapeHtml(o.subject||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box"></div>'+
+        '<div style="margin-bottom:10px"><strong>Anschreiben</strong><br><textarea id="pl-send-body" style="width:100%;min-height:190px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box">'+escapeHtml(o.anschreiben||'')+'</textarea></div>'+
+        '<div style="font-size:12px;color:var(--txt2);background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px">📎 Anhang: <strong>'+escapeHtml(o.pdfName||'Preisliste.pdf')+'</strong> — die Preisliste als PDF wird automatisch angehängt.</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'pl-send-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="pl-send-do" onclick="_plSendDo(this)">✉ Senden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+async function _plSendDo(btn) {
+  const m = document.getElementById('pl-send-modal');
+  if (!m) return;
+  const recId = m._recId, firmaSlug = m._firma;
+  const email   = (document.getElementById('pl-send-email')?.value||'').trim();
+  const subject = (document.getElementById('pl-send-subject')?.value||'').trim() || 'Wartungspreisliste';
+  const bodyText= (document.getElementById('pl-send-body')?.value||'').trim();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Bitte eine gültige Empfänger-Email eingeben','err');
+  if (!bodyText) return toast('Bitte ein Anschreiben eingeben','err');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sende…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    // PDF frisch laden (Attachment-URL kann ablaufen)
+    const rr = await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+recId, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY }});
+    const rd = await rr.json();
+    const pdfMeta = rd.fields?.pdf?.[0];
+    if (!pdfMeta) throw new Error('Kein PDF am Datensatz gefunden — bitte erst speichern.');
+    const pdfBlob = await (await fetch(pdfMeta.url)).blob();
+    const bodyHtml = '<p>'+escapeHtml(bodyText).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    const fd = new FormData();
+    fd.append('email', email);
+    fd.append('subject', subject);
+    fd.append('description', bodyHtml);
+    fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
+    fd.append('attachments[]', pdfBlob, pdfMeta.filename || 'Wartungspreisliste.pdf');
+    await erpEnsureSession();
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+    const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+    const txt = await res.text(); let d; try { d = JSON.parse(txt); } catch(_){ d = {}; }
+    if (!res.ok) {
+      let msg = 'HTTP '+res.status;
+      if (Array.isArray(d.errors)) msg = d.errors.map(e=>'['+(e.field||'')+'] '+e.message).join('; ');
+      throw new Error('Freshdesk: '+msg);
+    }
+    const ticketId = d.id;
+    // Ticket-Info am Datensatz speichern (best effort)
+    try {
+      const tUrl = (APP_KEYS.freshdeskTicketUrls?.[firmaSlug]||'').replace('{id}', String(ticketId||''));
+      await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten/'+recId, {
+        method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields:{ fd_ticket_id:String(ticketId||''), fd_ticket_url:tUrl, versendet_am:new Date().toISOString() } }),
+      });
+    } catch(_){}
+    toast('🎫 Ticket #'+(ticketId||'?')+' erstellt — Preisliste an '+email+' versendet.','ok');
+    m.remove();
+    document.getElementById('pl-detail-modal')?.remove();
+    if (document.getElementById('pl-view')?.classList.contains('show')) renderPreislistenView();
+  } catch(e) {
+    console.error('sendPreisliste:', e);
+    toast('❌ '+(e.message||e).slice(0,220),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '✉ Senden'; }
+  }
 }
 
 /* ── Verträge unter einer Preisliste ──────────────────────────────────── */
