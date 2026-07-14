@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.15';
+const APP_VERSION = 'v7.16';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23993,19 +23993,70 @@ async function _daSendToCustomer(recId) {
   let company = 'Aszendio Aufzugservice GmbH';
   try { if (typeof _daFirmaBranding==='function') company = (_daFirmaBranding(firmaSlug)||{}).company || company; } catch(_){}
   const anlage = [f.anlage_fabriknummer ? ('Fabrik-Nr. '+f.anlage_fabriknummer) : '', (String(f.anlage_adresse||'').split('\n')[0]||'')].filter(Boolean).join(' · ');
-  const message = 'Sehr geehrte Damen und Herren,\n\n'+
-    'anbei erhalten Sie den Zustandsbericht zu Ihrer Aufzugsanlage'+(anlage?' ('+anlage+')':'')+'.\n\n'+
+  // Nachrichten-Rumpf (ohne Anrede) — die Anrede wird aus dem gewählten ERP-Kontakt gesetzt
+  const bodyIntro = 'anbei erhalten Sie den Zustandsbericht zu Ihrer Aufzugsanlage'+(anlage?' ('+anlage+')':'')+'.\n\n'+
     'Bei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+  const message = 'Sehr geehrte Damen und Herren,\n\n'+bodyIntro;
   let signature = '';
   try { signature = localStorage.getItem('da_send_sig_'+firmaSlug) || ''; } catch(_){}
   if (!signature) signature = 'Mit freundlichen Grüßen\n'+(nameDefault ? nameDefault+'\n' : '')+company;
   _daSendOpenDialog(recId, {
     firma: firmaSlug, cps,
+    kundeNr: f.kunde_nummer || '',
     name: nameDefault,
     subject: 'Zustandsbericht Aufzugsanlage'+(f.anlage_fabriknummer ? ' · Fabrik-Nr. '+f.anlage_fabriknummer : ''),
-    email: '', message, signature,
+    email: '', message, bodyIntro, signature,
     pdfName: 'Zustandsbericht-DA'+(f.da_num||'')+'.pdf',
   });
+}
+function _daSendContactEmail(k) { return String((k&&(k.email||k.mail||k.emailAdresse||k.email1))||'').trim(); }
+function _daSendContactName(k)  { return [k&&k.vorname, k&&k.nachname].filter(Boolean).join(' ').trim(); }
+function _daSendMsgEdited() { const m = document.getElementById('da-send-modal'); if (m) m._msgEdited = true; }
+async function _daSendLoadContacts() {
+  const m = document.getElementById('da-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const sel = document.getElementById('da-send-contact');
+  if (!o.kundeNr) { if (sel) sel.innerHTML = '<option value="">(kein Kunde hinterlegt — Email manuell)</option>'; return; }
+  try {
+    const res = await erpFetch('/aufzug/'+o.firma+'/api/Kunden/'+encodeURIComponent(o.kundeNr)+'/Kontakte');
+    const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+    m._contacts = list;
+    _daSendRenderContacts();
+    // Auto-Select: Standard-Kontakt, sonst erster mit Email, sonst erster
+    const pick = list.find(k => k.isStandard || k.standard || k.isDefault) || list.find(k => _daSendContactEmail(k)) || list[0];
+    if (pick) _daSendPickContact(String(pick.id));
+  } catch(e) {
+    console.warn('[DA-Send] Kontakte-Load:', e.message);
+    if (sel) sel.innerHTML = '<option value="">(Kontakte nicht ladbar — Email manuell eingeben)</option>';
+  }
+}
+function _daSendRenderContacts() {
+  const m = document.getElementById('da-send-modal'); if (!m) return;
+  const sel = document.getElementById('da-send-contact'); if (!sel) return;
+  const list = m._contacts || [];
+  if (!list.length) { sel.innerHTML = '<option value="">(keine Kontakte im ERP)</option>'; return; }
+  const cur = m._selContactId || '';
+  sel.innerHTML = '<option value="">— Kontakt wählen —</option>' + list.map(k => {
+    const nm = _daSendContactName(k) || ('Kontakt '+k.id);
+    const em = _daSendContactEmail(k);
+    return '<option value="'+escapeHtml(String(k.id))+'"'+(String(k.id)===String(cur)?' selected':'')+'>'+escapeHtml(nm + (em ? ' · '+em : ' · (keine Email)'))+'</option>';
+  }).join('');
+}
+function _daSendPickContact(id) {
+  const m = document.getElementById('da-send-modal'); if (!m) return;
+  m._selContactId = id;
+  const sel = document.getElementById('da-send-contact'); if (sel) sel.value = id;
+  const k = (m._contacts||[]).find(x => String(x.id) === String(id));
+  if (!k) return;
+  const em = _daSendContactEmail(k);
+  const emailInp = document.getElementById('da-send-email'); if (emailInp && em) emailInp.value = em;
+  // Anrede aus dem Kontakt in die Nachricht setzen — nur wenn Nachricht noch nicht manuell editiert
+  if (!m._msgEdited) {
+    const anrede = String(k.anrede||'').trim().replace(/[,;\s]+$/,'');
+    const greeting = anrede ? (anrede + ',') : 'Sehr geehrte Damen und Herren,';
+    const msgInp = document.getElementById('da-send-message');
+    if (msgInp) msgInp.value = greeting + '\n\n' + (m._o.bodyIntro || '');
+  }
 }
 
 function _daSendOpenDialog(recId, o) {
@@ -24023,7 +24074,10 @@ function _daSendOpenDialog(recId, o) {
         '<button onclick="document.getElementById(\'da-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
-        '<div style="margin-bottom:10px"><label style="'+lbl+'">Empfänger-Email (Kunde)</label>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Kontakt aus ERP (Empfänger)</label>'+
+          '<select id="da-send-contact" onchange="_daSendPickContact(this.value)" style="'+inp+';background:#fff"><option value="">— lädt Kontakte… —</option></select>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Wählt Email + Anrede automatisch. Nicht dabei? Email unten manuell eintragen.</div></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Empfänger-Email</label>'+
           '<input type="email" id="da-send-email" value="'+escapeHtml(o.email||'')+'" placeholder="kunde@example.de" style="'+inp+'"></div>'+
         '<div style="margin-bottom:10px"><label style="'+lbl+'">Betreff</label>'+
           '<input type="text" id="da-send-subject" value="'+escapeHtml(o.subject||'')+'" style="'+inp+'"></div>'+
@@ -24031,7 +24085,7 @@ function _daSendOpenDialog(recId, o) {
           '<input type="text" id="da-send-name" value="'+escapeHtml(o.name||'')+'" placeholder="Vor- und Nachname" style="'+inp+'">'+
           '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Wird gespeichert und im PDF verwendet.</div></div>'+
         '<div style="margin-bottom:10px"><label style="'+lbl+'">Persönliche Nachricht</label>'+
-          '<textarea id="da-send-message" style="'+inp+';min-height:120px;font-family:inherit;line-height:1.5">'+escapeHtml(o.message||'')+'</textarea></div>'+
+          '<textarea id="da-send-message" oninput="_daSendMsgEdited()" style="'+inp+';min-height:120px;font-family:inherit;line-height:1.5">'+escapeHtml(o.message||'')+'</textarea></div>'+
         '<div style="margin-bottom:10px"><label style="'+lbl+'">Signatur <span style="font-weight:400;color:var(--txt3)">(wird als Standard gemerkt)</span></label>'+
           '<textarea id="da-send-signature" style="'+inp+';min-height:80px;font-family:inherit;line-height:1.5">'+escapeHtml(o.signature||'')+'</textarea></div>'+
         '<div style="font-size:12px;color:var(--txt2);background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px">📎 Anhang: <strong>'+escapeHtml(o.pdfName||'Zustandsbericht.pdf')+'</strong> — das PDF (ohne Preise) wird automatisch erzeugt &amp; angehängt.</div>'+
@@ -24043,6 +24097,7 @@ function _daSendOpenDialog(recId, o) {
     '</div>';
   document.body.appendChild(m);
   m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _daSendLoadContacts();  // v7.16: ERP-Kontakte laden + Email/Anrede vorbefüllen
 }
 
 async function _daSendDo(btn) {
