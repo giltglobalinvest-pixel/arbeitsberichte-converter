@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.12';
+const APP_VERSION = 'v7.13';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3763,34 +3763,66 @@ function _pdfArbeitModernBody(doc, d, num, sigs, header, theme) {
   field(ml, cw, 'Wurde der Auftrag vollständig erfüllt?', d.auftrag_vollstaendig, 1);
   y += 4 + 4.5 + 4;
   doc.setDrawColor(...GREY_X); doc.line(ml,y-2,mr,y-2); y += 2;
-  // SECTION — Beschreibung (Section-Titel + Box mit Border)
-  p.ft(8,true,NAVY);
-  doc.text('BESCHREIBUNG DURCHGEFÜHRTER ARBEITEN', ml, y);
-  y += 3.5;
-  const beschH = sigs ? 28 : 45;
-  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.rect(ml, y, cw, beschH, 'S');
-  p.ft(10,false,GREY);
-  const beschLines = doc.splitTextToSize(_sanPdf(d.beschreibung||''), cw-4);
-  const beschMax = Math.floor((beschH-3)/4.5);
-  beschLines.slice(0, beschMax).forEach((l,i) => doc.text(l, ml+2.5, y+5+i*4.5));
-  y += beschH + 5;
-  // SECTION — Sonstiges
-  p.ft(8,true,NAVY);
-  doc.text('SONSTIGES', ml, y);
-  y += 3.5;
-  const sonstH = sigs ? 12 : 38;
-  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.rect(ml, y, cw, sonstH, 'S');
-  p.ft(10,false,GREY);
-  const sonstLines = doc.splitTextToSize(_sanPdf(d.sonstiges||''), cw-4);
-  const sonstMax = Math.floor((sonstH-3)/4.5);
-  sonstLines.slice(0, sonstMax).forEach((l,i) => doc.text(l, ml+2.5, y+5+i*4.5));
-  y += sonstH + 5;
-  if (sigs) y = addSignaturesInline(doc, ml, cw, y, sigs);
-  // FOOTER — wie Classic
-  p.bd(); doc.setLineWidth(0.2); doc.line(ml,H-14,mr,H-14);
-  p.ft(8.5,false,[100,100,100]); doc.text('Arbeitsnachweis', ml, H-9);
-  p.ft(8,false,[160,160,160]);   doc.text('Bericht-Nr. '+num, mr, H-9, {align:'right'});
+  // v7.13: Beschreibung + Sonstiges FLIESSEND — wachsen mit dem Text und brechen bei
+  //   Bedarf auf eine Folgeseite um (mit Briefkopf + Fußzeile), statt Text abzuschneiden.
+  const footerLimit = H - 18;
+  const drawFooterM = () => {
+    p.bd(); doc.setLineWidth(0.2); doc.line(ml,H-14,mr,H-14);
+    p.ft(8.5,false,[100,100,100]); doc.text('Arbeitsnachweis', ml, H-9);
+    p.ft(8,false,[160,160,160]);   doc.text('Bericht-Nr. '+num, mr, H-9, {align:'right'});
+  };
+  const nextPageM = () => { drawFooterM(); doc.addPage(); return header(doc, ml, mr) + 4; };
+  function flowBoxM(title, value, minH) {
+    if (y + 4 + minH > footerLimit) y = nextPageM();
+    p.ft(8,true,NAVY); doc.text(_sanPdf(String(title)), ml, y); y += 3.5;
+    const lines = doc.splitTextToSize(_sanPdf(String(value||'')), cw-5);
+    const lineH = 4.5, padTop = 5, padBot = 3;
+    let idx = 0, first = true;
+    while (true) {
+      if (!first && y + lineH + padBot > footerLimit) y = nextPageM();
+      const avail = Math.max(1, Math.floor((footerLimit - y - padTop - padBot) / lineH));
+      const seg = lines.slice(idx, idx + avail);
+      const contentH = seg.length*lineH + padTop + padBot;
+      const boxH = Math.max(first ? minH : contentH, contentH);
+      doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.rect(ml, y, cw, boxH, 'S');
+      p.ft(10,false,GREY);
+      seg.forEach((l,i) => doc.text(l, ml+2.5, y+padTop+i*lineH));
+      y += boxH + 5;
+      idx += seg.length; first = false;
+      if (idx >= lines.length) break;
+    }
+  }
+  flowBoxM('BESCHREIBUNG DURCHGEFÜHRTER ARBEITEN', d.beschreibung, sigs ? 28 : 45);
+  flowBoxM('SONSTIGES', d.sonstiges, sigs ? 12 : 38);
+  if (sigs) {
+    if (y + 34 > footerLimit) y = nextPageM();
+    y = addSignaturesInline(doc, ml, cw, y, sigs);
+  }
+  drawFooterM();
   return doc;
+}
+
+/* v7.13: Text-Box für Classic-/Wartungs-Layouts, die mit dem Inhalt wächst und bei
+   Überlauf auf eine Folgeseite umbricht — statt langen Text abzuschneiden. Gibt neues y zurück. */
+function _bfBoxGrow(doc, p, ml, cw, y, value, minH) {
+  const H = 297, footerLimit = H - 16, lineH = 5, pad = 3;
+  const lines = doc.splitTextToSize(_sanPdf(String(value||'')), cw-5);
+  let idx = 0, first = true;
+  while (true) {
+    const need = first ? minH : (lineH + pad);
+    if (y + need + pad > footerLimit) { doc.addPage(); y = 18; }
+    const avail = Math.max(1, Math.floor((footerLimit - y - pad - pad) / lineH));
+    const seg = lines.slice(idx, idx + avail);
+    const contentH = seg.length*lineH + pad + pad;
+    const boxH = Math.max(first ? minH : contentH, contentH);
+    p.bd(); doc.setLineWidth(0.25); doc.rect(ml, y, cw, boxH, 'D');
+    p.ft(9,false,p.DK);
+    seg.forEach((l,i) => doc.text(l, ml+3, y+5+i*lineH));
+    y += boxH;
+    idx += seg.length; first = false;
+    if (idx >= lines.length) break;
+  }
+  return y;
 }
 
 function pdfArbeitModern(d,num,sigs) {
@@ -3831,8 +3863,8 @@ function pdfArbeitClassic(d,num,sigs) {
   // Mit Unterschriften: Beschreibung + Sonstiges kleiner, damit alles auf 1 Seite passt
   const beschH = sigs ? 28 : 45;
   const sonstH = sigs ? 12 : 38;
-  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,beschH,d.beschreibung||'');y+=beschH+6;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstH,d.sonstiges||'');y+=sonstH+4;
+  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');y=_bfBoxGrow(doc,p,ml,cw,y,d.beschreibung||'',beschH);y+=6;
+  y=p.sh(ml,y,cw,'Sonstiges');y=_bfBoxGrow(doc,p,ml,cw,y,d.sonstiges||'',sonstH);y+=4;
   if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs);
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
@@ -3854,7 +3886,7 @@ function pdfWartung(d,num,sigs) {
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Sind weiterführende Arbeiten erforderlich?:',zL2-3),ml+zL+zV+2,y+4);p.ft(9,false,p.DK);doc.text(d.weitere_arbeiten||'',ml+zL+zV+zL2+2,y+5);y+=19;
   // Sonstiges: kleiner wenn Unterschriften kommen
   const sonstHW = sigs ? 10 : 26;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+5;
+  y=p.sh(ml,y,cw,'Sonstiges');y=_bfBoxGrow(doc,p,ml,cw,y,d.sonstiges||'',sonstHW);y+=5;
   p.ft(14,true,[33,82,169]);doc.text('Prüfergebnisse',ml,y);y+=8;
   const pN=14,pT=30,pD=cw-pN-pT-32,pE=32;
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,pN,7,'FD');doc.rect(ml+pN,y,pT,7,'FD');doc.rect(ml+pN+pT,y,pD,7,'FD');doc.rect(ml+pN+pT+pD,y,pE,7,'FD');
@@ -3885,8 +3917,8 @@ function pdfAufzugAClassic(d,num,sigs) {
   // Mit Unterschriften: Beschreibung + Sonstiges kleiner, damit alles auf 1 Seite passt
   const beschHA = sigs ? 28 : 45;
   const sonstHA = sigs ? 12 : 38;
-  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');p.bx(ml,y,cw,beschHA,d.beschreibung||'');y+=beschHA+6;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHA,d.sonstiges||'');y+=sonstHA+4;
+  y=p.sh(ml,y,cw,'Beschreibung durchgeführter Arbeiten');y=_bfBoxGrow(doc,p,ml,cw,y,d.beschreibung||'',beschHA);y+=6;
+  y=p.sh(ml,y,cw,'Sonstiges');y=_bfBoxGrow(doc,p,ml,cw,y,d.sonstiges||'',sonstHA);y+=4;
   if (sigs) y = addSignaturesInline(doc,ml,cw,y,sigs);
   p.bd();doc.setLineWidth(0.2);doc.line(ml,H-14,mr,H-14);p.ft(8.5,false,[100,100,100]);doc.text('Arbeitsnachweis',ml,H-9);p.ft(8,false,[160,160,160]);doc.text('Bericht-Nr. '+num,mr,H-9,{align:'right'});
   return doc;
@@ -3908,7 +3940,7 @@ function pdfAufzugW(d,num,sigs) {
   p.bd();doc.rect(ml,y,cw,14,'D');p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Ist der Aufzug in Betrieb?:',zL2-3),ml+2,y+4.5);p.ft(9,false,p.DK);doc.text(d.aufzug_verlassen_in_betrieb||'',ml+zL2+2,y+5);
   p.ft(8.5,true,p.DK);doc.text(doc.splitTextToSize('Sind weiterführende Arbeiten erforderlich?:',zL3-3),ml+zL2+zV2+2,y+4);p.ft(9,false,p.DK);doc.text(d.weitere_arbeiten||'',ml+zL2+zV2+zL3+2,y+5);y+=19;
   const sonstHW=sigs?10:26;
-  y=p.sh(ml,y,cw,'Sonstiges');p.bx(ml,y,cw,sonstHW,d.sonstiges||'');y+=sonstHW+5;
+  y=p.sh(ml,y,cw,'Sonstiges');y=_bfBoxGrow(doc,p,ml,cw,y,d.sonstiges||'',sonstHW);y+=5;
   p.ft(14,true,[40,40,40]);doc.text('Prüfergebnisse',ml,y);y+=8;
   const pN=14,pT=30,pD=cw-pN-pT-32,pE=32;
   p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,pN,7,'FD');doc.rect(ml+pN,y,pT,7,'FD');doc.rect(ml+pN+pT,y,pD,7,'FD');doc.rect(ml+pN+pT+pD,y,pE,7,'FD');
