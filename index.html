@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.14';
+const APP_VERSION = 'v7.15';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22692,6 +22692,10 @@ async function openDaDetail(recId) {
         // v5.99: Als Vorlage speichern — übernimmt alle Checkpunkte (inkl. ki_beschreibung) als neue DA-Vorlage
         (hasPermission('datenaufnahmen_edit') && isAdmin() ? '<button class="btn" onclick="_daSaveAsVorlage(\''+recId+'\')" style="background:#F5F3FF;border-color:#C4B5FD;color:#5B21B6;font-weight:600" title="Aktuelle Checkpunkte (inkl. KI-Beschreibungen) als wiederverwendbare Vorlage speichern">📋 Als Vorlage speichern</button>' : '')+
         '<button class="btn prim" onclick="_daBuildAndShowPdf(\''+recId+'\')" title="Datenaufnahme-PDF ohne Preise">📄 PDF erzeugen</button>'+
+        // v7.15: Zustandsbericht direkt an den Kunden senden (persönliche Nachricht + Signatur + PDF)
+        (hasPermission('datenaufnahmen_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())
+          ? '<button class="btn" onclick="_daSendToCustomer(\''+recId+'\')" style="color:#1E40AF;border-color:rgba(30,64,175,.45);background:#EFF6FF" title="Zustandsbericht-PDF mit persönlicher Nachricht + Signatur per Freshdesk direkt an den Kunden senden">✉ An Kunden senden</button>'
+          : '')+
         // Abschließen: nur wenn noch NICHT abgeschlossen und User darf editieren
         (hasPermission('datenaufnahmen_edit') && f.status !== 'abgeschlossen'
           ? '<button class="btn" id="da-complete-btn" onclick="_daComplete(\''+recId+'\', this)" style="background:#10b981;border-color:#10b981;color:#fff;font-weight:700" title="Datenaufnahme abschließen — erstellt automatisch ein Freshdesk-Ticket">✅ Abschließen</button>'
@@ -23963,6 +23967,140 @@ async function _daBuildAndShowPdf(recId) {
   } catch(e) {
     console.error('DA-PDF:', e);
     toast('❌ '+e.message.slice(0,200),'err');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   v7.15: Datenaufnahme direkt an den Kunden senden (Freshdesk)
+   ──────────────────────────────────────────────────────────────
+   Persönliche Nachricht + editierbare Signatur (pro Firma gemerkt) +
+   editierbarer "Name im Bericht" (aufgenommen_von → wird gespeichert und
+   ins PDF übernommen). Erstellt ein Freshdesk-Ticket an die Kunden-Email
+   mit dem Zustandsbericht-PDF als Anhang (val.town-Proxy, wie Preisliste). */
+async function _daSendToCustomer(recId) {
+  const rec = (_daCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Datenaufnahme nicht gefunden','err');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert.','err');
+  // Checkpunkte: Live-State bevorzugen (frische Bild-URLs), sonst Cache
+  const m = document.getElementById('da-detail');
+  let cps = [];
+  if (m && Array.isArray(m._cps) && m._cps.length) cps = JSON.parse(JSON.stringify(m._cps));
+  else { try { cps = JSON.parse(f.checkpunkte_json||'[]'); } catch(_){}; _daRefreshBilderFromPool(cps, f.bilder_pool); }
+  if (!cps.length) return toast('Keine Checkpunkte erfasst — bitte zuerst ausfüllen.','err');
+  const nameDefault = f.aufgenommen_von || f.erstellt_von || APP_KEYS.user?.name || '';
+  let company = 'Aszendio Aufzugservice GmbH';
+  try { if (typeof _daFirmaBranding==='function') company = (_daFirmaBranding(firmaSlug)||{}).company || company; } catch(_){}
+  const anlage = [f.anlage_fabriknummer ? ('Fabrik-Nr. '+f.anlage_fabriknummer) : '', (String(f.anlage_adresse||'').split('\n')[0]||'')].filter(Boolean).join(' · ');
+  const message = 'Sehr geehrte Damen und Herren,\n\n'+
+    'anbei erhalten Sie den Zustandsbericht zu Ihrer Aufzugsanlage'+(anlage?' ('+anlage+')':'')+'.\n\n'+
+    'Bei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+  let signature = '';
+  try { signature = localStorage.getItem('da_send_sig_'+firmaSlug) || ''; } catch(_){}
+  if (!signature) signature = 'Mit freundlichen Grüßen\n'+(nameDefault ? nameDefault+'\n' : '')+company;
+  _daSendOpenDialog(recId, {
+    firma: firmaSlug, cps,
+    name: nameDefault,
+    subject: 'Zustandsbericht Aufzugsanlage'+(f.anlage_fabriknummer ? ' · Fabrik-Nr. '+f.anlage_fabriknummer : ''),
+    email: '', message, signature,
+    pdfName: 'Zustandsbericht-DA'+(f.da_num||'')+'.pdf',
+  });
+}
+
+function _daSendOpenDialog(recId, o) {
+  document.getElementById('da-send-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'da-send-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11300;display:flex;align-items:center;justify-content:center;padding:14px';
+  m._o = Object.assign({ recId }, o);
+  const lbl = 'font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px';
+  const inp = 'width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;box-sizing:border-box';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:620px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#2152A9;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>✉ Zustandsbericht an Kunden senden</span>'+
+        '<button onclick="document.getElementById(\'da-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Empfänger-Email (Kunde)</label>'+
+          '<input type="email" id="da-send-email" value="'+escapeHtml(o.email||'')+'" placeholder="kunde@example.de" style="'+inp+'"></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Betreff</label>'+
+          '<input type="text" id="da-send-subject" value="'+escapeHtml(o.subject||'')+'" style="'+inp+'"></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Name im Bericht (erscheint als „Aufnahme durch")</label>'+
+          '<input type="text" id="da-send-name" value="'+escapeHtml(o.name||'')+'" placeholder="Vor- und Nachname" style="'+inp+'">'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Wird gespeichert und im PDF verwendet.</div></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Persönliche Nachricht</label>'+
+          '<textarea id="da-send-message" style="'+inp+';min-height:120px;font-family:inherit;line-height:1.5">'+escapeHtml(o.message||'')+'</textarea></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Signatur <span style="font-weight:400;color:var(--txt3)">(wird als Standard gemerkt)</span></label>'+
+          '<textarea id="da-send-signature" style="'+inp+';min-height:80px;font-family:inherit;line-height:1.5">'+escapeHtml(o.signature||'')+'</textarea></div>'+
+        '<div style="font-size:12px;color:var(--txt2);background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px">📎 Anhang: <strong>'+escapeHtml(o.pdfName||'Zustandsbericht.pdf')+'</strong> — das PDF (ohne Preise) wird automatisch erzeugt &amp; angehängt.</div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'da-send-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="da-send-do" onclick="_daSendDo(this)">✉ Senden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+async function _daSendDo(btn) {
+  const m = document.getElementById('da-send-modal');
+  if (!m || !m._o) return;
+  const o = m._o;
+  const email   = (document.getElementById('da-send-email')?.value||'').trim();
+  const subject = (document.getElementById('da-send-subject')?.value||'').trim() || 'Zustandsbericht';
+  const name    = (document.getElementById('da-send-name')?.value||'').trim();
+  const message = (document.getElementById('da-send-message')?.value||'').trim();
+  const signature = (document.getElementById('da-send-signature')?.value||'').trim();
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Bitte eine gültige Empfänger-Email eingeben','err');
+  if (!message) return toast('Bitte eine Nachricht eingeben','err');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Erzeuge PDF…'; }
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const rec = (_daCache.items||[]).find(r => r.id === o.recId);
+    const f = (rec && rec.fields) || {};
+    // PDF mit dem (evtl. geänderten) Namen bauen
+    const recForPdf = Object.assign({}, f, { aufgenommen_von: name || f.aufgenommen_von || '' });
+    const pdfBlob = await _buildDatenaufnahmePdf(recForPdf, o.cps, { withPrices:false });
+    // "Name im Bericht" persistieren (falls geändert)
+    if (name && name !== f.aufgenommen_von) {
+      try {
+        await fetch('https://api.airtable.com/v0/'+baseId+'/Datenaufnahmen/'+o.recId, {
+          method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ aufgenommen_von: name } }),
+        });
+        if (rec) rec.fields = Object.assign(rec.fields||{}, { aufgenommen_von: name });
+      } catch(_){}
+    }
+    // Signatur als Standard merken
+    try { localStorage.setItem('da_send_sig_'+o.firma, signature); } catch(_){}
+    // Nachricht + Signatur → HTML
+    const full = message + (signature ? '\n\n'+signature : '');
+    const bodyHtml = '<p>'+escapeHtml(full).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    if (btn) btn.textContent = '⏳ Sende…';
+    const fd = new FormData();
+    fd.append('email', email);
+    fd.append('subject', subject);
+    fd.append('description', bodyHtml);
+    fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
+    fd.append('attachments[]', pdfBlob, o.pdfName || 'Zustandsbericht.pdf');
+    await erpEnsureSession();
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+o.firma+'/api/v2/tickets';
+    const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+    const txt = await res.text(); let d; try { d = JSON.parse(txt); } catch(_){ d = {}; }
+    if (!res.ok) {
+      let msg = 'HTTP '+res.status;
+      if (Array.isArray(d.errors)) msg = d.errors.map(e=>'['+(e.field||'')+'] '+e.message).join('; ');
+      throw new Error('Freshdesk: '+msg);
+    }
+    toast('🎫 Ticket #'+(d.id||'?')+' erstellt — Zustandsbericht an '+email+' gesendet.','ok');
+    m.remove();
+  } catch(e) {
+    console.error('[DA-Send]', e);
+    toast('❌ '+(e.message||e).slice(0,220),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '✉ Senden'; }
   }
 }
 
