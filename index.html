@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.16';
+const APP_VERSION = 'v7.17';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -23997,15 +23997,14 @@ async function _daSendToCustomer(recId) {
   const bodyIntro = 'anbei erhalten Sie den Zustandsbericht zu Ihrer Aufzugsanlage'+(anlage?' ('+anlage+')':'')+'.\n\n'+
     'Bei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
   const message = 'Sehr geehrte Damen und Herren,\n\n'+bodyIntro;
-  let signature = '';
-  try { signature = localStorage.getItem('da_send_sig_'+firmaSlug) || ''; } catch(_){}
-  if (!signature) signature = 'Mit freundlichen Grüßen\n'+(nameDefault ? nameDefault+'\n' : '')+company;
+  // v7.17: Signatur kommt aus dem Freshdesk-Profil (HTML inkl. Logo) — Fallback als HTML
+  const sigFallbackHtml = '<p>Mit freundlichen Grüßen<br>'+(nameDefault ? escapeHtml(nameDefault)+'<br>' : '')+escapeHtml(company)+'</p>';
   _daSendOpenDialog(recId, {
     firma: firmaSlug, cps,
     kundeNr: f.kunde_nummer || '',
     name: nameDefault,
     subject: 'Zustandsbericht Aufzugsanlage'+(f.anlage_fabriknummer ? ' · Fabrik-Nr. '+f.anlage_fabriknummer : ''),
-    email: '', message, bodyIntro, signature,
+    email: '', message, bodyIntro, sigFallbackHtml,
     pdfName: 'Zustandsbericht-DA'+(f.da_num||'')+'.pdf',
   });
 }
@@ -24058,6 +24057,37 @@ function _daSendPickContact(id) {
     if (msgInp) msgInp.value = greeting + '\n\n' + (m._o.bodyIntro || '');
   }
 }
+/* v7.17: HTML-Signatur (inkl. Logo) laden — bevorzugt gemerkte, sonst aus dem
+   Freshdesk-Profil (/agents/me), sonst Fallback. force=true → immer frisch aus Freshdesk. */
+async function _daSendLoadSignature(force) {
+  const m = document.getElementById('da-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const div = document.getElementById('da-send-sig'); if (!div) return;
+  if (!force) {
+    let saved = '';
+    try { saved = localStorage.getItem('da_send_sig_html_'+o.firma) || ''; } catch(_){}
+    if (saved) { div.innerHTML = saved; return; }
+  }
+  div.innerHTML = '<div style="color:var(--txt3);font-size:12px">⏳ Lade Signatur aus Freshdesk…</div>';
+  try {
+    await erpEnsureSession();
+    const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+o.firma+'/api/v2/agents/me', {
+      headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
+    });
+    if (r.ok) {
+      const me = await r.json();
+      const sig = String(me?.signature || me?.signature_html || me?.contact?.signature || '').trim();
+      if (sig) { div.innerHTML = sig; if (force) toast('✍️ Freshdesk-Signatur geladen','ok'); return; }
+    } else {
+      console.warn('[DA-Send] /agents/me HTTP', r.status);
+    }
+    div.innerHTML = o.sigFallbackHtml || '';
+    if (force) toast('Keine Signatur im Freshdesk-Profil hinterlegt — Standard eingesetzt.','');
+  } catch(e) {
+    console.warn('[DA-Send] Signatur:', e.message);
+    div.innerHTML = o.sigFallbackHtml || '';
+  }
+}
 
 function _daSendOpenDialog(recId, o) {
   document.getElementById('da-send-modal')?.remove();
@@ -24086,8 +24116,12 @@ function _daSendOpenDialog(recId, o) {
           '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Wird gespeichert und im PDF verwendet.</div></div>'+
         '<div style="margin-bottom:10px"><label style="'+lbl+'">Persönliche Nachricht</label>'+
           '<textarea id="da-send-message" oninput="_daSendMsgEdited()" style="'+inp+';min-height:120px;font-family:inherit;line-height:1.5">'+escapeHtml(o.message||'')+'</textarea></div>'+
-        '<div style="margin-bottom:10px"><label style="'+lbl+'">Signatur <span style="font-weight:400;color:var(--txt3)">(wird als Standard gemerkt)</span></label>'+
-          '<textarea id="da-send-signature" style="'+inp+';min-height:80px;font-family:inherit;line-height:1.5">'+escapeHtml(o.signature||'')+'</textarea></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+';display:flex;justify-content:space-between;align-items:center;gap:8px">'+
+            '<span>Signatur (aus Freshdesk-Profil · editierbar)</span>'+
+            '<button type="button" onclick="_daSendLoadSignature(true)" style="font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:5px;background:#fff;cursor:pointer;font-family:inherit;font-weight:600;color:var(--navy)">↻ Aus Freshdesk laden</button>'+
+          '</label>'+
+          '<div id="da-send-sig" contenteditable="true" style="'+inp+';min-height:90px;max-height:340px;overflow:auto;background:#fff"><div style="color:var(--txt3);font-size:12px">⏳ Lade Signatur…</div></div>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">HTML-Signatur inkl. Logo — direkt hier editierbar. Änderungen werden als Standard gemerkt.</div></div>'+
         '<div style="font-size:12px;color:var(--txt2);background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px">📎 Anhang: <strong>'+escapeHtml(o.pdfName||'Zustandsbericht.pdf')+'</strong> — das PDF (ohne Preise) wird automatisch erzeugt &amp; angehängt.</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
@@ -24097,7 +24131,8 @@ function _daSendOpenDialog(recId, o) {
     '</div>';
   document.body.appendChild(m);
   m.onclick = (e) => { if (e.target === m) m.remove(); };
-  _daSendLoadContacts();  // v7.16: ERP-Kontakte laden + Email/Anrede vorbefüllen
+  _daSendLoadContacts();   // v7.16: ERP-Kontakte laden + Email/Anrede vorbefüllen
+  _daSendLoadSignature();  // v7.17: HTML-Signatur aus Freshdesk-Profil laden
 }
 
 async function _daSendDo(btn) {
@@ -24108,7 +24143,7 @@ async function _daSendDo(btn) {
   const subject = (document.getElementById('da-send-subject')?.value||'').trim() || 'Zustandsbericht';
   const name    = (document.getElementById('da-send-name')?.value||'').trim();
   const message = (document.getElementById('da-send-message')?.value||'').trim();
-  const signature = (document.getElementById('da-send-signature')?.value||'').trim();
+  const signatureHtml = (document.getElementById('da-send-sig')?.innerHTML||'').trim();
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Bitte eine gültige Empfänger-Email eingeben','err');
   if (!message) return toast('Bitte eine Nachricht eingeben','err');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Erzeuge PDF…'; }
@@ -24130,10 +24165,10 @@ async function _daSendDo(btn) {
       } catch(_){}
     }
     // Signatur als Standard merken
-    try { localStorage.setItem('da_send_sig_'+o.firma, signature); } catch(_){}
-    // Nachricht + Signatur → HTML
-    const full = message + (signature ? '\n\n'+signature : '');
-    const bodyHtml = '<p>'+escapeHtml(full).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    try { localStorage.setItem('da_send_sig_html_'+o.firma, signatureHtml); } catch(_){}
+    // Nachricht (escaped Text) → HTML, danach die HTML-Signatur (inkl. Logo) ROH anhängen
+    const msgHtml = '<p>'+escapeHtml(message).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    const bodyHtml = msgHtml + (signatureHtml ? '<br><br>'+signatureHtml : '');
     if (btn) btn.textContent = '⏳ Sende…';
     const fd = new FormData();
     fd.append('email', email);
