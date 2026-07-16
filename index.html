@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.20';
+const APP_VERSION = 'v7.21';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22617,6 +22617,11 @@ function _daNormalizeCp(cp) {
   cp.bilder_ist = bilder;
   delete cp.bild_ist;
   delete cp.bild_massnahme;
+  // v7.21: index-paralleles Boolean-Array – true = Bild wird NICHT ins PDF gerendert
+  // (bleibt aber gespeichert und in der App sichtbar).
+  let hidden = Array.isArray(cp.bilder_ist_hidden) ? cp.bilder_ist_hidden.slice(0, bilder.length) : [];
+  while (hidden.length < bilder.length) hidden.push(false);
+  cp.bilder_ist_hidden = hidden.map(v => !!v);
   if (typeof cp.titel !== 'string') cp.titel = '';
   if (typeof cp.ist_zustand !== 'string') cp.ist_zustand = '';
   if (typeof cp.massnahme !== 'string') cp.massnahme = '';
@@ -22861,15 +22866,22 @@ function _daRenderCheckpunkte() {
 function _daRenderCheckpunktItem(cp, i, editable) {
   const esc = s => String(s||'').replace(/"/g,'&quot;').replace(/</g,'&lt;');
   const bilder = Array.isArray(cp.bilder_ist) ? cp.bilder_ist : [];
+  const hiddenArr = Array.isArray(cp.bilder_ist_hidden) ? cp.bilder_ist_hidden : [];
   // IST-Galerie: alle Bilder als Thumbnails + Add-Button am Ende
-  const thumbsHtml = bilder.map((src, idx) =>
-    '<div style="position:relative;width:96px;height:72px;border:1px solid var(--bdr);border-radius:6px;overflow:hidden;background:#f9fafb;flex-shrink:0">'+
-      '<img src="'+src+'" onclick="_daViewImage('+i+','+idx+')" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in">'+
+  // v7.21: pro Bild ein 👁-Toggle "im PDF ausblenden" (Bild bleibt gespeichert & in der App sichtbar).
+  const thumbsHtml = bilder.map((src, idx) => {
+    const imgHidden = !!hiddenArr[idx];
+    return '<div style="position:relative;width:96px;height:72px;border:1px solid '+(imgHidden?'#9CA3AF':'var(--bdr)')+';border-radius:6px;overflow:hidden;background:#f9fafb;flex-shrink:0'+(imgHidden?';opacity:.6':'')+'">'+
+      '<img src="'+src+'" onclick="_daViewImage('+i+','+idx+')" style="width:100%;height:100%;object-fit:cover;cursor:zoom-in'+(imgHidden?';filter:grayscale(1)':'')+'">'+
+      (imgHidden ? '<span style="position:absolute;bottom:2px;left:2px;background:rgba(107,114,128,.96);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;line-height:1.3">🚫 PDF</span>' : '')+
+      (editable
+        ? '<button onclick="_daToggleImagePdf('+i+','+idx+')" style="position:absolute;top:2px;left:2px;background:'+(imgHidden?'rgba(107,114,128,.96)':'rgba(0,0,0,.5)')+';color:#fff;border:none;width:20px;height:20px;border-radius:50%;font-size:11px;cursor:pointer;line-height:1;padding:0" title="'+(imgHidden?'Wieder ins PDF aufnehmen':'Aus PDF ausblenden (Bild bleibt gespeichert)')+'">'+(imgHidden?'🚫':'👁')+'</button>'
+        : '')+
       (editable
         ? '<button onclick="_daRemoveImage('+i+','+idx+')" style="position:absolute;top:2px;right:2px;background:rgba(220,38,38,.92);color:#fff;border:none;width:20px;height:20px;border-radius:50%;font-size:12px;cursor:pointer;line-height:1" title="Foto entfernen">×</button>'
         : '')+
-    '</div>'
-  ).join('');
+    '</div>';
+  }).join('');
   const addBtn = editable
     ? '<button onclick="_daAddImage('+i+')" style="width:96px;height:72px;border:2px dashed var(--bdr);border-radius:6px;background:#f9fafb;cursor:pointer;font-size:11px;color:var(--txt3);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;flex-shrink:0" title="Foto hinzufügen"><span style="font-size:20px">📷</span><span>+ Foto</span></button>'
     : (bilder.length === 0 ? '<div style="width:96px;height:72px;border:1px dashed var(--bdr);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--txt3);font-size:11px">— kein Foto —</div>' : '');
@@ -23431,6 +23443,7 @@ async function _daProcessImageFiles(i, fileList) {
   const m = document.getElementById('da-detail');
   if (!m || !m._cps[i]) return;
   if (!Array.isArray(m._cps[i].bilder_ist)) m._cps[i].bilder_ist = [];
+  if (!Array.isArray(m._cps[i].bilder_ist_hidden)) m._cps[i].bilder_ist_hidden = [];
   toast('🖼 Komprimiere '+files.length+' Foto'+(files.length===1?'':'s')+'…','');
   let added = 0, errs = 0;
   for (const file of files) {
@@ -23441,6 +23454,7 @@ async function _daProcessImageFiles(i, fileList) {
       // Größenkontrolle erfolgt bei Bedarf später durch die _daSave-Shrink-Schleife.
       const dataUrl = await _gbuResizeImage(file, 1100, 0.75);
       m._cps[i].bilder_ist.push(dataUrl);
+      m._cps[i].bilder_ist_hidden.push(false); // v7.21: neu = sichtbar im PDF
       added++;
     } catch(_) { errs++; }
   }
@@ -23480,8 +23494,22 @@ function _daRemoveImage(i, idx) {
   const m = document.getElementById('da-detail');
   if (!m || !m._cps[i] || !Array.isArray(m._cps[i].bilder_ist)) return;
   m._cps[i].bilder_ist.splice(idx, 1);
+  if (Array.isArray(m._cps[i].bilder_ist_hidden)) m._cps[i].bilder_ist_hidden.splice(idx, 1); // v7.21 aligned
   _daMarkDirty(m);
   _daRenderCheckpunkte();
+}
+
+// v7.21: Einzelnes Bild vom PDF-Export ausschließen (nicht löschen).
+function _daToggleImagePdf(i, idx) {
+  const m = document.getElementById('da-detail');
+  if (!m || !m._cps[i] || !Array.isArray(m._cps[i].bilder_ist)) return;
+  const cp = m._cps[i];
+  if (!Array.isArray(cp.bilder_ist_hidden)) cp.bilder_ist_hidden = cp.bilder_ist.map(() => false);
+  while (cp.bilder_ist_hidden.length < cp.bilder_ist.length) cp.bilder_ist_hidden.push(false);
+  cp.bilder_ist_hidden[idx] = !cp.bilder_ist_hidden[idx];
+  _daMarkDirty(m);
+  _daRenderCheckpunkte();
+  toast(cp.bilder_ist_hidden[idx] ? '🚫 Bild wird NICHT ins PDF gedruckt' : '✅ Bild wird ins PDF gedruckt', '');
 }
 
 function _daViewImage(i, idx) {
@@ -24594,6 +24622,18 @@ async function _daResolveBilderToDataUrls(cps) {
 async function _buildDatenaufnahmePdf(rec, cps, opts) {
   opts = opts || {};
   const withPrices = !!opts.withPrices;
+  // v7.21: Bilder, die pro Checkpunkt als "im PDF ausblenden" markiert sind,
+  // vor dem Rendern herausfiltern. Es wird eine flache Kopie des betroffenen
+  // Checkpunkts erzeugt – das Original (m._cps / gespeicherte Daten) bleibt unberührt.
+  cps = (Array.isArray(cps) ? cps : []).map(cp => {
+    if (!cp || !Array.isArray(cp.bilder_ist)) return cp;
+    const hid = Array.isArray(cp.bilder_ist_hidden) ? cp.bilder_ist_hidden : [];
+    if (!hid.some(Boolean)) return cp;
+    const c = Object.assign({}, cp);
+    c.bilder_ist = cp.bilder_ist.filter((_, bi) => !hid[bi]);
+    c.bilder_ist_hidden = c.bilder_ist.map(() => false);
+    return c;
+  });
   // v6.15: URL-Bilder → DataURLs vorab konvertieren (jsPDF braucht DataURL)
   await _daResolveBilderToDataUrls(cps);
   const { jsPDF } = window.jspdf;
