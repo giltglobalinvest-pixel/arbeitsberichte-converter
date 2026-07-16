@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.18';
+const APP_VERSION = 'v7.19';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16522,9 +16522,49 @@ async function sendPreislisteViaFreshdesk(recId) {
     firma:   firmaSlug,
     email:   f.kontakt_email || '',
     subject: 'Wartungspreisliste'+(kundeName?' · '+kundeName:''),
-    anschreiben: defaultAnschreiben,
+    anschreiben: defaultAnschreiben,  // Fallback, falls KI nicht verfügbar
     pdfName: pdfMeta.filename || 'Wartungspreisliste.pdf',
+    // v7.19: Anschreiben per KI vorab erzeugen (editierbar)
+    autoGen: true,
+    genCtx: { company, kundeName, gueltigBis: f.gueltig_bis||'', titel: f.titel||'' },
   });
+}
+
+/* v7.19: KI-Anschreiben für den Preislisten-Versand erzeugen (kurz, professionell, editierbar). */
+async function _plGenAnschreiben(ctx) {
+  ctx = ctx || {};
+  if (!APP_KEYS.anthropicKey) return null;
+  const prompt =
+    'Formuliere ein kurzes, professionelles deutsches Anschreiben (E-Mail-Text) für den Versand einer Wartungspreisliste an einen Kunden im Aufzugs-Service.\n'+
+    'Absender-Firma: '+(ctx.company||'Aszendio Aufzugservice GmbH')+'.\n'+
+    (ctx.kundeName ? 'Kunde/Empfänger: '+ctx.kundeName+'.\n' : '')+
+    (ctx.titel ? 'Dokument: '+ctx.titel+'.\n' : '')+
+    (ctx.gueltigBis ? 'Preise gültig bis: '+ctx.gueltigBis+'.\n' : '')+
+    'VORGABEN: Beginne mit "Sehr geehrte Damen und Herren," (keinen Namen erfinden). 2-4 Sätze. Inhalt: anbei die aktuelle Wartungspreisliste; Angebot für Rückfragen bzw. ein persönliches Gespräch. Schließe mit Grußformel und dem Firmennamen. '+
+    'STRIKT: KEINE Platzhalter, KEINE eckigen Klammern, KEINE erfundenen Preise/Konditionen/Details. Gib NUR den reinen Anschreiben-Text zurück (keine Betreffzeile, keine Erklärung, keine Anführungszeichen drumherum).';
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:700, messages:[{ role:'user', content:[{ type:'text', text: prompt }] }] }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const txt = (data.content||[]).filter(b => b.type==='text').map(b => b.text).join('').trim();
+    return txt || null;
+  } catch(e) { console.warn('[PL-Anschreiben-KI]', e.message); return null; }
+}
+async function _plRegenAnschreiben(btn) {
+  const m = document.getElementById('pl-send-modal'); if (!m) return;
+  const ta = document.getElementById('pl-send-body'); if (!ta) return;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 …'; }
+  const prevDisabled = ta.disabled; ta.disabled = true;
+  const txt = await _plGenAnschreiben(m._genCtx || {});
+  ta.disabled = prevDisabled;
+  if (txt) ta.value = txt;
+  else toast('KI-Anschreiben nicht verfügbar (kein Key?) — bitte Text manuell anpassen.','');
+  if (btn) { btn.disabled = false; btn.textContent = orig || '🤖 KI neu generieren'; }
 }
 
 function _plSendOpenDialog(recId, o) {
@@ -16542,7 +16582,9 @@ function _plSendOpenDialog(recId, o) {
       '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
         '<div style="margin-bottom:10px"><strong>Empfänger-Email</strong><br><input type="email" id="pl-send-email" value="'+escapeHtml(o.email||'')+'" placeholder="kunde@example.de" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box"></div>'+
         '<div style="margin-bottom:10px"><strong>Betreff</strong><br><input type="text" id="pl-send-subject" value="'+escapeHtml(o.subject||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box"></div>'+
-        '<div style="margin-bottom:10px"><strong>Anschreiben</strong><br><textarea id="pl-send-body" style="width:100%;min-height:190px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box">'+escapeHtml(o.anschreiben||'')+'</textarea></div>'+
+        '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px"><strong>Anschreiben</strong>'+
+            '<button type="button" class="btn" style="font-size:11px;padding:3px 9px" onclick="_plRegenAnschreiben(this)" title="Anschreiben per KI neu erzeugen">🤖 KI neu generieren</button></div>'+
+          '<textarea id="pl-send-body" style="width:100%;min-height:190px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box">'+escapeHtml(o.anschreiben||'')+'</textarea></div>'+
         '<div style="font-size:12px;color:var(--txt2);background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px">📎 Anhang: <strong>'+escapeHtml(o.pdfName||'Preisliste.pdf')+'</strong> — die Preisliste als PDF wird automatisch angehängt.</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
@@ -16552,6 +16594,18 @@ function _plSendOpenDialog(recId, o) {
     '</div>';
   document.body.appendChild(m);
   m.onclick = (e) => { if (e.target === m) m.remove(); };
+  m._genCtx = o.genCtx || {};
+  // v7.19: Anschreiben direkt per KI vorab erzeugen (editierbar)
+  if (o.autoGen && APP_KEYS.anthropicKey) {
+    const ta = document.getElementById('pl-send-body');
+    if (ta) { ta.value = '🤖 KI erstellt das Anschreiben …'; ta.disabled = true; }
+    _plGenAnschreiben(m._genCtx).then(txt => {
+      const t = document.getElementById('pl-send-body');
+      if (!t) return;
+      t.disabled = false;
+      t.value = txt || o.anschreiben || '';
+    });
+  }
 }
 
 async function _plSendDo(btn) {
@@ -37496,6 +37550,10 @@ function _showKundenpreislisteEditor(data, hkRef) {
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button class="btn" onclick="document.getElementById(\'kunden-pl-modal\').remove()">Abbrechen</button>'+
         '<button class="btn" onclick="_generateKundenpreislistePDF()">📄 Nur PDF herunterladen</button>'+
+        // v7.19: Speichern + direkt per Freshdesk an den Kunden senden (Anschreiben per KI)
+        ((typeof freshdeskIsConfigured==='function' && freshdeskIsConfigured(getCurrentFirmaSlug()))
+          ? '<button class="btn" onclick="_saveAndDownloadKundenpreisliste(true)" style="color:#1E40AF;border-color:rgba(30,64,175,.45);background:#EFF6FF" title="Preisliste speichern und direkt per Freshdesk an den Kunden senden (Anschreiben per KI)">✉ Speichern + An Kunden senden</button>'
+          : '')+
         '<button class="btn prim" onclick="_saveAndDownloadKundenpreisliste()">💾 Speichern + PDF</button>'+
       '</div>'+
     '</div>';
@@ -37670,7 +37728,7 @@ function _recalcKundenpreisliste() {
 
 /* Erzeugt Preisliste, lädt PDF hoch und speichert Metadaten in Airtable.
    Wenn _existingRecId gesetzt ist → Update statt Insert. */
-async function _saveAndDownloadKundenpreisliste() {
+async function _saveAndDownloadKundenpreisliste(sendAfter) {
   const data = _readKundenpreislisteEditor();
   if (!data) return;
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
@@ -37720,6 +37778,14 @@ async function _saveAndDownloadKundenpreisliste() {
     if (btn) btn.textContent = '☁ Lade PDF hoch…';
     const fname = 'Wartungspreisliste-'+(fields.kunde_name||'Kunde').replace(/[^\w-]/g,'_').slice(0,40)+'.pdf';
     await atBlobUpload(recId, 'pdf', pdfBlob, fname, 'application/pdf');
+    // v7.19: nach dem Speichern direkt den Freshdesk-Versand öffnen (Anschreiben per KI)
+    if (sendAfter) {
+      toast('💾 Preisliste gespeichert.', 'ok');
+      modal.remove();
+      if (document.getElementById('pl-view')?.classList.contains('show')) renderPreislistenView();
+      setTimeout(() => sendPreislisteViaFreshdesk(recId), 150);
+      return;
+    }
     // Lokal PDF zum Download anbieten
     const url = URL.createObjectURL(pdfBlob);
     const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove();
