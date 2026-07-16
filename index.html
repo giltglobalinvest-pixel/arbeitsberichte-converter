@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.23';
+const APP_VERSION = 'v7.24';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16726,14 +16726,32 @@ async function _plSendDo(btn) {
     try { localStorage.setItem('da_send_sig_html_'+firmaSlug, signatureHtml); } catch(_){}
     const msgHtml = '<p>'+escapeHtml(bodyText).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
     const bodyHtml = msgHtml + (signatureHtml ? '<br><br>'+signatureHtml : '');
+    await erpEnsureSession();
+    // v7.24: ECHTE ausgehende E-Mail an den Kunden — nicht nur ein Ticket anlegen.
+    //   POST /tickets/outbound_email verschickt die Mail tatsächlich; ein normaler
+    //   POST /tickets (source:portal) würde nur ein internes Ticket erzeugen, ohne
+    //   dass beim Kunden etwas ankommt. Dazu braucht es eine email_config_id
+    //   (= „Versand-E-Mail-Adresse" aus Freshdesk-Admin → E-Mail).
+    let emailConfigId = null, cfgErr = '';
+    try {
+      const cr = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/email_configs', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
+      if (cr.ok) {
+        const arr = await cr.json();
+        if (Array.isArray(arr) && arr.length) {
+          const primary = arr.find(c => c.primary_role) || arr.find(c => c.active) || arr[0];
+          emailConfigId = primary.id;
+        } else cfgErr = 'Keine Versand-E-Mail-Adresse in Freshdesk hinterlegt';
+      } else cfgErr = 'HTTP '+cr.status+' bei email_configs';
+    } catch(e) { cfgErr = e.message; }
+    if (!emailConfigId) throw new Error('Mail-Versand nicht möglich: '+(cfgErr||'keine email_config_id')+'. In Freshdesk-Admin → E-Mail eine Versand-Adresse einrichten/aktivieren.');
     const fd = new FormData();
     fd.append('email', email);
     fd.append('subject', subject);
     fd.append('description', bodyHtml);
-    fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
+    fd.append('priority','1'); fd.append('status','2');
+    fd.append('email_config_id', String(emailConfigId));
     fd.append('attachments[]', pdfBlob, pdfMeta.filename || 'Wartungspreisliste.pdf');
-    await erpEnsureSession();
-    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets';
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+firmaSlug+'/api/v2/tickets/outbound_email';
     const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
     const txt = await res.text(); let d; try { d = JSON.parse(txt); } catch(_){ d = {}; }
     if (!res.ok) {
@@ -16750,7 +16768,7 @@ async function _plSendDo(btn) {
         body: JSON.stringify({ fields:{ fd_ticket_id:String(ticketId||''), fd_ticket_url:tUrl, versendet_am:new Date().toISOString() } }),
       });
     } catch(_){}
-    toast('🎫 Ticket #'+(ticketId||'?')+' erstellt — Preisliste an '+email+' versendet.','ok');
+    toast('📧 E-Mail an '+email+' versendet (Ticket #'+(ticketId||'?')+').','ok');
     m.remove();
     document.getElementById('pl-detail-modal')?.remove();
     if (document.getElementById('pl-view')?.classList.contains('show')) renderPreislistenView();
@@ -24374,14 +24392,30 @@ async function _daSendDo(btn) {
     const msgHtml = '<p>'+escapeHtml(message).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
     const bodyHtml = msgHtml + (signatureHtml ? '<br><br>'+signatureHtml : '');
     if (btn) btn.textContent = '⏳ Sende…';
+    await erpEnsureSession();
+    // v7.24: ECHTE ausgehende E-Mail (outbound_email) statt nur Ticket anlegen —
+    //   sonst kommt beim Kunden nichts an. Braucht eine email_config_id
+    //   (= „Versand-E-Mail-Adresse" aus Freshdesk-Admin → E-Mail).
+    let emailConfigId = null, cfgErr = '';
+    try {
+      const cr = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+o.firma+'/api/v2/email_configs', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
+      if (cr.ok) {
+        const arr = await cr.json();
+        if (Array.isArray(arr) && arr.length) {
+          const primary = arr.find(c => c.primary_role) || arr.find(c => c.active) || arr[0];
+          emailConfigId = primary.id;
+        } else cfgErr = 'Keine Versand-E-Mail-Adresse in Freshdesk hinterlegt';
+      } else cfgErr = 'HTTP '+cr.status+' bei email_configs';
+    } catch(e) { cfgErr = e.message; }
+    if (!emailConfigId) throw new Error('Mail-Versand nicht möglich: '+(cfgErr||'keine email_config_id')+'. In Freshdesk-Admin → E-Mail eine Versand-Adresse einrichten/aktivieren.');
     const fd = new FormData();
     fd.append('email', email);
     fd.append('subject', subject);
     fd.append('description', bodyHtml);
-    fd.append('priority','1'); fd.append('status','2'); fd.append('source','2');
+    fd.append('priority','1'); fd.append('status','2');
+    fd.append('email_config_id', String(emailConfigId));
     fd.append('attachments[]', pdfBlob, o.pdfName || 'Zustandsbericht.pdf');
-    await erpEnsureSession();
-    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+o.firma+'/api/v2/tickets';
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+o.firma+'/api/v2/tickets/outbound_email';
     const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
     const txt = await res.text(); let d; try { d = JSON.parse(txt); } catch(_){ d = {}; }
     if (!res.ok) {
@@ -24389,7 +24423,7 @@ async function _daSendDo(btn) {
       if (Array.isArray(d.errors)) msg = d.errors.map(e=>'['+(e.field||'')+'] '+e.message).join('; ');
       throw new Error('Freshdesk: '+msg);
     }
-    toast('🎫 Ticket #'+(d.id||'?')+' erstellt — Zustandsbericht an '+email+' gesendet.','ok');
+    toast('📧 E-Mail an '+email+' versendet (Ticket #'+(d.id||'?')+').','ok');
     m.remove();
   } catch(e) {
     console.error('[DA-Send]', e);
