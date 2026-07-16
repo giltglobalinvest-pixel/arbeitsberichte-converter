@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.21';
+const APP_VERSION = 'v7.22';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -37399,12 +37399,42 @@ async function _selectKundeFromPicker(kundeOrId) {
   const nameInp = modal.querySelector('[data-kk="empfaengerName"]');
   const adrInp  = modal.querySelector('[data-kk="empfaengerAdresse"]');
   if (nameInp) nameInp.value = k.firmenname || '';
-  if (adrInp)  adrInp.value  = [k.strasse, [k.plz, k.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  // v7.22: Adresse robust auflösen. Der api/kunden-LISTEN-Endpoint liefert oft NUR
+  //   Name + Kundennummer (flache strasse/plz/ort leer). Die echte Anschrift steckt
+  //   dann in einem separaten Adress-Record (adresseId) bzw. beim Rechnungsempfänger
+  //   (defaultrechnungsempfaenger). Wir nutzen denselben bewährten Resolver wie die
+  //   Wartungsverträge: flache Felder → defaultrechnungsempfaenger → adresseId.
+  let resolvedAdr = [k.strasse, [k.plz, k.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  if (adrInp) adrInp.value = resolvedAdr;
+  if (adrInp && !resolvedAdr.trim()) {
+    const prevPh = adrInp.placeholder;
+    adrInp.placeholder = 'lade Anschrift aus ERP…';
+    try {
+      // Voll-Detail des Kunden nachladen, falls das Listen-Objekt keine auflösbaren
+      // Adress-Referenzen enthält (nur dann lohnt der zusätzliche Request).
+      let full = k;
+      const hasRef = k.adresseId || (k.defaultrechnungsempfaenger && (k.defaultrechnungsempfaenger.id || k.defaultrechnungsempfaenger.adresseId));
+      if (!hasRef && k.kundennummer) {
+        try {
+          const d = await erpFetch('/aufzug/'+firmaSlug+'/api/kunden/'+encodeURIComponent(k.kundennummer));
+          if (d && typeof d === 'object') full = Object.assign({}, k, d);
+        } catch(e) { console.warn('[KundenPicker] Kunde-Detail-Load fehlgeschlagen:', e.message); }
+      }
+      resolvedAdr = await _nwvResolveKundeAdresse(firmaSlug, full, []);
+      if (resolvedAdr && resolvedAdr.trim()) { adrInp.value = resolvedAdr; }
+      adrInp.placeholder = prevPh;
+      if (!resolvedAdr || !resolvedAdr.trim()) toast('⚠ Für diesen Kunden ist im ERP keine Anschrift hinterlegt — bitte manuell eintragen.','warn');
+    } catch(e) {
+      console.warn('[KundenPicker] Adresse-Resolve fehlgeschlagen:', e.message);
+      adrInp.placeholder = prevPh;
+    }
+  }
   // Kunden-Metadaten ans Modal anhängen
   modal._selectedKunde = {
     id: k.id, kundennummer: k.kundennummer || '',
     firmenname: k.firmenname || '',
     strasse: k.strasse || '', plz: k.plz || '', ort: k.ort || '',
+    adresse: resolvedAdr || '',
   };
   // Kontakte zum Kunden laden + Picker zeigen
   document.getElementById('kp-picker-modal').remove();
@@ -37585,7 +37615,7 @@ function _showKundenpreislisteEditor(data, hkRef) {
         '<div style="margin-bottom:8px"><button class="btn" onclick="openKundenPicker()" style="background:#EEF2FF;border-color:#A5B4FC;color:#3730A3">🔍 Kunde aus ERP wählen</button> <span style="font-size:11px;color:var(--txt3);margin-left:8px">füllt Empfänger + Adresse automatisch</span></div>'+
         '<div style="display:grid;grid-template-columns:1fr 2fr;gap:10px;margin-bottom:14px">'+
           '<div><strong>Empfänger (Name)</strong><br><input type="text" placeholder="z.B. Hausverwaltung Müller GmbH" value="'+escapeHtml(data.empfaengerName||'')+'" data-kk="empfaengerName" style="width:100%;padding:5px 8px"></div>'+
-          '<div><strong>Empfänger-Anschrift</strong><br><textarea data-kk="empfaengerAdresse" placeholder="Straße + Nr.\\nPLZ + Ort" style="width:100%;min-height:50px;padding:5px 8px;font-family:inherit;font-size:12px">'+escapeHtml(data.empfaengerAdresse||'')+'</textarea></div>'+
+          '<div><strong>Empfänger-Anschrift</strong><br><textarea data-kk="empfaengerAdresse" placeholder="Straße + Nr.&#10;PLZ + Ort" style="width:100%;min-height:50px;padding:5px 8px;font-family:inherit;font-size:12px">'+escapeHtml(data.empfaengerAdresse||'')+'</textarea></div>'+
         '</div>'+
         '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen <span style="font-weight:400;color:var(--txt3);font-size:11px">(2 Preisspalten je Wartungsfrequenz · HK in grau zur Referenz)</span></h4>'+
         '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
