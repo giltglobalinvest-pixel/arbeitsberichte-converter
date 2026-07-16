@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.17';
+const APP_VERSION = 'v7.18';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -37448,6 +37448,15 @@ function _showKundenpreislisteEditor(data, hkRef) {
           '<button class="btn" style="padding:2px 10px;font-size:11px;margin-left:6px" onclick="_recalcKundenpreisliste()">↻ Neu berechnen</button>'+
           '<div style="margin-top:4px;font-size:11px;color:#92400E">Du kannst trotzdem jede Position einzeln editieren. Markup wird als Default beim nächsten Öffnen gemerkt.</div>'+
         '</div>'+
+        // v7.18: Benannte Preis-Standards — speichern/laden der aktuell eingestellten Preise
+        '<div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:8px;align-items:center">'+
+          '<strong style="color:#3730A3;font-size:12px">📚 Preis-Standard:</strong>'+
+          '<select id="kpl-std-select" style="flex:1;min-width:170px;padding:5px 8px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;background:#fff"><option value="">— lädt Standards… —</option></select>'+
+          '<button class="btn" style="padding:4px 10px;font-size:11px" onclick="_plStdLoadSelected()" title="Preise des gewählten Standards übernehmen">📥 Laden</button>'+
+          '<button class="btn" style="padding:4px 10px;font-size:11px;color:#065F46;border-color:rgba(16,185,129,.4);background:#ECFDF5" onclick="_plStdSaveCurrent()" title="Aktuell eingestellte Preise als benannten Standard speichern">💾 Als Standard speichern</button>'+
+          '<button class="btn" style="padding:4px 10px;font-size:11px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="_plStdDeleteSelected()" title="Gewählten Standard löschen">🗑</button>'+
+          '<div style="flex-basis:100%;font-size:10px;color:#4338CA">Speichere die aktuell eingestellten Preise als Standard und lade sie bei Bedarf für andere Kunden. „Laden" übernimmt die Preise, Empfänger/Titel bleiben erhalten.</div>'+
+        '</div>'+
         '<h4 style="margin:6px 0;font-size:13px;color:var(--navy)">📝 Dokument-Daten</h4>'+
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">'+
           '<div><strong>Titel</strong><br><input type="text" value="'+escapeHtml(data.titel)+'" data-kk="titel" style="width:100%;padding:5px 8px"></div>'+
@@ -37493,6 +37502,116 @@ function _showKundenpreislisteEditor(data, hkRef) {
   document.body.appendChild(modal);
   modal._stagedData = JSON.parse(JSON.stringify(data));
   modal._hkRef = hkRef;
+  _plStdPopulateSelect();  // v7.18: benannte Preis-Standards ins Dropdown laden
+}
+
+/* ── v7.18: Benannte Preis-Standards für die Kundenpreisliste (Airtable, firma-weit geteilt) ── */
+let _plStdCache = { firma:null, items:null };
+async function _plStdEnsureTable() {
+  try {
+    await ensureTable('Preislisten_Standards', [
+      { name:'firma',      type:'singleLineText' },
+      { name:'name',       type:'singleLineText' },
+      { name:'data_json',  type:'multilineText' },
+      { name:'created_at', type:'singleLineText' },
+      { name:'created_by', type:'singleLineText' },
+    ]);
+  } catch(e) { console.warn('[PL-Std] Tabellen-Setup:', e.message); }
+}
+async function _plStdLoad(force) {
+  const firma = getCurrentFirmaSlug();
+  if (!force && _plStdCache.items && _plStdCache.firma === firma) return _plStdCache.items;
+  let recs = [];
+  try { recs = await atRead('Preislisten_Standards', null); } catch(_){ recs = []; }
+  const items = recs.filter(r => (r.fields?.firma||'') === firma)
+    .sort((a,b) => String(a.fields?.name||'').localeCompare(String(b.fields?.name||'')));
+  _plStdCache = { firma, items };
+  return items;
+}
+async function _plStdPopulateSelect() {
+  const sel = document.getElementById('kpl-std-select');
+  if (!sel) return;
+  let items = [];
+  try { items = await _plStdLoad(false); } catch(_){}
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">'+(items.length ? '— Standard wählen —' : '— noch keine Standards —')+'</option>' +
+    items.map(r => '<option value="'+escapeHtml(r.id)+'"'+(r.id===cur?' selected':'')+'>'+escapeHtml(r.fields?.name||'(ohne Name)')+'</option>').join('');
+}
+async function _plStdLoadSelected() {
+  const sel = document.getElementById('kpl-std-select');
+  const id = sel && sel.value;
+  if (!id) return toast('Bitte zuerst einen Standard wählen','');
+  const rec = (_plStdCache.items||[]).find(r => r.id === id);
+  if (!rec) return toast('Standard nicht gefunden','err');
+  let std = {};
+  try { std = JSON.parse(rec.fields?.data_json||'{}'); } catch(_){ return toast('Standard-Daten defekt','err'); }
+  const modal = document.getElementById('kunden-pl-modal'); if (!modal) return;
+  const current = _readKundenpreislisteEditor();
+  const newData = {
+    // Empfänger/Titel/Gültigkeit bleiben aus dem aktuellen Editor
+    titel: current.titel, gueltigBis: current.gueltigBis,
+    empfaengerName: current.empfaengerName, empfaengerAdresse: current.empfaengerAdresse,
+    // Preise aus dem Standard (Fallback: aktueller Wert)
+    wartung:     Array.isArray(std.wartung) ? std.wartung : current.wartung,
+    stundensatz: std.stundensatz != null ? +std.stundensatz : current.stundensatz,
+    aufschlaege: Array.isArray(std.aufschlaege) ? std.aufschlaege : current.aufschlaege,
+    sonstiges:   Array.isArray(std.sonstiges) ? std.sonstiges : current.sonstiges,
+    fussnote:    std.fussnote != null ? std.fussnote : current.fussnote,
+    markupPct:   std.markupPct != null ? +std.markupPct : current.markupPct,
+  };
+  _showKundenpreislisteEditor(newData, modal._hkRef);
+  toast('📥 Standard „'+(rec.fields?.name||'')+'" geladen','ok');
+}
+async function _plStdSaveCurrent() {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Schreib-Zugriff','err');
+  const data = _readKundenpreislisteEditor();
+  if (!data) return;
+  const name = (window.prompt('Name für diesen Preis-Standard:', data.titel || 'Standard')||'').trim();
+  if (!name) return;
+  const firma = getCurrentFirmaSlug();
+  const std = {
+    wartung:     data.wartung,
+    stundensatz: data.stundensatz,
+    aufschlaege: data.aufschlaege,
+    sonstiges:   data.sonstiges,
+    fussnote:    data.fussnote,
+    markupPct:   data.markupPct,
+  };
+  try {
+    await _plStdEnsureTable();
+    await _plStdLoad(true);
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const existing = (_plStdCache.items||[]).find(r => String(r.fields?.name||'').toLowerCase() === name.toLowerCase());
+    const fields = { firma, name, data_json: JSON.stringify(std), created_at: new Date().toISOString(), created_by: APP_KEYS.user?.name || '' };
+    if (existing) {
+      if (!confirm('Ein Standard „'+name+'" existiert bereits. Überschreiben?')) return;
+      await fetch('https://api.airtable.com/v0/'+baseId+'/Preislisten_Standards/'+existing.id, {
+        method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields }),
+      }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message); });
+    } else {
+      await atWrite('Preislisten_Standards', fields);
+    }
+    await _plStdLoad(true);
+    await _plStdPopulateSelect();
+    const sel = document.getElementById('kpl-std-select');
+    const created = (_plStdCache.items||[]).find(r => String(r.fields?.name||'') === name);
+    if (sel && created) sel.value = created.id;
+    toast('💾 Standard „'+name+'" gespeichert','ok');
+  } catch(e) { toast('❌ '+(e.message||e).slice(0,180),'err'); }
+}
+async function _plStdDeleteSelected() {
+  const sel = document.getElementById('kpl-std-select');
+  const id = sel && sel.value;
+  if (!id) return toast('Bitte einen Standard wählen','');
+  const rec = (_plStdCache.items||[]).find(r => r.id === id);
+  if (!confirm('Standard „'+(rec?.fields?.name||'')+'" wirklich löschen?')) return;
+  try {
+    await atDelete('Preislisten_Standards', id);
+    await _plStdLoad(true);
+    await _plStdPopulateSelect();
+    toast('🗑 Standard gelöscht','warn');
+  } catch(e) { toast('❌ '+(e.message||e).slice(0,150),'err'); }
 }
 
 function _readKundenpreislisteEditor() {
