@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.22';
+const APP_VERSION = 'v7.23';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16513,16 +16513,21 @@ async function sendPreislisteViaFreshdesk(recId) {
   const kundeName = f.kunde_name || f.empfaenger_name || '';
   let company = 'Aszendio Aufzugservice GmbH';
   try { if (typeof _daFirmaBranding==='function') company = (_daFirmaBranding(firmaSlug)||{}).company || company; } catch(_){}
+  const nameDefault = APP_KEYS.user?.name || '';
+  // v7.23: Signatur kommt aus dem Freshdesk-Profil (HTML inkl. Logo) — Fallback als HTML.
+  const sigFallbackHtml = '<p>Mit freundlichen Grüßen<br>'+(nameDefault ? escapeHtml(nameDefault)+'<br>' : '')+escapeHtml(company)+'</p>';
+  // v7.23: Anschreiben endet OHNE Grußformel — die kommt aus der Signatur.
   const defaultAnschreiben =
     'Sehr geehrte Damen und Herren,\n\n'+
     'anbei erhalten Sie unsere aktuelle Wartungspreisliste'+(f.gueltig_bis?' (gültig bis '+f.gueltig_bis+')':'')+'.\n\n'+
-    'Für Rückfragen oder ein persönliches Angebot stehen wir Ihnen jederzeit gerne zur Verfügung.\n\n'+
-    'Mit freundlichen Grüßen\n'+company;
+    'Für Rückfragen oder ein persönliches Angebot stehen wir Ihnen jederzeit gerne zur Verfügung.';
   _plSendOpenDialog(recId, {
     firma:   firmaSlug,
+    kundeNr: f.kunde_nummer || '',   // v7.23: ERP-Kontakte des Kunden für Email-Autofill
     email:   f.kontakt_email || '',
     subject: 'Wartungspreisliste'+(kundeName?' · '+kundeName:''),
     anschreiben: defaultAnschreiben,  // Fallback, falls KI nicht verfügbar
+    sigFallbackHtml,                  // v7.23: Freshdesk-Signatur mit HTML-Fallback
     pdfName: pdfMeta.filename || 'Wartungspreisliste.pdf',
     // v7.19: Anschreiben per KI vorab erzeugen (editierbar)
     autoGen: true,
@@ -16540,7 +16545,8 @@ async function _plGenAnschreiben(ctx) {
     (ctx.kundeName ? 'Kunde/Empfänger: '+ctx.kundeName+'.\n' : '')+
     (ctx.titel ? 'Dokument: '+ctx.titel+'.\n' : '')+
     (ctx.gueltigBis ? 'Preise gültig bis: '+ctx.gueltigBis+'.\n' : '')+
-    'VORGABEN: Beginne mit "Sehr geehrte Damen und Herren," (keinen Namen erfinden). 2-4 Sätze. Inhalt: anbei die aktuelle Wartungspreisliste; Angebot für Rückfragen bzw. ein persönliches Gespräch. Schließe mit Grußformel und dem Firmennamen. '+
+    'VORGABEN: Beginne mit "Sehr geehrte Damen und Herren," (keinen Namen erfinden). 2-4 Sätze. Inhalt: anbei die aktuelle Wartungspreisliste; Angebot für Rückfragen bzw. ein persönliches Gespräch. '+
+    'WICHTIG: Ende NACH dem letzten inhaltlichen Satz — KEINE Grußformel, KEIN "Mit freundlichen Grüßen", KEIN Firmenname am Ende (die Signatur wird separat angehängt). '+
     'STRIKT: KEINE Platzhalter, KEINE eckigen Klammern, KEINE erfundenen Preise/Konditionen/Details. Gib NUR den reinen Anschreiben-Text zurück (keine Betreffzeile, keine Erklärung, keine Anführungszeichen drumherum).';
   try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
@@ -16567,12 +16573,91 @@ async function _plRegenAnschreiben(btn) {
   if (btn) { btn.disabled = false; btn.textContent = orig || '🤖 KI neu generieren'; }
 }
 
+/* ── v7.23: ERP-Kontakte + Freshdesk-Signatur für den Preislisten-Versand ── */
+async function _plSendLoadContacts() {
+  const m = document.getElementById('pl-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const sel = document.getElementById('pl-send-contact');
+  if (!o.kundeNr) { if (sel) sel.innerHTML = '<option value="">(kein Kunde hinterlegt — Email manuell)</option>'; return; }
+  try {
+    const res = await erpFetch('/aufzug/'+o.firma+'/api/Kunden/'+encodeURIComponent(o.kundeNr)+'/Kontakte');
+    const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+    m._contacts = list;
+    _plSendRenderContacts();
+    // Auto-Select: Standard-Kontakt, sonst erster mit Email, sonst erster
+    const pick = list.find(k => k.isStandard || k.standard || k.isDefault) || list.find(k => _daSendContactEmail(k)) || list[0];
+    // Email nur automatisch setzen, wenn noch keine (z.B. aus kontakt_email) vorbelegt ist
+    const emailInp = document.getElementById('pl-send-email');
+    const hadEmail = emailInp && emailInp.value.trim();
+    if (pick) _plSendPickContact(String(pick.id), !hadEmail);
+  } catch(e) {
+    console.warn('[PL-Send] Kontakte-Load:', e.message);
+    if (sel) sel.innerHTML = '<option value="">(Kontakte nicht ladbar — Email manuell eingeben)</option>';
+  }
+}
+function _plSendRenderContacts() {
+  const m = document.getElementById('pl-send-modal'); if (!m) return;
+  const sel = document.getElementById('pl-send-contact'); if (!sel) return;
+  const list = m._contacts || [];
+  if (!list.length) { sel.innerHTML = '<option value="">(keine Kontakte im ERP)</option>'; return; }
+  const cur = m._selContactId || '';
+  sel.innerHTML = '<option value="">— Kontakt wählen —</option>' + list.map(k => {
+    const nm = _daSendContactName(k) || ('Kontakt '+k.id);
+    const em = _daSendContactEmail(k);
+    return '<option value="'+escapeHtml(String(k.id))+'"'+(String(k.id)===String(cur)?' selected':'')+'>'+escapeHtml(nm + (em ? ' · '+em : ' · (keine Email)'))+'</option>';
+  }).join('');
+}
+function _plSendPickContact(id, setEmail) {
+  const m = document.getElementById('pl-send-modal'); if (!m) return;
+  m._selContactId = id;
+  const sel = document.getElementById('pl-send-contact'); if (sel) sel.value = id;
+  const k = (m._contacts||[]).find(x => String(x.id) === String(id));
+  if (!k) return;
+  const em = _daSendContactEmail(k);
+  // Bei manueller Auswahl (setEmail undefined) IMMER überschreiben; beim Auto-Preselect nur wenn leer.
+  const emailInp = document.getElementById('pl-send-email');
+  if (emailInp && em && (setEmail === undefined || setEmail)) emailInp.value = em;
+}
+/* v7.23: HTML-Signatur (inkl. Logo) laden — bevorzugt gemerkte, sonst aus dem
+   Freshdesk-Profil (/agents/me), sonst Fallback. force=true → immer frisch aus Freshdesk.
+   Teilt sich den Merker mit dem DA-Versand (gleiche Freshdesk-Agent-Signatur). */
+async function _plSendLoadSignature(force) {
+  const m = document.getElementById('pl-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const div = document.getElementById('pl-send-sig'); if (!div) return;
+  if (!force) {
+    let saved = '';
+    try { saved = localStorage.getItem('da_send_sig_html_'+o.firma) || ''; } catch(_){}
+    if (saved) { div.innerHTML = saved; return; }
+  }
+  div.innerHTML = '<div style="color:var(--txt3);font-size:12px">⏳ Lade Signatur aus Freshdesk…</div>';
+  try {
+    await erpEnsureSession();
+    const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+o.firma+'/api/v2/agents/me', {
+      headers:{ 'Authorization':'Bearer '+erpGetSessionToken() },
+    });
+    if (r.ok) {
+      const me = await r.json();
+      const sig = String(me?.signature || me?.signature_html || me?.contact?.signature || '').trim();
+      if (sig) { div.innerHTML = sig; if (force) toast('✍️ Freshdesk-Signatur geladen','ok'); return; }
+    } else {
+      console.warn('[PL-Send] /agents/me HTTP', r.status);
+    }
+    div.innerHTML = o.sigFallbackHtml || '';
+    if (force) toast('Keine Signatur im Freshdesk-Profil hinterlegt — Standard eingesetzt.','');
+  } catch(e) {
+    console.warn('[PL-Send] Signatur:', e.message);
+    div.innerHTML = o.sigFallbackHtml || '';
+  }
+}
+
 function _plSendOpenDialog(recId, o) {
   document.getElementById('pl-send-modal')?.remove();
   const m = document.createElement('div');
   m.id = 'pl-send-modal';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11000;display:flex;align-items:center;justify-content:center;padding:14px';
   m._recId = recId; m._firma = o.firma; m._pdfName = o.pdfName;
+  m._o = Object.assign({ recId }, o);   // v7.23: für Kontakt-/Signatur-Loader
   m.innerHTML =
     '<div style="background:var(--surf);max-width:600px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:var(--navy);color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
@@ -16580,11 +16665,19 @@ function _plSendOpenDialog(recId, o) {
         '<button onclick="document.getElementById(\'pl-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
+        // v7.23: ERP-Kontakt wählen → Email automatisch
+        '<div style="margin-bottom:10px"><strong>Kontakt aus ERP (Empfänger)</strong><br><select id="pl-send-contact" onchange="_plSendPickContact(this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box;background:#fff"><option value="">— lädt Kontakte… —</option></select>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Wählt die Email automatisch. Nicht dabei? Email unten manuell eintragen.</div></div>'+
         '<div style="margin-bottom:10px"><strong>Empfänger-Email</strong><br><input type="email" id="pl-send-email" value="'+escapeHtml(o.email||'')+'" placeholder="kunde@example.de" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box"></div>'+
         '<div style="margin-bottom:10px"><strong>Betreff</strong><br><input type="text" id="pl-send-subject" value="'+escapeHtml(o.subject||'')+'" style="width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;box-sizing:border-box"></div>'+
         '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px"><strong>Anschreiben</strong>'+
             '<button type="button" class="btn" style="font-size:11px;padding:3px 9px" onclick="_plRegenAnschreiben(this)" title="Anschreiben per KI neu erzeugen">🤖 KI neu generieren</button></div>'+
-          '<textarea id="pl-send-body" style="width:100%;min-height:190px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box">'+escapeHtml(o.anschreiben||'')+'</textarea></div>'+
+          '<textarea id="pl-send-body" style="width:100%;min-height:150px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-family:inherit;font-size:13px;line-height:1.5;box-sizing:border-box">'+escapeHtml(o.anschreiben||'')+'</textarea></div>'+
+        // v7.23: Freshdesk-Signatur (HTML inkl. Logo) — editierbar
+        '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:3px"><strong>Signatur <span style="font-weight:400;color:var(--txt3);font-size:11px">(aus Freshdesk-Profil · editierbar)</span></strong>'+
+            '<button type="button" class="btn" style="font-size:11px;padding:3px 9px" onclick="_plSendLoadSignature(true)" title="Signatur frisch aus Freshdesk laden">↻ Aus Freshdesk laden</button></div>'+
+          '<div id="pl-send-sig" contenteditable="true" style="width:100%;min-height:90px;max-height:340px;overflow:auto;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;box-sizing:border-box;background:#fff"><div style="color:var(--txt3);font-size:12px">⏳ Lade Signatur…</div></div>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">HTML-Signatur inkl. Logo — direkt hier editierbar. Änderungen werden als Standard gemerkt.</div></div>'+
         '<div style="font-size:12px;color:var(--txt2);background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px">📎 Anhang: <strong>'+escapeHtml(o.pdfName||'Preisliste.pdf')+'</strong> — die Preisliste als PDF wird automatisch angehängt.</div>'+
       '</div>'+
       '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
@@ -16595,6 +16688,8 @@ function _plSendOpenDialog(recId, o) {
   document.body.appendChild(m);
   m.onclick = (e) => { if (e.target === m) m.remove(); };
   m._genCtx = o.genCtx || {};
+  _plSendLoadContacts();   // v7.23: ERP-Kontakte laden + Email vorbefüllen
+  _plSendLoadSignature();  // v7.23: HTML-Signatur aus Freshdesk-Profil laden
   // v7.19: Anschreiben direkt per KI vorab erzeugen (editierbar)
   if (o.autoGen && APP_KEYS.anthropicKey) {
     const ta = document.getElementById('pl-send-body');
@@ -16615,6 +16710,7 @@ async function _plSendDo(btn) {
   const email   = (document.getElementById('pl-send-email')?.value||'').trim();
   const subject = (document.getElementById('pl-send-subject')?.value||'').trim() || 'Wartungspreisliste';
   const bodyText= (document.getElementById('pl-send-body')?.value||'').trim();
+  const signatureHtml = (document.getElementById('pl-send-sig')?.innerHTML||'').trim();  // v7.23
   if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Bitte eine gültige Empfänger-Email eingeben','err');
   if (!bodyText) return toast('Bitte ein Anschreiben eingeben','err');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Sende…'; }
@@ -16626,7 +16722,10 @@ async function _plSendDo(btn) {
     const pdfMeta = rd.fields?.pdf?.[0];
     if (!pdfMeta) throw new Error('Kein PDF am Datensatz gefunden — bitte erst speichern.');
     const pdfBlob = await (await fetch(pdfMeta.url)).blob();
-    const bodyHtml = '<p>'+escapeHtml(bodyText).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    // v7.23: Signatur (HTML inkl. Logo) merken + roh an den Anschreiben-Text anhängen
+    try { localStorage.setItem('da_send_sig_html_'+firmaSlug, signatureHtml); } catch(_){}
+    const msgHtml = '<p>'+escapeHtml(bodyText).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    const bodyHtml = msgHtml + (signatureHtml ? '<br><br>'+signatureHtml : '');
     const fd = new FormData();
     fd.append('email', email);
     fd.append('subject', subject);
