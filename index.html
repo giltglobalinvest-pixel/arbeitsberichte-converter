@@ -2714,7 +2714,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.19';
+const APP_VERSION = 'v7.20';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -21348,12 +21348,35 @@ async function freshdeskCreateTicketForDA(daRec, opts) {
       '<a href="'+escapeHtml(opts.pdfUrl)+'">PDF öffnen</a></p>');
   }
 
+  // v7.20: Hauptansprechpartner des Kunden aus dem ERP nachladen — Name + Telefon fehlten im Ticket.
+  let _daAnsprech = null;
+  if (f.kunde_nummer) {
+    try {
+      const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(f.kunde_nummer)+'/Kontakte');
+      const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+      _daAnsprech = list.find(k => k.isStandard || k.standard || k.isDefault)
+                 || list.find(k => (k.telefon||k.tel||k.mobil||k.handy) || (k.email||k.mail||k.emailAdresse||k.email1))
+                 || list[0] || null;
+    } catch(e) { console.warn('[Freshdesk-DA-Ticket] Ansprechpartner-Load:', e.message); }
+  }
+
   // Detail-Block
   const fmtList = [];
   if (f.da_num)             fmtList.push('<li><strong>DA-Nummer:</strong> DA-'+f.da_num+'</li>');
   fmtList.push('<li><strong>Standort:</strong> '+(standort ? escapeHtml(standort) : '<em style="color:#a16207">— kein Standort hinterlegt —</em>')+'</li>');
   if (f.anlage_fabriknummer)fmtList.push('<li><strong>Fabrik-Nr.:</strong> '+escapeHtml(f.anlage_fabriknummer)+'</li>');
   if (f.kunde_name)         fmtList.push('<li><strong>Kunde:</strong> '+escapeHtml(f.kunde_name)+(f.kunde_nummer?' (Kd-Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</li>');
+  // v7.20: Hauptansprechpartner (Name · Telefon · E-Mail) aus dem ERP
+  if (_daAnsprech) {
+    const anName = [_daAnsprech.vorname, _daAnsprech.nachname].filter(Boolean).join(' ').trim() || String(_daAnsprech.name||'').trim();
+    const tel    = String(_daAnsprech.telefon||_daAnsprech.tel||_daAnsprech.mobil||_daAnsprech.handy||'').trim();
+    const mail   = String(_daAnsprech.email||_daAnsprech.mail||_daAnsprech.emailAdresse||_daAnsprech.email1||'').trim();
+    const ap = [];
+    if (anName) ap.push(escapeHtml(anName));
+    if (tel)    ap.push('☎ '+escapeHtml(tel));
+    if (mail)   ap.push('✉ '+escapeHtml(mail));
+    if (ap.length) fmtList.push('<li><strong>Ansprechpartner:</strong> '+ap.join(' · ')+'</li>');
+  }
   if (f.beschreibung)       fmtList.push('<li><strong>Auftrag/Beschreibung:</strong> '+escapeHtml(f.beschreibung)+'</li>');
   if (f.erstellt_von)       fmtList.push('<li><strong>Erstellt von:</strong> '+escapeHtml(f.erstellt_von)+'</li>');
   if (f.erstellt_am)        fmtList.push('<li><strong>Erstellt am:</strong> '+escapeHtml(f.erstellt_am)+'</li>');
