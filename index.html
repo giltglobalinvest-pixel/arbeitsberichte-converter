@@ -1586,6 +1586,11 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
             <div class="field"><div class="field-lbl">Berichtsnummer</div><input class="fi mono" id="s-num" readonly></div>
             <div class="field"><div class="field-lbl">Dateiname</div><input class="fi mono" id="s-name"></div>
           </div>
+          <label id="bf-gwl-toggle" style="display:flex;align-items:center;gap:9px;cursor:pointer;background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:10px 12px;margin-top:12px">
+            <input type="checkbox" id="bf-gwl-check" onchange="_bfToggleGewaehrleistung(this.checked)" style="width:18px;height:18px;flex-shrink:0;accent-color:#EA580C">
+            <span style="font-weight:700;color:#9A3412">🛡 Gewährleistungsprüfung</span>
+            <span style="font-size:11px;font-weight:400;color:#9A3412;opacity:.85">— setzt einen deutlichen Hinweis oben ins Bericht-PDF</span>
+          </label>
         </div>
         <div class="alert warn mt12" id="corr-alert" style="display:none">
           <span>🧠</span><span><span id="corr-n">0</span> Felder korrigiert – werden gespeichert.</span>
@@ -2564,6 +2569,13 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
             <label class="auf-label">Fällig bis (optional)</label>
             <input type="date" class="auf-input" id="auf-f-due">
           </div>
+          <div class="auf-field" style="grid-column:1/-1">
+            <label class="auf-label" style="display:flex;align-items:center;gap:9px;cursor:pointer;background:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:10px 12px;margin:0">
+              <input type="checkbox" id="auf-f-gewaehrleistung" style="width:18px;height:18px;flex-shrink:0;accent-color:#EA580C">
+              <span style="font-weight:700;color:#9A3412">🛡 Gewährleistungsprüfung</span>
+              <span style="font-size:11px;font-weight:400;color:#9A3412;opacity:.85">— markiert diesen Auftrag (und den zugehörigen Arbeitsbericht) als Gewährleistungsfall</span>
+            </label>
+          </div>
           <div class="auf-field" id="auf-f-empfaenger-wrap" style="display:none;grid-column:1/-1">
             <label class="auf-label">Auftraggeber-Kontakt (ERP) <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(Empfänger im ERP)</span></label>
             <select class="auf-select" id="auf-f-empfaenger"></select>
@@ -2724,7 +2736,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.26';
+const APP_VERSION = 'v7.27';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3725,6 +3737,13 @@ function _pdfArbeitModernBody(doc, d, num, sigs, header, theme) {
   const GAP = 8, cwHalf = (cw - GAP) / 2;
   let y = header(doc, ml, mr);
   y += 2;
+  // v7.27: Gewährleistungsprüfung — deutlicher Banner ganz oben
+  if (d && d.gewaehrleistung) {
+    doc.setFillColor(234,88,12); doc.roundedRect(ml, y, cw, 8.5, 1.5, 1.5, 'F');
+    p.ft(10.5,true,[255,255,255]);
+    doc.text(_sanPdf('GEWÄHRLEISTUNGSPRÜFUNG'), ml+cw/2, y+5.7, {align:'center'});
+    y += 13;
+  }
   // META — Datum + Auftragsnummer prominent
   p.ft(7.5,false,GREY_L);
   doc.text('BERICHT VOM', ml, y);
@@ -4351,10 +4370,20 @@ async function startExtraction() {
   }catch(err){toast('Fehler: '+err.message,'err');goTo(1);}
 }
 
+// v7.27: Gewährleistungsprüfung-Marker im Bericht — Toggle regeneriert das PDF mit Banner
+function _bfToggleGewaehrleistung(on) {
+  S.gewaehrleistung = !!on;
+  buildPreview();  // PDF mit/ohne Gewährleistungs-Banner neu erzeugen
+  toast(S.gewaehrleistung ? '🛡 Bericht als Gewährleistungsprüfung markiert' : 'Gewährleistungs-Markierung entfernt', '');
+}
+
 function buildPreview() {
   const data=collectForm();S.edited=data;
+  data.gewaehrleistung = !!S.gewaehrleistung;   // v7.27: Marker ins PDF-Datenmodell
   const tmpl=T[S.tmpl];const num=S.counter;
   const doc=tmpl.pdf(data,num);S.blob=doc.output('blob');
+  // Checkbox-Zustand synchron halten (z.B. nach Bearbeiten-Restore)
+  const gwlChk=document.getElementById('bf-gwl-check'); if(gwlChk) gwlChk.checked=!!S.gewaehrleistung;
   if(outBlobUrl)URL.revokeObjectURL(outBlobUrl);
   outBlobUrl=URL.createObjectURL(S.blob);
   document.getElementById('btn-out-preview').style.display='block';
@@ -4392,6 +4421,7 @@ function doDownload() {
 async function doSave() {
   if(!S.blob)return;
   const data=collectForm();
+  data.gewaehrleistung = !!S.gewaehrleistung;   // v7.27: Marker mitspeichern
   const btn=document.getElementById('btn-save');
 
   // ── Edit mode: ask user what to do ───────────────────────
@@ -4517,6 +4547,7 @@ async function doSaveOverwrite(data) {
       techniker:   data.durchgefuehrt_von||'',
       fname:       fname,
       data_json:   JSON.stringify(data),
+      gewaehrleistung: !!data.gewaehrleistung,   // v7.27
     });
 
     // Replace out_pdf: upload new PDF
@@ -4575,6 +4606,7 @@ async function doSaveAs(data, num, incrementCounter) {
       fname:       fname,
       subfolder:   SUBFOLDERS[S.tmpl]||'Sonstige',
       data_json:   JSON.stringify(data),
+      gewaehrleistung: !!data.gewaehrleistung,   // v7.27
       created:     new Date().toISOString(),
     });
 
@@ -4637,7 +4669,8 @@ async function doSaveAs(data, num, incrementCounter) {
 }
 
 function resetApp() {
-  S.file=null;S.blob=null;S.extracted={};S.edited={};
+  S.file=null;S.blob=null;S.extracted={};S.edited={};S.gewaehrleistung=false;  // v7.27
+  const _gwlChk=document.getElementById('bf-gwl-check'); if(_gwlChk) _gwlChk.checked=false;
   if(srcBlobUrl){URL.revokeObjectURL(srcBlobUrl);srcBlobUrl=null;}
   if(outBlobUrl){URL.revokeObjectURL(outBlobUrl);outBlobUrl=null;}
   document.getElementById('btn-src-preview').style.display='none';
@@ -6089,6 +6122,9 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Auftraege',    'bilder',               'multipleAttachments');
   await ensureField('Auftraege',    'subunternehmer_preis', 'multilineText');
   await ensureField('Auftraege',    'ext_last_modified',    'singleLineText');
+  // v7.27: Gewährleistungsprüfung — markiert Auftrag UND (übernommen) Arbeitsbericht
+  await ensureField('Auftraege',    'gewaehrleistung',      'checkbox');
+  await ensureField('Berichte',     'gewaehrleistung',      'checkbox');
   // User: Techniker-Flag + Subunternehmer-Flag + Rolle (Name aus Rollen-Tabelle)
   await ensureField('User',         'techniker',     'checkbox');
   await ensureField('User',         'subunternehmer','checkbox');
@@ -7105,12 +7141,16 @@ function _auftragCardHtml(r) {
   const vgBadge = vorgangsNr
     ? '<span title="Vorgangsnummer (interner ERP-Workflow-Counter)" style="background:#F3F4F6;color:#6B7280;font-size:10px;font-weight:600;padding:1px 6px;border-radius:99px;border:1px solid #E5E7EB;margin-left:6px">Vg. '+String(vorgangsNr).replace(/</g,'&lt;')+'</span>'
     : '';
+  // v7.27: Gewährleistungs-Badge
+  const gwlBadge = f.gewaehrleistung
+    ? '<span title="Gewährleistungsprüfung" style="background:#FFEDD5;color:#9A3412;font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;border:1px solid #FDBA74;margin-left:6px">🛡 Gewährleistung</span>'
+    : '';
   return `
     <div class="auf-card" style="${cardStyle}" onclick="${onClick}">
       ${checkbox}
       <div class="auf-card-num">#${String(auftragsNr).replace(/</g,'&lt;')}</div>
       <div class="auf-card-info">
-        <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}${vgBadge}</div>
+        <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}${vgBadge}${gwlBadge}</div>
         <div class="auf-card-meta">
           ${firmaBadge}
           <span>🏷 ${tmplLabel}</span>
@@ -8350,8 +8390,11 @@ function openAuftragDetail(recId) {
     : (_statusTmp === 'abgerechnet')
       ? ' <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#6B7280;color:#fff;letter-spacing:.3px;vertical-align:middle">💰 ABGERECHNET</span>'
       : ' <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#2152A9;color:#fff;letter-spacing:.3px;vertical-align:middle">📋 OFFEN</span>';
+  const _gwlBadge = f.gewaehrleistung
+    ? ' <span style="font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:#EA580C;color:#fff;letter-spacing:.3px;vertical-align:middle">🛡 GEWÄHRLEISTUNG</span>'
+    : '';
   document.getElementById('auf-detail-title').innerHTML =
-    'Auftrag #' + (f.auftrag_num || '–') + _statusBadge + ' · <span style="font-weight:400;opacity:.7">' + (T[f.tmpl]?.label || f.tmpl || '') + '</span>';
+    'Auftrag #' + (f.auftrag_num || '–') + _statusBadge + _gwlBadge + ' · <span style="font-weight:400;opacity:.7">' + (T[f.tmpl]?.label || f.tmpl || '') + '</span>';
   let techs = [];
   try { techs = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techNames = f.techniker_namen || _techNamesByKeys(techs);
@@ -10809,6 +10852,8 @@ async function openAuftragForm(recId) {
   document.getElementById('auf-f-standort').value      = f.standort || '';
   document.getElementById('auf-f-fabriknummer').value  = f.fabriknummer || '';
   document.getElementById('auf-f-due').value           = f.due_date || '';
+  const gwlChk = document.getElementById('auf-f-gewaehrleistung');
+  if (gwlChk) gwlChk.checked = !!f.gewaehrleistung;   // v7.27
   document.getElementById('auf-f-leistung').value      = f.leistungsbeschreibung || '';
   // Subunternehmer-Vergütungs-Textfeld – nur für Admin/Verwalter sichtbar+editierbar
   const subPriceInp     = document.getElementById('auf-f-subprice');
@@ -11199,7 +11244,9 @@ async function saveAuftrag() {
     due_date:              document.getElementById('auf-f-due').value,
     techniker_keys:        JSON.stringify(techKeys),
     techniker_namen:       techNames,
+    gewaehrleistung:       !!document.getElementById('auf-f-gewaehrleistung')?.checked,  // v7.27
   };
+  const isGewaehr = fields.gewaehrleistung;
   // Subunternehmer-Vergütung nur speichern wenn der User sie sehen/editieren darf (Admin/Verwalter)
   if (canSeePrices()) {
     fields.subunternehmer_preis = (document.getElementById('auf-f-subprice')?.value || '').trim();
@@ -11246,7 +11293,9 @@ async function saveAuftrag() {
         notizen:               '',
         datumAuftragserteilung: heuteISO,
         ausfuehrungstermin:    dueDate,
-        leistungsbeschreibung: leistung,
+        // v7.27: ERP hat kein eigenes Gewährleistungs-Feld → Marker in den Leistungstext,
+        //   damit der Auftrag auch im ERP/Auftrags-PDF eindeutig als Gewährleistungsprüfung erkennbar ist.
+        leistungsbeschreibung: (isGewaehr ? 'GEWÄHRLEISTUNGSPRÜFUNG – ' : '') + leistung,
         kundeMail:             false,
         titelemail:            '-',
         inhaltemail:           '-',
@@ -42337,6 +42386,8 @@ async function loadReportForEditing(recId) {
   const tmpl = T[S.tmpl];
   S.extracted = { ...tmpl.schema(), ...data };
   S.edited    = JSON.parse(JSON.stringify(S.extracted));
+  // v7.27: Gewährleistungs-Markierung wiederherstellen (aus data_json bzw. Spalte)
+  S.gewaehrleistung = !!(data.gewaehrleistung || f.gewaehrleistung);
 
   // ── Restore source PDF via direct URL (no fetch/CORS issue) ─
   const srcFiles = f.src_pdf || [];
