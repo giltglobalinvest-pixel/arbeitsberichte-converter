@@ -1436,12 +1436,13 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
 
     <!-- GRUPPE: Vorlagen (Admin-only) -->
-    <div class="tnav-group" id="tnav-grp-vorlagen" data-group-views="preislisten,vorlagen,dav" style="display:none">
+    <div class="tnav-group" id="tnav-grp-vorlagen" data-group-views="preislisten,vorlagen,dav,gwl" style="display:none">
       <button class="tnav tnav-trigger" onclick="_toggleTnavGroup('tnav-grp-vorlagen', event)">📑 Vorlagen</button>
       <div class="tnav-menu">
         <button class="tnav-menu-item" id="tnav-preislisten" onclick="switchView('preislisten')">📋 Preislisten</button>
         <button class="tnav-menu-item" id="tnav-vorlagen" onclick="switchView('vorlagen')">📑 Vertragsvorlagen</button>
         <button class="tnav-menu-item" id="tnav-dav" onclick="switchView('dav')">🔍 DA-Vorlagen</button>
+        <button class="tnav-menu-item" id="tnav-gwl" onclick="switchView('gwl')">📜 Gewährleistungsbedingungen</button>
       </div>
     </div>
 
@@ -2004,6 +2005,15 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn prim" onclick="openDaVorlageEdit(null)">+ Neue Vorlage</button>
   </div>
   <div class="firma-body" id="dav-list" style="padding:20px"></div>
+</div>
+
+<!-- GEWÄHRLEISTUNGSBEDINGUNGEN (Info-PDF „Ablauf im Gewährleistungsfall" je Mandant — nur Admin) -->
+<div class="firma-view" id="gwl-view">
+  <div class="firma-hdr">
+    <h2>📜 Gewährleistungsbedingungen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">Info-PDF „Ablauf im Gewährleistungsfall" · je Mandant · mit Versions-Historie</span></h2>
+    <button class="btn" onclick="renderGewaehrleistungView()">↻ Neu laden</button>
+  </div>
+  <div class="firma-body" id="gwl-list" style="padding:20px"></div>
 </div>
 
 <!-- DATENAUFNAHMEN (Inspektion vor Angebot — Techniker + Verwalter) -->
@@ -2714,7 +2724,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.24';
+const APP_VERSION = 'v7.25';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -4129,6 +4139,7 @@ function switchView(view) {
   if (view==='lv' && !hasPermission('tool_lv')) return toast('🔒 Keine Berechtigung','err');
   if (view==='galerie' && !(hasPermission('tool_datenaufnahmen') || hasPermission('tool_anlagen'))) return toast('🔒 Keine Berechtigung','err');
   if (view==='dav' && !isAdmin()) return;
+  if (view==='gwl' && !isAdmin()) return;
 
   const dash = document.getElementById('dash-view');
   const ov   = document.getElementById('ov-view');
@@ -4152,7 +4163,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','extract','angebote','briefberichte','lv','galerie'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','gwl','extract','angebote','briefberichte','lv','galerie'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -4180,6 +4191,8 @@ function switchView(view) {
   if (rollen) rollen.classList.toggle('show', view==='rollen');
   if (da) da.classList.toggle('show', view==='da');
   if (dav) dav.classList.toggle('show', view==='dav');
+  const gwl = document.getElementById('gwl-view');
+  if (gwl) gwl.classList.toggle('show', view==='gwl');
   const extract = document.getElementById('extract-view');
   if (extract) extract.classList.toggle('show', view==='extract');
   const angeboteEl = document.getElementById('angebote-view');
@@ -4214,6 +4227,7 @@ function switchView(view) {
   if (view==='rollen') renderRollenView();
   if (view==='da') renderDatenaufnahmenView();
   if (view==='dav') renderDaVorlagenView();
+  if (view==='gwl') renderGewaehrleistungView();
   if (view==='extract') renderDataExtractView();
   if (view==='angebote') renderAngeboteView();
   if (view==='briefberichte') renderBriefberichteView();
@@ -21021,6 +21035,560 @@ async function bootstrapDaVorlagenDefaults() {
     } catch(_) {}
   }
   await loadDaVorlagen();
+}
+
+/* ════════════════════════════════════════════════════════════
+   v7.25: GEWÄHRLEISTUNGSBEDINGUNGEN
+   Info-PDF „Ablauf im Gewährleistungsfall" je Mandant, mit Logo + Briefkopf-Footer
+   (Branding via _daFirmaBranding), editierbar per Formular ODER KI-Prompt,
+   mit Versions-Historie (jede Speicherung = neue Version + PDF-Anhang) + Download.
+   ════════════════════════════════════════════════════════════ */
+const GWL_DEFAULT_CONTENT = {
+  titel: 'Ablauf im Gewährleistungsfall',
+  untertitel: 'Informationen für unsere Kundinnen und Kunden',
+  intro: 'Damit wir gemeldete Mängel an gelieferten Frequenzumrichtern schnell und transparent bearbeiten können, haben wir den Ablauf im Gewährleistungsfall nachfolgend für Sie zusammengefasst.',
+  abschnitte: [
+    { titel: 'Meldung, Formular und Rücksendung',
+      text: 'Nach Eingang Ihrer Mangelmeldung senden wir Ihnen unser Gewährleistungsformular zu. Bitte füllen Sie dieses vollständig aus und senden Sie es gemeinsam mit dem betroffenen Frequenzumrichter zur Prüfung an uns zurück.' },
+    { titel: 'Prüfung der Ursache',
+      text: '**Ursache nicht eindeutig der Frequenzumrichter:** Lässt sich der Mangel nicht eindeutig dem Umrichter zuordnen, nehmen wir vor allen weiteren Schritten zunächst Rücksprache mit Ihnen.\n\n**Ursache möglicherweise am Umrichter:** Ist nicht abschließend klar, ob die Ursache am Umrichter liegt, dies jedoch möglich erscheint, fahren wir Ihre Anlage an, um den Anspruch vor Ort zu prüfen.' },
+    { titel: 'Ergebnis der Prüfung',
+      text: '**Ursache liegt am Gerät (Gewährleistungsfall):** In diesem Fall erfolgt die Behebung bzw. der Austausch für Sie **kostenfrei**. Es entstehen Ihnen keine Kosten.\n\n**Ursache liegt nicht am Gerät:** Ergibt die Prüfung, dass die Ursache nicht am Frequenzumrichter liegt, wird der Gewährleistungsanspruch abgewiesen. Der entstandene Aufwand wird nach Material und Arbeitszeit in Rechnung gestellt.' },
+  ],
+  tabelle: {
+    titel: 'Kostenübersicht bei nicht berechtigter Gewährleistung (Ursache nicht am Gerät):',
+    kopf: ['Position', 'Betrag (netto)'],
+    zeilen: [
+      ['Anfahrtspauschale', '459,00 €'],
+      ['Arbeitszeit, je Stunde und Mitarbeiter', '110,00 €'],
+      ['Material', 'separates Angebot'],
+    ],
+  },
+  fussnote: 'Sollte für die Instandsetzung Material erforderlich sein, unterbreiten wir Ihnen hierfür ein gesondertes Angebot. Die Bearbeitung erfolgt erst nach Ihrer ausdrücklichen Freigabe.',
+  schluss: 'Bei Fragen zum Ablauf oder zu einem konkreten Fall sprechen Sie uns gern an – wir helfen Ihnen jederzeit weiter.',
+  hinweis: 'Alle Preise verstehen sich netto zzgl. gesetzlicher Mehrwertsteuer.',
+};
+
+let _gwlCache = { firma:null, items:[], loadedAt:0 };
+
+function _gwlStandDefault() {
+  const now = new Date();
+  return String(now.getMonth()+1).padStart(2,'0')+'/'+now.getFullYear();
+}
+function _gwlNormalizeContent(c) {
+  c = (c && typeof c === 'object') ? c : {};
+  const d = GWL_DEFAULT_CONTENT;
+  return {
+    titel:      typeof c.titel === 'string' ? c.titel : d.titel,
+    untertitel: typeof c.untertitel === 'string' ? c.untertitel : d.untertitel,
+    intro:      typeof c.intro === 'string' ? c.intro : d.intro,
+    stand:      typeof c.stand === 'string' && c.stand ? c.stand : _gwlStandDefault(),
+    abschnitte: Array.isArray(c.abschnitte) ? c.abschnitte.map(s => ({ titel:String(s&&s.titel||''), text:String(s&&s.text||'') })) : JSON.parse(JSON.stringify(d.abschnitte)),
+    tabelle: (c.tabelle && typeof c.tabelle==='object')
+      ? { titel:String(c.tabelle.titel||''), kopf:(Array.isArray(c.tabelle.kopf)&&c.tabelle.kopf.length===2)?c.tabelle.kopf.map(String):['Position','Betrag (netto)'], zeilen:Array.isArray(c.tabelle.zeilen)?c.tabelle.zeilen.map(r=>[String((r&&r[0])||''),String((r&&r[1])||'')]):[] }
+      : JSON.parse(JSON.stringify(d.tabelle)),
+    fussnote:   typeof c.fussnote === 'string' ? c.fussnote : d.fussnote,
+    schluss:    typeof c.schluss === 'string' ? c.schluss : d.schluss,
+    hinweis:    typeof c.hinweis === 'string' ? c.hinweis : d.hinweis,
+  };
+}
+
+async function _ensureGewaehrTable() {
+  await ensureTable('Gewaehrleistung_Dokumente', [
+    { name:'firma',        type:'singleLineText' },
+    { name:'version',      type:'number', options:{ precision:0 } },
+    { name:'titel',        type:'singleLineText' },
+    { name:'untertitel',   type:'singleLineText' },
+    { name:'stand',        type:'singleLineText' },
+    { name:'content_json', type:'multilineText' },
+    { name:'change_note',  type:'multilineText' },
+    { name:'pdf',          type:'multipleAttachments' },
+    { name:'created',      type:'singleLineText' },
+    { name:'created_by',   type:'singleLineText' },
+  ]);
+}
+
+async function _gwlLoad(firmaSlug) {
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const url = 'https://api.airtable.com/v0/'+baseId+'/Gewaehrleistung_Dokumente?pageSize=100';
+  const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+APP_CONFIG.AIRTABLE_READ_KEY } });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message || 'Laden fehlgeschlagen');
+  const recs = (d.records||[])
+    .map(x => ({ id:x.id, f:x.fields||{} }))
+    .filter(x => String(x.f.firma||'') === String(firmaSlug));
+  recs.sort((a,b) => (+b.f.version||0) - (+a.f.version||0));
+  return recs;
+}
+
+async function renderGewaehrleistungView() {
+  const host = document.getElementById('gwl-list');
+  if (!host) return;
+  if (isFirmaAll()) {
+    host.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">Bitte oben rechts einen konkreten Mandanten wählen — die Gewährleistungsbedingungen werden je Mandant geführt.</div>';
+    return;
+  }
+  const firmaSlug = getCurrentFirmaSlug();
+  host.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Gewährleistungsbedingungen…</div>';
+  try {
+    if (isAdmin()) { try { await _ensureGewaehrTable(); } catch(_){} }
+    const items = await _gwlLoad(firmaSlug);
+    _gwlCache = { firma:firmaSlug, items, loadedAt:Date.now() };
+    _gwlRender(items, firmaSlug);
+  } catch(e) {
+    host.innerHTML = '<div style="padding:20px;color:var(--err)">Fehler: '+escapeHtml(e.message)+'</div>';
+  }
+}
+
+function _gwlBrandName(firmaSlug) {
+  try { return (_daFirmaBranding(firmaSlug)||{}).company || firmaSlug; } catch(_){ return firmaSlug; }
+}
+
+function _gwlRender(items, firmaSlug) {
+  const host = document.getElementById('gwl-list');
+  if (!host) return;
+  const brand = _gwlBrandName(firmaSlug);
+  if (!items.length) {
+    host.innerHTML =
+      '<div style="max-width:760px">'+
+        '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:22px">'+
+          '<div style="font-size:15px;font-weight:700;color:var(--navy)">Noch keine Fassung für '+escapeHtml(brand)+'</div>'+
+          '<div style="font-size:13px;color:var(--txt2);margin:8px 0 16px">Lege die erste Version an. Der Standardinhalt „Ablauf im Gewährleistungsfall" (gemäß Vorlage) ist bereits vorbefüllt und lässt sich per Formular oder KI-Prompt anpassen.</div>'+
+          '<button class="btn prim" onclick="_gwlOpenEditor(null,0)">+ Erste Fassung anlegen</button>'+
+        '</div>'+
+      '</div>';
+    return;
+  }
+  const cur = items[0];
+  const cf  = cur.f;
+  const fmtDate = s => { try { return new Date(s).toLocaleString('de-DE'); } catch(_){ return s||''; } };
+  const pdfUrl0 = (cf.pdf && cf.pdf[0] && cf.pdf[0].url) || '';
+  let html =
+    '<div style="max-width:820px">'+
+      '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:20px;margin-bottom:18px">'+
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">'+
+          '<div>'+
+            '<div style="font-size:16px;font-weight:700;color:var(--navy)">'+escapeHtml(cf.titel||'Gewährleistungsbedingungen')+'</div>'+
+            '<div style="font-size:12px;color:var(--txt2);margin-top:2px">'+escapeHtml(brand)+' · <strong>aktuelle Version v'+(cf.version||1)+'</strong> · Stand '+escapeHtml(cf.stand||'—')+'</div>'+
+            '<div style="font-size:11px;color:var(--txt3);margin-top:2px">Zuletzt geändert: '+escapeHtml(fmtDate(cf.created))+(cf.created_by?(' · '+escapeHtml(cf.created_by)):'')+'</div>'+
+            (cf.change_note?'<div style="font-size:11px;color:var(--txt2);margin-top:6px;font-style:italic">„'+escapeHtml(cf.change_note)+'"</div>':'')+
+          '</div>'+
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+            (pdfUrl0
+              ? '<button class="btn" onclick="_gwlDownload(\''+cur.id+'\')">⬇ PDF herunterladen</button>'
+              : '<button class="btn" onclick="_gwlRegenDownload(\''+cur.id+'\')">⬇ PDF erzeugen</button>')+
+            '<button class="btn prim" onclick="_gwlOpenEditor(\''+cur.id+'\','+(cf.version||1)+')">✏ Bearbeiten / neue Version</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+      '<div style="font-size:13px;font-weight:700;color:var(--navy);margin:6px 2px 10px">🕑 Versions-Historie ('+items.length+')</div>';
+  html += items.map(it => {
+    const f = it.f;
+    const isCur = it.id === cur.id;
+    const purl = (f.pdf && f.pdf[0] && f.pdf[0].url) || '';
+    return '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border:1px solid var(--bdr);border-left:3px solid '+(isCur?'#2152A9':'var(--bdr)')+';border-radius:8px;margin-bottom:6px;background:var(--surf)">'+
+        '<div>'+
+          '<div style="font-size:13px;font-weight:600;color:var(--navy)">v'+(f.version||1)+(isCur?' <span style="font-size:10px;background:#2152A9;color:#fff;padding:1px 7px;border-radius:4px;margin-left:4px">aktuell</span>':'')+' · Stand '+escapeHtml(f.stand||'—')+'</div>'+
+          '<div style="font-size:11px;color:var(--txt3)">'+escapeHtml(fmtDate(f.created))+(f.created_by?(' · '+escapeHtml(f.created_by)):'')+(f.change_note?(' · '+escapeHtml(f.change_note)):'')+'</div>'+
+        '</div>'+
+        '<div style="display:flex;gap:6px;flex-shrink:0">'+
+          (purl
+            ? '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="_gwlDownload(\''+it.id+'\')">⬇ PDF</button>'
+            : '<button class="btn" style="padding:5px 10px;font-size:12px" onclick="_gwlRegenDownload(\''+it.id+'\')">⬇ PDF</button>')+
+        '</div>'+
+      '</div>';
+  }).join('');
+  html += '</div>';
+  host.innerHTML = html;
+}
+
+async function _gwlDownload(recId) {
+  const it = (_gwlCache.items||[]).find(x => x.id === recId);
+  if (!it) return toast('Version nicht gefunden','err');
+  const url = it.f.pdf && it.f.pdf[0] && it.f.pdf[0].url;
+  if (!url) return _gwlRegenDownload(recId);
+  try {
+    toast('⬇ Lade PDF…','');
+    const blob = await (await fetch(url)).blob();
+    _gwlTriggerDownload(blob, _gwlFilename(it.f.firma, it.f.version));
+  } catch(e) { toast('❌ '+e.message,'err'); }
+}
+async function _gwlRegenDownload(recId) {
+  const it = (_gwlCache.items||[]).find(x => x.id === recId);
+  if (!it) return toast('Version nicht gefunden','err');
+  let content;
+  try { content = _gwlNormalizeContent(JSON.parse(it.f.content_json||'{}')); } catch(_){ content = _gwlNormalizeContent({}); }
+  content.stand = it.f.stand || content.stand;
+  try {
+    const blob = await _buildGwlPdfBlob(it.f.firma || getCurrentFirmaSlug(), content);
+    _gwlTriggerDownload(blob, _gwlFilename(it.f.firma, it.f.version));
+  } catch(e) { toast('❌ PDF: '+e.message,'err'); }
+}
+function _gwlFilename(firmaSlug, version) {
+  const b = String(_gwlBrandName(firmaSlug)).replace(/[^\w-]/g,'_').slice(0,32);
+  return 'Gewaehrleistung-'+b+'-v'+(version||1)+'.pdf';
+}
+function _gwlTriggerDownload(blob, fname) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = fname;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+/* ── Editor ── */
+function _gwlOpenEditor(recId, baseVersion) {
+  document.getElementById('gwl-ed-modal')?.remove();
+  let content;
+  if (recId) {
+    const it = (_gwlCache.items||[]).find(x => x.id === recId);
+    try { content = _gwlNormalizeContent(JSON.parse((it&&it.f.content_json)||'{}')); } catch(_){ content = _gwlNormalizeContent({}); }
+    if (it && it.f.stand) content.stand = it.f.stand;
+  } else {
+    content = _gwlNormalizeContent(null);
+  }
+  const m = document.createElement('div');
+  m.id = 'gwl-ed-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11000;display:flex;align-items:center;justify-content:center;padding:14px';
+  m._content = content;
+  m._baseVersion = +baseVersion || 0;
+  m._firma = getCurrentFirmaSlug();
+  const nextV = m._baseVersion + 1;
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:820px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:var(--navy);color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>📜 Gewährleistungsbedingungen bearbeiten · '+escapeHtml(_gwlBrandName(m._firma))+' · → v'+nextV+'</span>'+
+        '<button onclick="document.getElementById(\'gwl-ed-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
+        // KI-Prompt
+        '<div style="background:#F5F3FF;border:1px solid #C4B5FD;border-radius:10px;padding:12px 14px;margin-bottom:16px">'+
+          '<div style="font-size:12px;font-weight:700;color:#5B21B6;margin-bottom:6px">🤖 Per Prompt ändern</div>'+
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+            '<input id="gwl-ai-prompt" type="text" placeholder="z.B. Anfahrtspauschale auf 480 € ändern und einen Absatz zur Rücksendeadresse ergänzen" style="flex:1;min-width:240px;padding:8px 10px;border:1px solid #C4B5FD;border-radius:6px;font-size:12px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_gwlAiModify(document.getElementById(\'gwl-ai-btn\'));}">'+
+            '<button class="btn" id="gwl-ai-btn" onclick="_gwlAiModify(this)" style="background:#7C3AED;border-color:#7C3AED;color:#fff;font-weight:600;font-size:12px">🤖 Übernehmen</button>'+
+          '</div>'+
+          '<div style="font-size:10px;color:#6D28D9;margin-top:6px">Die KI passt den Inhalt an und aktualisiert die Felder unten. Prüfe das Ergebnis vor dem Speichern.</div>'+
+        '</div>'+
+        '<div id="gwl-ed-body"></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:space-between;align-items:center;flex-wrap:wrap">'+
+        '<button class="btn" style="font-size:12px" onclick="if(confirm(\'Alle Felder auf den Standard-Inhalt aus der Vorlage zurücksetzen?\')){_gwlResetToDefault();}">↺ Standard-Inhalt laden</button>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button class="btn" onclick="document.getElementById(\'gwl-ed-modal\').remove()">Abbrechen</button>'+
+          '<button class="btn" onclick="_gwlPreviewPdf()">👁 PDF-Vorschau</button>'+
+          '<button class="btn prim" id="gwl-save-btn" onclick="_gwlSaveVersion(this)">💾 Als v'+nextV+' speichern</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _gwlRenderEditorBody();
+}
+
+function _gwlRenderEditorBody() {
+  const m = document.getElementById('gwl-ed-modal'); if (!m) return;
+  const c = m._content || _gwlNormalizeContent(null);
+  const body = document.getElementById('gwl-ed-body'); if (!body) return;
+  const lbl = 'font-size:11px;font-weight:700;color:var(--navy);display:block;margin:12px 0 3px';
+  const inp = 'width:100%;padding:7px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;box-sizing:border-box;font-family:inherit';
+  const ta  = inp + ';min-height:70px;line-height:1.5';
+  let h = '';
+  h += '<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px">'+
+        '<div><label style="'+lbl+'">Titel</label><input id="gwl-titel" type="text" value="'+escapeHtml(c.titel)+'" style="'+inp+'"></div>'+
+        '<div><label style="'+lbl+'">Stand</label><input id="gwl-stand" type="text" value="'+escapeHtml(c.stand)+'" placeholder="MM/JJJJ" style="'+inp+'"></div>'+
+      '</div>';
+  h += '<label style="'+lbl+'">Untertitel</label><input id="gwl-untertitel" type="text" value="'+escapeHtml(c.untertitel)+'" style="'+inp+'">';
+  h += '<label style="'+lbl+'">Einleitung</label><textarea id="gwl-intro" style="'+ta+'">'+escapeHtml(c.intro)+'</textarea>';
+  h += '<div style="font-size:11px;color:var(--txt3);margin-top:4px">💡 Fett formatieren mit **Sternchen** — z.B. **Ursache liegt am Gerät:** …</div>';
+  // Abschnitte
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 4px"><div style="font-size:12px;font-weight:700;color:var(--navy)">Abschnitte</div><button class="btn" style="padding:4px 10px;font-size:11px" onclick="_gwlAddSection()">+ Abschnitt</button></div>';
+  (c.abschnitte||[]).forEach((s,i) => {
+    h += '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px;background:var(--bg)">'+
+          '<div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">'+
+            '<span style="background:#2152A9;color:#fff;width:20px;height:20px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0">'+(i+1)+'</span>'+
+            '<input data-gs="titel" data-i="'+i+'" type="text" value="'+escapeHtml(s.titel)+'" placeholder="Abschnitts-Titel" style="'+inp+';font-weight:600">'+
+            '<button class="btn" style="padding:4px 8px;font-size:11px;color:var(--err);border-color:rgba(220,38,38,.3);flex-shrink:0" onclick="_gwlRemoveSection('+i+')" title="Abschnitt entfernen">✕</button>'+
+          '</div>'+
+          '<textarea data-gs="text" data-i="'+i+'" style="'+ta+'" placeholder="Text (Absätze mit Leerzeile trennen, **fett** möglich)">'+escapeHtml(s.text)+'</textarea>'+
+        '</div>';
+  });
+  // Tabelle
+  h += '<label style="'+lbl+'">Kostentabelle · Überschrift</label><input id="gwl-tab-titel" type="text" value="'+escapeHtml(c.tabelle.titel)+'" style="'+inp+'">';
+  h += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px">'+
+        '<input id="gwl-tab-kopf0" type="text" value="'+escapeHtml(c.tabelle.kopf[0]||'')+'" placeholder="Spalte 1" style="'+inp+';font-weight:600">'+
+        '<input id="gwl-tab-kopf1" type="text" value="'+escapeHtml(c.tabelle.kopf[1]||'')+'" placeholder="Spalte 2" style="'+inp+';font-weight:600">'+
+      '</div>';
+  (c.tabelle.zeilen||[]).forEach((row,i) => {
+    h += '<div style="display:grid;grid-template-columns:1fr 1fr 34px;gap:8px;margin-top:6px;align-items:center">'+
+          '<input data-gt="0" data-i="'+i+'" type="text" value="'+escapeHtml(row[0]||'')+'" style="'+inp+'">'+
+          '<input data-gt="1" data-i="'+i+'" type="text" value="'+escapeHtml(row[1]||'')+'" style="'+inp+'">'+
+          '<button class="btn" style="padding:6px;font-size:11px;color:var(--err);border-color:rgba(220,38,38,.3)" onclick="_gwlRemoveRow('+i+')" title="Zeile entfernen">✕</button>'+
+        '</div>';
+  });
+  h += '<button class="btn" style="padding:4px 10px;font-size:11px;margin-top:8px" onclick="_gwlAddRow()">+ Tabellen-Zeile</button>';
+  h += '<label style="'+lbl+'">Fußnote zur Tabelle</label><textarea id="gwl-fussnote" style="'+ta+'">'+escapeHtml(c.fussnote)+'</textarea>';
+  h += '<label style="'+lbl+'">Schluss-Absatz</label><textarea id="gwl-schluss" style="'+ta+'">'+escapeHtml(c.schluss)+'</textarea>';
+  h += '<label style="'+lbl+'">Hinweis (in der Stand-Zeile)</label><input id="gwl-hinweis" type="text" value="'+escapeHtml(c.hinweis)+'" style="'+inp+'">';
+  body.innerHTML = h;
+}
+
+function _gwlReadEditor() {
+  const m = document.getElementById('gwl-ed-modal'); if (!m) return null;
+  const val = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const abschnitte = [];
+  m.querySelectorAll('#gwl-ed-body [data-gs="titel"]').forEach(el => {
+    const i = +el.dataset.i;
+    abschnitte[i] = abschnitte[i] || { titel:'', text:'' };
+    abschnitte[i].titel = el.value;
+  });
+  m.querySelectorAll('#gwl-ed-body [data-gs="text"]').forEach(el => {
+    const i = +el.dataset.i;
+    abschnitte[i] = abschnitte[i] || { titel:'', text:'' };
+    abschnitte[i].text = el.value;
+  });
+  const zeilen = [];
+  m.querySelectorAll('#gwl-ed-body [data-gt="0"]').forEach(el => {
+    const i = +el.dataset.i;
+    zeilen[i] = zeilen[i] || ['',''];
+    zeilen[i][0] = el.value;
+  });
+  m.querySelectorAll('#gwl-ed-body [data-gt="1"]').forEach(el => {
+    const i = +el.dataset.i;
+    zeilen[i] = zeilen[i] || ['',''];
+    zeilen[i][1] = el.value;
+  });
+  return _gwlNormalizeContent({
+    titel: val('gwl-titel'),
+    untertitel: val('gwl-untertitel'),
+    stand: val('gwl-stand'),
+    intro: val('gwl-intro'),
+    abschnitte: abschnitte.filter(Boolean),
+    tabelle: { titel: val('gwl-tab-titel'), kopf:[val('gwl-tab-kopf0'), val('gwl-tab-kopf1')], zeilen: zeilen.filter(Boolean) },
+    fussnote: val('gwl-fussnote'),
+    schluss: val('gwl-schluss'),
+    hinweis: val('gwl-hinweis'),
+  });
+}
+function _gwlSyncFromEditor() {
+  const m = document.getElementById('gwl-ed-modal'); if (!m) return;
+  const c = _gwlReadEditor(); if (c) m._content = c;
+}
+function _gwlAddSection() { _gwlSyncFromEditor(); const m=document.getElementById('gwl-ed-modal'); if(!m)return; m._content.abschnitte.push({titel:'',text:''}); _gwlRenderEditorBody(); }
+function _gwlRemoveSection(i) { _gwlSyncFromEditor(); const m=document.getElementById('gwl-ed-modal'); if(!m)return; m._content.abschnitte.splice(i,1); _gwlRenderEditorBody(); }
+function _gwlAddRow() { _gwlSyncFromEditor(); const m=document.getElementById('gwl-ed-modal'); if(!m)return; m._content.tabelle.zeilen.push(['','']); _gwlRenderEditorBody(); }
+function _gwlRemoveRow(i) { _gwlSyncFromEditor(); const m=document.getElementById('gwl-ed-modal'); if(!m)return; m._content.tabelle.zeilen.splice(i,1); _gwlRenderEditorBody(); }
+function _gwlResetToDefault() { const m=document.getElementById('gwl-ed-modal'); if(!m)return; const std=_gwlNormalizeContent(null); std.stand = _gwlReadEditor()?.stand || std.stand; m._content = std; _gwlRenderEditorBody(); toast('↺ Standard-Inhalt geladen','ok'); }
+
+async function _gwlAiModify(btn) {
+  if (!APP_KEYS.anthropicKey) return toast('Kein KI-Key konfiguriert.','err');
+  const instr = (document.getElementById('gwl-ai-prompt')?.value||'').trim();
+  if (!instr) return toast('Bitte eine Änderungs-Anweisung eingeben.','');
+  _gwlSyncFromEditor();
+  const m = document.getElementById('gwl-ed-modal'); if (!m) return;
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 …'; }
+  try {
+    const prompt =
+      'Du bearbeitest den Inhalt eines Kunden-Infoblatts „Ablauf im Gewährleistungsfall" (Aufzugs-/Frequenzumrichter-Service). '+
+      'Hier ist der AKTUELLE Inhalt als JSON:\n\n'+JSON.stringify(m._content, null, 2)+'\n\n'+
+      'ÄNDERUNGSWUNSCH des Nutzers:\n"'+instr+'"\n\n'+
+      'Gib den VOLLSTÄNDIGEN, angepassten Inhalt als JSON mit EXAKT denselben Feldern und derselben Struktur zurück '+
+      '(titel, untertitel, intro, stand, abschnitte:[{titel,text}], tabelle:{titel,kopf:[..],zeilen:[[..,..]]}, fussnote, schluss, hinweis). '+
+      'Fett-Auszeichnung im Text mit **doppelten Sternchen**. Absätze innerhalb eines Abschnitts-Textes mit doppeltem Zeilenumbruch (\\n\\n). '+
+      'Ändere NUR, was der Wunsch verlangt; alles andere unverändert übernehmen. Erfinde keine Preise/Fakten. '+
+      'Antworte AUSSCHLIESSLICH mit dem reinen JSON-Objekt, ohne Markdown-Codeblock, ohne Erklärung.';
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:4000, messages:[{ role:'user', content:[{ type:'text', text:prompt }] }] }),
+    });
+    if (!resp.ok) throw new Error('KI HTTP '+resp.status);
+    const data = await resp.json();
+    let txt = (data.content||[]).filter(b => b.type==='text').map(b => b.text).join('').trim();
+    txt = txt.replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+    const first = txt.indexOf('{'), last = txt.lastIndexOf('}');
+    if (first >= 0 && last > first) txt = txt.slice(first, last+1);
+    const parsed = JSON.parse(txt);
+    m._content = _gwlNormalizeContent(parsed);
+    _gwlRenderEditorBody();
+    const pin = document.getElementById('gwl-ai-prompt'); if (pin) pin.value = '';
+    toast('🤖 Inhalt angepasst — bitte prüfen.','ok');
+  } catch(e) {
+    console.warn('[GWL-KI]', e);
+    toast('❌ KI-Anpassung fehlgeschlagen: '+(e.message||e).slice(0,140),'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig || '🤖 Übernehmen'; }
+  }
+}
+
+async function _gwlPreviewPdf() {
+  _gwlSyncFromEditor();
+  const m = document.getElementById('gwl-ed-modal'); if (!m) return;
+  try {
+    toast('👁 Erzeuge Vorschau…','');
+    const blob = await _buildGwlPdfBlob(m._firma, m._content);
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 20000);
+  } catch(e) { toast('❌ PDF: '+e.message,'err'); }
+}
+
+async function _gwlSaveVersion(btn) {
+  _gwlSyncFromEditor();
+  const m = document.getElementById('gwl-ed-modal'); if (!m) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const firmaSlug = m._firma;
+  const content = m._content;
+  const nextV = (m._baseVersion || 0) + 1;
+  const note = (prompt('Kurze Notiz zur Änderung (optional, erscheint in der Historie):','') || '').trim();
+  if (btn) { btn.disabled = true; btn.textContent = '💾 Erzeuge PDF…'; }
+  try {
+    if (isAdmin()) { try { await _ensureGewaehrTable(); } catch(_){} }
+    const pdfBlob = await _buildGwlPdfBlob(firmaSlug, content);
+    const rec = await atWrite('Gewaehrleistung_Dokumente', {
+      firma: firmaSlug,
+      version: nextV,
+      titel: content.titel || '',
+      untertitel: content.untertitel || '',
+      stand: content.stand || '',
+      content_json: JSON.stringify(content),
+      change_note: note,
+      created: new Date().toISOString(),
+      created_by: APP_KEYS.user?.name || APP_KEYS.user?.api_key || '',
+    });
+    if (btn) btn.textContent = '☁ Lade PDF hoch…';
+    try { await atBlobUpload(rec.id, 'pdf', pdfBlob, _gwlFilename(firmaSlug, nextV), 'application/pdf'); }
+    catch(e) { console.warn('[GWL] PDF-Upload:', e.message); }
+    toast('💾 Version v'+nextV+' gespeichert.','ok');
+    m.remove();
+    renderGewaehrleistungView();
+  } catch(e) {
+    console.error('[GWL-Save]', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Als v'+nextV+' speichern'; }
+  }
+}
+
+/* ── PDF-Generator (Firmen-Briefpapier: Logo + 3-Spalten-Footer) ── */
+function _gwlRuns(text) {
+  const out = [];
+  const parts = String(text||'').split('**');
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i] === '') continue;
+    out.push({ text: parts[i], bold: (i % 2 === 1) });
+  }
+  return out;
+}
+async function _buildGwlPdfBlob(firmaSlug, content) {
+  const c = _gwlNormalizeContent(content);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const BR = _daFirmaBranding(firmaSlug || getCurrentFirmaSlug());
+  const NAVY = BR.navy, ACCENT = BR.accent, GREY = [55,65,81], GREY_L = [120,130,145], GREY_X = [229,231,235];
+  const ml = 20, mr = 190, cw = mr - ml, LIMIT = 262;
+  let y = 34;
+  function header() {
+    try { doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-BR.logoW, 12, BR.logoW, BR.logoH); } catch(_){}
+    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf(BR.headerLine), ml, 16);
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6); doc.line(ml, 22, mr, 22);
+  }
+  function ensure(h) { if (y + h > LIMIT) { doc.addPage(); header(); y = 30; } }
+  function flow(text, opts) {
+    opts = opts || {};
+    const size = opts.size || 10, lh = opts.lh || 4.8, color = opts.color || GREY, gap = (opts.gap != null ? opts.gap : 3);
+    const paras = String(text||'').split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+    doc.setFontSize(size);
+    paras.forEach((para, pidx) => {
+      const runs = _gwlRuns(para);
+      const tokens = [];
+      runs.forEach(run => _sanPdf(run.text).split(/\s+/).filter(Boolean).forEach(w => tokens.push({ w, bold: run.bold })));
+      let x = ml; ensure(lh);
+      const sp = doc.getTextWidth(' ');
+      tokens.forEach(t => {
+        doc.setFont('helvetica', t.bold ? 'bold' : 'normal');
+        const ww = doc.getTextWidth(t.w);
+        const isPunct = /^[.,;:!?)\]]/.test(t.w);
+        let addSpace = (x > ml) && !isPunct;
+        if (x > ml && x + (addSpace ? sp : 0) + ww > mr) { y += lh; x = ml; ensure(lh); addSpace = false; }
+        if (addSpace) x += sp;
+        doc.setTextColor(...color);
+        doc.text(t.w, x, y); x += ww;
+      });
+      y += lh + (pidx < paras.length-1 ? gap : 0);
+    });
+    y += gap;
+  }
+  header();
+  // Titel + Untertitel
+  doc.setTextColor(...NAVY); doc.setFont('helvetica','bold'); doc.setFontSize(20);
+  doc.text(_sanPdf(c.titel), ml, y); y += 7;
+  if (c.untertitel) { doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(...GREY); doc.text(_sanPdf(c.untertitel), ml, y); y += 3; }
+  doc.setDrawColor(...ACCENT); doc.setLineWidth(0.5); doc.line(ml, y, mr, y); y += 8;
+  if (c.intro) flow(c.intro, { size:10, color:GREY, gap:4 });
+  (c.abschnitte||[]).forEach((s, i) => {
+    ensure(10);
+    doc.setFont('helvetica','bold'); doc.setFontSize(11.5); doc.setTextColor(...NAVY);
+    doc.text(_sanPdf((i+1)+'.  '+(s.titel||'')), ml, y); y += 5.5;
+    if (s.text) flow(s.text, { size:10, color:GREY, gap:3 });
+    y += 1;
+  });
+  // Tabelle
+  if (c.tabelle && Array.isArray(c.tabelle.zeilen) && c.tabelle.zeilen.length) {
+    ensure(20);
+    if (c.tabelle.titel) {
+      doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.setTextColor(...ACCENT);
+      doc.splitTextToSize(_sanPdf(c.tabelle.titel), cw).forEach(l => { ensure(5); doc.text(l, ml, y); y += 5; });
+      y += 2;
+    }
+    const kopf = c.tabelle.kopf || ['Position','Betrag (netto)'];
+    ensure(9);
+    doc.setFillColor(...NAVY); doc.rect(ml, y-5, cw, 8, 'F');
+    doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.setTextColor(255,255,255);
+    doc.text(_sanPdf(kopf[0]||''), ml+2, y);
+    doc.text(_sanPdf(kopf[1]||''), mr-2, y, { align:'right' });
+    y += 5;
+    doc.setFont('helvetica','normal');
+    const col1 = cw - 44;
+    c.tabelle.zeilen.forEach((row, ri) => {
+      ensure(8);
+      if (ri % 2 === 1) { doc.setFillColor(247,248,250); doc.rect(ml, y-4, cw, 7, 'F'); }
+      doc.setFontSize(10); doc.setTextColor(...GREY);
+      const a = doc.splitTextToSize(_sanPdf(row[0]||''), col1-4);
+      doc.text(a[0]||'', ml+2, y);
+      doc.text(_sanPdf(row[1]||''), mr-2, y, { align:'right' });
+      y += 6;
+      doc.setDrawColor(...GREY_X); doc.setLineWidth(0.2); doc.line(ml, y-1, mr, y-1);
+    });
+    y += 4;
+  }
+  if (c.fussnote) flow(c.fussnote, { size:8.5, color:GREY_L, gap:4 });
+  if (c.schluss) flow(c.schluss, { size:10, color:GREY, gap:4 });
+  // Stand-Zeile
+  ensure(10);
+  doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.line(ml, y, mr, y); y += 5;
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+  doc.text(_sanPdf('Stand: '+(c.stand||'—')+(c.hinweis ? ('  ·  '+c.hinweis) : '')), ml, y);
+  // 3-Spalten Briefkopf-Footer auf jeder Seite
+  const total = doc.getNumberOfPages();
+  const cols = BR.footerCols || [];
+  const colW = cw / 3;
+  for (let p = 1; p <= total; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml, 275, mr, 275);
+    for (let cix = 0; cix < 3; cix++) {
+      const x = ml + cix*colW + 1;
+      const col = cols[cix] || { title:'', lines:[] };
+      doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...NAVY);
+      doc.text(_sanPdf(col.title||''), x, 279);
+      doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREY_L);
+      let yy = 283;
+      (col.lines||[]).forEach(l => { if (yy <= 290) { doc.text(_sanPdf(l), x, yy); yy += 3.4; } });
+    }
+    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(...GREY_L);
+    doc.text(_sanPdf('Gewährleistungsbedingungen · Stand '+(c.stand||'')+' · Seite '+p+' / '+total), mr, 293, { align:'right' });
+  }
+  return doc.output('blob');
 }
 
 async function renderDaVorlagenView() {
