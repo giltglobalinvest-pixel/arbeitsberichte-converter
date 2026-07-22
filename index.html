@@ -2736,7 +2736,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.27';
+const APP_VERSION = 'v7.28';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -8517,6 +8517,10 @@ function openAuftragDetail(recId) {
   if (hasPermission('auftraege_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())) {
     html += '<button class="btn" onclick="openFolgeTicketModal(\''+rec.id+'\', \'\')" style="color:#7c2d12;border-color:rgba(124,45,18,.45);background:#FEF3C7" title="Folge-Ticket für weiterführende Arbeiten anlegen (Bilder, Sprachnachricht, Video, KI-Diktat)">🎫 Folge-Ticket erstellen</button>';
   }
+  // v7.28: Gewährleistungsbedingungen an Kunden senden (nur bei Gewährleistungsauftrag + FD konfiguriert)
+  if (f.gewaehrleistung && hasPermission('auftraege_edit') && freshdeskIsConfigured(f.firma || getCurrentFirmaSlug())) {
+    html += '<button class="btn" onclick="_gwlSendFromAuftrag(\''+rec.id+'\')" style="color:#fff;border-color:#EA580C;background:#EA580C" title="Gewährleistungsbedingungen als PDF per Freshdesk an den Kunden senden (Versions-Auswahl)">🛡 Gewährleistungsbedingungen senden</button>';
+  }
   if ((status === 'abgeschlossen' || status === 'abgerechnet') && f.bericht_id) {
     html += '<button class="btn prim" onclick="viewAuftragsBericht(\''+f.bericht_id+'\')">📄 Ansehen</button>';
     if ((_isAssignedToMe(rec) || hasPermission('auftraege_edit')) && status !== 'abgerechnet') {
@@ -11424,9 +11428,26 @@ async function saveAuftrag() {
         toast('✅ Auftrag #'+erpAuftragNum+' im ERP erstellt + lokal gespeichert.', 'ok');
       }
       trackEvent('auftraege', 'create', { num: erpAuftragNum, via: 'erp', mailBug: mailBugWorkaround });
+      // v7.28: Gewährleistungsfall → nach dem Anlegen den Versand der Gewährleistungsbedingungen
+      //   an den Kunden vorschlagen (Freshdesk outbound_email, mit Versions-Auswahl).
+      if (isGewaehr && freshdeskIsConfigured(firmaSlug)) {
+        _pendingGwlSend = {
+          firma: firmaSlug,
+          kundeNr: String((kunde && kunde.kundennummer) || ''),
+          kundeName: auftraggeberName,
+          auftragNum: erpAuftragNum,
+        };
+      }
     }
     closeAuftragForm();
     await loadAuftraegeAndRender();
+    // v7.28: Gewährleistungsbedingungen-Versand anstoßen (nach Reload, damit UI ruhig ist)
+    if (_pendingGwlSend) {
+      const p = _pendingGwlSend; _pendingGwlSend = null;
+      if (confirm('🛡 Gewährleistungsauftrag #'+(p.auftragNum||'')+' erstellt.\n\nJetzt die Gewährleistungsbedingungen per E-Mail (Freshdesk) an den Kunden senden?')) {
+        setTimeout(() => _gwlSendConditions(p), 200);
+      }
+    }
   } catch(e) {
     console.error('saveAuftrag:', e);
     // Wenn ERP-Body vorhanden → öffne Diagnose-Modal mit vollem Trace (kopierbar)
@@ -21646,6 +21667,221 @@ async function _buildGwlPdfBlob(firmaSlug, content) {
     doc.text(_sanPdf('Gewährleistungsbedingungen · Stand '+(c.stand||'')+' · Seite '+p+' / '+total), mr, 293, { align:'right' });
   }
   return doc.output('blob');
+}
+
+/* ════════════════════════════════════════════════════════════
+   v7.28: Gewährleistungsbedingungen per Freshdesk an den Kunden senden
+   (echte ausgehende E-Mail via outbound_email, mit Versions-Auswahl aus
+   Gewaehrleistung_Dokumente + PDF-Anhang der gewählten Fassung).
+   ════════════════════════════════════════════════════════════ */
+let _pendingGwlSend = null;
+
+async function _gwlSendConditions(o) {
+  o = o || {};
+  const firmaSlug = o.firma || getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma wählen.','err');
+  if (!freshdeskIsConfigured(firmaSlug)) return toast('Freshdesk für "'+firmaSlug+'" nicht konfiguriert.','err');
+  toast('⏳ Lade Gewährleistungsbedingungen…','');
+  let versions = [];
+  try { if (isAdmin()) { try { await _ensureGewaehrTable(); } catch(_){} } versions = await _gwlLoad(firmaSlug); }
+  catch(e) { console.warn('[GWL-Send] Versionen:', e.message); }
+  if (!versions.length) {
+    return toast('Noch keine Gewährleistungsbedingungen-Fassung für '+_gwlBrandName(firmaSlug)+' angelegt — bitte unter Vorlagen → Gewährleistungsbedingungen erstellen.','err');
+  }
+  const company = _gwlBrandName(firmaSlug);
+  const nameDefault = APP_KEYS.user?.name || '';
+  const sigFallbackHtml = '<p>Mit freundlichen Grüßen<br>'+(nameDefault ? escapeHtml(nameDefault)+'<br>' : '')+escapeHtml(company)+'</p>';
+  const kundeName = o.kundeName || '';
+  const defaultBody =
+    'Sehr geehrte Damen und Herren,\n\n'+
+    'im Rahmen der gemeldeten Gewährleistung'+(o.auftragNum ? (' (Auftrag #'+o.auftragNum+')') : '')+' übersenden wir Ihnen anbei unsere Gewährleistungsbedingungen mit dem Ablauf im Gewährleistungsfall.\n\n'+
+    'Bitte beachten Sie insbesondere den beschriebenen Ablauf. Bei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+  _gwlSendOpenDialog({
+    firma: firmaSlug, kundeNr: o.kundeNr || '', email: o.email || '',
+    subject: 'Gewährleistungsbedingungen'+(kundeName ? ' · '+kundeName : ''),
+    body: defaultBody, sigFallbackHtml, versions,
+  });
+}
+
+// Bequemer Aufruf aus dem Auftrags-Detail (kein Inline-Escaping nötig)
+function _gwlSendFromAuftrag(recId) {
+  const rec = (_auftragCache||[]).find(r => r.id === recId);
+  if (!rec) return toast('Auftrag nicht gefunden','err');
+  const f = rec.fields || {};
+  _gwlSendConditions({
+    firma: f.firma || getCurrentFirmaSlug(),
+    kundeNr: String(f.kunde_nummer || ''),
+    kundeName: f.kunde_firmenname || f.kunde_name || '',
+    auftragNum: f.auftrag_num || '',
+  });
+}
+
+function _gwlSendOpenDialog(o) {
+  document.getElementById('gwl-send-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'gwl-send-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11400;display:flex;align-items:center;justify-content:center;padding:14px';
+  m._o = o;
+  const lbl = 'font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px';
+  const inp = 'width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;box-sizing:border-box';
+  const versOpts = o.versions.map((v, idx) => {
+    const f = v.f;
+    return '<option value="'+v.id+'"'+(idx===0?' selected':'')+'>v'+(f.version||1)+' · Stand '+escapeHtml(f.stand||'—')+(idx===0?' (aktuell)':'')+'</option>';
+  }).join('');
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:620px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#EA580C;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>🛡 Gewährleistungsbedingungen an Kunden senden</span>'+
+        '<button onclick="document.getElementById(\'gwl-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Kontakt aus ERP (Empfänger)</label>'+
+          '<select id="gwl-send-contact" onchange="_gwlSendPickContact(this.value)" style="'+inp+';background:#fff"><option value="">— lädt Kontakte… —</option></select>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Wählt die Email automatisch. Nicht dabei? Email unten manuell eintragen.</div></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Empfänger-Email</label>'+
+          '<input type="email" id="gwl-send-email" value="'+escapeHtml(o.email||'')+'" placeholder="kunde@example.de" style="'+inp+'"></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Fassung der Gewährleistungsbedingungen (Anhang)</label>'+
+          '<select id="gwl-send-version" style="'+inp+';background:#fff">'+versOpts+'</select>'+
+          '<div style="font-size:10px;color:var(--txt3);margin-top:3px">Das PDF dieser Fassung wird als Anhang mitgeschickt.</div></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Betreff</label>'+
+          '<input type="text" id="gwl-send-subject" value="'+escapeHtml(o.subject||'')+'" style="'+inp+'"></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+'">Anschreiben</label>'+
+          '<textarea id="gwl-send-body" style="'+inp+';min-height:130px;font-family:inherit;line-height:1.5">'+escapeHtml(o.body||'')+'</textarea></div>'+
+        '<div style="margin-bottom:10px"><label style="'+lbl+';display:flex;justify-content:space-between;align-items:center;gap:8px">'+
+            '<span>Signatur (aus Freshdesk-Profil · editierbar)</span>'+
+            '<button type="button" onclick="_gwlSendLoadSignature(true)" style="font-size:11px;padding:3px 9px;border:1px solid var(--bdr);border-radius:5px;background:#fff;cursor:pointer;font-family:inherit;font-weight:600;color:var(--navy)">↻ Aus Freshdesk laden</button>'+
+          '</label>'+
+          '<div id="gwl-send-sig" contenteditable="true" style="'+inp+';min-height:80px;max-height:320px;overflow:auto;background:#fff"><div style="color:var(--txt3);font-size:12px">⏳ Lade Signatur…</div></div></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'gwl-send-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" id="gwl-send-do" onclick="_gwlSendConditionsDo(this)" style="background:#EA580C;border-color:#EA580C">✉ Senden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _gwlSendLoadContacts();
+  _gwlSendLoadSignature();
+}
+
+async function _gwlSendLoadContacts() {
+  const m = document.getElementById('gwl-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const sel = document.getElementById('gwl-send-contact');
+  if (!o.kundeNr) { if (sel) sel.innerHTML = '<option value="">(kein Kunde hinterlegt — Email manuell)</option>'; return; }
+  try {
+    const res = await erpFetch('/aufzug/'+o.firma+'/api/Kunden/'+encodeURIComponent(o.kundeNr)+'/Kontakte');
+    const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
+    m._contacts = list;
+    if (!list.length) { if (sel) sel.innerHTML = '<option value="">(keine Kontakte im ERP)</option>'; return; }
+    if (sel) sel.innerHTML = '<option value="">— Kontakt wählen —</option>' + list.map(k => {
+      const nm = _daSendContactName(k) || ('Kontakt '+k.id);
+      const em = _daSendContactEmail(k);
+      return '<option value="'+escapeHtml(String(k.id))+'">'+escapeHtml(nm + (em ? ' · '+em : ' · (keine Email)'))+'</option>';
+    }).join('');
+    const pick = list.find(k => k.isStandard || k.standard || k.isDefault) || list.find(k => _daSendContactEmail(k)) || list[0];
+    const emailInp = document.getElementById('gwl-send-email');
+    const hadEmail = emailInp && emailInp.value.trim();
+    if (pick && !hadEmail) _gwlSendPickContact(String(pick.id));
+  } catch(e) {
+    console.warn('[GWL-Send] Kontakte-Load:', e.message);
+    if (sel) sel.innerHTML = '<option value="">(Kontakte nicht ladbar — Email manuell)</option>';
+  }
+}
+function _gwlSendPickContact(id) {
+  const m = document.getElementById('gwl-send-modal'); if (!m) return;
+  const sel = document.getElementById('gwl-send-contact'); if (sel) sel.value = id;
+  const k = (m._contacts||[]).find(x => String(x.id) === String(id));
+  if (!k) return;
+  const em = _daSendContactEmail(k);
+  const emailInp = document.getElementById('gwl-send-email'); if (emailInp && em) emailInp.value = em;
+}
+async function _gwlSendLoadSignature(force) {
+  const m = document.getElementById('gwl-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const div = document.getElementById('gwl-send-sig'); if (!div) return;
+  if (!force) {
+    let saved = '';
+    try { saved = localStorage.getItem('da_send_sig_html_'+o.firma) || ''; } catch(_){}
+    if (saved) { div.innerHTML = saved; return; }
+  }
+  div.innerHTML = '<div style="color:var(--txt3);font-size:12px">⏳ Lade Signatur aus Freshdesk…</div>';
+  try {
+    await erpEnsureSession();
+    const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+o.firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
+    if (r.ok) {
+      const me = await r.json();
+      const sig = String(me?.signature || me?.signature_html || me?.contact?.signature || '').trim();
+      if (sig) { div.innerHTML = sig; if (force) toast('✍️ Freshdesk-Signatur geladen','ok'); return; }
+    }
+    div.innerHTML = o.sigFallbackHtml || '';
+    if (force) toast('Keine Signatur im Freshdesk-Profil hinterlegt — Standard eingesetzt.','');
+  } catch(e) { console.warn('[GWL-Send] Signatur:', e.message); div.innerHTML = o.sigFallbackHtml || ''; }
+}
+
+async function _gwlSendConditionsDo(btn) {
+  const m = document.getElementById('gwl-send-modal'); if (!m || !m._o) return;
+  const o = m._o;
+  const email   = (document.getElementById('gwl-send-email')?.value||'').trim();
+  const subject = (document.getElementById('gwl-send-subject')?.value||'').trim() || 'Gewährleistungsbedingungen';
+  const bodyText= (document.getElementById('gwl-send-body')?.value||'').trim();
+  const signatureHtml = (document.getElementById('gwl-send-sig')?.innerHTML||'').trim();
+  const versionId = document.getElementById('gwl-send-version')?.value || '';
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return toast('Bitte eine gültige Empfänger-Email eingeben','err');
+  if (!bodyText) return toast('Bitte ein Anschreiben eingeben','err');
+  const ver = (o.versions||[]).find(v => v.id === versionId) || o.versions[0];
+  if (!ver) return toast('Keine Fassung gewählt','err');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Erzeuge PDF…'; }
+  try {
+    // PDF der gewählten Fassung: bevorzugt Attachment, sonst on-the-fly aus content_json
+    let pdfBlob = null;
+    const pdfUrl = ver.f.pdf && ver.f.pdf[0] && ver.f.pdf[0].url;
+    if (pdfUrl) { try { pdfBlob = await (await fetch(pdfUrl)).blob(); } catch(_){} }
+    if (!pdfBlob) {
+      let content = {}; try { content = JSON.parse(ver.f.content_json||'{}'); } catch(_){}
+      content = _gwlNormalizeContent(content); if (ver.f.stand) content.stand = ver.f.stand;
+      pdfBlob = await _buildGwlPdfBlob(o.firma, content);
+    }
+    const pdfName = _gwlFilename(o.firma, ver.f.version);
+    // Signatur merken + an Anschreiben anhängen
+    try { localStorage.setItem('da_send_sig_html_'+o.firma, signatureHtml); } catch(_){}
+    const msgHtml = '<p>'+escapeHtml(bodyText).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,'<br>')+'</p>';
+    const bodyHtml = msgHtml + (signatureHtml ? '<br><br>'+signatureHtml : '');
+    if (btn) btn.textContent = '⏳ Sende…';
+    await erpEnsureSession();
+    // outbound_email braucht eine email_config_id (Versand-Adresse aus Freshdesk-Admin)
+    let emailConfigId = null, cfgErr = '';
+    try {
+      const cr = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+o.firma+'/api/v2/email_configs', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
+      if (cr.ok) {
+        const arr = await cr.json();
+        if (Array.isArray(arr) && arr.length) { const primary = arr.find(c=>c.primary_role)||arr.find(c=>c.active)||arr[0]; emailConfigId = primary.id; }
+        else cfgErr = 'Keine Versand-E-Mail-Adresse in Freshdesk hinterlegt';
+      } else cfgErr = 'HTTP '+cr.status+' bei email_configs';
+    } catch(e) { cfgErr = e.message; }
+    if (!emailConfigId) throw new Error('Mail-Versand nicht möglich: '+(cfgErr||'keine email_config_id')+'. In Freshdesk-Admin → E-Mail eine Versand-Adresse einrichten/aktivieren.');
+    const fd = new FormData();
+    fd.append('email', email);
+    fd.append('subject', subject);
+    fd.append('description', bodyHtml);
+    fd.append('priority','1'); fd.append('status','2');
+    fd.append('email_config_id', String(emailConfigId));
+    fd.append('attachments[]', pdfBlob, pdfName);
+    const url = APP_KEYS.valtownProxyUrl + '/freshdesk/'+o.firma+'/api/v2/tickets/outbound_email';
+    const res = await fetch(url, { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+    const txt = await res.text(); let d; try { d = JSON.parse(txt); } catch(_){ d = {}; }
+    if (!res.ok) {
+      let msg = 'HTTP '+res.status;
+      if (Array.isArray(d.errors)) msg = d.errors.map(e=>'['+(e.field||'')+'] '+e.message).join('; ');
+      throw new Error('Freshdesk: '+msg);
+    }
+    toast('📧 Gewährleistungsbedingungen (v'+(ver.f.version||1)+') an '+email+' versendet.','ok');
+    m.remove();
+  } catch(e) {
+    console.error('[GWL-Send]', e);
+    toast('❌ '+(e.message||e).slice(0,200),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '✉ Senden'; }
+  }
 }
 
 async function renderDaVorlagenView() {
