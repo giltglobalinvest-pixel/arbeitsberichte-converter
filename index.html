@@ -2736,7 +2736,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.28';
+const APP_VERSION = 'v7.29';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -11436,6 +11436,9 @@ async function saveAuftrag() {
           kundeNr: String((kunde && kunde.kundennummer) || ''),
           kundeName: auftraggeberName,
           auftragNum: erpAuftragNum,
+          standort: fields.standort || '',
+          fabriknummer: fields.fabriknummer || '',
+          kontakt: fields.kontakt || '',
         };
       }
     }
@@ -11444,7 +11447,7 @@ async function saveAuftrag() {
     // v7.28: Gewährleistungsbedingungen-Versand anstoßen (nach Reload, damit UI ruhig ist)
     if (_pendingGwlSend) {
       const p = _pendingGwlSend; _pendingGwlSend = null;
-      if (confirm('🛡 Gewährleistungsauftrag #'+(p.auftragNum||'')+' erstellt.\n\nJetzt die Gewährleistungsbedingungen per E-Mail (Freshdesk) an den Kunden senden?')) {
+      if (confirm('🛡 Gewährleistungsauftrag #'+(p.auftragNum||'')+' erstellt.\n\nJetzt die Auftragsbestätigung mit den Gewährleistungsbedingungen (PDF) per E-Mail an den Kunden senden?')) {
         setTimeout(() => _gwlSendConditions(p), 200);
       }
     }
@@ -21692,14 +21695,26 @@ async function _gwlSendConditions(o) {
   const nameDefault = APP_KEYS.user?.name || '';
   const sigFallbackHtml = '<p>Mit freundlichen Grüßen<br>'+(nameDefault ? escapeHtml(nameDefault)+'<br>' : '')+escapeHtml(company)+'</p>';
   const kundeName = o.kundeName || '';
+  // v7.29: E-Mail ist eine AUFTRAGSBESTÄTIGUNG — bestätigt die Auftragsdaten,
+  //   weist auf Kostenfreiheit im Gewährleistungsfall hin, Bedingungen im Anhang.
+  const bestZeilen = [];
+  if (o.auftragNum)   bestZeilen.push('Auftragsnummer: #'+o.auftragNum);
+  if (o.standort)     bestZeilen.push('Standort: '+o.standort);
+  if (o.fabriknummer) bestZeilen.push('Fabriknummer: '+o.fabriknummer);
+  if (kundeName)      bestZeilen.push('Kunde: '+kundeName);
+  if (o.kontakt)      bestZeilen.push('Ansprechpartner: '+String(o.kontakt).replace(/\s*\n\s*/g,', ').trim());
+  const bestBlock = bestZeilen.length ? (bestZeilen.join('\n')+'\n\n') : '';
   const defaultBody =
     'Sehr geehrte Damen und Herren,\n\n'+
-    'im Rahmen der gemeldeten Gewährleistung'+(o.auftragNum ? (' (Auftrag #'+o.auftragNum+')') : '')+' übersenden wir Ihnen anbei unsere Gewährleistungsbedingungen mit dem Ablauf im Gewährleistungsfall.\n\n'+
-    'Bitte beachten Sie insbesondere den beschriebenen Ablauf. Bei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+    'hiermit bestätigen wir den Eingang Ihres Auftrags mit folgenden Daten:\n\n'+
+    bestBlock+
+    'Es handelt sich um eine Gewährleistungsprüfung. Sollte die Ursache am Gerät liegen (Gewährleistungsfall), entstehen Ihnen hierfür keine Kosten.\n\n'+
+    'Unsere Gewährleistungsbedingungen mit dem detaillierten Ablauf im Gewährleistungsfall finden Sie im Anhang.\n\n'+
+    'Bei Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.';
+  const subject = 'Auftragsbestätigung'+(o.auftragNum ? ' #'+o.auftragNum : '')+(o.standort ? ' · '+o.standort : '')+(o.fabriknummer ? ' · Fabrik-Nr. '+o.fabriknummer : '');
   _gwlSendOpenDialog({
     firma: firmaSlug, kundeNr: o.kundeNr || '', email: o.email || '',
-    subject: 'Gewährleistungsbedingungen'+(kundeName ? ' · '+kundeName : ''),
-    body: defaultBody, sigFallbackHtml, versions,
+    subject, body: defaultBody, sigFallbackHtml, versions,
   });
 }
 
@@ -21713,6 +21728,9 @@ function _gwlSendFromAuftrag(recId) {
     kundeNr: String(f.kunde_nummer || ''),
     kundeName: f.kunde_firmenname || f.kunde_name || '',
     auftragNum: f.auftrag_num || '',
+    standort: f.standort || '',
+    fabriknummer: f.fabriknummer || '',
+    kontakt: f.kontakt || '',
   });
 }
 
@@ -21731,7 +21749,7 @@ function _gwlSendOpenDialog(o) {
   m.innerHTML =
     '<div style="background:var(--surf);max-width:620px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:#EA580C;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
-        '<span>🛡 Gewährleistungsbedingungen an Kunden senden</span>'+
+        '<span>🛡 Auftragsbestätigung (Gewährleistung) an Kunden senden</span>'+
         '<button onclick="document.getElementById(\'gwl-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:16px 18px;flex:1;overflow-y:auto;font-size:13px">'+
@@ -21875,7 +21893,7 @@ async function _gwlSendConditionsDo(btn) {
       if (Array.isArray(d.errors)) msg = d.errors.map(e=>'['+(e.field||'')+'] '+e.message).join('; ');
       throw new Error('Freshdesk: '+msg);
     }
-    toast('📧 Gewährleistungsbedingungen (v'+(ver.f.version||1)+') an '+email+' versendet.','ok');
+    toast('📧 Auftragsbestätigung an '+email+' versendet (Gewährleistungsbedingungen v'+(ver.f.version||1)+' im Anhang).','ok');
     m.remove();
   } catch(e) {
     console.error('[GWL-Send]', e);
