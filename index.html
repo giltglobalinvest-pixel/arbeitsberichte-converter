@@ -2736,7 +2736,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.29';
+const APP_VERSION = 'v7.30';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -22619,7 +22619,8 @@ function _renderGalerieList() {
         '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(g.fabriknummer?'🛗 '+escapeHtml(g.fabriknummer)+' · ':'')+escapeHtml(g.adresse||'(ohne Adresse)')+'</div>'+
         '<div style="display:flex;align-items:center;gap:6px">'+
           '<span style="font-size:11px;font-weight:700;background:#EEF2FF;color:#3730A3;padding:2px 10px;border-radius:99px">📷 '+g.images.length+' Bilder</span>'+
-          (canUpload?'<button onclick="event.stopPropagation();_galerieUploadFromGroup('+realIdx+')" class="btn" style="font-size:11px;padding:2px 9px;color:#065F46;border-color:rgba(16,185,129,.4);background:#ECFDF5" title="Fotos hochladen &amp; Freigabe-Link für diese Anlage">⬆ Hochladen &amp; Link</button>':'')+
+          (canUpload?'<button onclick="event.stopPropagation();_galerieCopyShareForGroup('+realIdx+',this)" class="btn" style="font-size:11px;padding:2px 9px;color:#3730A3;border-color:#A5B4FC;background:#EEF2FF" title="Freigabe-Link für diese Anlage erzeugen &amp; kopieren">🔗 Link</button>':'')+
+          (canUpload?'<button onclick="event.stopPropagation();_galerieUploadFromGroup('+realIdx+')" class="btn" style="font-size:11px;padding:2px 9px;color:#065F46;border-color:rgba(16,185,129,.4);background:#ECFDF5" title="Fotos hochladen &amp; Freigabe-Link für diese Anlage">⬆ Hochladen</button>':'')+
         '</div>'+
       '</div>'+
       (g.kunde ? '<div style="font-size:11px;color:var(--txt2);margin-bottom:8px">👥 '+escapeHtml(g.kunde)+'</div>' : '')+
@@ -22632,7 +22633,7 @@ function _renderGalerieList() {
 function _galerieOpenGroup(idx) {
   const g = (_galerieCache.groups||[])[idx];
   if (!g) return;
-  _galerieOpenModal(g.images, (g.fabriknummer?'🛗 '+g.fabriknummer+' · ':'')+(g.adresse||''), g.kunde);
+  _galerieOpenModal(g.images, (g.fabriknummer?'🛗 '+g.fabriknummer+' · ':'')+(g.adresse||''), g.kunde, g);
 }
 
 /* Öffnet die Galerie für eine konkrete Anlage (aus dem Anlage-Detail).
@@ -22648,7 +22649,7 @@ async function _galerieOpenForAnlage(anlage, btn) {
     const idNorm  = String(anlage.id||'');
     const g = groups.find(x => (fabNorm && _galerieNormFab(x.fabriknummer) === fabNorm) || (idNorm && String(x.anlageId) === idNorm));
     if (!g || !g.images.length) { toast('Keine Bilder für diese Anlage gefunden.','' ); return; }
-    _galerieOpenModal(g.images, (g.fabriknummer?'🛗 '+g.fabriknummer+' · ':'')+(g.adresse||anlage.anzeigeAdresse||''), g.kunde);
+    _galerieOpenModal(g.images, (g.fabriknummer?'🛗 '+g.fabriknummer+' · ':'')+(g.adresse||anlage.anzeigeAdresse||''), g.kunde, g);
   } catch(e) {
     toast('❌ '+(e.message||'Fehler').slice(0,150),'err');
   } finally {
@@ -22656,13 +22657,14 @@ async function _galerieOpenForAnlage(anlage, btn) {
   }
 }
 
-/* Galerie-Modal: Thumbnail-Grid + Lightbox */
-function _galerieOpenModal(images, titel, kunde) {
+/* Galerie-Modal: Thumbnail-Grid + Lightbox + (v7.30) automatischer Freigabe-Link */
+function _galerieOpenModal(images, titel, kunde, group) {
   document.getElementById('galerie-modal')?.remove();
   const m = document.createElement('div');
   m.id = 'galerie-modal';
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:11000;display:flex;align-items:center;justify-content:center;padding:12px';
   m._images = images;
+  m._group = group || null;
   m.innerHTML =
     '<div style="background:var(--surf);max-width:920px;width:100%;max-height:94vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:#3730A3;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">'+
@@ -22670,6 +22672,8 @@ function _galerieOpenModal(images, titel, kunde) {
         '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;opacity:.9">'+images.length+' Bilder</span>'+
         '<button onclick="document.getElementById(\'galerie-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button></div>'+
       '</div>'+
+      // v7.30: Freigabe-Link direkt im Galerie-Modal (wird beim Öffnen automatisch erzeugt/geladen)
+      '<div id="gal-modal-share" style="padding:12px 18px;border-bottom:1px solid var(--bdr);background:var(--bg)"><div style="font-size:12px;color:var(--txt3)">🔗 Freigabe-Link wird geladen…</div></div>'+
       '<div style="padding:14px 18px;flex:1;overflow-y:auto">'+
         '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px">'+
           images.map((img,i) =>
@@ -22683,6 +22687,21 @@ function _galerieOpenModal(images, titel, kunde) {
     '</div>';
   document.body.appendChild(m);
   m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _galerieModalLoadShare(m._group);   // v7.30: Link automatisch erzeugen/laden
+}
+
+/* v7.30: Freigabe-Link im Galerie-Modal automatisch erzeugen/laden (idempotent). */
+async function _galerieModalLoadShare(group) {
+  const box = document.getElementById('gal-modal-share'); if (!box) return;
+  if (!APP_KEYS.airtableWriteKey) { box.innerHTML = '<div style="font-size:11px;color:var(--txt3)">🔗 Freigabe-Link nur mit Schreib-Zugriff verfügbar.</div>'; return; }
+  if (!group || (!group.fabriknummer && !group.anlageId)) { box.innerHTML = '<div style="font-size:11px;color:var(--txt3)">🔗 Kein Freigabe-Link möglich (Anlage nicht eindeutig).</div>'; return; }
+  try {
+    const rec = await _galerieEnsureRecord({ fabriknummer: group.fabriknummer, id: group.anlageId, adresse: group.adresse, kunde: group.kunde, titel: group.titel });
+    const modal = document.getElementById('galerie-modal'); if (modal) modal._galRec = rec;
+    const b = document.getElementById('gal-modal-share'); if (b) b.innerHTML = _galerieShareBoxHtml(rec);
+  } catch(e) {
+    const b = document.getElementById('gal-modal-share'); if (b) b.innerHTML = '<div style="font-size:11px;color:var(--err)">Freigabe-Link konnte nicht erstellt werden: '+escapeHtml(String(e.message||'').slice(0,120))+'</div>';
+  }
 }
 
 /* Lightbox: einzelnes Bild groß, mit Vor/Zurück */
@@ -22847,6 +22866,23 @@ function _galerieUploadFromGroup(idx) {
   if (!g) return;
   _galerieOpenUpload({ fabriknummer:g.fabriknummer, id:g.anlageId, adresse:g.adresse, kunde:g.kunde });
 }
+/* v7.30: Freigabe-Link für eine Anlage direkt erzeugen (idempotent) + in die Zwischenablage kopieren. */
+async function _galerieCopyShareForGroup(idx, btn) {
+  const g = (_galerieCache.groups||[])[idx];
+  if (!g) return;
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Schreib-Zugriff für Freigabe-Link','err');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    const rec = await _galerieEnsureRecord({ fabriknummer:g.fabriknummer, id:g.anlageId, adresse:g.adresse, kunde:g.kunde });
+    const link = _galerieShareLink(rec.fields.share_token);
+    _galerieCopyLink(link);   // Toast „Link kopiert" kommt von hier
+  } catch(e) {
+    toast('❌ '+(e.message||e).slice(0,140),'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = orig || '🔗 Link'; }
+  }
+}
 
 function _galerieOpenUpload(anlage) {
   if (!anlage) return;
@@ -22993,6 +23029,13 @@ async function _galerieRegenToken(recId) {
     if (_galUp.rec && _galUp.rec.id === recId) _galUp.rec.fields = Object.assign(_galUp.rec.fields||{}, { share_token: token });
     const box = document.getElementById('gal-up-share');
     if (box && _galUp.rec) box.innerHTML = _galerieShareBoxHtml(_galUp.rec);
+    // v7.30: auch die Freigabe-Box im Galerie-Modal aktualisieren
+    const modal = document.getElementById('galerie-modal');
+    if (modal && modal._galRec && modal._galRec.id === recId) {
+      modal._galRec.fields = Object.assign(modal._galRec.fields||{}, { share_token: token });
+      const mbox = document.getElementById('gal-modal-share');
+      if (mbox) mbox.innerHTML = _galerieShareBoxHtml(modal._galRec);
+    }
     toast('🔗 Neuer Link erzeugt — alter ist ungültig','ok');
   } catch(e) { toast('❌ '+(e.message||e).slice(0,150),'err'); }
 }
