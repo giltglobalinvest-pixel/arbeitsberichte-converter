@@ -2737,7 +2737,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.35';
+const APP_VERSION = 'v7.36';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -42536,14 +42536,16 @@ function _buildSyncStatusBlock(firmaName, s) {
 
   // Kompakt-Zeile: immer sichtbar, eine Zeile
   const compact = (() => {
+    // v7.36: absolute Uhrzeit direkt in der Kompaktzeile (nicht mehr nur im aufgeklappten Bereich),
+    //   damit sofort sichtbar ist, WANN der letzte Sync lief.
     let tail = '';
     if (s.running) {
-      tail = ' · läuft seit '+_formatRelTime(s.started);
+      tail = ' · gestartet '+_formatAbsTime(s.started)+' ('+_formatRelTime(s.started)+')';
     } else if (s.error) {
-      tail = ' · ' + _formatRelTime(s.finished);
+      tail = ' · '+_formatAbsTime(s.finished)+' ('+_formatRelTime(s.finished)+')';
     } else if (s.finished) {
       const counts = (s.updated||0) + (s.created||0);
-      tail = ' · '+_formatRelTime(s.finished)+' · '+counts+' aktualisiert';
+      tail = ' · '+_formatAbsTime(s.finished)+' ('+_formatRelTime(s.finished)+') · '+counts+' aktualisiert';
     }
     return '<div style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none" onclick="toggleSyncBanner()">'
       + '<span style="font-size:16px;flex:none">'+icon+'</span>'
