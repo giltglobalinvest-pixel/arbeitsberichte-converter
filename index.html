@@ -89,6 +89,12 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .topbar-btn{background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:#fff;padding:5px 12px;border-radius:var(--rs);font-size:12px;cursor:pointer;font-family:inherit;transition:background .2s;white-space:nowrap}
 .topbar-btn:hover{background:rgba(255,255,255,.2)}
 .topbar-btn.active{background:var(--amber);border-color:var(--amber)}
+/* v7.38: Agent-Freigabe. KEINE festen Textfarben setzen — die Kopfzeile ist je
+   nach Design hell oder dunkel; ein hart gesetztes Weiß war auf hellem Grund
+   unsichtbar. Nur der EIN-Zustand färbt kräftig, der ist auf beidem lesbar. */
+.topbar-btn.agent-an{background:#059669;border-color:#047857;color:#fff;font-weight:600}
+.topbar-btn.agent-an:hover{background:#047857}
+.topbar-btn.agent-fremd{text-decoration:line-through;opacity:.5;cursor:not-allowed}
 .user-pill{display:flex;align-items:center;gap:7px;color:rgba(255,255,255,.6);font-size:12px}
 .ver-pill{font-family:monospace;font-size:11px;color:rgba(255,255,255,.5);background:rgba(255,255,255,.05);padding:3px 8px;border-radius:4px;border:1px solid rgba(255,255,255,.1);letter-spacing:.3px}
 
@@ -2742,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.37';
+const APP_VERSION = 'v7.38';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3390,27 +3396,26 @@ function renderAgentMode() {
   const lbl = document.getElementById('agentModeLabel');
   if (!btn || !lbl) return;
 
+  // Zustände über KLASSEN, nicht über feste Farben: Die Kopfzeile ist je nach
+  // gewähltem Design hell oder dunkel. Ein hart gesetztes Weiß machte den
+  // Schalter im hellen Design unsichtbar — er war da, man sah ihn nur nicht.
+  btn.classList.remove('agent-an', 'agent-fremd');
+
   // Fremdes Fenster: Schalter unmissverständlich als wirkungslos kennzeichnen,
   // statt ihn scheinbar bedienbar zu lassen.
   if (!sbxIstAgentFenster()) {
-    lbl.textContent = 'Kein Agent-Fenster';
-    btn.style.background      = 'transparent';
-    btn.style.color           = 'rgba(255,255,255,.35)';
-    btn.style.borderColor     = 'rgba(255,255,255,.15)';
-    btn.style.textDecoration  = 'line-through';
+    lbl.textContent = '🚫 Kein Agent-Fenster';
+    btn.classList.add('agent-fremd');
     btn.title = 'Dieses Browser-Fenster ist nicht mit dem Agenten gekoppelt. Der Agent sieht nur das Fenster, das „fdhero-start" geöffnet hat.';
     return;
   }
-  btn.style.textDecoration = 'none';
 
   const on = sbxIsAgentMode();
   // Kennung mitzeigen: dieselben Zeichen stehen im Protokoll und in Freshdesk
   // Hero — so lässt sich auf einen Blick vergleichen, ob beide dasselbe Fenster
-  // meinen. Farben INLINE, damit sie dem Zustand nicht einen Klick hinterherhinken.
-  lbl.textContent = (on ? '🤖 Agent aktiv' : 'Agent aus') + ' · ' + sbxAgentBrowserKey().slice(0, 6);
-  btn.style.background  = on ? '#059669' : 'transparent';
-  btn.style.color       = on ? '#ffffff' : 'rgba(255,255,255,.6)';
-  btn.style.borderColor = on ? '#047857' : 'rgba(255,255,255,.25)';
+  // meinen.
+  lbl.textContent = (on ? '🤖 Agent aktiv' : '🔒 Agent aus') + ' · ' + sbxAgentBrowserKey().slice(0, 6);
+  if (on) btn.classList.add('agent-an');
   btn.title = on ? 'Der Agent darf diese Servicebox fernsteuern. Klicken zum Sperren.'
                  : 'Klicken, um dem Agenten die Steuerung dieser Servicebox zu erlauben.';
 
