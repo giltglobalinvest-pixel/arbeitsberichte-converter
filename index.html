@@ -1476,6 +1476,11 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <span class="ver-pill" id="ver-pill" title="App-Version">–</span>
   <button class="topbar-btn tb-only-desktop" id="theme-toggle-btn" onclick="toggleTheme()" title="Design wechseln (Modern / Playful / Classic)">🎨</button>
   <button class="topbar-btn tb-only-desktop" onclick="forceUpdate()" title="Auf neueste Version prüfen und App neu laden">↻ Update</button>
+  <!-- v7.37: Agent-Freigabe, analog zu Freshdesk Hero. Ohne diesen Schalter darf
+       der Agent die App NICHT fernsteuern — der MCP-Server verweigert die Arbeit. -->
+  <button class="topbar-btn" id="agentModeBtn" onclick="toggleAgentMode()" title="Freigabe für den KI-Agenten">
+    <span id="agentModeLabel">Agent aus</span>
+  </button>
   <div class="firma-pill-wrap">
     <button class="firma-pill" id="firma-pill" onclick="toggleFirmaDropdown(event)" title="Aktuelle Firma – klicken zum Wechseln">
       <span id="firma-pill-icon">🏢</span>
@@ -2737,7 +2742,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.36';
+const APP_VERSION = 'v7.37';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -3340,6 +3345,80 @@ async function triggerInstallPwa() {
   }, 1000);
 })();
 
+/* ---------------------------------------------------------------------------
+   v7.37: Agent-Freigabe — 1:1 dieselbe Bedingung wie in Freshdesk Hero.
+
+   Zwei Bedingungen müssen erfüllt sein, damit der Agent diese App steuern darf:
+   1. Das FENSTER trägt den Kopplungsschlüssel (schreibt „fdhero-start" beim
+      Öffnen des Agent-Tabs). Ein normales Chrome-Fenster hat ihn nicht.
+   2. In DIESEM Tab ist der Schalter oben ausdrücklich auf „Agent aktiv".
+
+   Der Schlüssel allein genügt nicht — sonst würde ein versehentlich offener
+   Agent-Tab still fernsteuerbar. Genau daran ist die Freigabe in Freshdesk Hero
+   schon einmal gescheitert (Schalter im falschen Fenster gesetzt).
+--------------------------------------------------------------------------- */
+const SBX_AGENT_MODE_KEY    = 'sbx_agent_tab';
+const SBX_AGENT_BROWSER_KEY = 'sbx_agent_browser';
+
+function sbxAgentBrowserKey() {
+  try { return localStorage.getItem(SBX_AGENT_BROWSER_KEY) || ''; } catch (_) { return ''; }
+}
+function sbxIstAgentFenster() { return !!sbxAgentBrowserKey(); }
+function sbxIsAgentMode() {
+  if (!sbxIstAgentFenster()) return false;   // in einem fremden Fenster niemals aktiv
+  try { return localStorage.getItem(SBX_AGENT_MODE_KEY) === '1'; } catch (_) { return false; }
+}
+
+function toggleAgentMode() {
+  if (!sbxIstAgentFenster()) {
+    return toast('Dieses Fenster ist NICHT mit dem Agenten gekoppelt. Bitte die App über „fdhero-start" öffnen — nur jenes Fenster kann der Agent sehen.', 'warn');
+  }
+  const on = !sbxIsAgentMode();
+  try {
+    if (on) localStorage.setItem(SBX_AGENT_MODE_KEY, '1');
+    else    localStorage.removeItem(SBX_AGENT_MODE_KEY);
+  } catch (_) {
+    return toast('Freigabe konnte nicht gespeichert werden (localStorage blockiert)', 'err');
+  }
+  renderAgentMode();
+  toast(on ? '🤖 Agent-Modus AN — der Agent darf diese Servicebox steuern'
+           : 'Agent-Modus aus — Fernsteuerung gesperrt', on ? 'ok' : 'info');
+}
+
+function renderAgentMode() {
+  const btn = document.getElementById('agentModeBtn');
+  const lbl = document.getElementById('agentModeLabel');
+  if (!btn || !lbl) return;
+
+  // Fremdes Fenster: Schalter unmissverständlich als wirkungslos kennzeichnen,
+  // statt ihn scheinbar bedienbar zu lassen.
+  if (!sbxIstAgentFenster()) {
+    lbl.textContent = 'Kein Agent-Fenster';
+    btn.style.background      = 'transparent';
+    btn.style.color           = 'rgba(255,255,255,.35)';
+    btn.style.borderColor     = 'rgba(255,255,255,.15)';
+    btn.style.textDecoration  = 'line-through';
+    btn.title = 'Dieses Browser-Fenster ist nicht mit dem Agenten gekoppelt. Der Agent sieht nur das Fenster, das „fdhero-start" geöffnet hat.';
+    return;
+  }
+  btn.style.textDecoration = 'none';
+
+  const on = sbxIsAgentMode();
+  // Kennung mitzeigen: dieselben Zeichen stehen im Protokoll und in Freshdesk
+  // Hero — so lässt sich auf einen Blick vergleichen, ob beide dasselbe Fenster
+  // meinen. Farben INLINE, damit sie dem Zustand nicht einen Klick hinterherhinken.
+  lbl.textContent = (on ? '🤖 Agent aktiv' : 'Agent aus') + ' · ' + sbxAgentBrowserKey().slice(0, 6);
+  btn.style.background  = on ? '#059669' : 'transparent';
+  btn.style.color       = on ? '#ffffff' : 'rgba(255,255,255,.6)';
+  btn.style.borderColor = on ? '#047857' : 'rgba(255,255,255,.25)';
+  btn.title = on ? 'Der Agent darf diese Servicebox fernsteuern. Klicken zum Sperren.'
+                 : 'Klicken, um dem Agenten die Steuerung dieser Servicebox zu erlauben.';
+
+  // Tab-Titel kennzeichnen: In der Tab-Leiste muss OHNE Klick erkennbar sein,
+  // welches Fenster der Agent steuert.
+  document.title = (on ? '🟢 AGENT AKTIV · ' : '') + 'Elevator Servicebox ' + APP_VERSION;
+}
+
 async function showApp() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app').classList.add('show');
@@ -3350,6 +3429,9 @@ async function showApp() {
   const dv = document.getElementById('drawer-version');   if (dv) dv.textContent = APP_VERSION;
   // Browser-Tab-Titel inkl. Version (so dass User die Version auch im Tab/PWA-Title sieht)
   document.title = 'Elevator Servicebox ' + APP_VERSION;
+  // NACH dem Titel: renderAgentMode setzt ihn ggf. auf „AGENT AKTIV" um und
+  // würde sonst gleich wieder überschrieben.
+  renderAgentMode();
   applyTheme(getActiveTheme());
   // SOFORT zum Dashboard wechseln, BEVOR die langsamen Network-Loads passieren –
   // sonst flackert kurz die Konverter-View durch. switchView setzt view-dashboard
