@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.38';
+const APP_VERSION = 'v7.39';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -31869,6 +31869,25 @@ function _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X) {
 }
 
 /* ── DETAIL-MODAL ──────────────────────────────────────────────────── */
+/* v7.39: Freshdesk-Ticket-Verknüpfung im Dialog setzen/ändern/entfernen.
+   Feld freshdesk_ticket_id — dieselbe Konvention wie Freshdesk Hero und die
+   KI-Agenten (sbx_angebot_speichern mit ticket_id). */
+async function _angTicketVerknuepfen(recId) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  const f = (rec && rec.fields) || {};
+  const alt = String(f.freshdesk_ticket_id||'');
+  const wert = prompt('Freshdesk-Ticketnummer (leer lassen = Verknüpfung entfernen):', alt);
+  if (wert === null) return;
+  const neu = String(wert).trim().replace(/[^0-9]/g, '');
+  if (wert.trim() && !neu) { toast('Bitte nur die Ticketnummer eingeben', 'error'); return; }
+  try {
+    await atUpdate('App_Angebote', recId, { freshdesk_ticket_id: neu });
+    if (rec) rec.fields.freshdesk_ticket_id = neu;
+    toast(neu ? ('Mit Ticket #'+neu+' verknüpft') : 'Verknüpfung entfernt', 'success');
+    openAngebotDetail(recId);
+  } catch (e) { toast('Speichern fehlgeschlagen: '+e.message, 'error'); }
+}
+
 function openAngebotDetail(recId) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
@@ -31907,6 +31926,16 @@ function openAngebotDetail(recId) {
           return '<div style="margin-top:6px;padding:8px 10px;background:#FEF2F2;border-left:3px solid #EF4444;border-radius:4px;font-size:11.5px"><strong style="color:#991B1B">⚠ Empfänger-Adresse unvollständig:</strong> '+(adrLines.length?adrLines.join(', '):'(leer)')+'<br><span style="color:#7F1D1D">Bitte über „Bearbeiten" ergänzen — sonst fehlt sie im PDF.</span></div>';
         })()+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
+        // v7.39: Ticket-Verknüpfung sichtbar + änderbar (Feld freshdesk_ticket_id,
+        // dieselbe Konvention wie Freshdesk Hero und die KI-Agenten)
+        (() => {
+          const tid = String(f.freshdesk_ticket_id||'').trim();
+          const dom = (APP_KEYS.freshdeskDomains||{})[f.firma];
+          const url = (tid && dom) ? ('https://'+dom+'.freshdesk.com/a/tickets/'+encodeURIComponent(tid)) : null;
+          const knopf = '<button onclick="_angTicketVerknuepfen(\''+recId+'\')" style="margin-left:8px;background:none;border:1px solid #93C5FD;color:#2152A9;font-size:10.5px;padding:2px 8px;border-radius:99px;cursor:pointer">'+(tid?'ändern':'verknüpfen')+'</button>';
+          if (tid) return '<div style="margin-top:6px;padding:6px 10px;background:#EFF6FF;border-left:3px solid #2152A9;border-radius:4px"><strong style="color:#1E3A8A">🎫 Freshdesk-Ticket:</strong> '+(url?'<a href="'+url+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">#'+escapeHtml(tid)+' öffnen ↗</a>':'#'+escapeHtml(tid))+knopf+'</div>';
+          return '<div style="margin-top:6px;font-size:11px;color:var(--txt3)">🎫 Kein Freshdesk-Ticket verknüpft'+knopf+'</div>';
+        })()+
         (f.kone_angebot_num ? '<div><strong>🔗 '+escapeHtml(f.anbieter||'Original')+':</strong> '+escapeHtml(f.kone_angebot_num)+(f.kone_angebot_datum?' vom '+escapeHtml(f.kone_angebot_datum):'')+'</div>' : '')+
         (f.erp_anfrage_id ? '<div style="margin-top:6px;padding:6px 10px;background:#EFF6FF;border-left:3px solid #2152A9;border-radius:4px"><strong style="color:#1E3A8A">📋 ERP-Anfrage:</strong> '+(f.erp_anfrage_url ? '<a href="'+escapeHtml(f.erp_anfrage_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Anfrage '+escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id)+' öffnen ↗</a>' : escapeHtml(f.erp_anfrage_nummer||f.erp_anfrage_id))+'</div>' : '')+
         (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 ERP-Angebot:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
