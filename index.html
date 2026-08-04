@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.41';
+const APP_VERSION = 'v7.42';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -16439,10 +16439,21 @@ async function _acceptVertragPreview() {
   try {
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     try { await ensureField('Vertraege', 'vertrag_pdf', 'multipleAttachments'); } catch(_){}
+    // v7.42: Beim Speichern die (ggf. aus dem ERP nachgezogenen) Betreiberdaten mit auf den
+    //   Vertrag-Record schreiben — damit Sende-Dialog (kontakt_email) + künftige Ansichten sie
+    //   dauerhaft haben und nicht bei jeder Erzeugung neu aufgelöst werden müssen.
+    //   _ensureVertraegeTable stellt sicher, dass die Kontakt-Felder existieren (sonst 422).
+    try { await _ensureVertraegeTable(); } catch(_){}
+    const _cv = ctx.vars || {};
+    const _patch = { vertrag_pdf: [] };
+    if (_cv.kunde_nummer)    _patch.kunde_nummer    = String(_cv.kunde_nummer);
+    if (_cv.kontakt_name)    _patch.kontakt_name    = String(_cv.kontakt_name);
+    if (_cv.kontakt_email)   _patch.kontakt_email   = String(_cv.kontakt_email);
+    if (_cv.kontakt_telefon) _patch.kontakt_telefon = String(_cv.kontakt_telefon);
     await fetch('https://api.airtable.com/v0/'+baseId+'/Vertraege/'+ctx.vertragId, {
       method:'PATCH',
       headers:{'Authorization':'Bearer '+APP_KEYS.airtableWriteKey,'Content-Type':'application/json'},
-      body: JSON.stringify({ fields: { vertrag_pdf: [] }})
+      body: JSON.stringify({ fields: _patch })
     });
     const fname = _wvPdfFilename(ctx.vars?.vertragsnummer, ctx.vars?.kunde_name);
     await atBlobUpload(ctx.vertragId, 'vertrag_pdf', ctx.pdfBlob, fname, 'application/pdf');
