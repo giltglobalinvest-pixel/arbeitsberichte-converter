@@ -2748,7 +2748,213 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.42';
+const APP_VERSION = 'v7.43';
+
+/* ════════════════════════════════════════════════════════════
+   v7.43: DIAGNOSE-PROTOKOLL
+   Dauerhaftes „mitlesendes" Protokoll für Hänger-Analyse.
+   - Ring-Puffer (max 500) in localStorage → überlebt Hänger + Reload
+   - fängt globale Fehler, unhandledrejection, Main-Thread-Stall
+   - wrappt fetch: loggt Start/Ende/Dauer + markiert HÄNGENDE Requests
+     (>8s / >25s noch offen) — genau das, was bei „Abschließen" ohne
+     Fehlermeldung die App blockiert
+   - schwebender 🩺-Button (unten links): Protokoll ansehen/kopieren +
+     „UI entsperren" (klemmende Overlays schließen)
+   Bedienung: window.DIAG.text() liefert das Protokoll als Text.
+   ════════════════════════════════════════════════════════════ */
+const DIAG = (function(){
+  const KEY = 'diag_log_v1';
+  const MAX = 500;
+  let buf = [];
+  try { const s = localStorage.getItem(KEY); if (s) { const a = JSON.parse(s); if (Array.isArray(a)) buf = a; } } catch(_){}
+  let flushT = null, problem = false;
+  function flush(){ flushT = null; try { localStorage.setItem(KEY, JSON.stringify(buf.slice(-MAX))); } catch(_){} }
+  function scheduleFlush(){ if (flushT) return; try { flushT = setTimeout(flush, 500); } catch(_){ flush(); } }
+  function sanUrl(u){
+    return String(u||'')
+      .replace(/([?&](key|token|secret|api_key|apikey|sig|signature|password)=)[^&#]*/gi, '$1***')
+      .slice(0, 180);
+  }
+  function markProblem(lvl){
+    if (lvl === 'error' || lvl === 'warn') { problem = true; try { _diagUpdateBtn(); } catch(_){} }
+  }
+  function push(lvl, tag, msg, data){
+    const e = { t: Date.now(), lvl, tag: String(tag||''), msg: String(msg==null?'':msg).slice(0,300) };
+    if (data !== undefined) {
+      let s; try { s = (typeof data === 'string') ? data : JSON.stringify(data); } catch(_){ s = String(data); }
+      if (s && s.length > 500) s = s.slice(0,500)+'…';
+      e.d = s;
+    }
+    buf.push(e);
+    if (buf.length > MAX) buf.splice(0, buf.length - MAX);
+    scheduleFlush(); markProblem(lvl);
+    return e;
+  }
+  function fmt(e){
+    let ts = ''; try { const d = new Date(e.t); ts = d.toLocaleTimeString('de-DE')+'.'+String(d.getMilliseconds()).padStart(3,'0'); } catch(_){ ts = ''+e.t; }
+    return ts+' ['+String(e.lvl||'').toUpperCase()+'] '+e.tag+': '+e.msg+(e.d!==undefined?'  '+e.d:'');
+  }
+  return {
+    log:  (t,m,d)=>push('info',t,m,d),
+    warn: (t,m,d)=>push('warn',t,m,d),
+    err:  (t,m,d)=>push('error',t,m,d),
+    step: (t,m,d)=>push('step',t,m,d),
+    all:  ()=>buf.slice(),
+    hasProblem: ()=>problem,
+    clearProblem: ()=>{ problem = false; },
+    clear: ()=>{ buf = []; problem = false; try { localStorage.removeItem(KEY); } catch(_){} },
+    flushNow: flush,
+    text: ()=>{
+      const head = 'Diagnose-Protokoll · '+APP_VERSION+' · '+(function(){try{return new Date().toLocaleString('de-DE');}catch(_){return '';}})()+
+        ' · UA '+(navigator.userAgent||'').slice(0,80)+'\n'+'─'.repeat(60)+'\n';
+      return head + buf.slice(-MAX).map(fmt).join('\n');
+    },
+  };
+})();
+window.DIAG = DIAG;
+
+/* Globale Fehler + unbehandelte Promise-Rejections (typisch für stillen Hänger) */
+try {
+  window.addEventListener('error', function(ev){
+    DIAG.err('js-error', (ev.message||'Fehler')+' @'+String(ev.filename||'').split('/').pop()+':'+(ev.lineno||''),
+      ev.error && ev.error.stack ? String(ev.error.stack).slice(0,400) : undefined);
+  });
+  window.addEventListener('unhandledrejection', function(ev){
+    const r = ev.reason;
+    DIAG.err('promise-rejection', (r && (r.message||r)) ? String(r.message||r).slice(0,300) : 'unbekannt',
+      r && r.stack ? String(r.stack).slice(0,400) : undefined);
+  });
+} catch(_){}
+
+/* fetch-Wrapper: Start/Ende/Dauer + Watchdog für hängende Requests */
+(function(){
+  try {
+    const orig = window.fetch;
+    if (!orig || orig.__diagWrapped) return;
+    let seq = 0, inflight = 0;
+    const wrapped = function(input, init){
+      const id = ++seq; inflight++;
+      let url = ''; try { url = (typeof input === 'string') ? input : (input && input.url) || ''; } catch(_){}
+      const method = (init && init.method) || (input && input.method) || 'GET';
+      const shortUrl = String(url)
+        .replace(/([?&](key|token|secret|api_key|apikey|sig|signature|password)=)[^&#]*/gi,'$1***')
+        .slice(0,180);
+      const t0 = Date.now();
+      DIAG.log('fetch→', method+' '+shortUrl, '#'+id+' inflight='+inflight);
+      let pend = true, wd1 = null, wd2 = null;
+      try {
+        wd1 = setTimeout(function(){ if (pend) DIAG.warn('fetch-HÄNGT', method+' '+shortUrl+' — >8s noch offen', '#'+id); }, 8000);
+        wd2 = setTimeout(function(){ if (pend) DIAG.err('fetch-HÄNGT', method+' '+shortUrl+' — >25s noch offen', '#'+id); }, 25000);
+      } catch(_){}
+      const done = function(){ pend = false; inflight--; try { clearTimeout(wd1); clearTimeout(wd2); } catch(_){} };
+      return orig.call(this, input, init).then(function(res){
+        done(); DIAG.log('fetch✓', method+' '+shortUrl+' → '+res.status+' · '+(Date.now()-t0)+'ms', '#'+id);
+        return res;
+      }, function(err){
+        done(); DIAG.err('fetch✗', method+' '+shortUrl+' → '+((err&&err.message)||err)+' · '+(Date.now()-t0)+'ms', '#'+id);
+        throw err;
+      });
+    };
+    wrapped.__diagWrapped = true;
+    window.fetch = wrapped;
+  } catch(_){}
+})();
+
+/* Main-Thread-Stall-Wächter: erkennt Einfrieren (>4s Lücke) rückwirkend */
+(function(){
+  try {
+    let last = Date.now();
+    setInterval(function(){
+      const now = Date.now(), gap = now - last; last = now;
+      if (gap > 4000) DIAG.warn('main-stall', 'Oberfläche war ~'+Math.round(gap/1000)+'s blockiert (eingefroren)');
+    }, 1000);
+  } catch(_){}
+})();
+
+/* Diagnose-UI: schwebender 🩺-Button + Protokoll-Viewer + „UI entsperren" */
+function _diagEnsureButton(){
+  try {
+    if (document.getElementById('diag-fab') || !document.body) return;
+    const b = document.createElement('button');
+    b.id = 'diag-fab'; b.type = 'button'; b.textContent = '🩺';
+    b.setAttribute('data-diag','1');
+    b.style.cssText = 'position:fixed;left:10px;bottom:10px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(60,60,60,.35);color:#fff;font-size:16px;line-height:34px;text-align:center;padding:0;cursor:pointer;z-index:2147483000;box-shadow:0 2px 8px rgba(0,0,0,.25);opacity:.5;transition:opacity .2s,background .2s';
+    b.onclick = function(){ _diagShow(); };
+    document.body.appendChild(b);
+    _diagUpdateBtn();
+  } catch(_){}
+}
+function _diagUpdateBtn(){
+  const b = document.getElementById('diag-fab'); if (!b) return;
+  if (DIAG.hasProblem && DIAG.hasProblem()) {
+    b.style.background = 'rgba(220,38,38,.92)'; b.style.opacity = '1';
+    b.title = 'Diagnose: Auffälligkeit erkannt — tippen zum Ansehen';
+  } else {
+    b.style.background = 'rgba(60,60,60,.35)'; b.style.opacity = '.5';
+    b.title = 'Diagnose-Protokoll ansehen';
+  }
+}
+function _diagUnstick(){
+  let removed = 0;
+  try {
+    const nodes = Array.prototype.slice.call(document.querySelectorAll('body > *'));
+    for (const el of nodes) {
+      if (!el || (el.getAttribute && el.getAttribute('data-diag'))) continue;
+      let st; try { st = getComputedStyle(el); } catch(_){ continue; }
+      if (!st || st.position !== 'fixed') continue;
+      const z = parseInt(st.zIndex,10) || 0;
+      // Echtes Vollbild-Overlay: breit UND hoch (nicht eine fixe Kopfleiste/Topbar)
+      const coversScreen = (el.offsetWidth >= window.innerWidth*0.8 && el.offsetHeight >= window.innerHeight*0.5) || st.inset==='0px';
+      const bigFixed = z >= 9000 && coversScreen;
+      const looksModal = /modal|overlay|working|backdrop|spinner/i.test((el.id||'')+' '+(typeof el.className==='string'?el.className:''));
+      if (bigFixed || looksModal) { el.remove(); removed++; }
+    }
+    document.body.style.overflow = ''; document.body.style.pointerEvents = '';
+  } catch(_){}
+  DIAG.warn('unstick', 'UI entsperrt — '+removed+' Overlay(s) entfernt');
+  if (typeof toast === 'function') toast('🧹 UI entsperrt ('+removed+' Overlay(s) geschlossen)','ok');
+  return removed;
+}
+async function _diagCopy(){
+  const txt = DIAG.text();
+  try { await navigator.clipboard.writeText(txt); if (typeof toast==='function') toast('📋 Protokoll kopiert — hier im Chat einfügen','ok'); }
+  catch(_){ const ta = document.getElementById('diag-text'); if (ta){ ta.focus(); ta.select(); try { document.execCommand('copy'); if(typeof toast==='function') toast('📋 kopiert','ok'); } catch(e){ if(typeof toast==='function') toast('Bitte Text manuell markieren + kopieren','warn'); } } }
+}
+function _diagShow(){
+  try { DIAG.clearProblem(); _diagUpdateBtn(); } catch(_){}
+  document.getElementById('diag-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'diag-modal'; m.setAttribute('data-diag','1');
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2147483600;display:flex;align-items:center;justify-content:center;padding:12px';
+  m.innerHTML =
+    '<div data-diag="1" style="background:#fff;color:#111;max-width:820px;width:100%;height:88vh;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:12px 16px;background:#111827;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+        '<span>🩺 Diagnose-Protokoll · '+APP_VERSION+'</span>'+
+        '<button data-diag="1" onclick="document.getElementById(\'diag-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<textarea id="diag-text" data-diag="1" readonly style="flex:1;width:100%;border:none;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;resize:none;background:#0b1020;color:#d6e2ff;white-space:pre;overflow:auto"></textarea>'+
+      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;flex-wrap:wrap;justify-content:space-between">'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button data-diag="1" onclick="_diagCopy()" style="padding:8px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">📋 Kopieren</button>'+
+          '<button data-diag="1" onclick="_diagUnstick()" style="padding:8px 14px;border:1px solid #f59e0b;border-radius:6px;background:#fffbeb;color:#92400e;font-weight:600;cursor:pointer" title="Klemmende Overlays schließen, damit die App wieder bedienbar ist">🧹 UI entsperren</button>'+
+        '</div>'+
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+          '<button data-diag="1" onclick="document.getElementById(\'diag-text\').value=window.DIAG.text()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;color:#374151;cursor:pointer">↻ Aktualisieren</button>'+
+          '<button data-diag="1" onclick="if(confirm(\'Protokoll leeren?\')){window.DIAG.clear();document.getElementById(\'diag-text\').value=window.DIAG.text();}" style="padding:8px 14px;border:1px solid #fecaca;border-radius:6px;background:#fff;color:#dc2626;cursor:pointer">🗑 Leeren</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = function(ev){ if (ev.target === m) m.remove(); };
+  const ta = document.getElementById('diag-text');
+  if (ta) { ta.value = DIAG.text(); ta.scrollTop = ta.scrollHeight; }
+}
+try {
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _diagEnsureButton);
+  else _diagEnsureButton();
+  window.addEventListener('keydown', function(e){ if ((e.ctrlKey||e.metaKey) && e.shiftKey && (e.key==='D'||e.key==='d')) { e.preventDefault(); _diagShow(); } });
+} catch(_){}
+
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -7412,10 +7618,12 @@ async function _aufCompleteWithFd(auftragRecId, btn) {
     if (!confirm('Es gibt noch keinen Bericht zu diesem Auftrag.\n\nTrotzdem als "abgeschlossen" markieren? (Kein Freshdesk-Ticket wird erzeugt.)')) return;
   }
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Schließe ab…'; }
+  DIAG.step('auftrag-abschluss','START · Auftrag '+auftragRecId+' · '+(list.length)+' Bericht(e)');
   try {
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
     const firmaSlug = rec.fields.firma || getCurrentFirmaSlug();
     // 1) Status auf abgeschlossen + completed_at
+    DIAG.step('auftrag-abschluss','Status → abgeschlossen (Airtable-PATCH)');
     await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+auftragRecId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
@@ -7445,9 +7653,13 @@ async function _aufCompleteWithFd(auftragRecId, btn) {
       // pdfBlob nachladen (für Attachment)
       let pdfBlob = null;
       if (pdfUrl) {
-        try { pdfBlob = await (await fetch(pdfUrl)).blob(); } catch(_){}
+        DIAG.step('auftrag-abschluss','PDF-Blob laden…');
+        try { pdfBlob = await (await fetch(pdfUrl)).blob(); } catch(e){ DIAG.warn('auftrag-abschluss','PDF-Blob laden fehlgeschlagen: '+(e.message||e)); }
+        DIAG.step('auftrag-abschluss','PDF-Blob geladen ('+(pdfBlob?Math.round(pdfBlob.size/1024)+'KB':'—')+')');
       }
+      DIAG.step('auftrag-abschluss','Freshdesk-Ticket wird erzeugt…');
       const result = await freshdeskCreateTicketForBericht(berichtRec, pdfBlob, rec, pdfUrl);
+      DIAG.step('auftrag-abschluss','Freshdesk-Ticket zurück: '+(result && result.ticketId ? '#'+result.ticketId : 'kein Ticket'));
       if (result && result.ticketId) {
         // Ticket-ID am Bericht speichern
         try {
@@ -7463,9 +7675,12 @@ async function _aufCompleteWithFd(auftragRecId, btn) {
       }
     }
     _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
+    DIAG.step('auftrag-abschluss','Aufträge neu laden + rendern…');
     await loadAuftraegeAndRender();
     openAuftragDetail(auftragRecId);
+    DIAG.step('auftrag-abschluss','FERTIG · Auftrag '+auftragRecId);
   } catch(e) {
+    DIAG.err('auftrag-abschluss','FEHLER: '+(e && e.message || e), e && e.stack ? String(e.stack).slice(0,300) : undefined);
     toast('❌ '+e.message, 'err');
     if (btn) { btn.disabled = false; btn.textContent = '✅ Auftrag fertigstellen'; }
   }
@@ -13433,6 +13648,7 @@ async function saveBerichtFromForm() {
   btn.textContent = '☁ Generiere PDF…';
   _bfClearError();  // v7.07: altes Fehler-Banner entfernen
   let step = 'Vorbereiten';  // v7.07: aktueller Schritt für aussagekräftige Fehlermeldung
+  DIAG.step('bericht-speichern','START · '+(_bfMode==='edit'?'EDIT':'NEU')+' · Vorlage '+(af.tmpl||'')+' · '+(_bfKeepBilder.length)+' best.+'+(_bfImages.length)+' neue Bilder');
 
   try {
     const firmaSlug = getCurrentFirmaSlug();
@@ -13605,9 +13821,12 @@ async function saveBerichtFromForm() {
     // v5.22: Kein Auto-FD-Ticket mehr beim Bericht-Save. Das Ticket entsteht
     // beim "✅ Auftrag fertigstellen"-Schritt (sammelt alle Berichte zusammen).
     _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };  // Cache invalidieren
+    DIAG.step('bericht-speichern','gespeichert · schließe Formular + Aufträge neu laden…');
     closeBerichtForm();
     await loadAuftraegeAndRender();
+    DIAG.step('bericht-speichern','FERTIG');
   } catch(e) {
+    DIAG.err('bericht-speichern','FEHLER @'+step+': '+(e && e.message || e), e && e.stack ? String(e.stack).slice(0,300) : undefined);
     console.error('saveBerichtFromForm @ '+step+':', e);
     // v7.07: Fehler dauerhaft + gut sichtbar im Formular anzeigen (statt nur 4-Sek.-Toast).
     const m = String(e?.message || e || '').toLowerCase();
@@ -25150,12 +25369,14 @@ async function _daComplete(recId, btn) {
 
   const origLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ schließe ab…'; }
+  DIAG.step('da-abschluss','START · DA '+recId+' · '+cps.length+' Checkpunkt(e)');
   try {
     // 1) Save falls dirty
-    if (m._dirty) await _daSave(recId);
+    if (m._dirty) { DIAG.step('da-abschluss','Speichern (dirty)…'); await _daSave(recId); }
 
     // 2) PDF bauen
     if (btn) btn.textContent = '⏳ PDF erzeuge…';
+    DIAG.step('da-abschluss','PDF bauen…');
     const recAfterSave = (_daCache.items||[]).find(r => r.id === recId) || rec;
     const fieldsAfterSave = recAfterSave.fields || fields;
     let cpsForPdf = [];
@@ -25211,9 +25432,11 @@ async function _daComplete(recId, btn) {
     let fdError = null;
     if (freshdeskIsConfigured(firmaSlug)) {
       if (btn) btn.textContent = '⏳ Freshdesk-Ticket…';
+      DIAG.step('da-abschluss','Freshdesk-Ticket wird erzeugt…');
       try {
         const recForFd = (_daCache.items||[]).find(r => r.id === recId) || recAfterSave;
         fdResult = await freshdeskCreateTicketForDA(recForFd, { pdfBlob, pdfUrl: pdfUrlForTicket });
+        DIAG.step('da-abschluss','Freshdesk-Ticket zurück: '+(fdResult && fdResult.ticketId ? '#'+fdResult.ticketId : 'kein Ticket'));
         if (fdResult?.ticketId) {
           await _daPersistFdTicketLink(recId, fdResult.ticketId, fdResult.ticketUrl);
           // v7.06: nach erfolgreichem Push → Status 'gepusht' (überschreibt nicht die Erfolgs-Overlay dank noReopen)
@@ -25228,7 +25451,9 @@ async function _daComplete(recId, btn) {
     // 6) Erfolgs-Dialog im Modal anzeigen + Liste neu rendern
     _daShowCompletionSuccess(recId, { fdResult, fdError, fdConfigured: freshdeskIsConfigured(firmaSlug) });
     try { _renderDaList(); } catch(_){}
+    DIAG.step('da-abschluss','FERTIG · DA '+recId);
   } catch(e) {
+    DIAG.err('da-abschluss','FEHLER: '+(e && e.message || e), e && e.stack ? String(e.stack).slice(0,300) : undefined);
     console.error('[DA-Complete]', e);
     toast('❌ Abschließen fehlgeschlagen: '+(e.message||e).slice(0,200), 'err');
     if (btn) { btn.disabled = false; btn.textContent = origLabel || '✅ Abschließen'; }
