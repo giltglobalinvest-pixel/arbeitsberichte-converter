@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.43';
+const APP_VERSION = 'v7.44';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2867,6 +2867,8 @@ try {
     setInterval(function(){
       const now = Date.now(), gap = now - last; last = now;
       if (gap > 4000) DIAG.warn('main-stall', 'Oberfläche war ~'+Math.round(gap/1000)+'s blockiert (eingefroren)');
+      // Selbstheilung: falls die App den Diagnose-Button entfernt hat, neu anlegen
+      try { if (!document.getElementById('diag-fab')) _diagEnsureButton(); } catch(_){}
     }, 1000);
   } catch(_){}
 })();
@@ -2875,10 +2877,16 @@ try {
 function _diagEnsureButton(){
   try {
     if (document.getElementById('diag-fab') || !document.body) return;
+    // Pulse-Animation einmalig injizieren (für den Alarm-Zustand)
+    if (!document.getElementById('diag-style')) {
+      const st = document.createElement('style'); st.id = 'diag-style'; st.setAttribute('data-diag','1');
+      st.textContent = '@keyframes diagPulse{0%{box-shadow:0 0 0 0 rgba(220,38,38,.6)}70%{box-shadow:0 0 0 12px rgba(220,38,38,0)}100%{box-shadow:0 0 0 0 rgba(220,38,38,0)}}';
+      document.head && document.head.appendChild(st);
+    }
     const b = document.createElement('button');
-    b.id = 'diag-fab'; b.type = 'button'; b.textContent = '🩺';
-    b.setAttribute('data-diag','1');
-    b.style.cssText = 'position:fixed;left:10px;bottom:10px;width:34px;height:34px;border-radius:50%;border:none;background:rgba(60,60,60,.35);color:#fff;font-size:16px;line-height:34px;text-align:center;padding:0;cursor:pointer;z-index:2147483000;box-shadow:0 2px 8px rgba(0,0,0,.25);opacity:.5;transition:opacity .2s,background .2s';
+    b.id = 'diag-fab'; b.type = 'button'; b.setAttribute('data-diag','1');
+    b.innerHTML = '<span style="font-size:18px">🩺</span><span id="diag-fab-lbl" style="font-size:11px;font-weight:700;letter-spacing:.3px">Diagnose</span>';
+    b.style.cssText = 'position:fixed;left:12px;bottom:12px;height:40px;padding:0 13px 0 11px;display:inline-flex;align-items:center;gap:6px;border-radius:20px;border:2px solid #fff;background:#0f172a;color:#fff;cursor:pointer;z-index:2147483000;box-shadow:0 3px 12px rgba(0,0,0,.4);opacity:.92;transition:opacity .2s,background .2s';
     b.onclick = function(){ _diagShow(); };
     document.body.appendChild(b);
     _diagUpdateBtn();
@@ -2886,11 +2894,14 @@ function _diagEnsureButton(){
 }
 function _diagUpdateBtn(){
   const b = document.getElementById('diag-fab'); if (!b) return;
+  const lbl = document.getElementById('diag-fab-lbl');
   if (DIAG.hasProblem && DIAG.hasProblem()) {
-    b.style.background = 'rgba(220,38,38,.92)'; b.style.opacity = '1';
+    b.style.background = '#dc2626'; b.style.opacity = '1'; b.style.animation = 'diagPulse 1.4s infinite';
+    if (lbl) lbl.textContent = 'Problem!';
     b.title = 'Diagnose: Auffälligkeit erkannt — tippen zum Ansehen';
   } else {
-    b.style.background = 'rgba(60,60,60,.35)'; b.style.opacity = '.5';
+    b.style.background = '#0f172a'; b.style.opacity = '.92'; b.style.animation = '';
+    if (lbl) lbl.textContent = 'Diagnose';
     b.title = 'Diagnose-Protokoll ansehen';
   }
 }
