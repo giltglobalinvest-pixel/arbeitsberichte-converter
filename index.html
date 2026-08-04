@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.39';
+const APP_VERSION = 'v7.40';
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
   MASTER_BASE_ID:    'appzhNrhkLSTEaNFW',
@@ -15353,8 +15353,10 @@ async function _previewVorlageFromList(recId) {
       turnus_betrag:      '1.440,00 € netto',
       stundensatz:        '162,00 €',
       gueltig_bis:        '31.12.2027',
-      start_datum:        new Date().toISOString().slice(0,10),
+      start_datum:        new Date().toLocaleDateString('de-DE'),
       laufzeit_monate:    '12',
+      vertragsbeginn:     new Date().toLocaleDateString('de-DE'),
+      laufzeit_jahre:     '1',
       datum_heute:        new Date().toLocaleDateString('de-DE'),
       firma_name:         'Aszendio Aufzugservice GmbH',
     };
@@ -15835,6 +15837,17 @@ async function openVertragGenerator(vertragId, preislisteId) {
   modal.id = 'vt-gen-modal';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10200;display:flex;align-items:center;justify-content:center;padding:16px';
   const vorlageOpts = vorlagen.map(v => '<option value="'+v.id+'">'+escapeHtml(v.fields.name||'?')+'</option>').join('');
+  // v7.37: Vertragsbeginn + Laufzeit aus dem gespeicherten Vertrag-Record vorbelegen
+  //   (die NWV-Form speichert start_datum/laufzeit_monate) — sonst heute / 12 Monate.
+  const _vf = vRec.fields || {};
+  const _isoStart = (() => {
+    const s = String(_vf.start_datum||'').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+    if (m) return m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+    return new Date().toISOString().slice(0,10);
+  })();
+  const _startMonate = (parseInt(_vf.laufzeit_monate,10) > 0) ? parseInt(_vf.laufzeit_monate,10) : 12;
   modal.innerHTML =
     '<div style="background:var(--surf,#fff);max-width:640px;width:100%;max-height:90vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 18px;background:#4F46E5;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
@@ -15847,6 +15860,17 @@ async function openVertragGenerator(vertragId, preislisteId) {
         '<div id="vt-gen-mode-hint"></div>'+
         // v5.69: Sections-Checkbox-Container — wird je nach Vorlage befüllt
         '<div id="vt-gen-sections-wrap" style="display:none;margin-top:10px"></div>'+
+        // v7.37: Vertragsbeginn + Laufzeit — für Nicht-Wizard-Modi (Wizard fragt es selbst ab).
+        '<div id="vt-gen-laufzeit-wrap" style="margin-top:10px;background:#F0F9FF;border:1px solid #7DD3FC;border-radius:8px;padding:10px 12px">'+
+          '<div style="font-weight:700;color:#075985;font-size:10.5px;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px">📅 Vertragsbeginn & Laufzeit</div>'+
+          '<div style="display:flex;gap:10px;flex-wrap:wrap">'+
+            '<label style="flex:1;min-width:150px;font-size:11.5px;color:var(--txt2)">Vertragsbeginn<br>'+
+              '<input id="vt-gen-startdatum" type="date" value="'+_isoStart+'" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;margin-top:3px;background:#fff;color:#222"></label>'+
+            '<label style="flex:1;min-width:150px;font-size:11.5px;color:var(--txt2)">Laufzeit (Monate)<br>'+
+              '<input id="vt-gen-laufzeit-monate" type="number" min="1" step="1" value="'+_startMonate+'" placeholder="z.B. 12" style="width:100%;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;margin-top:3px;background:#fff;color:#222"></label>'+
+          '</div>'+
+          '<div style="font-size:10.5px;color:#0369A1;margin-top:6px">Wird in den Vertrag eingesetzt (ersetzt {{start_datum}} / {{laufzeit_monate}}).</div>'+
+        '</div>'+
         '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:8px;margin-bottom:8px" id="vt-gen-ki-wrap"><input id="vt-gen-ki" type="checkbox" checked> 🤖 KI-Politur anwenden (nur für Markdown-Vorlagen)</label>'+
         '<div style="margin-top:10px"><strong>📝 Vorgangs-spezifische Hinweise <span style="font-weight:400;color:var(--txt3);font-size:11px">— optional, nur für diesen Vertrag</span></strong>'+
           '<div style="font-size:11px;color:var(--txt3);margin-top:2px;margin-bottom:4px">z.B. <em>"Kündigungsfrist 12 Monate, weil Großkunde"</em> oder <em>"Notrufaufschaltung optional, Preis abgesprochen"</em></div>'+
@@ -15877,6 +15901,10 @@ function _updateGeneratorModeHint() {
   const kiWrap = document.getElementById('vt-gen-ki-wrap');
   const secWrap = document.getElementById('vt-gen-sections-wrap');
   if (!v || !hint) return;
+  // v7.37: Vertragsbeginn/Laufzeit-Block nur für Nicht-Wizard-Modi zeigen
+  //   (der Wizard fragt Beginn + Laufzeit über eigene Schritte ab).
+  const lzWrap = document.getElementById('vt-gen-laufzeit-wrap');
+  if (lzWrap) lzWrap.style.display = (v.fields?.wizard_mode === 'wartung') ? 'none' : '';
   // v5.72: Wartungsvertrag-Wizard hat höchsten Vorrang — fixe Schritte, kein KI
   if (v.fields?.wizard_mode === 'wartung') {
     hint.innerHTML = '<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;padding:8px 12px;font-size:12px;color:#065F46">'+
@@ -16034,7 +16062,7 @@ function _wvWizardBuildUebersicht(ans) {
     '- **Notruf und GSM-Service:** ' + (ans.notruf_gsm ? ja : nein),
     '- **Montage Notrufgerät:** ' + (ans.notrufgeraet_montage ? ja : nein),
     '- **ZÜS-Organisation, Durchführung und Begleitung:** ' + (ans.zues_komplett ? ja : nein),
-    '- **Vertragsbeginn:** ' + (ans.vertragsbeginn || ''),
+    '- **Vertragsbeginn:** ' + (_deDate(ans.vertragsbeginn) || ''),
     '- **Laufzeit:** ' + String(ans.laufzeit_jahre||'1') + ' Jahr(e)',
     '- **Abrechnungsturnus:** ' + turnusLabel,
     '- **Jahrespreis netto:** ' + (jahresPreis > 0 ? eur(jahresPreis) : '— wird separat vereinbart —'),
@@ -16077,8 +16105,10 @@ function _wvWizardBuildText(customTemplate) {
     .replace(/\{\{notruf_gsm_section\}\}/g,       notrufGsmSec)
     .replace(/\{\{notrufgeraet_montage_section\}\}/g, notrufMontageSec)
     .replace(/\{\{zues_section\}\}/g,             zuesSec)
-    .replace(/\{\{vertragsbeginn\}\}/g,           String(ans.vertragsbeginn||''))
+    .replace(/\{\{vertragsbeginn\}\}/g,           _deDate(ans.vertragsbeginn))
+    .replace(/\{\{start_datum\}\}/g,              _deDate(ans.vertragsbeginn))
     .replace(/\{\{laufzeit_jahre\}\}/g,           String(ans.laufzeit_jahre||'1'))
+    .replace(/\{\{laufzeit_monate\}\}/g,          String((parseInt(ans.laufzeit_jahre,10)||1)*12))
     .replace(/\{\{vertrag_uebersicht\}\}/g,       uebersicht);
   // §-Nummerierung durchziehen (1..N), damit nach weggelassenen optionalen Sections keine Lücken bleiben
   out = _wvWizardRenumberParagraphs(out);
@@ -16104,6 +16134,18 @@ function _wvWizardApplyToVars(vars) {
   }
   vars.abrechnung_turnus = turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich';
   if (ans.anzahl_wartungen) vars.wartungen_pro_jahr = String(ans.anzahl_wartungen);
+  // v7.37: Beginn + Laufzeit aus den Wizard-Schritten auch als start_datum/laufzeit_monate
+  //   spiegeln, damit Wizard-Templates mit {{start_datum}}/{{laufzeit_monate}} ebenfalls greifen.
+  if (ans.vertragsbeginn) {
+    const de = _deDate(ans.vertragsbeginn);
+    vars.start_datum = de;
+    vars.vertragsbeginn = de;
+  }
+  if (ans.laufzeit_jahre) {
+    const j = parseInt(ans.laufzeit_jahre, 10) || 0;
+    if (j > 0) vars.laufzeit_monate = String(j * 12);
+    vars.laufzeit_jahre = String(ans.laufzeit_jahre);
+  }
   return vars;
 }
 
@@ -16144,6 +16186,9 @@ async function _generateVertragNow(vertragId, preislisteId) {
 
     const vRec = m._vRec, plRec = m._plRec;
     const vars = _buildVertragVars(vRec, plRec);
+    // v7.37: Vertragsbeginn + Laufzeit aus dem Modal in vars (alle Nicht-Wizard-Modi).
+    //   Im Wizard-Modus übernimmt _wvWizardApplyToVars die Werte aus den Wizard-Schritten.
+    if (vData.fields?.wizard_mode !== 'wartung') _applyLaufzeitToVars(vars);
     const quellPdfMeta = vData.fields.quell_pdf && vData.fields.quell_pdf[0];
     const hasQuellPdf  = !!quellPdfMeta && !!quellPdfMeta.url;
     let text = '';
@@ -16454,6 +16499,18 @@ function _buildVertragVars(vRec, plRec) {
     stundensatz:        plData?.stundensatz != null ? eur(plData.stundensatz) : '',
     gueltig_bis:        pf.gueltig_bis || '',
     datum_heute:        new Date().toLocaleDateString('de-DE'),
+    // v7.37: Vertragsbeginn + Laufzeit — aus dem Vertrag-Record (die NWV-Form speichert
+    //   start_datum/laufzeit_monate), sonst sichere Defaults (heute / 12 Monate), damit
+    //   {{start_datum}}/{{laufzeit_monate}} (+ Aliase) NIE als roher Platzhalter stehenbleiben.
+    //   Werden vom Generier-Modal (_applyLaufzeitToVars) bzw. dem Wizard überschrieben.
+    start_datum:        _deDate(vf.start_datum) || new Date().toLocaleDateString('de-DE'),
+    laufzeit_monate:    (parseInt(vf.laufzeit_monate,10) > 0) ? String(parseInt(vf.laufzeit_monate,10)) : '12',
+    vertragsbeginn:     _deDate(vf.start_datum) || new Date().toLocaleDateString('de-DE'),
+    laufzeit_jahre:     (parseInt(vf.laufzeit_monate,10) > 0)
+                          ? ((parseInt(vf.laufzeit_monate,10) % 12 === 0)
+                              ? String(parseInt(vf.laufzeit_monate,10)/12)
+                              : (parseInt(vf.laufzeit_monate,10)/12).toFixed(1).replace('.',','))
+                          : '1',
     // v5.82: Auftragnehmer-Stammdaten aus zentraler Konstante (firma-aware)
     firma_name:         _getFirmaStammdaten(vf.firma).name,
     firma_adresse:      _getFirmaStammdaten(vf.firma).adresse,
@@ -16479,6 +16536,37 @@ function _ersetzePlatzhalter(text, vars) {
       .replace(/[ \t]*·[ \t]*(?=\n|$)/g, '');
   }
   return result;
+}
+
+/** v7.37: ISO-Datum (yyyy-mm-dd) → deutsches Format (dd.mm.yyyy). Leer bleibt leer,
+ *  Unparsbares wird unverändert zurückgegeben. */
+function _deDate(iso) {
+  const s = String(iso||'').trim();
+  if (!s) return '';
+  const d = new Date(s.length <= 10 ? s + 'T00:00:00' : s);
+  return isNaN(d.getTime()) ? s : d.toLocaleDateString('de-DE');
+}
+
+/** v7.37: Liest Vertragsbeginn + Laufzeit (Monate) aus dem Generier-Modal und schreibt
+ *  sie in vars — inkl. der Wizard-Aliase (vertragsbeginn/laufzeit_jahre), damit sowohl
+ *  {{start_datum}}/{{laufzeit_monate}} als auch {{vertragsbeginn}}/{{laufzeit_jahre}}
+ *  im Template ersetzt werden, egal welche Variante die Vorlage nutzt. */
+function _applyLaufzeitToVars(vars) {
+  const dEl = document.getElementById('vt-gen-startdatum');
+  const mEl = document.getElementById('vt-gen-laufzeit-monate');
+  const iso = dEl && dEl.value ? dEl.value : '';
+  if (iso) {
+    const de = _deDate(iso);
+    vars.start_datum    = de;
+    vars.vertragsbeginn = de;
+  }
+  const monate = mEl && mEl.value ? parseInt(mEl.value, 10) : null;
+  if (monate && monate > 0) {
+    vars.laufzeit_monate = String(monate);
+    // Jahre-Alias: glatt teilbar → ganze Zahl, sonst mit einer Nachkommastelle (deutsch)
+    vars.laufzeit_jahre = (monate % 12 === 0) ? String(monate/12) : (monate/12).toFixed(1).replace('.',',');
+  }
+  return vars;
 }
 
 async function _callClaudeText(prompt, opts) {
@@ -36277,8 +36365,15 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
     firma_telefon:      _getFirmaStammdaten(firmaSlug).telefon,
     firma_website:      _getFirmaStammdaten(firmaSlug).website,
     vertragsnummer:     opts.nummer || '',
-    start_datum:        opts.start || '',
+    // v7.37: Datum deutsch + Wizard-Aliase, damit alle Template-Varianten greifen
+    start_datum:        _deDate(opts.start) || new Date().toLocaleDateString('de-DE'),
     laufzeit_monate:    String(opts.laufzeit||12),
+    vertragsbeginn:     _deDate(opts.start) || new Date().toLocaleDateString('de-DE'),
+    laufzeit_jahre:     (parseInt(opts.laufzeit,10) > 0)
+                          ? ((parseInt(opts.laufzeit,10) % 12 === 0)
+                              ? String(parseInt(opts.laufzeit,10)/12)
+                              : (parseInt(opts.laufzeit,10)/12).toFixed(1).replace('.',','))
+                          : '1',
   };
   const tpl = vorlage.fields.vorlage_text || '';
   const pdfMeta = vorlage.fields.quell_pdf && vorlage.fields.quell_pdf[0];
