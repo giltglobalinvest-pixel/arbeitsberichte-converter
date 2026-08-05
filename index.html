@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.45';
+const APP_VERSION = 'v7.46';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2965,6 +2965,58 @@ try {
   else _diagEnsureButton();
   window.addEventListener('keydown', function(e){ if ((e.ctrlKey||e.metaKey) && e.shiftKey && (e.key==='D'||e.key==='d')) { e.preventDefault(); _diagShow(); } });
 } catch(_){}
+
+/* ════════════════════════════════════════════════════════════
+   v7.46: MOBILE-MODAL-FIX (global)
+   Problem: viele Vollbild-Overlay-Modals nutzen `max-height:9Xvh` + zentriert.
+   Auf dem iPhone ist die Box dadurch höher als der sichtbare Bereich → Kopfzeile
+   mit × und Fußzeile (Schließen) ragen oben/unten raus und sind unerreichbar
+   (Notch/Home-Indikator fressen zusätzlich Platz). Der User muss die App neu starten.
+   Lösung: Ein leichter Beobachter taggt jedes zentrierte Vollbild-Overlay mit .mfix,
+   eine Stylesheet-Regel (mit !important) erzwingt Safe-Area-Padding am Overlay und
+   begrenzt die Box auf die sichtbare Höhe (max-height:100%). Greift für ALLE Modals.
+   ════════════════════════════════════════════════════════════ */
+(function(){
+  try {
+    // Stylesheet einmalig injizieren
+    function injectStyle(){
+      if (document.getElementById('mfix-style') || !document.head) return;
+      var st = document.createElement('style'); st.id = 'mfix-style'; st.setAttribute('data-diag','1');
+      st.textContent =
+        '.mfix{box-sizing:border-box!important;'+
+          'padding-top:max(8px,env(safe-area-inset-top))!important;'+
+          'padding-bottom:max(8px,env(safe-area-inset-bottom))!important;'+
+          'padding-left:max(8px,env(safe-area-inset-left))!important;'+
+          'padding-right:max(8px,env(safe-area-inset-right))!important;}'+
+        '.mfix>div{max-height:100%!important;min-height:0!important;}';
+      document.head.appendChild(st);
+    }
+    function isCenteredOverlay(el){
+      if (!(el instanceof HTMLElement) || el.tagName !== 'DIV') return false;
+      if (el.getAttribute('data-diag')) return false;   // eigene Diagnose-Overlays auslassen
+      var s = el.style;
+      if (s.position !== 'fixed') return false;
+      var full = (s.inset==='0px'||s.inset==='0') || (s.top==='0px'&&s.left==='0px'&&s.right==='0px'&&s.bottom==='0px');
+      if (!full) return false;
+      return s.justifyContent==='center' || s.alignItems==='center';
+    }
+    function tag(el){ if (el && !el.classList.contains('mfix')) el.classList.add('mfix'); }
+    function start(){
+      injectStyle();
+      // bereits vorhandene Overlays taggen
+      try { Array.prototype.forEach.call(document.body.children, function(el){ if (isCenteredOverlay(el)) tag(el); }); } catch(_){}
+      // neue Overlays live taggen
+      try {
+        var obs = new MutationObserver(function(muts){
+          for (var i=0;i<muts.length;i++){ var ns=muts[i].addedNodes; for (var j=0;j<ns.length;j++){ if (isCenteredOverlay(ns[j])) tag(ns[j]); } }
+        });
+        obs.observe(document.body, { childList:true });
+      } catch(_){}
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+    else start();
+  } catch(_){}
+})();
 
 const APP_CONFIG = {
   AIRTABLE_READ_KEY: ['patu8KWM8aWByxCG','L.69','fae5d9fa4b94c266b426dadd71a51f574945d840b33569058ab5e9d89ebef3'].join(''),
@@ -32325,9 +32377,10 @@ function openAngebotDetail(recId) {
   const old = document.getElementById('ang-detail'); if (old) old.remove();
   const m = document.createElement('div');
   m.id = 'ang-detail';
-  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;padding:8px';
+  // v7.46: mobil-sicher — Safe-Area (Notch/Home-Indikator) berücksichtigen, damit Kopf (×) + Fuß erreichbar bleiben
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10500;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
   m.innerHTML =
-    '<div style="background:var(--surf);max-width:880px;width:100%;max-height:96vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+    '<div style="background:var(--surf);max-width:880px;width:100%;max-height:100%;min-height:0;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
         '<span>📄 ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+'</span>'+
         '<button onclick="document.getElementById(\'ang-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
