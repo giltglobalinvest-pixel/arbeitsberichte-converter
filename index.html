@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.44';
+const APP_VERSION = 'v7.45';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3135,17 +3135,44 @@ async function atBlobUpload(recordId, field, blob, filename, mimeType) {
 /* ════════════════════════════════════════════════════════════
    TABLE SETUP
    ════════════════════════════════════════════════════════════ */
+/* v7.45: Cache für die Airtable-Meta-API (/meta/bases/{base}/tables).
+   Grund: ensureTable/ensureField wurden je Aufruf mit einem KOMPLETTEN Metadaten-GET
+   ausgeführt. Beim Start laufen ~13 _ensure*Table-Routinen mit zusammen >150 ensureField —
+   das ergab >150 identische /meta/tables-Requests hintereinander → Airtable-Rate-Limit →
+   6s-Wartezeiten → App-Einfrieren (im Diagnose-Protokoll als Endlos-Flut sichtbar).
+   Lösung: kurzlebiger In-Memory-Cache + Dedupe laufender Anfragen. Bei echten
+   Schema-Änderungen (neue Tabelle/neues Feld) wird der Cache verworfen. */
+let _atTablesMeta = { data:null, at:0, inflight:null };
+const _AT_META_TTL = 20000; // 20s — deckt einen Setup-Burst ab
+async function _atFetchTablesMeta(baseId, force){
+  const now = Date.now();
+  if (!force && _atTablesMeta.data && (now - _atTablesMeta.at) < _AT_META_TTL) return _atTablesMeta.data;
+  if (_atTablesMeta.inflight) return _atTablesMeta.inflight;   // laufende Anfrage teilen
+  const p = (async () => {
+    const r = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
+      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
+    });
+    if (!r.ok) {
+      _atTablesMeta.inflight = null;
+      const errBody = await r.text().catch(()=> '');
+      const err = new Error('Meta-API '+r.status+': '+errBody.slice(0,200)); err._status = r.status;
+      throw err;
+    }
+    const meta = await r.json();
+    _atTablesMeta = { data: meta, at: Date.now(), inflight: null };
+    return meta;
+  })();
+  _atTablesMeta.inflight = p;
+  return p;
+}
+function _atInvalidateTablesMeta(){ _atTablesMeta = { data:null, at:0, inflight:null }; }
+
 async function ensureTable(tableName, fields) {
   if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
   const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-  const r = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
-    headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
-  });
-  if (!r.ok) {
-    const errBody = await r.text().catch(()=> '');
-    throw new Error('Meta-API '+r.status+' beim Lesen der Tabellen (Token braucht schema:bases:read+write): '+errBody.slice(0,200));
-  }
-  const meta = await r.json();
+  let meta;
+  try { meta = await _atFetchTablesMeta(baseId); }
+  catch(e){ throw new Error('Meta-API Fehler beim Lesen der Tabellen (Token braucht schema:bases:read+write): '+(e.message||e)); }
   const exists = (meta.tables||[]).find(t => t.name === tableName);
   if (exists) return exists;
   const cr = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
@@ -3157,6 +3184,7 @@ async function ensureTable(tableName, fields) {
     const errBody = await cr.text().catch(()=> '');
     throw new Error('Tabelle "'+tableName+'" konnte nicht angelegt werden (HTTP '+cr.status+'): '+errBody.slice(0,300));
   }
+  _atInvalidateTablesMeta();  // v7.45: neue Tabelle → Cache verwerfen
   console.log('[Schema] Tabelle '+tableName+' angelegt.');
   return await cr.json();
 }
@@ -3232,11 +3260,8 @@ async function ensureField(tableName, fieldName, fieldType) {
   if (!APP_KEYS.airtableWriteKey) return;
   try {
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-    const r = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables', {
-      headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey }
-    });
-    if (!r.ok) return;
-    const d = await r.json();
+    // v7.45: gecachte Metadaten statt je Aufruf ein voller /meta/tables-GET
+    let d; try { d = await _atFetchTablesMeta(baseId); } catch(_){ return; }
     const tbl = (d.tables||[]).find(t => t.name === tableName);
     if (!tbl) return;
     const has = (tbl.fields||[]).some(f => f.name === fieldName);
@@ -3246,11 +3271,12 @@ async function ensureField(tableName, fieldName, fieldType) {
     // Airtable verlangt options bei einigen Typen
     if (type === 'number')   body.options = { precision: 0 };
     if (type === 'checkbox') body.options = { icon:'check', color:'greenBright' };
-    await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables/'+tbl.id+'/fields', {
+    const cr = await fetch('https://api.airtable.com/v0/meta/bases/'+baseId+'/tables/'+tbl.id+'/fields', {
       method:'POST',
       headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
       body: JSON.stringify(body),
     });
+    if (cr.ok) _atInvalidateTablesMeta();  // v7.45: neues Feld → Cache verwerfen, damit Folgechecks es sehen
     console.log('[Schema] Feld '+fieldName+' zu Tabelle '+tableName+' hinzugefügt.');
   } catch(e) { console.warn('ensureField '+tableName+'.'+fieldName+':', e.message); }
 }
