@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.49';
+const APP_VERSION = 'v7.50';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32530,10 +32530,194 @@ function openAngebotDetail(recId) {
         (f.abrechnung_modus === 'aufwand'
           ? '<button class="btn" disabled style="background:#E5E7EB;color:#6B7280;border-color:#D1D5DB;cursor:not-allowed" title="ERP-Push ist für Aufwand-Angebote nicht verfügbar — das ERP unterstützt nur Pauschalpreis-Angebote">📤 ERP-Push (nicht für Aufwand)</button>'
           : '<button class="btn" onclick="_angPushToErp(\''+recId+'\', this)" style="background:#10B981;color:#fff;border-color:#10B981" title="'+(f.erp_angebot_id ? 'Erneut ins ERP pushen' : 'Als Pauschal-Angebot ins ERP pushen')+'">📤 '+(f.erp_angebot_id ? 'Erneut ins ERP' : 'Ins ERP pushen')+'</button>')+
+        '<button class="btn" onclick="_abOpen(\''+recId+'\')" style="background:#4F46E5;color:#fff;border-color:#4F46E5" title="Auftragsbestätigung aus diesem Angebot erstellen">📋 Auftragsbestätigung</button>'+
         '<button class="btn prim" onclick="openAngebotEditor({editMode:true,recId:\''+recId+'\'})" title="Angebot ändern + PDF neu generieren">✏️ Bearbeiten</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v7.50: AUFTRAGSBESTÄTIGUNG aus einem Angebot (Schritt 1 + 3)
+   - Dialog, vorbefüllt aus dem Angebot (Leistungsumfang aus Positionen,
+     Angebotsnr., Ticketnr., Kunde, Besteller, Anlage/Fabriknr.) — alles
+     manuell überschreibbar (Anforderung: manuell prüfbar).
+   - Erzeugt daraus eine gebrandete Auftragsbestätigung als PDF (Vorschau).
+   Schritt 2 (Auftrag im ERP/Maxise anlegen → echte Auftragsnummer) und der
+   Freshdesk-Versand kommen als nächstes und werden hier angedockt.
+   ══════════════════════════════════════════════════════════════════ */
+function _abOpen(recId) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Angebot nicht gefunden','err');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  // Leistungsumfang aus den Positionen (bzw. Stundensätzen) zusammenbauen
+  let lu = '';
+  try {
+    if (f.abrechnung_modus === 'aufwand') {
+      const s = JSON.parse(f.stundensaetze_json||'[]');
+      lu = 'Abrechnung nach tatsächlichem Aufwand.\n' + s.map(x => '- '+(x.name||'')+(x.satz?(' ('+x.satz+' '+(x.einheit||'')+')'):'')).join('\n');
+    } else {
+      const pos = JSON.parse(f.positionen_json||'[]');
+      lu = pos.map(p => {
+        const lines = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [];
+        return (p.titel||'') + (lines.length ? '\n'+lines.map(l => '  - '+l).join('\n') : '');
+      }).filter(Boolean).join('\n\n');
+    }
+  } catch(_){}
+  const v = {
+    auftragNum:          '',
+    angebotNum:          f.app_angebot_num || '',
+    ticketNum:           f.freshdesk_ticket_id || '',
+    kunde:               (f.kunde_name||'') + (f.kunde_nummer ? ' (Nr. '+f.kunde_nummer+')' : ''),
+    kundeAdresse:        f.kunde_adresse || '',
+    besteller:           f.kontakt_name || '',
+    zugang:              '',
+    rechnungsempfaenger: '',
+    standort:            f.anlage_adresse || '',
+    fabriknummer:        f.seriennummer || '',
+    zeitrahmen:          '',
+    leistungsumfang:     lu,
+  };
+  const inp = (key, label, hint) =>
+    '<label style="display:block;margin-bottom:10px"><span style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:3px">'+label+(hint?' <span style="font-weight:400;color:var(--txt3)">'+hint+'</span>':'')+'</span>'+
+    '<input data-abf="'+key+'" value="'+escapeHtml(v[key]||'')+'" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;box-sizing:border-box"></label>';
+  const area = (key, label, rows) =>
+    '<label style="display:block;margin-bottom:10px"><span style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:3px">'+label+'</span>'+
+    '<textarea data-abf="'+key+'" rows="'+(rows||3)+'" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;font-family:inherit;box-sizing:border-box">'+escapeHtml(v[key]||'')+'</textarea></label>';
+
+  document.getElementById('ab-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'ab-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10700;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:720px;width:100%;max-height:100%;min-height:0;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 20px;background:#4F46E5;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+        '<span>📋 Auftragsbestätigung aus ANG-'+escapeHtml(String(v.angebotNum||'?'))+'</span>'+
+        '<button onclick="document.getElementById(\'ab-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;flex:1;overflow-y:auto">'+
+        '<div style="background:#EEF2FF;border:1px solid #A5B4FC;border-radius:8px;padding:9px 12px;font-size:11.5px;color:#3730A3;margin-bottom:14px">'+
+          'Vorbefüllt aus dem Angebot — bitte prüfen/ergänzen. Die <strong>Auftragsnummer</strong> vergibt später das ERP; für die Vorschau kannst du sie leer lassen oder manuell eintragen.'+
+        '</div>'+
+        '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">'+
+          inp('auftragNum','Auftragsnummer','(kommt aus ERP)')+
+          inp('angebotNum','Angebotsnummer')+
+          inp('ticketNum','Ticketnummer')+
+          inp('zeitrahmen','Zeitrahmen / Ausführung')+
+          inp('standort','Standort der Aufzugsanlage')+
+          inp('fabriknummer','Fabriknummer')+
+          inp('besteller','Besteller / Kontakt')+
+          inp('zugang','Ansprechpartner vor Ort (Zugang)')+
+        '</div>'+
+        inp('rechnungsempfaenger','Rechnungsempfänger')+
+        inp('kunde','Kunde')+
+        area('kundeAdresse','Empfänger-Anschrift', 3)+
+        area('leistungsumfang','Leistungsumfang (aus Angebot)', 7)+
+      '</div>'+
+      '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
+        '<button class="btn" onclick="document.getElementById(\'ab-modal\').remove()">Schließen</button>'+
+        '<button class="btn prim" style="background:#4F46E5;border-color:#4F46E5" onclick="_abPreview()">📄 Auftragsbestätigung-Vorschau</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m._firmaSlug = firmaSlug;
+  m._recId = recId;
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
+function _abPreview() {
+  const m = document.getElementById('ab-modal'); if (!m) return;
+  const d = {};
+  m.querySelectorAll('[data-abf]').forEach(el => { d[el.dataset.abf] = el.value || ''; });
+  try {
+    const blob = _abBuildPdfBlob(d, m._firmaSlug);
+    if (typeof _showVorlagenPreview === 'function') _showVorlagenPreview(blob, 'Auftragsbestätigung'+(d.auftragNum?' '+d.auftragNum:''));
+    else { const url = URL.createObjectURL(blob); window.open(url,'_blank'); }
+  } catch(e) { console.error('[AB-PDF]', e); toast('❌ PDF-Fehler: '+(e.message||e),'err'); }
+}
+
+function _abBuildPdfBlob(d, firmaSlug) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit:'mm', format:'a4' });
+  const BR = _daFirmaBranding(firmaSlug);
+  const ml=22, mr=188, cw=mr-ml;
+  const NAVY = BR.navy||[26,51,83], ACCENT = BR.accent||[33,82,169], GREY=[55,65,81], GREYL=[140,148,160];
+  let y = 16;
+  try { if (BR.logoB64) doc.addImage('data:image/png;base64,'+BR.logoB64,'PNG', mr-(BR.logoW||46), 12, BR.logoW||46, BR.logoH||8); } catch(_){}
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREYL);
+  doc.text(_sanPdf(BR.headerLine||BR.company||''), ml, 16);
+  y = 26; doc.setDrawColor(...ACCENT); doc.setLineWidth(0.8); doc.line(ml, y, mr, y); y += 9;
+  // Empfänger
+  doc.setFontSize(8); doc.setTextColor(...GREYL); doc.text('EMPFÄNGER', ml, y); y+=4.5;
+  doc.setFontSize(10.5); doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+  doc.text(_sanPdf(String(d.kunde||'').replace(/\s*\(Nr\..*?\)\s*$/,'')), ml, y); y+=5;
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+  if (d.besteller) { doc.text(_sanPdf('z.Hd. '+d.besteller), ml, y); y+=4.6; }
+  for (const ln of String(d.kundeAdresse||'').split(/\r?\n/)) { if (ln.trim()) { doc.text(_sanPdf(ln.trim()), ml, y); y+=4.6; } }
+  y += 4;
+  doc.setFontSize(9); doc.setTextColor(...GREYL);
+  doc.text(_sanPdf(new Date().toLocaleDateString('de-DE')), mr, y, { align:'right' }); y += 7;
+  // Betreff
+  doc.setFont('helvetica','bold'); doc.setFontSize(12.5); doc.setTextColor(...NAVY);
+  const betreff = 'Auftragsbestätigung'+(d.auftragNum?' '+d.auftragNum:'')+(d.standort?' · '+String(d.standort).split(/[,\n]/)[0].trim():'')+(d.fabriknummer?' · Fabrik-Nr. '+d.fabriknummer:'');
+  const bl = doc.splitTextToSize(_sanPdf(betreff), cw); doc.text(bl, ml, y); y += bl.length*5.6 + 5;
+  // Anrede + Einleitung
+  doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+  doc.text(_sanPdf(d.besteller ? ('Sehr geehrte/r '+d.besteller+',') : 'Sehr geehrte Damen und Herren,'), ml, y); y+=6;
+  doc.text(doc.splitTextToSize(_sanPdf('vielen Dank für Ihren Auftrag. Hiermit bestätigen wir die Beauftragung mit folgenden Daten:'), cw), ml, y); y+=9;
+  // Daten-Block
+  const rows = [];
+  if (d.auftragNum)          rows.push(['Auftragsnummer', d.auftragNum]);
+  if (d.angebotNum)          rows.push(['Bezug: Angebot-Nr.', d.angebotNum]);
+  if (d.ticketNum)           rows.push(['Ticketnummer', d.ticketNum]);
+  if (d.standort)            rows.push(['Standort', String(d.standort).replace(/\s*\n\s*/g,', ')]);
+  if (d.fabriknummer)        rows.push(['Fabriknummer', d.fabriknummer]);
+  if (d.besteller)           rows.push(['Besteller', d.besteller]);
+  if (d.zugang)              rows.push(['Ansprechpartner vor Ort (Zugang)', d.zugang]);
+  if (d.rechnungsempfaenger) rows.push(['Rechnungsempfänger', d.rechnungsempfaenger]);
+  if (d.zeitrahmen)          rows.push(['Zeitrahmen / Ausführung', d.zeitrahmen]);
+  doc.setFontSize(9.5);
+  const labelW = 56;
+  for (const [k,vv] of rows) {
+    if (y>255){ doc.addPage(); y=20; }
+    doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY); doc.text(_sanPdf(k), ml, y);
+    doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
+    const vl = doc.splitTextToSize(_sanPdf(String(vv)), cw-labelW);
+    doc.text(vl, ml+labelW, y); y += Math.max(5, vl.length*4.7);
+  }
+  y += 5;
+  // Leistungsumfang
+  if (d.leistungsumfang && d.leistungsumfang.trim()) {
+    if (y>250){ doc.addPage(); y=20; }
+    doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.setTextColor(...NAVY); doc.text('Leistungsumfang', ml, y); y+=6;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.setTextColor(...GREY);
+    for (const ln of String(d.leistungsumfang).split(/\r?\n/)) {
+      const wrapped = doc.splitTextToSize(_sanPdf(ln), cw);
+      for (const w of (wrapped.length?wrapped:[''])) { if (y>264){ doc.addPage(); y=20; } doc.text(w, ml, y); y+=4.9; }
+    }
+    y += 5;
+  }
+  if (y>252){ doc.addPage(); y=20; }
+  doc.setFontSize(10); doc.setTextColor(...GREY);
+  doc.text(doc.splitTextToSize(_sanPdf('Für Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.'), cw), ml, y); y+=8;
+  doc.text('Mit freundlichen Grüßen', ml, y); y+=6;
+  doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY); doc.text(_sanPdf(BR.company||''), ml, y);
+  // Footer (3 Spalten, auf jeder Seite)
+  const cols = BR.footerCols || []; const colW = cw/3; const total = doc.getNumberOfPages();
+  for (let p=1;p<=total;p++){
+    doc.setPage(p);
+    doc.setDrawColor(...ACCENT); doc.setLineWidth(0.4); doc.line(ml,275,mr,275);
+    for (let c=0;c<3;c++){
+      const x = ml + c*colW + 1; const col = cols[c]||{title:'',lines:[]};
+      doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.setTextColor(...NAVY); doc.text(_sanPdf(col.title||''), x, 279);
+      doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(...GREYL);
+      let yy=283; (col.lines||[]).forEach(l => { if (yy<=290){ doc.text(_sanPdf(l), x, yy); yy+=3.4; } });
+    }
+    doc.setFontSize(7); doc.setTextColor(...GREYL);
+    doc.text(_sanPdf('Auftragsbestätigung'+(d.auftragNum?' '+d.auftragNum:'')+' · Seite '+p+' / '+total), mr, 293, {align:'right'});
+  }
+  return doc.output('blob');
 }
 
 /**
