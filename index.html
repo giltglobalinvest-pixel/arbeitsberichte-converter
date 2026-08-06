@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.47';
+const APP_VERSION = 'v7.48';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -14116,6 +14116,27 @@ function statCard(icon, num, lbl, sub, onClickJs) {
   </div>`;
 }
 
+/* v7.48: Statistik-Events nur der letzten ~50 Tage laden (server-seitig gefiltert) + Cache/Dedupe.
+   Vorher lud loadDashboardStats die KOMPLETTE Statistiken-Tabelle (>10.000 Rows, 130+ Seiten) —
+   beim Start teils 3× parallel → ~15s Laden + mehrsekündige Freezes (im Diagnose-Protokoll belegt).
+   Alle Dashboard-Kennzahlen sind zeitfensterbasiert (heute/Woche/30 Tage/Monat) → 50 Tage genügen. */
+let _statEventsCache = { data:null, at:0, inflight:null, key:null };
+async function _loadRecentStatEvents(){
+  const cutoff = new Date(Date.now() - 50*24*3600*1000).toISOString().slice(0,10);
+  const now = Date.now();
+  if (_statEventsCache.data && _statEventsCache.key === cutoff && (now - _statEventsCache.at) < 60000) return _statEventsCache.data;
+  if (_statEventsCache.inflight) return _statEventsCache.inflight;                 // 3 parallele Aufrufe teilen 1 Fetch
+  const p = (async () => {
+    let ev = [];
+    try { ev = await atRead('Statistiken', "{timestamp} >= '" + cutoff + "'"); }   // ISO-Timestamp → lexikografischer Vergleich
+    catch(e){ console.warn('Statistiken:', e.message); ev = []; }
+    _statEventsCache = { data: ev, at: Date.now(), inflight: null, key: cutoff };
+    return ev;
+  })();
+  _statEventsCache.inflight = p;
+  return p;
+}
+
 async function loadDashboardStats() {
   const c = document.getElementById('dash-stats');
   c.innerHTML = '<div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>';
@@ -14173,9 +14194,9 @@ async function loadDashboardStats() {
       return;
     }
 
-    // Statistik-Events laden (firma-scoped, Tabelle existiert evtl. noch nicht)
+    // v7.48: Statistik-Events der letzten ~50 Tage (gecacht + serverseitig gefiltert)
     let allEvents = [];
-    try { allEvents = await atRead('Statistiken', null); } catch(e) { console.warn('Statistiken:', e.message); }
+    try { allEvents = await _loadRecentStatEvents(); } catch(e) { console.warn('Statistiken:', e.message); }
     const events = allEvents.filter(e => (e.fields.firma||'aszendio') === firmaSlug);
     const todayLaunches = events.filter(e =>
       (e.fields.timestamp || '').slice(0,10) === todayISO &&
