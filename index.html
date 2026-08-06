@@ -2749,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.51';
+const APP_VERSION = 'v7.52';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32579,7 +32579,13 @@ function _abOpen(recId) {
     fabriknummer:        f.seriennummer || '',
     zeitrahmen:          '',
     leistungsumfang:     lu,
+    _recId:              recId,
   };
+  _abOpenFromData(v, firmaSlug);
+}
+
+/* v7.52: Dialog-Renderer — nimmt ein fertiges Werte-Objekt (aus App-Angebot ODER Maxise). */
+function _abOpenFromData(v, firmaSlug) {
   const inp = (key, label, hint) =>
     '<label style="display:block;margin-bottom:10px"><span style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:3px">'+label+(hint?' <span style="font-weight:400;color:var(--txt3)">'+hint+'</span>':'')+'</span>'+
     '<input data-abf="'+key+'" value="'+escapeHtml(v[key]||'')+'" style="width:100%;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;box-sizing:border-box"></label>';
@@ -32623,7 +32629,7 @@ function _abOpen(recId) {
     '</div>';
   document.body.appendChild(m);
   m._firmaSlug = firmaSlug;
-  m._recId = recId;
+  m._recId = (v && v._recId) || null;
   m.onclick = (e) => { if (e.target === m) m.remove(); };
 }
 
@@ -32721,6 +32727,70 @@ function _abBuildPdfBlob(d, firmaSlug) {
   return doc.output('blob');
 }
 
+/* v7.52: Typ-Adapter — wandelt ein Maxise-Angebot (Wartung/Notruf, Pauschal, Modernisierung,
+   Aufwand) in das Werte-Objekt der Auftragsbestätigung. Gemeinsame Felder aus angebot.anlage/
+   .empfaenger, Leistungsumfang typ-spezifisch. „ALT ALT" (ERP-Platzhalter) wird ausgelassen. */
+function _angMaxiseToAb(data) {
+  const a = (data && data.angebot) || {};
+  const anlage = a.anlage || (a.anfrage && a.anfrage.anlage) || {};
+  const kunde = anlage.kunde || (a.empfaenger && a.empfaenger.kunde) || {};
+  const emp = a.empfaenger || {};
+  const ap = anlage.ansprechpartner || {};
+  const typ = String((data && data.typ) || a.typ || '').trim();
+  const eur = n => (Number(n)||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' EUR';
+  const deDate = s => { const t=String(s||'').slice(0,10); if(!/^\d{4}-\d{2}-\d{2}$/.test(t)) return String(s||''); const d=new Date(t+'T00:00:00'); return isNaN(d.getTime())?t:d.toLocaleDateString('de-DE'); };
+  const besteller = [emp.vorname, emp.nachname].filter(Boolean).join(' ').trim();
+  const zugangName = [ap.vorname, ap.nachname].filter(Boolean).join(' ').trim();
+  const zugang = (zugangName && zugangName.toUpperCase() !== 'ALT ALT')
+    ? zugangName + (ap.telefon && ap.telefon!=='0' ? ', '+ap.telefon : '') : '';
+  let lu = '', zeitrahmen = '';
+  const tl = typ.toLowerCase();
+  if (tl.includes('wartung') || tl.includes('notruf')) {
+    const svc = (data.servicesListItems||[]).map(s => s && s.text).filter(Boolean);
+    const parts = ['Wartungsvertrag ('+(typ||'Wartung')+')'];
+    if (svc.length) parts.push('Leistungen: '+svc.join(', '));
+    if (data.maintenancesPerYear != null) parts.push('Wartungen pro Jahr: '+data.maintenancesPerYear);
+    if (data.annualPrice) parts.push('Jahrespreis: '+eur(data.annualPrice)+' netto');
+    if (data.oneTimePaymentAmount) parts.push('Einmalzahlung: '+eur(data.oneTimePaymentAmount)+' netto');
+    if (data.contractStartDate || data.vertragsEnde) parts.push('Vertragsbeginn: '+deDate(data.contractStartDate)+(data.vertragsEnde?' · Vertragsende: '+deDate(data.vertragsEnde):''));
+    if (data.generateTuv) parts.push('TÜV-Organisation: ja');
+    lu = parts.join('\n');
+    zeitrahmen = data.contractStartDate ? ('ab '+deDate(data.contractStartDate)) : '';
+  } else if (tl.includes('aufwand')) {
+    const parts = ['Abrechnung nach tatsächlichem Aufwand.'];
+    if (data.serviceDescription) parts.push(data.serviceDescription);
+    if (data.offerExplanation && data.offerExplanation!==data.serviceDescription) parts.push(data.offerExplanation);
+    if (anlage.stundensatz) parts.push('Stundensatz: '+eur(anlage.stundensatz));
+    if (anlage.einsatzPauschale) parts.push('Einsatzpauschale: '+eur(anlage.einsatzPauschale));
+    if (data.workPrice) parts.push('Arbeitspreis (Schätzung): '+eur(data.workPrice)+' netto');
+    lu = parts.join('\n');
+  } else {
+    // Pauschal / Modernisierung
+    const parts = [];
+    if (data.serviceDescription) parts.push(data.serviceDescription);
+    if (data.offerExplanation && data.offerExplanation!==data.serviceDescription) parts.push(data.offerExplanation);
+    if (data.netPrice) parts.push('Pauschalpreis: '+eur(data.netPrice)+' netto');
+    if (data.workPrice) parts.push('Arbeitspreis: '+eur(data.workPrice)+' netto');
+    if (data.materialDeliveryTime || data.plannedInstallationDate) parts.push('Materiallieferung: '+(data.materialDeliveryTime||'—')+' · Montage geplant: '+(data.plannedInstallationDate||'—'));
+    lu = parts.join('\n');
+    zeitrahmen = data.plannedInstallationDate || '';
+  }
+  return {
+    auftragNum:          '',
+    angebotNum:          String((data && data.id) || a.id || ''),
+    ticketNum:           '',
+    kunde:               (kunde.firmenname||'') + (kunde.kundennummer ? ' (Nr. '+kunde.kundennummer+')' : ''),
+    kundeAdresse:        '',
+    besteller:           besteller,
+    zugang:              zugang,
+    rechnungsempfaenger: anlage.rechnungsempfaenger || '',
+    standort:            anlage.name || '',
+    fabriknummer:        anlage.fabriknummer || '',
+    zeitrahmen:          zeitrahmen,
+    leistungsumfang:     lu,
+  };
+}
+
 /* v7.51: READ-ONLY — ein Maxise-Angebot per ID abrufen und das echte JSON zeigen.
    Fundament für den geplanten Import + Typ-Adapter (damit die Feld-Zuordnung auf der
    ECHTEN Struktur basiert, nicht auf Vermutungen). KEIN Schreibzugriff. */
@@ -32748,12 +32818,14 @@ async function _angMaxiseInspect() {
         '<button onclick="document.getElementById(\'mx-json-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
       '</div>'+
       '<textarea id="mx-json" readonly style="flex:1;width:100%;border:none;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;background:#0b1020;color:#d6e2ff;white-space:pre;overflow:auto"></textarea>'+
-      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end">'+
+      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button onclick="(function(){var m=document.getElementById(\'mx-json-modal\');if(m&&m._data){_abOpenFromData(_angMaxiseToAb(m._data), m._firmaSlug||getCurrentFirmaSlug());}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#4F46E5;color:#fff;font-weight:600;cursor:pointer" title="Aus diesem Maxise-Angebot eine Auftragsbestätigung erstellen">➡️ Auftragsbestätigung erstellen</button>'+
         '<button onclick="(async()=>{try{await navigator.clipboard.writeText(document.getElementById(\'mx-json\').value);(typeof toast===\'function\')&&toast(\'📋 JSON kopiert\',\'ok\');}catch(e){var t=document.getElementById(\'mx-json\');t.focus();t.select();try{document.execCommand(\'copy\');}catch(_){}}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">📋 JSON kopieren</button>'+
         '<button onclick="document.getElementById(\'mx-json-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Schließen</button>'+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+  m._data = data; m._firmaSlug = firmaSlug;
   const ta=document.getElementById('mx-json'); if (ta) ta.value = json;
   m.onclick=(e)=>{ if(e.target===m) m.remove(); };
 }
