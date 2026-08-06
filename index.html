@@ -2749,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.53';
+const APP_VERSION = 'v7.54';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32831,6 +32831,30 @@ async function _angMaxiseInspect() {
   m.onclick=(e)=>{ if(e.target===m) m.remove(); };
 }
 
+/* v7.54: kleines, kopierbares Text-Modal (mit 📋-Icon) — für Diagnosen etc. */
+function _mxTextModal(title, text) {
+  document.getElementById('mx-txt-modal')?.remove();
+  const m = document.createElement('div'); m.id = 'mx-txt-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10900;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
+  m.innerHTML =
+    '<div style="background:#fff;max-width:760px;width:100%;max-height:100%;min-height:0;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:12px 16px;background:#0f172a;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+        '<span>'+escapeHtml(title||'')+'</span>'+
+        '<span style="display:flex;gap:6px;align-items:center">'+
+          '<button title="Kopieren" onclick="(async()=>{try{await navigator.clipboard.writeText(document.getElementById(\'mx-txt\').value);(typeof toast===\'function\')&&toast(\'📋 kopiert\',\'ok\');}catch(e){var t=document.getElementById(\'mx-txt\');t.focus();t.select();try{document.execCommand(\'copy\');(typeof toast===\'function\')&&toast(\'📋 kopiert\',\'ok\');}catch(_){}}})()" style="background:rgba(255,255,255,.18);border:none;color:#fff;width:34px;height:34px;border-radius:8px;font-size:16px;cursor:pointer">📋</button>'+
+          '<button title="Schließen" onclick="document.getElementById(\'mx-txt-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:34px;height:34px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+        '</span>'+
+      '</div>'+
+      '<textarea id="mx-txt" readonly style="flex:1;width:100%;border:none;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.55;background:#0b1020;color:#d6e2ff;white-space:pre-wrap;overflow:auto"></textarea>'+
+      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end">'+
+        '<button onclick="document.getElementById(\'mx-txt-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  const ta = document.getElementById('mx-txt'); if (ta) ta.value = text || '';
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+}
+
 /* v7.53: Versucht das ORIGINAL-Angebot-PDF aus Maxise zu laden (mehrere Endpunkt-Kandidaten).
    Erfolg → PDF-Vorschau; sonst klare Diagnose, was jeder Endpunkt zurückgab. */
 async function _angMaxisePdf() {
@@ -32861,7 +32885,7 @@ async function _angMaxisePdf() {
     } catch(e){ diag.push(p+' → Fehler: '+((((e&&e.message)||e)+'').slice(0,90))); }
   }
   console.warn('[Maxise-PDF] Kein PDF-Endpunkt. Diagnose:\n'+diag.join('\n'));
-  alert('Kein Original-PDF-Endpunkt gefunden.\n\nWas Maxise je Endpunkt zurückgab:\n\n'+diag.join('\n')+'\n\nBitte diese Zeilen an Claude schicken — dann finde ich den richtigen Endpunkt.');
+  _mxTextModal('📄 Original-PDF — Diagnose', 'Kein Original-PDF-Endpunkt gefunden.\n\nWas Maxise je Endpunkt zurückgab:\n\n'+diag.join('\n')+'\n\nDiese Zeilen an Claude schicken (📋-Icon oben) — dann finde ich den richtigen Endpunkt.');
 }
 
 /**
