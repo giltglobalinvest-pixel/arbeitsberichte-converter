@@ -2083,6 +2083,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="firma-hdr">
     <h2>📄 Angebote <span id="angebote-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
     <button class="btn" onclick="renderAngeboteView({force:true})">↻ Neu laden</button>
+    <button class="btn" onclick="_angMaxiseInspect()" title="Ein Maxise-Angebot per ID abrufen (nur lesen) — Grundlage für den geplanten Import">📥 Aus Maxise</button>
     <button class="btn" onclick="openAngLernModal()" title="KI-Lern-Beispiele verwalten — die KI nutzt aktive Beispiele beim Generieren neuer Angebote als Stilvorbild">📚 KI-Lern-Beispiele</button>
     <button class="btn" id="angebote-anhang-vorl-btn" onclick="openAngVorlagenManager()" title="Anhang-Vorlagen verwalten — wiederverwendbare PDFs (Datenblätter, AGB etc.) die beim Angebot-Versand mitgeschickt werden" style="display:none">📎 Anhang-Vorlagen</button>
     <button class="btn prim" id="angebote-new-btn" onclick="openAngebotWizard()">+ Neues Angebot</button>
@@ -2748,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.50';
+const APP_VERSION = 'v7.51';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32718,6 +32719,43 @@ function _abBuildPdfBlob(d, firmaSlug) {
     doc.text(_sanPdf('Auftragsbestätigung'+(d.auftragNum?' '+d.auftragNum:'')+' · Seite '+p+' / '+total), mr, 293, {align:'right'});
   }
   return doc.output('blob');
+}
+
+/* v7.51: READ-ONLY — ein Maxise-Angebot per ID abrufen und das echte JSON zeigen.
+   Fundament für den geplanten Import + Typ-Adapter (damit die Feld-Zuordnung auf der
+   ECHTEN Struktur basiert, nicht auf Vermutungen). KEIN Schreibzugriff. */
+async function _angMaxiseInspect() {
+  if (typeof isFirmaAll === 'function' && isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const id = (prompt('Maxise Angebot-ID abrufen (nur lesen) — z.B. 2892:','') || '').trim();
+  if (!id) return;
+  toast('⏳ Lade Maxise-Angebot '+id+'…','');
+  let data=null, usedPath=null, lastErr=null;
+  for (const p of ['api/angebote/'+encodeURIComponent(id), 'angebote/'+encodeURIComponent(id)]) {
+    try { data = await erpFetch('/aufzug/'+firmaSlug+'/'+p); usedPath=p; break; }
+    catch(e){ lastErr=e; if (e.status===401||e.status===403) break; }
+  }
+  if (data == null) { toast('❌ Angebot '+id+' nicht ladbar: '+(((lastErr&&lastErr.message)||'?')+'').slice(0,180),'err'); return; }
+  let json=''; try { json = JSON.stringify(data, null, 2); } catch(_){ json = String(data); }
+  const typ = String((data && (data.typ||data.angebotstyp||data.type||data.angebotsart))||'?');
+  document.getElementById('mx-json-modal')?.remove();
+  const m=document.createElement('div'); m.id='mx-json-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10800;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
+  m.innerHTML =
+    '<div style="background:#fff;max-width:820px;width:100%;max-height:100%;min-height:0;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:12px 16px;background:#0f172a;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+        '<span>📥 Maxise-Angebot '+escapeHtml(id)+' · '+escapeHtml(usedPath||'')+' · Typ: '+escapeHtml(typ)+'</span>'+
+        '<button onclick="document.getElementById(\'mx-json-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<textarea id="mx-json" readonly style="flex:1;width:100%;border:none;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;background:#0b1020;color:#d6e2ff;white-space:pre;overflow:auto"></textarea>'+
+      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end">'+
+        '<button onclick="(async()=>{try{await navigator.clipboard.writeText(document.getElementById(\'mx-json\').value);(typeof toast===\'function\')&&toast(\'📋 JSON kopiert\',\'ok\');}catch(e){var t=document.getElementById(\'mx-json\');t.focus();t.select();try{document.execCommand(\'copy\');}catch(_){}}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">📋 JSON kopieren</button>'+
+        '<button onclick="document.getElementById(\'mx-json-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  const ta=document.getElementById('mx-json'); if (ta) ta.value = json;
+  m.onclick=(e)=>{ if(e.target===m) m.remove(); };
 }
 
 /**
