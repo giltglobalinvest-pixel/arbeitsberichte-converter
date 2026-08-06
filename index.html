@@ -2748,7 +2748,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.48';
+const APP_VERSION = 'v7.49';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2860,13 +2860,25 @@ try {
   } catch(_){}
 })();
 
-/* Main-Thread-Stall-Wächter: erkennt Einfrieren (>4s Lücke) rückwirkend */
+/* Main-Thread-Stall-Wächter: erkennt Einfrieren (>4s Lücke) rückwirkend.
+   v7.49: Meldet NUR echte Freezes im Vordergrund. Wenn der Tab im Hintergrund ist
+   (Handy gesperrt / App weggewischt), drosselt/suspendiert iOS die Timer — das ergab
+   fälschlich Dauer-„60s eingefroren"-Meldungen. Solche Hintergrund-Lücken werden ignoriert. */
 (function(){
   try {
     let last = Date.now();
+    let bgGap = (typeof document !== 'undefined' && document.hidden); // war der Tab im Intervall (teilweise) versteckt?
+    try {
+      document.addEventListener('visibilitychange', function(){
+        if (document.hidden) bgGap = true;           // ab jetzt Hintergrund → nächste Lücke nicht als Freeze werten
+        else { last = Date.now(); bgGap = false; }    // Rückkehr in Vordergrund → Uhr zurücksetzen, kein Fake-Stall
+      });
+    } catch(_){}
     setInterval(function(){
       const now = Date.now(), gap = now - last; last = now;
-      if (gap > 4000) DIAG.warn('main-stall', 'Oberfläche war ~'+Math.round(gap/1000)+'s blockiert (eingefroren)');
+      const wasBg = bgGap || document.hidden;
+      bgGap = document.hidden;                         // für nächstes Intervall merken
+      if (gap > 4000 && !wasBg) DIAG.warn('main-stall', 'Oberfläche war ~'+Math.round(gap/1000)+'s blockiert (eingefroren)');
       // Selbstheilung: falls die App den Diagnose-Button entfernt hat, neu anlegen
       try { if (!document.getElementById('diag-fab')) _diagEnsureButton(); } catch(_){}
     }, 1000);
