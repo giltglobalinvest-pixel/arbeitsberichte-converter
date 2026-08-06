@@ -2749,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.54';
+const APP_VERSION = 'v7.55';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32819,7 +32819,7 @@ async function _angMaxiseInspect() {
       '</div>'+
       '<textarea id="mx-json" readonly style="flex:1;width:100%;border:none;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;background:#0b1020;color:#d6e2ff;white-space:pre;overflow:auto"></textarea>'+
       '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
-        '<button onclick="_angMaxisePdf()" style="padding:8px 14px;border:none;border-radius:6px;background:#059669;color:#fff;font-weight:600;cursor:pointer" title="Original-Angebot-PDF direkt aus Maxise laden (Test)">📄 Original-PDF</button>'+
+        '<button onclick="_angMaxisePdf()" style="padding:8px 14px;border:none;border-radius:6px;background:#059669;color:#fff;font-weight:600;cursor:pointer" title="Original-Angebot-PDF direkt aus Maxise laden">📄 Original-PDF</button>'+
         '<button onclick="(function(){var m=document.getElementById(\'mx-json-modal\');if(m&&m._data){_abOpenFromData(_angMaxiseToAb(m._data), m._firmaSlug||getCurrentFirmaSlug());}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#4F46E5;color:#fff;font-weight:600;cursor:pointer" title="Aus diesem Maxise-Angebot eine Auftragsbestätigung erstellen">➡️ Auftragsbestätigung erstellen</button>'+
         '<button onclick="(async()=>{try{await navigator.clipboard.writeText(document.getElementById(\'mx-json\').value);(typeof toast===\'function\')&&toast(\'📋 JSON kopiert\',\'ok\');}catch(e){var t=document.getElementById(\'mx-json\');t.focus();t.select();try{document.execCommand(\'copy\');}catch(_){}}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">📋 JSON kopieren</button>'+
         '<button onclick="document.getElementById(\'mx-json-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Schließen</button>'+
@@ -32855,20 +32855,37 @@ function _mxTextModal(title, text) {
   m.onclick = (e) => { if (e.target === m) m.remove(); };
 }
 
-/* v7.53: Versucht das ORIGINAL-Angebot-PDF aus Maxise zu laden (mehrere Endpunkt-Kandidaten).
-   Erfolg → PDF-Vorschau; sonst klare Diagnose, was jeder Endpunkt zurückgab. */
+/* v7.55: Lädt das ORIGINAL-Angebot-PDF direkt aus Maxise.
+   Echter Endpunkt (aus dem Maxise-Frontend-Bundle rekonstruiert, main-*.js):
+     GET …/v1/api/angebote/{TYP}/{id}/pdf   mit TYP ∈ wartungNotruf|aufwand|modernisierung|pauschal
+   → über den val.town-Proxy:  /aufzug/{slug}/api/angebote/{TYP}/{id}/pdf
+   (Auth macht der Proxy per Bearer; das Maxise-„?sessionId=" brauchen wir hier nicht.)
+   Erfolg → PDF-Vorschau; sonst klare Diagnose je Endpunkt. */
+function _mxAngebotTypSeg(data){
+  const a = (data && data.angebot) || {};
+  const raw = String((data && (data.typ||data.angebotstyp||data.type||data.angebotsart)) || a.typ || a.angebotstyp || '').trim().toLowerCase();
+  if (!raw) return '';
+  if (raw.includes('wartung') || raw.includes('notruf')) return 'wartungNotruf';
+  if (raw.includes('aufwand')) return 'aufwand';
+  if (raw.includes('modern'))  return 'modernisierung';
+  if (raw.includes('pausch'))  return 'pauschal';
+  return '';
+}
 async function _angMaxisePdf() {
   const m = document.getElementById('mx-json-modal');
   const data = m && m._data;
   const firmaSlug = (m && m._firmaSlug) || getCurrentFirmaSlug();
-  const id = String((data && (data.id || (data.angebot && data.angebot.id))) || '').trim();
-  if (!id) return toast('Keine Angebot-ID','err');
-  toast('⏳ Suche Original-PDF für Angebot '+id+'…','');
-  const cands = [
-    'api/angebote/'+id+'/pdf', 'api/angebote/'+id+'/document', 'api/angebote/'+id+'/dokument',
-    'api/angebote/'+id+'/download', 'api/angebote/'+id+'/angebot.pdf', 'api/angebote/'+id+'/export/pdf',
-    'api/documents/angebot/'+id
-  ];
+  // Maxise baut die PDF-URL mit e.angebot.id; data.id (Typ-Datensatz) als Fallback.
+  const angId = String((data && data.angebot && data.angebot.id) || (data && data.id) || '').trim();
+  const altId = String((data && data.id) || '').trim();
+  const ids = [...new Set([angId, altId].filter(Boolean))];
+  if (!ids.length) return toast('Keine Angebot-ID','err');
+  const detected = _mxAngebotTypSeg(data);
+  const allSegs = ['wartungNotruf','aufwand','modernisierung','pauschal'];
+  const segs = detected ? [detected, ...allSegs.filter(s=>s!==detected)] : allSegs;
+  toast('⏳ Lade Original-PDF für Angebot '+ids[0]+'…','');
+  const cands = [];
+  for (const s of segs) for (const idv of ids) cands.push('api/angebote/'+s+'/'+encodeURIComponent(idv)+'/pdf');
   const diag = [];
   for (const p of cands) {
     try {
@@ -32877,15 +32894,15 @@ async function _angMaxisePdf() {
       const isPdf = r.ok && (/pdf/i.test(r.contentType) || head.indexOf('%PDF')===0);
       diag.push(p+' → HTTP '+r.status+' · '+(r.contentType||'?')+' · '+(r.blob?Math.round(r.blob.size/1024)+'KB':'0KB')+(head?' · "'+head.replace(/[^\x20-\x7e]/g,'.')+'"':''));
       if (isPdf) {
-        if (typeof _showVorlagenPreview==='function') _showVorlagenPreview(r.blob, 'Original-Angebot '+id+' (Maxise)');
+        if (typeof _showVorlagenPreview==='function') _showVorlagenPreview(r.blob, 'Original-Angebot '+ids[0]+' (Maxise)');
         else { const u=URL.createObjectURL(r.blob); window.open(u,'_blank'); }
-        toast('✅ Original-PDF gefunden ('+p+')','ok');
+        toast('✅ Original-PDF geladen ('+p+')','ok');
         return;
       }
     } catch(e){ diag.push(p+' → Fehler: '+((((e&&e.message)||e)+'').slice(0,90))); }
   }
   console.warn('[Maxise-PDF] Kein PDF-Endpunkt. Diagnose:\n'+diag.join('\n'));
-  _mxTextModal('📄 Original-PDF — Diagnose', 'Kein Original-PDF-Endpunkt gefunden.\n\nWas Maxise je Endpunkt zurückgab:\n\n'+diag.join('\n')+'\n\nDiese Zeilen an Claude schicken (📋-Icon oben) — dann finde ich den richtigen Endpunkt.');
+  _mxTextModal('📄 Original-PDF — Diagnose', 'Kein Original-PDF geladen (Typ erkannt: '+(detected||'?')+').\n\nWas Maxise je Endpunkt zurückgab:\n\n'+diag.join('\n')+'\n\nDiese Zeilen an Claude schicken (📋-Icon oben) — dann prüfe ich den Endpunkt.');
 }
 
 /**
