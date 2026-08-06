@@ -2749,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.55';
+const APP_VERSION = 'v7.56';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32882,24 +32882,31 @@ async function _angMaxisePdf() {
   if (!ids.length) return toast('Keine Angebot-ID','err');
   const detected = _mxAngebotTypSeg(data);
   const allSegs = ['wartungNotruf','aufwand','modernisierung','pauschal'];
-  const segs = detected ? [detected, ...allSegs.filter(s=>s!==detected)] : allSegs;
   toast('⏳ Lade Original-PDF für Angebot '+ids[0]+'…','');
+  // v7.56: 406 = Content-Negotiation. Wir testen mehrere Accept-Header (strikt vs. wildcard)
+  // und zeigen den echten Fehlerkörper an. Erkannter Typ + primäre ID zuerst, dann Fallbacks.
+  const acceptVars = ['application/pdf', 'application/pdf,*/*', '*/*'];
   const cands = [];
-  for (const s of segs) for (const idv of ids) cands.push('api/angebote/'+s+'/'+encodeURIComponent(idv)+'/pdf');
+  const primSegs = detected ? [detected] : allSegs;
+  for (const s of primSegs) for (const idv of ids) for (const acc of acceptVars)
+    cands.push({ p:'api/angebote/'+s+'/'+encodeURIComponent(idv)+'/pdf', acc });
+  if (detected) for (const s of allSegs.filter(x=>x!==detected))
+    cands.push({ p:'api/angebote/'+s+'/'+encodeURIComponent(ids[0])+'/pdf', acc:'application/pdf,*/*' });
   const diag = [];
-  for (const p of cands) {
+  for (const c of cands) {
     try {
-      const r = await erpFetchRaw('/aufzug/'+firmaSlug+'/'+p);
-      let head=''; try { head = await r.blob.slice(0,8).text(); } catch(_){}
+      const r = await erpFetchRaw('/aufzug/'+firmaSlug+'/'+c.p, c.acc);
+      let head=''; try { head = await r.blob.slice(0,12).text(); } catch(_){}
       const isPdf = r.ok && (/pdf/i.test(r.contentType) || head.indexOf('%PDF')===0);
-      diag.push(p+' → HTTP '+r.status+' · '+(r.contentType||'?')+' · '+(r.blob?Math.round(r.blob.size/1024)+'KB':'0KB')+(head?' · "'+head.replace(/[^\x20-\x7e]/g,'.')+'"':''));
+      let body=''; if (!isPdf) { try { body = (await r.blob.slice(0,300).text()).replace(/\s+/g,' ').trim(); } catch(_){} }
+      diag.push(c.p+' [Accept '+c.acc+'] → HTTP '+r.status+' · '+(r.contentType||'?')+' · '+(r.blob?Math.round(r.blob.size/1024)+'KB':'0KB')+(body?' · '+body.slice(0,200):''));
       if (isPdf) {
         if (typeof _showVorlagenPreview==='function') _showVorlagenPreview(r.blob, 'Original-Angebot '+ids[0]+' (Maxise)');
         else { const u=URL.createObjectURL(r.blob); window.open(u,'_blank'); }
-        toast('✅ Original-PDF geladen ('+p+')','ok');
+        toast('✅ Original-PDF geladen','ok');
         return;
       }
-    } catch(e){ diag.push(p+' → Fehler: '+((((e&&e.message)||e)+'').slice(0,90))); }
+    } catch(e){ diag.push(c.p+' → Fehler: '+((((e&&e.message)||e)+'').slice(0,90))); }
   }
   console.warn('[Maxise-PDF] Kein PDF-Endpunkt. Diagnose:\n'+diag.join('\n'));
   _mxTextModal('📄 Original-PDF — Diagnose', 'Kein Original-PDF geladen (Typ erkannt: '+(detected||'?')+').\n\nWas Maxise je Endpunkt zurückgab:\n\n'+diag.join('\n')+'\n\nDiese Zeilen an Claude schicken (📋-Icon oben) — dann prüfe ich den Endpunkt.');
@@ -42701,11 +42708,11 @@ async function erpFetch(path, options={}) {
 
 /* v7.53: Roh-/Binär-Fetch über den ERP-Proxy — gibt {status,ok,contentType,blob} zurück.
    Für Original-Dokumente (PDF) aus Maxise, die erpFetch (nur JSON/Text) nicht liefern kann. */
-async function erpFetchRaw(path) {
+async function erpFetchRaw(path, accept) {
   if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet (Admin → Integrationen)');
   await erpEnsureSession();
   const url = APP_KEYS.valtownProxyUrl + path;
-  const init = { method:'GET', headers: { 'Authorization':'Bearer '+erpGetSessionToken(), 'Accept':'application/pdf,*/*' } };
+  const init = { method:'GET', headers: { 'Authorization':'Bearer '+erpGetSessionToken(), 'Accept': accept || 'application/pdf,*/*' } };
   const m = /^\/aufzug\/([^\/]+)\//.exec(path);
   if (m) { const t = _getErpTenantForFirma(m[1]); if (t) init.headers['X-ERP-Tenant'] = t; }
   let res = await _erpRawFetch(url, init);
