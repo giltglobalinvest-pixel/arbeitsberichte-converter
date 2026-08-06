@@ -2749,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.58';
+const APP_VERSION = 'v7.59';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2862,24 +2862,30 @@ try {
 })();
 
 /* Main-Thread-Stall-Wächter: erkennt Einfrieren (>4s Lücke) rückwirkend.
-   v7.49: Meldet NUR echte Freezes im Vordergrund. Wenn der Tab im Hintergrund ist
-   (Handy gesperrt / App weggewischt), drosselt/suspendiert iOS die Timer — das ergab
-   fälschlich Dauer-„60s eingefroren"-Meldungen. Solche Hintergrund-Lücken werden ignoriert. */
+   v7.59: Meldet NUR echte Freezes im aktiven Vordergrund. Drei Filter gegen Fehlalarme:
+   (1) Tab versteckt (document.hidden) → ignorieren (Handy gesperrt / anderer Tab).
+   (2) Fenster unfokussiert (document.hasFocus()===false) → ignorieren. Genau das war der
+       Bug: ein unfokussiertes/„schlafendes" Desktop-Fenster drosselt Timer auf ~60s OHNE
+       hidden zu setzen → Dauer-„60s eingefroren"-Flut über Nacht.
+   (3) Lücke > 30s → Tab-Suspend/Display-Sleep/Drosselung, KEIN UI-Freeze (ein echter Freeze
+       liegt bei 4–15s; 60s am Stück killt der Browser). */
 (function(){
   try {
     let last = Date.now();
-    let bgGap = (typeof document !== 'undefined' && document.hidden); // war der Tab im Intervall (teilweise) versteckt?
+    const _unfocused = () => { try { return (typeof document.hasFocus === 'function') && !document.hasFocus(); } catch(_){ return false; } };
+    let bgGap = (typeof document !== 'undefined' && (document.hidden || _unfocused()));
+    const _resetClock = () => { last = Date.now(); bgGap = false; };  // wieder aktiv → Uhr zurücksetzen
+    const _markBg     = () => { bgGap = true; };                       // Hintergrund/unfokussiert → nächste Lücke nicht werten
     try {
-      document.addEventListener('visibilitychange', function(){
-        if (document.hidden) bgGap = true;           // ab jetzt Hintergrund → nächste Lücke nicht als Freeze werten
-        else { last = Date.now(); bgGap = false; }    // Rückkehr in Vordergrund → Uhr zurücksetzen, kein Fake-Stall
-      });
+      document.addEventListener('visibilitychange', function(){ if (document.hidden) _markBg(); else _resetClock(); });
+      window.addEventListener('focus', _resetClock);
+      window.addEventListener('blur',  _markBg);
     } catch(_){}
     setInterval(function(){
       const now = Date.now(), gap = now - last; last = now;
-      const wasBg = bgGap || document.hidden;
-      bgGap = document.hidden;                         // für nächstes Intervall merken
-      if (gap > 4000 && !wasBg) DIAG.warn('main-stall', 'Oberfläche war ~'+Math.round(gap/1000)+'s blockiert (eingefroren)');
+      const wasBg = bgGap || document.hidden || _unfocused();
+      bgGap = document.hidden || _unfocused();          // für nächstes Intervall merken
+      if (gap > 4000 && gap <= 30000 && !wasBg) DIAG.warn('main-stall', 'Oberfläche war ~'+Math.round(gap/1000)+'s blockiert (eingefroren)');
       // Selbstheilung: falls die App den Diagnose-Button entfernt hat, neu anlegen
       try { if (!document.getElementById('diag-fab')) _diagEnsureButton(); } catch(_){}
     }, 1000);
