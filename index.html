@@ -2749,7 +2749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.57';
+const APP_VERSION = 'v7.58';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -40686,6 +40686,8 @@ function _normalizeProxyUrl(url) {
 //   ANY  /aufzug/<firma>/<path> → forward zu Aufzugshandwerk-ERP
 const VALTOWN_PROXY_CODE = `// Elevator Servicebox · ERP-Proxy
 // ENV: AIRTABLE_READ_KEY, AIRTABLE_BASE_ID, AUFZUG_API_KEY
+// PROXY_VERSION: 2026-08-07-a (aufzug: Accept durchreichen + Binaer/PDF-Passthrough)
+const PROXY_VERSION = "2026-08-07-a";
 import { blob } from "https://esm.town/v/std/blob";
 
 const TENANT_MAP = { aufzug: "1", aszendio: "4" };
@@ -40782,7 +40784,7 @@ export default async function (req) {
     return json({ ok:true });
   }
   if (path === "me")     return json({ user });
-  if (path === "health") return json({ ok:true, user:{ name:user.name, is_admin:user.is_admin } });
+  if (path === "health") return json({ ok:true, proxy_version:PROXY_VERSION, user:{ name:user.name, is_admin:user.is_admin } });
 
   // ── Debug: welche Env-Vars sind gesetzt? (Werte nicht ausgegeben) ──
   if (path === "debug/env") {
@@ -40846,40 +40848,53 @@ export default async function (req) {
     const baseUrl = Deno.env.get("AUFZUG_BASE_URL") || "https://verwaltung.api.aufzugshandwerk.de/v1";
     const target = baseUrl + "/" + up + url.search;
     const t0 = Date.now();
-    const init = { method:req.method, headers: { APIKEY:apiKey, TENANT:tenant, Accept:"application/json" } };
+    // v7.58: Accept vom Client DURCHREICHEN (vorher hart application/json) — sonst liefern
+    // Binaer-Endpunkte wie das Angebot-PDF (produces application/octet-stream) HTTP 406.
+    // Fallback application/json fuer normale JSON-Reads.
+    const clientAccept = (req.headers.get("accept") || "").trim();
+    const init = { method:req.method, headers: { APIKEY:apiKey, TENANT:tenant, Accept: clientAccept || "application/json" } };
     if (req.method !== "GET" && req.method !== "HEAD") {
       const t = await req.text();
       if (t && t.length > 0) { init.body = t; init.headers["Content-Type"] = "application/json"; }
     }
-    let up2, text;
+    let up2;
     try {
       up2 = await fetch(target, init);
     } catch(e) {
       return json({ error:"Upstream-Verbindung fehlgeschlagen", target, tenant, message:e.message }, 502);
     }
     const noBody = up2.status===101||up2.status===204||up2.status===205||up2.status===304;
-    text = noBody ? null : await up2.text();
-    // Bei Upstream-Fehler: strukturierte Fehlerantwort mit Diagnose
+    const upCT = up2.headers.get("content-type") || "";
+    const isTextual = upCT === "" || /json|text|xml|javascript|csv|html|urlencoded/i.test(upCT);
+    // Bei Upstream-Fehler: strukturierte Fehlerantwort mit Diagnose (Body als Text lesen)
     if (up2.status >= 400) {
+      const errText = noBody ? null : await up2.text();
       return json({
         error: "Upstream HTTP "+up2.status,
         target,
         tenant,
         tenant_source: tenantHeader ? "X-ERP-Tenant header" : "TENANT_MAP fallback",
         method: req.method,
+        accept_sent: init.headers.Accept,
         api_key_source: Deno.env.get(firmaEnvKey) ? firmaEnvKey : "AUFZUG_API_KEY",
         duration_ms: Date.now()-t0,
-        upstream_body_excerpt: text ? text.slice(0, 1500) : null,
-        upstream_content_type: up2.headers.get("content-type") || null
+        upstream_body_excerpt: errText ? errText.slice(0, 1500) : null,
+        upstream_content_type: upCT || null
       }, up2.status);
     }
-    return new Response(text, { status:up2.status, headers: {
-      "content-type": up2.headers.get("content-type") || "application/json",
+    const outHeaders = {
+      "content-type": upCT || "application/json",
       "access-control-allow-origin": "*",
+      "access-control-expose-headers": "x-erp-target,x-erp-tenant,x-erp-duration-ms,content-disposition",
       "x-erp-target": target,
       "x-erp-tenant": tenant,
       "x-erp-duration-ms": String(Date.now()-t0)
-    }});
+    };
+    const cd = up2.headers.get("content-disposition"); if (cd) outHeaders["content-disposition"] = cd;
+    if (noBody) return new Response(null, { status:up2.status, headers: outHeaders });
+    // Textuelles als Text, Binaeres (PDF/octet-stream) 1:1 als ArrayBuffer durchreichen (KEIN .text()!)
+    if (isTextual) return new Response(await up2.text(), { status:up2.status, headers: outHeaders });
+    return new Response(await up2.arrayBuffer(), { status:up2.status, headers: outHeaders });
   }
 
   // ══════════ FRESHDESK PROXY ══════════
@@ -41764,7 +41779,7 @@ async function valtownTestProxy() {
     _erpLog('✓ Session aktiv', 'ok');
     const r = await erpFetch('/health');
     _erpLog('✓ /health: '+JSON.stringify(r), 'ok');
-    toast('✅ Proxy OK: '+(r.user?.name||'?')+(r.user?.is_admin?' (admin)':''), 'ok');
+    toast('✅ Proxy OK'+(r.proxy_version?' · v'+r.proxy_version:'')+' · '+(r.user?.name||'?')+(r.user?.is_admin?' (admin)':''), 'ok');
   } catch(e) {
     _erpLog('❌ '+e.message, 'err');
     toast('❌ '+e.message, 'err');
@@ -42666,7 +42681,7 @@ async function erpFetch(path, options={}) {
   const url = APP_KEYS.valtownProxyUrl + path;
   const init = {
     method: options.method || 'GET',
-    headers: Object.assign({ 'Authorization':'Bearer '+erpGetSessionToken() }, options.headers||{}),
+    headers: Object.assign({ 'Authorization':'Bearer '+erpGetSessionToken(), 'Accept':'application/json' }, options.headers||{}),
   };
   // Tenant-Override für /aufzug/<firma>/... Pfade aus Firmen-Verwaltung
   const m = /^\/aufzug\/([^\/]+)\//.exec(path);
