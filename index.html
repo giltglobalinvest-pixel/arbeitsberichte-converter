@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.64';
+const APP_VERSION = 'v7.65';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15668,6 +15668,14 @@ function _rvOpenForm(recId) {
         '<button onclick="document.getElementById(\'rv-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="flex:1;overflow:auto;padding:16px">'+
+        '<div style="margin-bottom:12px;position:relative">'+
+          '<label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">🔎 Kunde aus ERP (Aufzugshandwerk) suchen</label>'+
+          '<input id="rv-f-kundesearch" type="text" autocomplete="off" oninput="_rvKundeSearch(this.value)" onfocus="_rvKundeSearch(this.value)" onblur="setTimeout(function(){var d=document.getElementById(\'rv-kunde-dd\');if(d)d.style.display=\'none\';},200)" placeholder="Firmenname oder Kundennummer…" style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box">'+
+          '<div id="rv-kunde-dd" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:30;background:#fff;border:1px solid #d1d5db;border-radius:0 0 8px 8px;max-height:230px;overflow:auto;box-shadow:0 10px 22px rgba(0,0,0,.14)"></div>'+
+          '<div style="font-size:11px;color:#6b7280;margin-top:3px">Auswahl füllt Hausverwalter, Adresse, Kd-Nr. und E-Mail automatisch. Manuelle Eingabe bleibt möglich.</div>'+
+        '</div>'+
+        '<input type="hidden" id="rv-f-kunde_id" value="'+escapeHtml(String(val('kunde_id')))+'">'+
+        '<input type="hidden" id="rv-f-kunde_nummer" value="'+escapeHtml(String(val('kunde_nummer')))+'">'+
         row('Hausverwalter (Firma) *','hausverwalter', val('hausverwalter'), { ph:'z.B. Bietigheimer Wohnbau GmbH' })+
         row('Adresse Hausverwalter','hv_adresse', val('hv_adresse'), { textarea:true, rows:2 })+
         '<div style="display:flex;gap:10px;flex-wrap:wrap"><div style="flex:1;min-width:180px">'+row('Ansprechpartner','kontakt_name', val('kontakt_name'))+'</div><div style="flex:1;min-width:180px">'+row('E-Mail','kontakt_email', val('kontakt_email'), { type:'email' })+'</div></div>'+
@@ -15687,6 +15695,71 @@ function _rvOpenForm(recId) {
   m.onclick = (e) => { if (e.target === m) m.remove(); };
 }
 
+/* v7.65: ERP-Kunden-Picker fürs RV-Formular — lädt/sucht Kunden (api/kunden), Autofill bei Auswahl. */
+let _rvKunden = { firma:null, items:null };
+let _rvKundeMatches = [];
+async function _rvEnsureKunden(firma) {
+  if (_rvKunden.items && _rvKunden.firma === firma) return _rvKunden.items;
+  // Vorhandenen globalen Kunden-Cache wiederverwenden, falls passend geladen
+  try {
+    if (typeof _kundenCache !== 'undefined' && _kundenCache && Array.isArray(_kundenCache.items) && _kundenCache.items.length && (_kundenCache.firma == null || _kundenCache.firma === firma)) {
+      _rvKunden = { firma, items: _kundenCache.items }; return _rvKunden.items;
+    }
+  } catch(_){}
+  const res = await _erpTryPaths(firma, ['api/kunden','kunden']);
+  const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
+  _rvKunden = { firma, items: list };
+  return list;
+}
+async function _rvKundeSearch(query) {
+  const dd = document.getElementById('rv-kunde-dd'); if (!dd) return;
+  const firma = getCurrentFirmaSlug();
+  let items = [];
+  try { items = await _rvEnsureKunden(firma); }
+  catch(e){ dd.innerHTML = '<div style="padding:10px;font-size:12px;color:#b91c1c">Kunden nicht ladbar: '+escapeHtml((e&&e.message)||'')+'</div>'; dd.style.display='block'; return; }
+  const q = String(query||'').toLowerCase().trim();
+  let list = items;
+  if (q) list = items.filter(k => [k.firmenname, String(k.kundennummer||''), k.ort, k.strasse, k.email].filter(Boolean).join(' ').toLowerCase().includes(q));
+  list = list.slice(0, 40);
+  _rvKundeMatches = list;
+  if (!list.length) { dd.innerHTML = '<div style="padding:10px;font-size:12px;color:#6b7280">'+(items.length?'Keine Treffer.':'Keine Kunden im ERP gefunden.')+'</div>'; dd.style.display='block'; return; }
+  dd.innerHTML = list.map((k,i) =>
+    '<div onmousedown="_rvKundeSelect('+i+')" style="padding:8px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9" onmouseover="this.style.background=\'#f8fafc\'" onmouseout="this.style.background=\'#fff\'">'+
+      '<div style="font-size:13px;font-weight:600;color:#0f172a">'+escapeHtml(k.firmenname||'(ohne Name)')+'</div>'+
+      '<div style="font-size:11px;color:#64748b">'+escapeHtml([k.kundennummer?('Nr. '+k.kundennummer):'', [k.strasse,k.plz,k.ort].filter(Boolean).join(' ')].filter(Boolean).join(' · '))+(k.email?' · '+escapeHtml(k.email):'')+'</div>'+
+    '</div>'
+  ).join('');
+  dd.style.display = 'block';
+}
+async function _rvKundeSelect(idx) {
+  const k = (_rvKundeMatches||[])[idx]; if (!k) return;
+  const set = (id, v) => { const el = document.getElementById('rv-f-'+id); if (el && v != null) el.value = v; };
+  set('hausverwalter', k.firmenname || '');
+  set('kunde_nummer', k.kundennummer != null ? String(k.kundennummer) : '');
+  set('kunde_id', k.id != null ? String(k.id) : (k.kundennummer != null ? String(k.kundennummer) : ''));
+  const addr = [k.strasse, [k.plz, k.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
+  if (addr) set('hv_adresse', addr);
+  if (k.email) set('kontakt_email', k.email);
+  const s = document.getElementById('rv-f-kundesearch'); if (s) s.value = k.firmenname || '';
+  const dd = document.getElementById('rv-kunde-dd'); if (dd) dd.style.display = 'none';
+  // Kontakte laden → Ansprechpartner-Name + ggf. bessere E-Mail
+  try {
+    const firma = getCurrentFirmaSlug();
+    const nr = k.kundennummer || k.id;
+    if (nr) {
+      const r = await erpFetch('/aufzug/'+firma+'/api/Kunden/'+encodeURIComponent(nr)+'/Kontakte');
+      const ks = Array.isArray(r) ? r : ((r && (r.content||r.items||r.data)) || []);
+      const main = ks.find(c => /standard|haupt|primaer|primary/i.test(String(c.rolle||''))) || ks[0];
+      if (main) {
+        const nm = [main.vorname, main.nachname].filter(Boolean).join(' ').trim() || main.name || '';
+        if (nm) set('kontakt_name', nm);
+        const emEl = document.getElementById('rv-f-kontakt_email');
+        if (main.email && emEl && !emEl.value) emEl.value = main.email;
+      }
+    }
+  } catch(_){}
+}
+
 function _rvCollectForm() {
   const g = id => (document.getElementById('rv-f-'+id)?.value || '').trim();
   const firmaSlug = getCurrentFirmaSlug();
@@ -15694,6 +15767,8 @@ function _rvCollectForm() {
   const num = s => { const n = parseFloat(String(s).replace(/\./g,'').replace(',','.')); return isNaN(n) ? null : n; };
   return {
     firma: firmaSlug,
+    kunde_id: g('kunde_id'),
+    kunde_nummer: g('kunde_nummer'),
     hausverwalter: g('hausverwalter'),
     hv_adresse: g('hv_adresse'),
     kontakt_name: g('kontakt_name'),
