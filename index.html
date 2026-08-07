@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.69';
+const APP_VERSION = 'v7.70';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15372,6 +15372,7 @@ const RV_TEMPLATES = {
   aufzug: {
     firmaLabel: 'Aufzugshandwerk GmbH',
     kurz: 'Aufzugshandwerk',
+    nummerStart: 37,   // v7.70: Servicebox setzt den Maxise-Nummernkreis fort (001–036 existieren extern/historisch)
     unterzeichner: 'Julia Kröner',
     unterzeichner_rolle: 'Geschäftsführung',
     jahrespreis_default: 2200,
@@ -15465,14 +15466,41 @@ function _rvEur(n) { return (Number(n)||0).toLocaleString('de-DE',{ minimumFract
 
 async function _rvNextNummer(firmaSlug) {
   const year = new Date().getFullYear();
+  const start = (RV_TEMPLATES[firmaSlug] || {}).nummerStart || 1;
   let recs = [];
   try { recs = await atRead('Rahmenvereinbarungen', "{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'"); } catch(_){}
-  let maxN = 0;
+  let maxN = start - 1;   // Baseline: erste Nummer = start (z.B. 037), sonst höchste+1
   for (const r of recs) {
     const m = /^(\d+)\s*\/\s*(\d+)/.exec(String((r.fields&&r.fields.rv_nummer)||''));
     if (m && +m[2] === year) maxN = Math.max(maxN, +m[1]);
   }
   return String(maxN+1).padStart(3,'0') + '/' + year;
+}
+
+/* v7.70: Nummernkreis-Baseline anwenden — vorhandene Datensätze unter der Baseline (z.B. das
+   versehentliche 001) einmalig auf den Startwert renummerieren (001 → 037), danach normal +1. */
+async function _rvApplyNummernBaseline(firmaSlug, records) {
+  const start = (RV_TEMPLATES[firmaSlug] || {}).nummerStart || 1;
+  if (start <= 1 || !Array.isArray(records) || !records.length) return;
+  if (!APP_KEYS.airtableWriteKey) return;
+  const year = new Date().getFullYear();
+  const parse = r => { const m = /^(\d+)\s*\/\s*(\d+)/.exec(String((r.fields&&r.fields.rv_nummer)||'')); return m ? { n:+m[1], y:+m[2] } : null; };
+  const thisYear = records.filter(r => { const p = parse(r); return p && p.y === year; });
+  if (!thisYear.length) return;
+  // Wenn bereits ein Datensatz >= Baseline existiert, ist der Kreis gesetzt → nichts tun.
+  if (thisYear.some(r => { const p = parse(r); return p && p.n >= start; })) return;
+  // Alle (unterhalb der Baseline) aufsteigend ab start renummerieren.
+  const toFix = thisYear.map(r => ({ r, n: parse(r).n })).sort((a,b) => a.n - b.n);
+  let next = start, changed = 0;
+  for (const { r } of toFix) {
+    const neu = String(next).padStart(3,'0') + '/' + year;
+    if (String(r.fields.rv_nummer) !== neu) {
+      try { await atUpdate('Rahmenvereinbarungen', r.id, { rv_nummer: neu }); r.fields.rv_nummer = neu; changed++; }
+      catch(e){ console.warn('[RV-Baseline]', e); }
+    }
+    next++;
+  }
+  if (changed) toast('ℹ️ Nummernkreis auf '+String(start).padStart(3,'0')+' gesetzt ('+changed+' angepasst).','');
 }
 
 function _rvFillText(firmaSlug, v) {
@@ -15578,6 +15606,7 @@ async function renderRahmenvereinbarungenView() {
   try { await _ensureRahmenTable(); } catch(e){ list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--err)">⚠ '+escapeHtml(e.message||'')+'</div>'; return; }
   try { _rahmenCache = await atRead('Rahmenvereinbarungen', "{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'"); }
   catch(e){ list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--err)">⚠ '+escapeHtml(e.message||'')+'</div>'; return; }
+  try { await _rvApplyNummernBaseline(firmaSlug, _rahmenCache); } catch(_){}
   _rvRenderList();
 }
 
