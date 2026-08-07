@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.81';
+const APP_VERSION = 'v7.82';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -40816,6 +40816,9 @@ async function reeditPreisliste(recId) {
     try { data = JSON.parse(d.fields.data_json||'null'); } catch(_){}
     if (!data) return toast('Datensatz unvollständig — kein data_json.','err');
     data._existingRecId = recId;
+    // v7.82: Kunde/Ansprechpartner aus den gespeicherten Feldern nachfüllen, falls nicht im data_json
+    if (!data.kunde && (d.fields.kunde_nummer || d.fields.kunde_id)) data.kunde = { kundennummer: d.fields.kunde_nummer||'', id: d.fields.kunde_id||'', firmenname: d.fields.kunde_name||'' };
+    if (!data.kontakt && d.fields.kontakt_name) data.kontakt = { name: d.fields.kontakt_name, email: d.fields.kontakt_email||'', telefon: d.fields.kontakt_telefon||'' };
     _showKundenpreislisteEditor(data, _loadKonePrices());
   } catch(e) { toast('❌ '+e.message,'err'); }
 }
@@ -40970,6 +40973,8 @@ async function _selectKundeFromPicker(kundeOrId) {
     strasse: k.strasse || '', plz: k.plz || '', ort: k.ort || '',
     adresse: resolvedAdr || '',
   };
+  // v7.82: Kunde auch persistent in die Editor-Daten (für Ansprechpartner-Picker + Reedit)
+  if (modal._stagedData) modal._stagedData.kunde = { id:k.id, kundennummer:k.kundennummer||'', firmenname:k.firmenname||'' };
   // Kontakte zum Kunden laden + Picker zeigen
   document.getElementById('kp-picker-modal').remove();
   toast('Kunde übernommen — lade Kontakte…','');
@@ -41043,13 +41048,14 @@ function _selectKontaktFromPicker(kontaktId) {
   modal.remove();
   if (!k) return;
   const ed = document.getElementById('kunden-pl-modal');
-  if (ed) ed._selectedKontakt = {
-    id: k.id,
-    name:  [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim(),
-    email: k.email || '',
-    telefon: k.telefon || k.mobile || '',
-  };
-  toast('Kontakt übernommen: '+(k.vorname||'')+' '+(k.nachname||''),'ok');
+  const name = [k.anrede, k.vorname, k.nachname].filter(Boolean).join(' ').trim();
+  const kontakt = { id:k.id, anrede:k.anrede||'', vorname:k.vorname||'', nachname:k.nachname||'', name, email:k.email||'', telefon:k.telefon||k.mobile||'' };
+  if (ed) {
+    ed._selectedKontakt = { id:kontakt.id, name:kontakt.name, email:kontakt.email, telefon:kontakt.telefon };
+    if (ed._stagedData) ed._stagedData.kontakt = kontakt;   // v7.82: persistent (data_json / recalc / reedit)
+    _kplRenderKontakt(kontakt);                              // Anzeige + personalisierte Brief-Anrede
+  }
+  toast('Kontakt übernommen: '+name,'ok');
 }
 
 /* ── Kundenversion der Preisliste: Markup-Editor + PDF-Export ──────────
@@ -41167,6 +41173,15 @@ function _showKundenpreislisteEditor(data, hkRef) {
           '<div><strong>Empfänger (Name)</strong><br><input type="text" placeholder="z.B. Hausverwaltung Müller GmbH" value="'+escapeHtml(data.empfaengerName||'')+'" data-kk="empfaengerName" style="width:100%;padding:5px 8px"></div>'+
           '<div><strong>Empfänger-Anschrift</strong><br><textarea data-kk="empfaengerAdresse" placeholder="Straße + Nr.&#10;PLZ + Ort" style="width:100%;min-height:50px;padding:5px 8px;font-family:inherit;font-size:12px">'+escapeHtml(data.empfaengerAdresse||'')+'</textarea></div>'+
         '</div>'+
+        // v7.82: Ansprechpartner (ERP-Kontakt) — erscheint im Brief (z.Hd. + Anrede) und wird gespeichert
+        '<div style="margin-bottom:14px">'+
+          '<strong style="font-size:12px">👤 Ansprechpartner</strong> <span style="font-size:11px;color:var(--txt3)">(optional — erscheint im Brief als „z.Hd." + persönliche Anrede)</span>'+
+          '<div style="display:flex;gap:8px;align-items:center;margin-top:4px">'+
+            '<input id="kpl-kontakt-display" readonly value="'+escapeHtml(data.kontakt && data.kontakt.name ? (data.kontakt.name + (data.kontakt.email ? ' · '+data.kontakt.email : '')) : '')+'" placeholder="— kein Ansprechpartner gewählt (erst Kunde wählen) —" style="flex:1;padding:6px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:var(--bg)">'+
+            '<button type="button" class="btn" onclick="_kplPickKontakt()" style="font-size:12px;white-space:nowrap">👤 Auswählen / Ändern</button>'+
+            '<button type="button" class="btn" onclick="_kplClearKontakt()" title="Ansprechpartner entfernen" style="font-size:13px;color:var(--err);border-color:rgba(220,38,38,.3);padding:6px 10px">×</button>'+
+          '</div>'+
+        '</div>'+
         // v7.80: Brief-Deckblatt (Anschreiben auf Briefpapier) — optional voranstellen
         '<div style="border:1px solid #C7D2FE;background:#F5F7FF;border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
           '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:#3730A3;font-size:13px">'+
@@ -41225,6 +41240,9 @@ function _showKundenpreislisteEditor(data, hkRef) {
   document.body.appendChild(modal);
   modal._stagedData = JSON.parse(JSON.stringify(data));
   modal._hkRef = hkRef;
+  // v7.82: Kunde/Ansprechpartner aus den Editor-Daten wiederherstellen (z.B. beim Bearbeiten einer bestehenden Preisliste)
+  if (data.kunde)   modal._selectedKunde   = data.kunde;
+  if (data.kontakt) modal._selectedKontakt = { id:data.kontakt.id, name:data.kontakt.name, email:data.kontakt.email, telefon:data.kontakt.telefon };
   _plStdPopulateSelect();  // v7.18: benannte Preis-Standards ins Dropdown laden
   if (data.briefEnabled) _kplBriefAutoText();  // v7.81: KI-Anschreiben automatisch, wenn Brief aktiv
 }
@@ -41278,6 +41296,8 @@ async function _plStdLoadSelected() {
     // v7.80: Brief-Deckblatt bleibt ebenfalls aus dem aktuellen Editor
     briefEnabled: current.briefEnabled, briefBetreff: current.briefBetreff, briefOrt: current.briefOrt,
     briefAnrede: current.briefAnrede, briefText: current.briefText, briefGruss: current.briefGruss, briefUnterzeichner: current.briefUnterzeichner,
+    // v7.82: Kunde + Ansprechpartner erhalten
+    kunde: current.kunde, kontakt: current.kontakt,
     _existingRecId: current._existingRecId,
     // Preise aus dem Standard (Fallback: aktueller Wert)
     wartung:     Array.isArray(std.wartung) ? std.wartung : current.wartung,
@@ -41396,6 +41416,8 @@ function _recalcKundenpreisliste() {
     // v7.80: Brief-Deckblatt beim Neu-Berechnen nicht verlieren
     briefEnabled: current.briefEnabled, briefBetreff: current.briefBetreff, briefOrt: current.briefOrt,
     briefAnrede: current.briefAnrede, briefText: current.briefText, briefGruss: current.briefGruss, briefUnterzeichner: current.briefUnterzeichner,
+    // v7.82: Kunde + Ansprechpartner ebenfalls erhalten
+    kunde: current.kunde, kontakt: current.kontakt,
     _existingRecId: current._existingRecId,
   };
   _showKundenpreislisteEditor(newData, hk);
@@ -41410,8 +41432,8 @@ async function _saveAndDownloadKundenpreisliste(sendAfter) {
   if (isFirmaAll()) return toast('Bitte erst eine konkrete Firma oben rechts wählen.','err');
   const firmaSlug = getCurrentFirmaSlug();
   const modal = document.getElementById('kunden-pl-modal');
-  const kunde   = modal?._selectedKunde || null;
-  const kontakt = modal?._selectedKontakt || null;
+  const kunde   = modal?._selectedKunde   || (data && data.kunde)   || null;   // v7.82: Fallback aus Editor-Daten
+  const kontakt = modal?._selectedKontakt || (data && data.kontakt) || null;
   const existingRecId = modal?._stagedData?._existingRecId || null;
   const btn = document.querySelector('#kunden-pl-modal .btn.prim');
   if (btn) { btn.disabled = true; btn.textContent = '💾 Speichere…'; }
@@ -41499,6 +41521,7 @@ function _renderBriefSeite(doc, data) {
   doc.setTextColor(30,30,30);
   if ((data.empfaengerName||'').trim()) { doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(String(data.empfaengerName).trim(), ml, y); y += 5.4; }
   doc.setFont('helvetica','normal'); doc.setFontSize(11);
+  if (data.kontakt && String(data.kontakt.name||'').trim()) { doc.text('z. Hd. '+String(data.kontakt.name).trim(), ml, y); y += 5.4; }   // v7.82: Ansprechpartner
   for (const ln of String(data.empfaengerAdresse||'').split('\n')) { if (ln.trim()) { doc.text(ln.trim(), ml, y); y += 5.4; } }
   // Datum rechts
   const ort = (data.briefOrt||'Esslingen').trim();
@@ -41653,9 +41676,15 @@ async function _kplBriefKI(btn) {
   const prev = ta.disabled; ta.disabled = true;
   const txt = await _plGenAnschreiben({ company:'Aszendio Aufzugservice GmbH', kundeName:data.empfaengerName||'', titel:data.titel||'', gueltigBis:data.gueltigBis||'' });
   ta.disabled = prev;
-  if (txt) { ta.value = txt; toast('🤖 Anschreiben-Vorschlag eingefügt','ok'); }
+  if (txt) { ta.value = _kplStripAnrede(txt); toast('🤖 Anschreiben-Vorschlag eingefügt','ok'); }
   else toast('KI-Anschreiben nicht verfügbar — bitte manuell anpassen.','');
   if (btn) { btn.disabled = false; btn.textContent = orig || '🤖 KI-Vorschlag'; }
+}
+/* v7.82: Führende „Sehr geehrte…"-Anrede aus dem KI-Text entfernen — die Anrede setzt der Brief separat (sonst doppelt). */
+function _kplStripAnrede(txt) {
+  let t = String(txt||'').replace(/^[\s﻿]+/, '');
+  t = t.replace(/^sehr geehrte[^\n]*\r?\n+/i, '');   // eine führende Anrede-Zeile
+  return t.replace(/^\s+/, '');
 }
 /* v7.81: KI-Anschreiben AUTOMATISCH erzeugen (beim Aktivieren/Öffnen) — überschreibt aber keine manuellen Edits. */
 async function _kplBriefAutoText() {
@@ -41668,13 +41697,48 @@ async function _kplBriefAutoText() {
   ta.disabled = true; ta.placeholder = '🤖 KI erstellt das Anschreiben…';
   const txt = await _plGenAnschreiben({ company:'Aszendio Aufzugservice GmbH', kundeName:data.empfaengerName||'', titel:data.titel||'', gueltigBis:data.gueltigBis||'' });
   const t2 = document.getElementById('kpl-brief-text');
-  if (t2) { t2.disabled = false; if (txt) t2.value = txt; }
+  if (t2) { t2.disabled = false; if (txt) t2.value = _kplStripAnrede(txt); }
 }
 /* v7.81: Brief-Toggle — zeigt/versteckt die Felder und stößt das KI-Anschreiben automatisch an. */
 function _kplBriefToggle(cb) {
   const box = document.getElementById('kpl-brief-fields');
   if (box) box.style.display = cb.checked ? 'block' : 'none';
   if (cb.checked) _kplBriefAutoText();
+}
+/* v7.82: Ansprechpartner für die Preisliste wählen (ERP-Kontakt) — Anzeige + Brief-Personalisierung. */
+async function _kplPickKontakt() {
+  const modal = document.getElementById('kunden-pl-modal'); if (!modal) return;
+  const kunde = modal._selectedKunde || (modal._stagedData && modal._stagedData.kunde) || null;
+  const kundennummer = kunde && (kunde.kundennummer || kunde.id);
+  if (!kundennummer) return toast('Bitte zuerst einen Kunden „🔍 aus ERP wählen".','');
+  if (!modal._selectedKunde && kunde) modal._selectedKunde = kunde; // für „+ Neuer Kontakt"-Pfad
+  const firmaSlug = getCurrentFirmaSlug();
+  toast('Lade Kontakte…','');
+  try {
+    const kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundennummer)+'/Kontakte');
+    const list = Array.isArray(kontakte) ? kontakte : ((kontakte && (kontakte.content||kontakte.items||kontakte.data))||[]);
+    _openKontaktPicker(list); // zeigt auch bei leerer Liste den „+ Neuer Kontakt"-Button
+  } catch(e) { toast('❌ Kontakte laden: '+(e.message||e),'err'); }
+}
+function _kplClearKontakt() {
+  const ed = document.getElementById('kunden-pl-modal'); if (!ed) return;
+  ed._selectedKontakt = null;
+  if (ed._stagedData) ed._stagedData.kontakt = null;
+  const disp = document.getElementById('kpl-kontakt-display'); if (disp) disp.value = '';
+  const anredeInp = document.querySelector('#kunden-pl-modal [data-kk="briefAnrede"]');
+  if (anredeInp) anredeInp.value = KPL_BRIEF_DEFAULTS.briefAnrede;   // Anrede wieder generisch
+  toast('Ansprechpartner entfernt','');
+}
+/* Anzeige + personalisierte Brief-Anrede nach Kontakt-Auswahl aktualisieren. */
+function _kplRenderKontakt(kontakt) {
+  const disp = document.getElementById('kpl-kontakt-display');
+  if (disp) disp.value = (kontakt && kontakt.name) ? (kontakt.name + (kontakt.email ? ' · '+kontakt.email : '')) : '';
+  const anredeInp = document.querySelector('#kunden-pl-modal [data-kk="briefAnrede"]');
+  if (anredeInp && kontakt && kontakt.nachname) {
+    const a = String(kontakt.anrede||'');
+    const g = /frau/i.test(a) ? 'Sehr geehrte Frau ' : (/herr/i.test(a) ? 'Sehr geehrter Herr ' : 'Sehr geehrte(r) ');
+    anredeInp.value = g + kontakt.nachname + ',';
+  }
 }
 
 /* PDF-Upload → Claude extrahiert Preisliste → Preview-Modal */
