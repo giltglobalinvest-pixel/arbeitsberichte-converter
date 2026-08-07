@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.74';
+const APP_VERSION = 'v7.75';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15602,11 +15602,15 @@ async function _rvMergeAnhaenge(baseBytes, firmaSlug) {
   const baseBlob = () => new Blob([baseBytes], { type:'application/pdf' });
   try {
     const L = window.PDFLib;
-    if (!L || !L.PDFDocument) { console.warn('[RV-Merge] pdf-lib nicht geladen'); return baseBlob(); }
-    const vorlagen = (typeof _loadAngVorlagen === 'function') ? (await _loadAngVorlagen(firmaSlug) || []) : [];
+    if (!L || !L.PDFDocument) { console.warn('[RV-Merge] pdf-lib nicht geladen'); toast('⚠ PDF-Merge-Lib nicht geladen (evtl. alte Version — bitte neu laden). RV ohne Anhang.','err'); return baseBlob(); }
+    const vorlagen = (typeof _loadAngVorlagen === 'function') ? (await _loadAngVorlagen(firmaSlug, { force:true }) || []) : [];
     const rvVorl = vorlagen.filter(v => String((v.fields && v.fields.auto_typ) || '') === 'rahmenvereinbarung');
-    if (!rvVorl.length) return baseBlob();
+    if (!rvVorl.length) {
+      toast('ℹ️ Keine RV-Anhänge hinterlegt — unter 📎 Anhang-Vorlagen ein PDF mit „Automatisch anhängen bei = Rahmenvereinbarung" anlegen.','');
+      return baseBlob();
+    }
     const merged = await L.PDFDocument.load(baseBytes);
+    let added = 0, failed = 0;
     for (const v of rvVorl) {
       let fresh = v;
       try { if (typeof _fetchAngVorlageFresh === 'function') fresh = (await _fetchAngVorlageFresh(v.id)) || v; } catch(_){}
@@ -15618,13 +15622,17 @@ async function _rvMergeAnhaenge(baseBytes, firmaSlug) {
           const src = await L.PDFDocument.load(ab, { ignoreEncryption: true });
           const pages = await merged.copyPages(src, src.getPageIndices());
           pages.forEach(pg => merged.addPage(pg));
-        } catch(e){ console.warn('[RV-Merge] Anhang fehlgeschlagen:', p && p.filename, e && e.message); }
+          added += pages.length;
+        } catch(e){ failed++; console.warn('[RV-Merge] Anhang fehlgeschlagen:', p && p.filename, e && e.message); }
       }
     }
+    if (!added) { toast('⚠ RV-Anhänge gefunden, aber PDF(s) nicht ladbar ('+failed+') — RV ohne Anhang.','err'); return baseBlob(); }
+    toast('📎 '+added+' Anhang-Seite(n) angehängt'+(failed?' · '+failed+' fehlgeschlagen':''), 'ok');
     const out = await merged.save();
     return new Blob([out], { type:'application/pdf' });
   } catch(e) {
     console.warn('[RV-Merge] fehlgeschlagen — RV ohne Anhang:', e && e.message);
+    toast('⚠ Anhang-Merge fehlgeschlagen — RV ohne Anhang: '+((e&&e.message)||e),'err');
     return baseBlob();
   }
 }
