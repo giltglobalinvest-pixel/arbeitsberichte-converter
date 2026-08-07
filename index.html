@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.67';
+const APP_VERSION = 'v7.68';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15824,6 +15824,24 @@ async function _rvKundeSelect(idx) {
       _rvKontaktSelectChange();
     } else { _rvSetKontaktOptions([]); }
   } catch(_){ _rvSetKontaktOptions([]); }
+  // Adresse robust auflösen — die Kundenliste liefert oft einen reduzierten Kunden OHNE
+  //   Straße/PLZ/Ort. Vollen Kunden (/api/kunden/{nr}) nachladen und via _nwvResolveKundeAdresse
+  //   (flache Felder → defaultrechnungsempfaenger → adresseId) auflösen.
+  try {
+    const firma = getCurrentFirmaSlug();
+    const nr = k.kundennummer || k.id;
+    const aEl = document.getElementById('rv-f-hv_adresse');
+    if (aEl && !String(aEl.value||'').trim()) {
+      let kundeFull = k;
+      if (!k.strasse && !k.adresseId && !k.defaultrechnungsempfaenger && nr) {
+        try { const fk = await erpFetch('/aufzug/'+firma+'/api/kunden/'+encodeURIComponent(nr)); if (fk && typeof fk === 'object') kundeFull = Object.assign({}, k, fk); } catch(_){}
+      }
+      if (typeof _nwvResolveKundeAdresse === 'function') {
+        const adr = await _nwvResolveKundeAdresse(firma, kundeFull, []);
+        if (adr && adr.trim() && !String(aEl.value||'').trim()) aEl.value = adr.trim();
+      }
+    }
+  } catch(_){}
 }
 
 function _rvCollectForm() {
