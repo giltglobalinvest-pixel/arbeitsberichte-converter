@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.79';
+const APP_VERSION = 'v7.80';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -6662,6 +6662,13 @@ function updateFirmaPillUI() {
   const f = getCurrentFirma();
   document.getElementById('firma-pill-icon').textContent = f?.icon || '🏢';
   document.getElementById('firma-pill-name').textContent = f?.name || '–';
+  // v7.80: Rahmenvereinbarungen gibt es nur für Aufzugshandwerk → für andere Firmen ausgrauen.
+  const rv = document.getElementById('tnav-rahmen');
+  if (rv) {
+    const isAufzug = (f?.slug === 'aufzug' || f?.slug === 'aufzugshandwerk');
+    rv.style.opacity = isAufzug ? '' : '0.4';
+    rv.title = isAufzug ? 'Rahmenvereinbarungen mit Hausverwaltern (Aufzugshandwerk)' : 'Rahmenvereinbarungen: nur für Aufzugshandwerk — bei Aszendio wird stattdessen die Preisliste genutzt';
+  }
 }
 
 function toggleFirmaDropdown(ev) {
@@ -41075,6 +41082,14 @@ function openKonePreislisteKundeEditor() {
     sonstiges:   hk.sonstiges.map(s => ({ label: s.label, preis: r2(+s.preis||0), einheit: s.einheit, highlight: s.highlight })),
     fussnote:    'Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.',
     markupPct:   markupPct,
+    // v7.80: Brief-Deckblatt (optional) — Anschreiben auf Aszendio-Briefpapier vor der Preisliste
+    briefEnabled:       false,
+    briefBetreff:       'Ihre individuelle Wartungspreisliste',
+    briefOrt:           'Esslingen',
+    briefAnrede:        'Sehr geehrte Damen und Herren,',
+    briefText:          'vielen Dank für Ihr Interesse an einer Zusammenarbeit mit der Aszendio Aufzugservice GmbH. Anbei erhalten Sie unsere aktuelle Wartungspreisliste mit transparenten Konditionen für die Wartung Ihrer Aufzugsanlagen.\n\nGerne erläutern wir Ihnen die Preise in einem persönlichen Gespräch und erstellen Ihnen ein individuelles Angebot. Für Rückfragen stehen wir Ihnen jederzeit zur Verfügung.',
+    briefGruss:         'Mit freundlichen Grüßen',
+    briefUnterzeichner: 'Walter Schäfer',
   };
   _showKundenpreislisteEditor(initData, hk);
 }
@@ -41144,7 +41159,29 @@ function _showKundenpreislisteEditor(data, hkRef) {
           '<div><strong>Empfänger (Name)</strong><br><input type="text" placeholder="z.B. Hausverwaltung Müller GmbH" value="'+escapeHtml(data.empfaengerName||'')+'" data-kk="empfaengerName" style="width:100%;padding:5px 8px"></div>'+
           '<div><strong>Empfänger-Anschrift</strong><br><textarea data-kk="empfaengerAdresse" placeholder="Straße + Nr.&#10;PLZ + Ort" style="width:100%;min-height:50px;padding:5px 8px;font-family:inherit;font-size:12px">'+escapeHtml(data.empfaengerAdresse||'')+'</textarea></div>'+
         '</div>'+
-        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen <span style="font-weight:400;color:var(--txt3);font-size:11px">(2 Preisspalten je Wartungsfrequenz · HK in grau zur Referenz)</span></h4>'+
+        // v7.80: Brief-Deckblatt (Anschreiben auf Briefpapier) — optional voranstellen
+        '<div style="border:1px solid #C7D2FE;background:#F5F7FF;border-radius:8px;padding:10px 14px;margin-bottom:14px">'+
+          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:#3730A3;font-size:13px">'+
+            '<input type="checkbox" data-kk="briefEnabled" id="kpl-brief-enabled" '+(data.briefEnabled?'checked':'')+' onchange="var b=document.getElementById(\'kpl-brief-fields\');if(b)b.style.display=this.checked?\'block\':\'none\'" style="width:16px;height:16px;cursor:pointer">'+
+            '📬 Brief-Deckblatt mit Briefpapier voranstellen</label>'+
+          '<div style="font-size:11px;color:#4338CA;margin:4px 0 0 24px;line-height:1.5">Erzeugt vor der Preisliste eine Anschreiben-Seite auf Aszendio-Briefpapier (Logo, Absender, Empfänger, Datum, Betreff, Text, Grußformel). Empfänger + Anschrift werden von oben übernommen.</div>'+
+          '<div id="kpl-brief-fields" style="display:'+(data.briefEnabled?'block':'none')+';margin-top:12px">'+
+            '<div style="display:grid;grid-template-columns:2fr 1fr;gap:10px;margin-bottom:8px">'+
+              '<div><strong style="font-size:12px">Betreff</strong><br><input type="text" data-kk="briefBetreff" value="'+escapeHtml(data.briefBetreff||'')+'" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
+              '<div><strong style="font-size:12px">Ort (Datumszeile)</strong><br><input type="text" data-kk="briefOrt" value="'+escapeHtml(data.briefOrt||'')+'" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
+            '</div>'+
+            '<div style="margin-bottom:8px"><strong style="font-size:12px">Anrede</strong><br><input type="text" data-kk="briefAnrede" value="'+escapeHtml(data.briefAnrede||'')+'" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
+            '<div style="margin-bottom:8px"><div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px"><strong style="font-size:12px">Anschreiben</strong>'+
+              '<button type="button" class="btn" style="font-size:11px;padding:3px 9px" onclick="_kplBriefKI(this)" title="Anschreiben-Text per KI vorschlagen (Anthropic-Key erforderlich)">🤖 KI-Vorschlag</button></div>'+
+              '<textarea data-kk="briefText" id="kpl-brief-text" style="width:100%;min-height:120px;padding:8px;border:1px solid var(--bdr);border-radius:4px;font-family:inherit;font-size:12px;line-height:1.5;box-sizing:border-box">'+escapeHtml(data.briefText||'')+'</textarea>'+
+              '<div style="font-size:10px;color:var(--txt3);margin-top:2px">Ohne Anrede und ohne Grußformel — die werden separat gesetzt. Leerzeile = neuer Absatz.</div></div>'+
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+
+              '<div><strong style="font-size:12px">Grußformel</strong><br><input type="text" data-kk="briefGruss" value="'+escapeHtml(data.briefGruss||'')+'" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
+              '<div><strong style="font-size:12px">Unterzeichner</strong><br><input type="text" data-kk="briefUnterzeichner" value="'+escapeHtml(data.briefUnterzeichner||'')+'" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+        '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Wartung pro Haltestellen<span style="font-weight:400;color:var(--txt3);font-size:11px">(2 Preisspalten je Wartungsfrequenz · HK in grau zur Referenz)</span></h4>'+
         '<table style="width:100%;border-collapse:collapse;font-size:12px">'+
           '<thead>'+
             '<tr style="background:var(--bg)">'+
@@ -41229,6 +41266,10 @@ async function _plStdLoadSelected() {
     // Empfänger/Titel/Gültigkeit bleiben aus dem aktuellen Editor
     titel: current.titel, gueltigBis: current.gueltigBis,
     empfaengerName: current.empfaengerName, empfaengerAdresse: current.empfaengerAdresse,
+    // v7.80: Brief-Deckblatt bleibt ebenfalls aus dem aktuellen Editor
+    briefEnabled: current.briefEnabled, briefBetreff: current.briefBetreff, briefOrt: current.briefOrt,
+    briefAnrede: current.briefAnrede, briefText: current.briefText, briefGruss: current.briefGruss, briefUnterzeichner: current.briefUnterzeichner,
+    _existingRecId: current._existingRecId,
     // Preise aus dem Standard (Fallback: aktueller Wert)
     wartung:     Array.isArray(std.wartung) ? std.wartung : current.wartung,
     stundensatz: std.stundensatz != null ? +std.stundensatz : current.stundensatz,
@@ -41312,6 +41353,7 @@ function _readKundenpreislisteEditor() {
     }
     const last = path[path.length-1];
     if (el.type === 'number') target[last] = +el.value || 0;
+    else if (el.type === 'checkbox') target[last] = el.checked;   // v7.80: Brief-Toggle
     else target[last] = el.value;
   });
   return data;
@@ -41342,6 +41384,10 @@ function _recalcKundenpreisliste() {
     sonstiges:    hk.sonstiges.map(s => ({ label: s.label, preis: r2(+s.preis||0), einheit: s.einheit, highlight: s.highlight })),
     fussnote:     current.fussnote,
     markupPct:    pct,
+    // v7.80: Brief-Deckblatt beim Neu-Berechnen nicht verlieren
+    briefEnabled: current.briefEnabled, briefBetreff: current.briefBetreff, briefOrt: current.briefOrt,
+    briefAnrede: current.briefAnrede, briefText: current.briefText, briefGruss: current.briefGruss, briefUnterzeichner: current.briefUnterzeichner,
+    _existingRecId: current._existingRecId,
   };
   _showKundenpreislisteEditor(newData, hk);
 }
@@ -41429,10 +41475,67 @@ async function _buildKundenpreislistePDFBlob(data) {
   return doc.output('blob');
 }
 
+/* v7.80: Brief-Deckblatt (Anschreiben auf Aszendio-Briefpapier) — eine Seite VOR der Preisliste. */
+function _renderBriefSeite(doc, data) {
+  const ml = 25, mr = 185, H = 297; // DIN-5008-nahe Ränder (Adressfeld links 25 mm)
+  // Logo oben rechts (wie Preisliste)
+  try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',148,12,42,7); } catch(_){}
+  // Absender-Zeile klein über dem Anschriftenfeld
+  let y = 46;
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(120,120,120);
+  doc.text('Aszendio Aufzugservice GmbH · Boschstraße 10 · 73734 Esslingen am Neckar', ml, y);
+  y += 1.5; doc.setDrawColor(200,200,200); doc.setLineWidth(0.2); doc.line(ml, y, ml+95, y);
+  // Empfänger-Anschrift (Anschriftenfeld)
+  y = 54;
+  doc.setTextColor(30,30,30);
+  if ((data.empfaengerName||'').trim()) { doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(String(data.empfaengerName).trim(), ml, y); y += 5.4; }
+  doc.setFont('helvetica','normal'); doc.setFontSize(11);
+  for (const ln of String(data.empfaengerAdresse||'').split('\n')) { if (ln.trim()) { doc.text(ln.trim(), ml, y); y += 5.4; } }
+  // Datum rechts
+  const ort = (data.briefOrt||'Esslingen').trim();
+  let datum = ''; try { datum = new Date().toLocaleDateString('de-DE',{ day:'2-digit', month:'2-digit', year:'numeric' }); } catch(_) { datum = ''; }
+  doc.setFontSize(10); doc.setTextColor(80,80,80);
+  doc.text(ort+', den '+datum, mr, 92, { align:'right' });
+  // Betreff
+  y = 104;
+  doc.setFont('helvetica','bold'); doc.setFontSize(11.5); doc.setTextColor(26,51,83);
+  const betreff = (data.briefBetreff||data.titel||'Ihre Wartungspreisliste').trim();
+  for (const ln of doc.splitTextToSize(betreff, mr-ml)) { doc.text(ln, ml, y); y += 5.6; }
+  y += 5;
+  // Anrede
+  doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(40,40,40);
+  doc.text((data.briefAnrede||'Sehr geehrte Damen und Herren,').trim(), ml, y); y += 8;
+  // Fließtext (Absätze durch Leerzeilen getrennt)
+  for (const para of String(data.briefText||'').split('\n')) {
+    if (!para.trim()) { y += 3.5; continue; }
+    for (const ln of doc.splitTextToSize(para.trim(), mr-ml)) {
+      if (y > H - 60) { doc.addPage(); y = 30; } // Sicherheitsnetz bei sehr langem Text
+      doc.text(ln, ml, y); y += 5.6;
+    }
+    y += 2.5;
+  }
+  // Grußformel + Unterschrift
+  y += 8;
+  if (y > H - 55) { doc.addPage(); y = 40; }
+  doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.setTextColor(40,40,40);
+  doc.text((data.briefGruss||'Mit freundlichen Grüßen').trim(), ml, y); y += 16;
+  if ((data.briefUnterzeichner||'').trim()) { doc.setFont('helvetica','bold'); doc.text(String(data.briefUnterzeichner).trim(), ml, y); y += 5; }
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(90,90,90);
+  doc.text('Aszendio Aufzugservice GmbH', ml, y);
+  // Anlagen-Hinweis
+  y += 9; doc.setFontSize(9); doc.setTextColor(120,120,120);
+  doc.text('Anlage: Wartungspreisliste', ml, y);
+}
+
 /* Gemeinsamer Renderer für PDF-Inhalte — wiederverwendet von Save + Download */
 function _renderKundenpreislisteIntoDoc(doc, data) {
   const ml = 14, mr = 196, cw = 182, H = 297;
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  // v7.80: optionales Brief-Deckblatt VOR der Preisliste (eigene Seite)
+  if (data.briefEnabled && String(data.briefText||'').trim()) {
+    _renderBriefSeite(doc, data);
+    doc.addPage();
+  }
   let y = 14;
   try { doc.addImage('data:image/png;base64,'+LOGO_B64,'PNG',148,9,42,7); } catch(_){}
   doc.setFont('helvetica','bold'); doc.setFontSize(20); doc.setTextColor(26,51,83);
@@ -41529,6 +41632,21 @@ async function _generateKundenpreislistePDF() {
   const fname = 'Wartungspreisliste-Aszendio'+(data.empfaengerName?'-'+String(data.empfaengerName).replace(/[^\w-]/g,'_').slice(0,40):'')+'.pdf';
   doc.save(fname);
   toast('📄 PDF erstellt: '+fname, 'ok');
+}
+
+/* v7.80: KI-Vorschlag für den Brief-Anschreiben-Text (nutzt denselben Generator wie der Versand). */
+async function _kplBriefKI(btn) {
+  const ta = document.getElementById('kpl-brief-text'); if (!ta) return;
+  if (!APP_KEYS.anthropicKey) return toast('KI nicht verfügbar (kein Anthropic-Key hinterlegt) — bitte Text manuell schreiben.','');
+  const data = _readKundenpreislisteEditor() || {};
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '🤖 …'; }
+  const prev = ta.disabled; ta.disabled = true;
+  const txt = await _plGenAnschreiben({ company:'Aszendio Aufzugservice GmbH', kundeName:data.empfaengerName||'', titel:data.titel||'', gueltigBis:data.gueltigBis||'' });
+  ta.disabled = prev;
+  if (txt) { ta.value = txt; toast('🤖 Anschreiben-Vorschlag eingefügt','ok'); }
+  else toast('KI-Anschreiben nicht verfügbar — bitte manuell anpassen.','');
+  if (btn) { btn.disabled = false; btn.textContent = orig || '🤖 KI-Vorschlag'; }
 }
 
 /* PDF-Upload → Claude extrahiert Preisliste → Preview-Modal */
