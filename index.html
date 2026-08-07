@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.63';
+const APP_VERSION = 'v7.64';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15633,7 +15633,8 @@ function _rvRenderList() {
           '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+
             '<button class="btn" style="font-size:11px;padding:5px 9px" onclick="_rvPreview(\''+rec.id+'\')" title="PDF-Vorschau">📄 Vorschau</button>'+
             '<button class="btn" style="font-size:11px;padding:5px 9px" onclick="_rvOpenForm(\''+rec.id+'\')" title="Bearbeiten">✏️ Bearbeiten</button>'+
-            ((f.status||'entwurf')==='entwurf' ? '<button class="btn" style="font-size:11px;padding:5px 9px" onclick="_rvMarkSent(\''+rec.id+'\')" title="Manuell als versendet markieren (autom. Versand folgt)">📤 Versendet</button>' : '')+
+            '<button class="btn" style="font-size:11px;padding:5px 9px" onclick="_rvOpenSendModal(\''+rec.id+'\')" title="Per Freshdesk senden — Ticket-Antwort oder Kunden-E-Mail">📤 Senden</button>'+
+            (f.fd_ticket_url ? '<a class="btn" style="font-size:11px;padding:5px 9px;text-decoration:none" href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener" title="Freshdesk-Ticket öffnen">🎫</a>' : '')+
             '<button class="btn" style="font-size:11px;padding:5px 9px;'+(hasSigned?'background:#ECFDF5;border-color:#10b981;color:#065F46':'')+'" onclick="_rvUploadSigned(\''+rec.id+'\')" title="Unterschriebene Version hochladen → Abgeschlossen">📎 '+(hasSigned?'Unterschrift ✓':'Unterschrieben')+'</button>'+
             '<button class="btn" style="font-size:11px;padding:5px 9px;color:#DC2626;border-color:#FCA5A5" onclick="deleteRahmen(\''+rec.id+'\')" title="Löschen">🗑</button>'+
           '</div>'+
@@ -15792,6 +15793,149 @@ async function deleteRahmen(recId) {
   if (!confirm('Rahmenvereinbarung '+(f.rv_nummer||'')+' ('+(f.hausverwalter||'')+') wirklich löschen?')) return;
   try { await atDelete('Rahmenvereinbarungen', recId); toast('🗑 Gelöscht.','ok'); renderRahmenvereinbarungenView(); }
   catch(e){ toast('❌ '+((e&&e.message)||e),'err'); }
+}
+
+/* ── v7.64: RAHMENVEREINBARUNG VERSENDEN (Phase 2) ──
+   (a) Antwort auf ein Freshdesk-Ticket  (b) neue ausgehende Kunden-E-Mail (outbound_email).
+   PDF wird frisch erzeugt + als Anhang mitgeschickt. Danach Status → versendet. */
+function _rvFdErr(status, d, txt) {
+  let msg = 'Freshdesk HTTP ' + status + ((d && (d.description||d.error)) ? ' · ' + (d.description||d.error) : '');
+  if (d && Array.isArray(d.errors) && d.errors.length) msg += ' — ' + d.errors.map(e => '['+(e.field||'?')+'] '+(e.message||e.code||'?')).join('; ');
+  else if (d && d.upstream_body_excerpt) msg += ' — ' + String(d.upstream_body_excerpt).slice(0,200);
+  else if (txt) msg += ' — ' + String(txt).slice(0,200);
+  return msg;
+}
+function _rvSendToggleMode() {
+  const mode = (document.querySelector('input[name="rv-send-mode"]:checked')||{}).value || 'email';
+  const eb = document.getElementById('rv-send-email-box');
+  const tb = document.getElementById('rv-send-ticket-box');
+  const sb = document.getElementById('rv-send-subject-box');
+  if (eb) eb.style.display = (mode==='email') ? '' : 'none';
+  if (sb) sb.style.display = (mode==='email') ? '' : 'none';
+  if (tb) tb.style.display = (mode==='ticket') ? '' : 'none';
+}
+function _rvOpenSendModal(recId) {
+  const rec = (_rahmenCache||[]).find(r=>r.id===recId);
+  if (!rec) return toast('Nicht gefunden','err');
+  const f = rec.fields || {};
+  const firma = f.firma || getCurrentFirmaSlug();
+  if (!APP_KEYS.valtownProxyUrl) return toast('Freshdesk/Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  const fdOk = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
+  const tpl = RV_TEMPLATES[firma] || RV_TEMPLATES.aufzug;
+  const subject = 'Rahmenvereinbarung ' + (f.rv_nummer||'') + ' – ' + tpl.firmaLabel;
+  const body = 'Sehr geehrte Damen und Herren,\n\nanbei erhalten Sie die Rahmenvereinbarung ' + (f.rv_nummer||'') + ' zwischen der ' + (f.hausverwalter||'Ihrem Haus') + ' und der ' + tpl.firmaLabel + '.\n\nFür Rückfragen stehen wir Ihnen gerne zur Verfügung.\n\nMit freundlichen Grüßen';
+  document.getElementById('rv-send-modal')?.remove();
+  const m = document.createElement('div'); m.id = 'rv-send-modal'; m._recId = recId;
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10850;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
+  const inpStyle = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box';
+  m.innerHTML =
+    '<div style="background:#fff;max-width:600px;width:100%;max-height:100%;min-height:0;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:12px 16px;background:#0f172a;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+        '<span>📤 Rahmenvereinbarung '+escapeHtml(f.rv_nummer||'')+' senden</span>'+
+        '<button onclick="document.getElementById(\'rv-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="flex:1;overflow:auto;padding:16px">'+
+        (fdOk ? '' : '<div style="background:#FEF3C7;border:1px solid #FCD34D;color:#78350F;padding:8px 10px;border-radius:6px;font-size:12px;margin-bottom:12px">⚠ Für <strong>'+escapeHtml(firma)+'</strong> ist in Freshdesk keine Domain hinterlegt — Versand schlägt evtl. fehl.</div>')+
+        '<div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">'+
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="rv-send-mode" value="email" checked onchange="_rvSendToggleMode()"> ✉️ Kunden-E-Mail (neue ausgehende Mail)</label>'+
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="rv-send-mode" value="ticket" onchange="_rvSendToggleMode()"> 🎫 Antwort auf Freshdesk-Ticket</label>'+
+        '</div>'+
+        '<div id="rv-send-email-box">'+
+          '<div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Empfänger-E-Mail (Kundenmail aus Maxise / Ansprechpartner)</label>'+
+            '<input id="rv-send-email" type="email" value="'+escapeHtml(f.kontakt_email||'')+'" placeholder="kunde@example.de" style="'+inpStyle+'"></div>'+
+        '</div>'+
+        '<div id="rv-send-ticket-box" style="display:none">'+
+          '<div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Freshdesk-Ticket-Nr.</label>'+
+            '<input id="rv-send-ticket" type="text" inputmode="numeric" value="'+escapeHtml(f.fd_ticket_id||'')+'" placeholder="z.B. 12345" style="'+inpStyle+'"></div>'+
+        '</div>'+
+        '<div id="rv-send-subject-box" style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Betreff</label>'+
+          '<input id="rv-send-subject" type="text" value="'+escapeHtml(subject)+'" style="'+inpStyle+'"></div>'+
+        '<div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Nachricht</label>'+
+          '<textarea id="rv-send-body" rows="6" style="'+inpStyle+';resize:vertical">'+escapeHtml(body)+'</textarea></div>'+
+        '<div style="margin-bottom:6px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">CC (optional, kommagetrennt)</label>'+
+          '<input id="rv-send-cc" type="text" placeholder="cc1@…, cc2@…" style="'+inpStyle+'"></div>'+
+        '<div style="font-size:11px;color:#6b7280">Die aktuelle RV wird als PDF frisch erzeugt und angehängt. Nach dem Versand: Status → <strong>Versendet</strong>.</div>'+
+      '</div>'+
+      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap">'+
+        '<button onclick="(function(){var x=document.getElementById(\'rv-send-modal\');var id=x&&x._recId;x&&x.remove();_rvMarkSent(id);})()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px" title="Ohne Versand nur den Status auf Versendet setzen">nur als versendet markieren</button>'+
+        '<button id="rv-send-btn" onclick="_rvDoSend()" style="padding:8px 16px;border:none;border-radius:6px;background:#059669;color:#fff;font-weight:600;cursor:pointer">📤 Senden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _rvSendToggleMode();
+}
+async function _rvDoSend() {
+  const m = document.getElementById('rv-send-modal'); if (!m) return;
+  const recId = m._recId;
+  const rec = (_rahmenCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const mode = (document.querySelector('input[name="rv-send-mode"]:checked')||{}).value || 'email';
+  const subject = g('rv-send-subject') || ('Rahmenvereinbarung ' + (f.rv_nummer||''));
+  const bodyText = g('rv-send-body');
+  const ccEmails = g('rv-send-cc').split(/[;,\s]+/).map(s=>s.trim()).filter(s=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+  const btn = document.getElementById('rv-send-btn'); if (btn){ btn.disabled=true; btn.textContent='⏳ Sende…'; }
+  try {
+    if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
+    await erpEnsureSession();
+    const blob = _rvBuildPdfBlob(f, firma);
+    const fname = 'Rahmenvereinbarung_' + String(f.rv_nummer||'').replace(/[\/ ]/g,'-') + '.pdf';
+    // Agent-Signatur (FD hängt sie bei outbound_email nicht automatisch an)
+    let sig = '';
+    try {
+      const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
+      if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); }
+    } catch(_){}
+    const bodyHtml = '<p>' + escapeHtml(bodyText).replace(/\n/g,'<br>') + '</p>' + (sig ? '<br><br>'+sig : '');
+    let ticketId = null, sentEmail = '';
+    if (mode === 'ticket') {
+      const tid = g('rv-send-ticket');
+      if (!/^\d+$/.test(tid)) throw new Error('Bitte eine gültige Ticket-Nr. angeben.');
+      const fd = new FormData();
+      fd.append('body', bodyHtml);
+      for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      fd.append('attachments[]', blob, fname);
+      const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/'+tid+'/reply', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+      const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
+      if (!r.ok) throw new Error(_rvFdErr(r.status, d, txt));
+      ticketId = tid;
+    } else {
+      const email = g('rv-send-email');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Bitte eine gültige Empfänger-E-Mail angeben.');
+      let ecid = null;
+      try {
+        const cr = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/email_configs', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
+        if (cr.ok) { const arr = await cr.json(); if (Array.isArray(arr) && arr.length) { const p = arr.find(c=>c.primary_role) || arr.find(c=>c.active) || arr[0]; ecid = p.id; } }
+      } catch(_){}
+      if (!ecid) throw new Error('Keine Freshdesk-E-Mail-Konfiguration (email_config_id) gefunden. Bitte in Freshdesk-Admin eine Versand-Adresse einrichten.');
+      const fd = new FormData();
+      fd.append('email', email);
+      fd.append('subject', subject);
+      fd.append('description', bodyHtml);
+      fd.append('status', '2');
+      fd.append('priority', '1');
+      fd.append('email_config_id', String(ecid));
+      for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      fd.append('attachments[]', blob, fname);
+      const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/outbound_email', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+      const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
+      if (!r.ok) throw new Error(_rvFdErr(r.status, d, txt));
+      ticketId = d && d.id; sentEmail = email;
+    }
+    const tUrl = (ticketId && APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma])
+      ? 'https://'+APP_KEYS.freshdeskDomains[firma]+'.freshdesk.com/a/tickets/'+ticketId : '';
+    const patch = { status:'versendet', versendet_am: new Date().toLocaleString('de-DE'), fd_ticket_id: String(ticketId||''), fd_ticket_url: tUrl };
+    if (sentEmail && !f.kontakt_email) patch.kontakt_email = sentEmail;
+    try { await atUpdate('Rahmenvereinbarungen', recId, patch); } catch(_){}
+    rec.fields = Object.assign({}, rec.fields, patch);
+    toast('✅ Rahmenvereinbarung gesendet' + (ticketId ? ' (Ticket #'+ticketId+')' : '') + '.','ok');
+    m.remove();
+    renderRahmenvereinbarungenView();
+  } catch(e) {
+    console.error('[RV-Send]', e);
+    toast('❌ ' + ((e && e.message) || e), 'err');
+  } finally { if (btn){ btn.disabled=false; btn.textContent='📤 Senden'; } }
 }
 
 /* ════════════════════════════════════════════════════════════════════
