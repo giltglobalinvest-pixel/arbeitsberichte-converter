@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.75';
+const APP_VERSION = 'v7.76';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -33413,12 +33413,20 @@ function openAngebotDetail(recId) {
         // v5.50: Bei Aufwand-Modus statt Summen-Block einen lila Hinweis
         (f.abrechnung_modus === 'aufwand'
           ? '<div style="background:#F3E8FF;border:2px solid #9333EA;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#5B21B6"><span style="font-size:22px">⏱</span><div><div style="font-weight:700">Abrechnung nach tatsächlichem Aufwand</div><div style="font-size:11px;color:#7C3AED">Kein Endpreis — Verrechnung nach Stundennachweis. Siehe Stundensätze unten.</div></div></div>'
-          : (canSeePrices() ? '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
-            '<div><div style="font-size:11px;color:var(--txt3)">Netto KONE (EK)</div><div style="font-weight:600">'+fmt(f.summe_netto_kone)+' €</div></div>'+
-            '<div><div style="font-size:11px;color:var(--txt3)">Netto VP</div><div style="font-weight:700;font-size:15px">'+fmt(f.summe_netto_vp)+' €</div></div>'+
-            '<div><div style="font-size:11px;color:var(--txt3)">Marge</div><div style="font-weight:600">'+fmt((f.summe_netto_vp||0)-(f.summe_netto_kone||0))+' €</div></div>'+
-            '<div style="margin-left:auto"><div style="font-size:11px;color:var(--txt3)">Brutto VP</div><div style="font-weight:700;font-size:16px">'+fmt(f.summe_brutto_vp)+' €</div></div>'+
-          '</div>' : ''))+
+          : (canSeePrices() ? (function(){
+              // v7.76: mehrere Aufzüge → Preis gilt JE AUFZUG, GESAMT = × Anzahl (analog Editor/PDF).
+              const _n = (function(){ try { return 1 + (JSON.parse(f.aufzuege_json||'[]')||[]).filter(a=>a&&(a.fabriknummer||a.adresse)).length; } catch(_){ return 1; } })();
+              const ekJe = +f.summe_netto_kone||0, vpJe = +f.summe_netto_vp||0, bruttoJe = +f.summe_brutto_vp||0;
+              const m = _n > 1;
+              return '<div style="background:#FFF7ED;border:2px solid #FB923C;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;flex-wrap:wrap;gap:14px;font-size:13px;color:#7C2D12">'+
+                '<div><div style="font-size:11px;color:var(--txt3)">Netto KONE (EK)'+(m?' je Aufzug':'')+'</div><div style="font-weight:600">'+fmt(ekJe)+' €</div></div>'+
+                '<div><div style="font-size:11px;color:var(--txt3)">Netto VP'+(m?' je Aufzug':'')+'</div><div style="font-weight:700;font-size:15px">'+fmt(vpJe)+' €</div></div>'+
+                '<div><div style="font-size:11px;color:var(--txt3)">Marge'+(m?' (gesamt)':'')+'</div><div style="font-weight:600">'+fmt((vpJe-ekJe)*_n)+' €</div></div>'+
+                (m ? '<div style="background:#EEF2FF;border:1px solid #C7D2FE;border-radius:6px;padding:2px 10px"><div style="font-size:11px;color:#3730A3;font-weight:700">🛗 Aufzüge</div><div style="font-weight:800;font-size:15px;color:#3730A3">× '+_n+'</div></div>' : '')+
+                (m ? '<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:6px;padding:2px 10px"><div style="font-size:11px;color:#065F46;font-weight:700">GESAMT netto</div><div style="font-weight:800;font-size:15px;color:#065F46">'+fmt(vpJe*_n)+' €</div></div>' : '')+
+                '<div style="margin-left:auto"><div style="font-size:11px;color:var(--txt3)">'+(m?'GESAMT brutto':'Brutto VP')+'</div><div style="font-weight:700;font-size:16px">'+fmt(bruttoJe*_n)+' €</div></div>'+
+              '</div>';
+            })() : ''))+
         // PDF-Buttons
         '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">'+
           (appPdf ? '<a href="'+escapeHtml(appPdf.url)+'" target="_blank" rel="noopener" class="btn prim" style="text-decoration:none">📄 PDF öffnen</a>' : '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)">📄 PDF erzeugen</button>')+
