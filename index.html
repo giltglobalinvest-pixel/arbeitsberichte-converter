@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.77';
+const APP_VERSION = 'v7.78';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -34866,7 +34866,74 @@ window._angApplyFdPicker = function(firmaSlug, recId) {
   _angSendCustomerEmail(recId);
 };
 
+// v7.78: Zusätzliche Anhänge, die im Sendedialog manuell gewählt werden (Anhang-Vorlagen-IDs). Reset bei jedem Öffnen.
+let _angSendExtraIds = [];
+function _angSendRenderAtts(recId) {
+  const out = document.getElementById('angsend-atts');
+  if (!out) return;
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  const f = (rec && rec.fields) || {};
+  const appPdf = (Array.isArray(f.app_pdf) && f.app_pdf[0]) || {};
+  const atts = [];
+  if (appPdf.url) atts.push({ label:'Angebot', url:appPdf.url, filename:appPdf.filename||'Angebot.pdf', size:appPdf.size||0 });
+  const daAnh = Array.isArray(f.da_anhang_pdf) && f.da_anhang_pdf[0];
+  if (daAnh && daAnh.url) atts.push({ label:'Datenaufnahme', url:daAnh.url, filename:daAnh.filename||'Datenaufnahme.pdf', size:daAnh.size||0 });
+  let baseIds = [];
+  try { baseIds = JSON.parse(f.anhang_vorlage_ids||'[]') || []; } catch(_){}
+  const allIds = [...new Set([...baseIds, ...(_angSendExtraIds||[])])];
+  for (const vid of allIds) {
+    const vr = (_angVorlagenCache?.items||[]).find(v => v.id === vid);
+    const vname = vr?.fields?.name || '(unbenannt)';
+    const pdfs = Array.isArray(vr?.fields?.pdfs) ? vr.fields.pdfs : [];
+    const removable = !baseIds.includes(vid); // nur manuell hinzugefügte sind entfernbar
+    for (const p of pdfs) {
+      if (!p?.url) continue;
+      atts.push({ label:'Anhang · '+vname, url:p.url, filename:p.filename||'Anhang.pdf', size:p.size||0, vid, removable });
+    }
+  }
+  out.innerHTML =
+    '<div style="font-size:12px;font-weight:700;color:#075985;margin-bottom:6px">📎 '+atts.length+' Anhang'+(atts.length===1?'':'/Anhänge')+' werden mitgesendet:</div>'+
+    atts.map(a =>
+      '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #BAE6FD;border-radius:6px;padding:8px 10px;margin-top:6px">'+
+        '<span style="font-size:18px">📄</span>'+
+        '<div style="flex:1;min-width:0;overflow:hidden">'+
+          '<div style="font-size:11px;font-weight:700;color:#075985">'+escapeHtml(a.label)+'</div>'+
+          '<div style="font-size:11px;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(a.filename)+' · '+Math.round(a.size/1024)+' KB</div>'+
+        '</div>'+
+        '<a href="'+escapeHtml(a.url)+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:700;color:#fff;background:#0369A1;padding:7px 12px;border-radius:5px;text-decoration:none;flex-shrink:0;white-space:nowrap">👁 Vorschau</a>'+
+        (a.removable ? '<button type="button" onclick="_angSendRemoveExtra(\''+a.vid+'\',\''+recId+'\')" title="Anhang entfernen" style="font-size:14px;font-weight:700;color:#DC2626;border:1px solid rgba(220,38,38,.35);background:#fff;border-radius:5px;padding:5px 9px;cursor:pointer;flex-shrink:0">×</button>' : '')+
+      '</div>'
+    ).join('');
+  // Auswähler: Anhang-Vorlagen, die noch nicht dabei sind
+  const pk = document.getElementById('angsend-anhang-picker');
+  if (pk) {
+    const all = (_angVorlagenCache?.items||[]);
+    const available = all.filter(v => !allIds.includes(v.id) && Array.isArray(v?.fields?.pdfs) && v.fields.pdfs.length);
+    if (available.length) {
+      pk.innerHTML =
+        '<select id="angsend-anhang-add" style="flex:1;min-width:180px;padding:8px 10px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff">'+
+          '<option value="">➕ Anhang-Vorlage hinzufügen…</option>'+
+          available.map(v => '<option value="'+escapeHtml(v.id)+'">'+escapeHtml(v.fields.name||'(unbenannt)')+' · '+v.fields.pdfs.length+' PDF</option>').join('')+
+        '</select>'+
+        '<button type="button" class="btn" onclick="_angSendAddAnhang(\''+recId+'\')" style="font-size:12px;padding:8px 14px;white-space:nowrap">Hinzufügen</button>';
+    } else {
+      pk.innerHTML = '<span style="font-size:11px;color:var(--txt3)">'+(all.length ? 'Alle Anhang-Vorlagen bereits dabei.' : 'Keine Anhang-Vorlagen angelegt — anlegen unter „📎 Anhang-Vorlagen".')+'</span>';
+    }
+  }
+}
+function _angSendAddAnhang(recId) {
+  const sel = document.getElementById('angsend-anhang-add');
+  if (!sel || !sel.value) return;
+  if (!_angSendExtraIds.includes(sel.value)) _angSendExtraIds.push(sel.value);
+  _angSendRenderAtts(recId);
+}
+function _angSendRemoveExtra(vid, recId) {
+  _angSendExtraIds = (_angSendExtraIds||[]).filter(x => x !== vid);
+  _angSendRenderAtts(recId);
+}
+
 async function _angOpenSendModal(recId) {
+  _angSendExtraIds = [];
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
   const f = rec.fields;
@@ -34878,9 +34945,11 @@ async function _angOpenSendModal(recId) {
   // v6.49: Anhang-Vorlagen-Cache warm laden, damit die Anhang-Liste im Modal sofort gefüllt ist.
   //   Wir holen die einzelnen ausgewählten Vorlagen frisch nach (URLs sonst evtl. expired).
   try {
+    // v7.78: Vorlagenliste IMMER laden — auch wenn das Angebot noch keine Anhänge hat,
+    //         damit der Anhang-Auswähler im Sendedialog Vorlagen zur Auswahl anbieten kann.
+    await _loadAngVorlagen(firmaSlug);
     const ids = JSON.parse(f.anhang_vorlage_ids||'[]');
     if (Array.isArray(ids) && ids.length) {
-      await _loadAngVorlagen(firmaSlug);
       // Pro ID einen frischen GET, damit die Attachment-URLs nicht expired sind
       await Promise.allSettled(ids.map(id => _fetchAngVorlageFresh(id).catch(()=>{})));
     }
@@ -34951,38 +35020,11 @@ async function _angOpenSendModal(recId) {
         '<div>• Bearbeiter: <strong>'+(localStorage.getItem('fd_agent_id_'+firmaSlug)?'gespeicherte Auswahl':ANGEBOT_FD_RESPONDER_CANDIDATES[0])+'</strong></div>'+
         '<div>• Signatur: <strong>aus deinem Freshdesk-Profil</strong> (über /agents/me)</div>'+
       '</div>'+
-      // v6.43/v6.49: PDF-Anhänge mit Vorschau-Buttons (Angebot + Datenaufnahme + Anhang-Vorlagen)
-      (() => {
-        const atts = [{ label:'Angebot', url:appPdf.url, filename:appPdf.filename||'Angebot.pdf', size:appPdf.size||0 }];
-        const daAnh = f.da_anhang_pdf?.[0];
-        if (daAnh?.url) atts.push({ label:'Datenaufnahme', url:daAnh.url, filename:daAnh.filename||'Datenaufnahme.pdf', size:daAnh.size||0 });
-        // v6.49: Anhang-Vorlagen-PDFs hinzufügen (frisch aus dem Cache aufgelöst, fresh URLs via _angVorlagenFreshById)
-        try {
-          const ids = JSON.parse(f.anhang_vorlage_ids||'[]');
-          for (const vid of (ids||[])) {
-            const vr = (_angVorlagenCache?.items||[]).find(v => v.id === vid);
-            const vname = vr?.fields?.name || '';
-            const pdfs = Array.isArray(vr?.fields?.pdfs) ? vr.fields.pdfs : [];
-            for (const p of pdfs) {
-              if (!p?.url) continue;
-              atts.push({ label: 'Anhang · '+vname, url:p.url, filename:p.filename||'Anhang.pdf', size:p.size||0 });
-            }
-          }
-        } catch(_){}
-        return '<div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:10px 14px">'+
-          '<div style="font-size:12px;font-weight:700;color:#075985;margin-bottom:6px">📎 '+atts.length+' Anhang'+(atts.length===1?'':'/Anhänge')+' werden mitgesendet:</div>'+
-          atts.map(a =>
-            '<div style="display:flex;align-items:center;gap:10px;background:#fff;border:1px solid #BAE6FD;border-radius:6px;padding:8px 10px;margin-top:6px">'+
-              '<span style="font-size:18px">📄</span>'+
-              '<div style="flex:1;min-width:0;overflow:hidden">'+
-                '<div style="font-size:11px;font-weight:700;color:#075985">'+escapeHtml(a.label)+'</div>'+
-                '<div style="font-size:11px;color:var(--txt2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(a.filename)+' · '+Math.round(a.size/1024)+' KB</div>'+
-              '</div>'+
-              '<a href="'+escapeHtml(a.url)+'" target="_blank" rel="noopener" style="font-size:11px;font-weight:700;color:#fff;background:#0369A1;padding:7px 12px;border-radius:5px;text-decoration:none;flex-shrink:0;white-space:nowrap">👁 Vorschau</a>'+
-            '</div>'
-          ).join('')+
-        '</div>';
-      })()+
+      // v7.78: PDF-Anhänge — Container + Auswähler (Anhang-Vorlagen im Sendedialog hinzufügbar)
+      '<div style="background:#F0F9FF;border:1px solid #BAE6FD;border-radius:8px;padding:10px 14px">'+
+        '<div id="angsend-atts"></div>'+
+        '<div id="angsend-anhang-picker" style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap"></div>'+
+      '</div>'+
       '<div><label style="font-size:11px;font-weight:700;color:var(--navy);display:block;margin-bottom:4px">Empfänger-E-Mail *</label>'+
         '<input id="angsend-email" type="email" data-default-email="'+escapeHtml(defaultEmail)+'" value="'+escapeHtml(defaultEmail)+'" placeholder="kunde@beispiel.de" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px"></div>'+
       // v5.44: CC-Empfänger (frei, optional, mehrere mit Komma getrennt)
@@ -35013,6 +35055,7 @@ async function _angOpenSendModal(recId) {
     '</div>'+
   '</div>';
   document.body.appendChild(m);
+  _angSendRenderAtts(recId); // v7.78: Anhang-Liste + Auswähler befüllen
   setTimeout(() => document.getElementById(defaultEmail ? 'angsend-subject' : 'angsend-email')?.focus(), 100);
   // v5.54: Initial-Sync der Test-Modus-UI (Ticket-Sektion sperren falls Test-Modus aus localStorage aktiviert ist)
   setTimeout(() => _angsendToggleTestMode(), 50);
@@ -35236,7 +35279,10 @@ async function _angSendCustomerEmail(recId, btn) {
     // v6.49: Anhang-Vorlagen-PDFs laden — pro Vorlage alle PDFs (Anzahl×Vorlagen begrenzen, default <=5 Vorlagen ist OK)
     const extraBlobs = []; // [{ blob, filename }]
     try {
-      const vorlagenIds = JSON.parse(f.anhang_vorlage_ids||'[]');
+      let baseVorlagenIds = [];
+      try { baseVorlagenIds = JSON.parse(f.anhang_vorlage_ids||'[]') || []; } catch(_){}
+      // v7.78: im Sendedialog manuell hinzugefügte Anhänge mit den am Angebot gespeicherten mergen
+      const vorlagenIds = [...new Set([...baseVorlagenIds, ...( _angSendExtraIds||[])])];
       if (Array.isArray(vorlagenIds) && vorlagenIds.length) {
         setProgress(20, '📥 Lade '+vorlagenIds.length+' Anhang-Vorlage'+(vorlagenIds.length===1?'':'n')+' …');
         for (const vid of vorlagenIds) {
