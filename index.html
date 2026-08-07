@@ -2750,7 +2750,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.60';
+const APP_VERSION = 'v7.61';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7218,6 +7218,7 @@ function _normAuftragStatus(s) {
   if (!t) return 'offen';
   if (/abgerechnet/.test(t)) return 'abgerechnet';
   if (/abgeschlossen/.test(t)) return 'abgeschlossen';
+  if (/storn|cancel/.test(t)) return 'storniert';   // v7.61: Storniert/Storno/Cancelled → wird in der Liste ausgeblendet
   // Merged: 'In Bearbeitung' + 'Auftrag bestätigt' + legacy 'in_bearbeitung' → alles 'offen'
   if (/bearbeit|best.tigt|^offen$|^in_bearbeitung$/.test(t)) return 'offen';
   return t;
@@ -7235,15 +7236,16 @@ function renderAuftraegeList() {
     _aufLoadInvoicesForList(_firma);
   }
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
-  // Cache nach hidden_invoiced ODER hidden_manual vorfiltern (außer Toggle ist aktiv)
-  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
+  // Cache nach hidden_invoiced ODER hidden_manual ODER Storniert vorfiltern (außer Toggle ist aktiv)
+  // v7.61: Stornierte Aufträge werden standardmäßig ausgeblendet (Maxise = Quelle der Wahrheit).
+  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual && _normAuftragStatus(r.fields.status) !== 'storniert');
   // Dropdown-Optionen für Angebots-Typ aus dem (gesamten) Cache zusammensuchen
   _refreshAngebotTypFilter();
   _refreshTechnikerFilter();
   const typFilter = (document.getElementById('auf-typ-filter')?.value || '').trim();
   const techFilter = (document.getElementById('auf-tech-filter')?.value || '').trim();
   // Hidden-Counter für Toggle-Label-Hinweis (inkl. manuell ausgeblendete)
-  const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced || r.fields.hidden_manual).length;
+  const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced || r.fields.hidden_manual || _normAuftragStatus(r.fields.status) === 'storniert').length;
   const hiddenChk = document.getElementById('auf-show-hidden');
   const hiddenLblSpan = document.getElementById('auf-show-hidden-lbl');
   if (hiddenChk && hiddenChk.parentElement) {
@@ -43295,6 +43297,30 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
     if (r.fields.ext_id && (r.fields.firma||'') === firmaSlug) byExt.set(String(r.fields.ext_id), r);
   }
   log('Bestehende mit ext_id: '+byExt.size);
+
+  // ── v7.61: Stornierungen/Inaktiv-Wechsel NACHZIEHEN ──
+  //   Aufträge, die im ERP nicht (mehr) aktiv sind (z.B. 'Storniert'), laufen nicht über den
+  //   normalen Upsert. Ein lokal noch als aktiv geführter Auftrag würde sonst für immer fälschlich
+  //   im "Offen"-Tab hängen. Darum: für lokal bekannte, jetzt-inaktive Aufträge den echten
+  //   ERP-Status übernehmen. Die Liste blendet 'storniert' danach aus.
+  let cancelledUpdated = 0;
+  for (const a of all) {
+    _checkSyncCancelled();
+    if (ERP_ACTIVE_STATUSES.includes(a.status)) continue;      // aktive → normaler Upsert unten
+    const existRec = byExt.get(String(a.id));
+    if (!existRec) continue;                                    // nie synchronisiert → ignorieren
+    const erpStatus = String(a.status || '');
+    if (!erpStatus || String(existRec.fields.status || '') === erpStatus) continue;  // schon aktuell
+    const wasActiveLocal = ERP_ACTIVE_STATUSES.includes(String(existRec.fields.status || ''));
+    const isStorno = /storn|cancel/i.test(erpStatus);
+    if (!isStorno && !wasActiveLocal) continue;                 // nur Storno oder Aktiv→Inaktiv nachziehen
+    try {
+      await atUpdate('Auftraege', existRec.id, { status: erpStatus, ext_last_modified: a.lastmodifiedDate || existRec.fields.ext_last_modified || '' });
+      existRec.fields.status = erpStatus;
+      cancelledUpdated++;
+    } catch(e) { log('⚠ Status-Nachzug '+a.id+' fehlgeschlagen: '+((e && e.message) || e)); }
+  }
+  if (cancelledUpdated) log('⚫ '+cancelledUpdated+' Auftrag/Aufträge auf inaktiven ERP-Status (u.a. Storniert) nachgezogen → werden ausgeblendet');
 
   // ── INKREMENTELL: Aufträge filtern, deren lastmodifiedDate sich nicht geändert hat ──
   const toProcess = [];
