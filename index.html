@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.70';
+const APP_VERSION = 'v7.71';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15741,7 +15741,7 @@ function _rvOpenForm(recId) {
 }
 
 /* v7.65: ERP-Kunden-Picker fürs RV-Formular — lädt/sucht Kunden (api/kunden), Autofill bei Auswahl. */
-let _rvKunden = { firma:null, items:null };
+let _rvKunden = { firma:null, items:null, inflight:null };
 let _rvKundeMatches = [];
 let _rvKontakte = [];
 let _rvSelectedKunde = null;
@@ -15797,16 +15797,22 @@ function _rvNeuerKontakt() {
 }
 async function _rvEnsureKunden(firma) {
   if (_rvKunden.items && _rvKunden.firma === firma) return _rvKunden.items;
+  // v7.71: laufenden Abruf wiederverwenden — onfocus+oninput lösten sonst mehrere parallele /api/kunden aus
+  if (_rvKunden.inflight && _rvKunden.firma === firma) return _rvKunden.inflight;
   // Vorhandenen globalen Kunden-Cache wiederverwenden, falls passend geladen
   try {
     if (typeof _kundenCache !== 'undefined' && _kundenCache && Array.isArray(_kundenCache.items) && _kundenCache.items.length && (_kundenCache.firma == null || _kundenCache.firma === firma)) {
-      _rvKunden = { firma, items: _kundenCache.items }; return _rvKunden.items;
+      _rvKunden = { firma, items: _kundenCache.items, inflight:null }; return _rvKunden.items;
     }
   } catch(_){}
-  const res = await _erpTryPaths(firma, ['api/kunden','kunden']);
-  const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
-  _rvKunden = { firma, items: list };
-  return list;
+  const p = (async () => {
+    const res = await _erpTryPaths(firma, ['api/kunden','kunden']);
+    const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
+    _rvKunden = { firma, items: list, inflight:null };
+    return list;
+  })();
+  _rvKunden = { firma, items:null, inflight: p };
+  return p;
 }
 async function _rvKundeSearch(query) {
   const dd = document.getElementById('rv-kunde-dd'); if (!dd) return;
