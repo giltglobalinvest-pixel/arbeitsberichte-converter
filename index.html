@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.62';
+const APP_VERSION = 'v7.63';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7238,6 +7238,35 @@ function _normAuftragStatus(s) {
   return t;
 }
 
+/* v7.63: AB-Datum (Datum der Auftragsbestätigung) — editierbar im Auftragsdetail. */
+function _deDateShort(s) {
+  const t = String(s||'').slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return t || '–';
+  const d = new Date(t+'T00:00:00');
+  return isNaN(d.getTime()) ? t : d.toLocaleDateString('de-DE');
+}
+function _renderAbDatumField(rec) {
+  const f = (rec && rec.fields) || {};
+  const v = String(f.ab_datum || '').slice(0,10);
+  if (!hasPermission('auftraege_edit')) {
+    return v ? escapeHtml(_deDateShort(v)) : '<span style="color:var(--txt3)">–</span>';
+  }
+  return '<input type="date" value="'+escapeHtml(v)+'" onchange="_aufSaveAbDatum(\''+rec.id+'\', this.value)" '+
+    'style="padding:3px 6px;border:1px solid var(--bdr);border-radius:5px;font-size:12px;font-family:inherit;background:#fff;color:var(--txt)" '+
+    'title="Datum der Auftragsbestätigung (AB)">';
+}
+async function _aufSaveAbDatum(recId, value) {
+  const v = String(value||'').slice(0,10);
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  try {
+    try { await ensureField('Auftraege', 'ab_datum', 'singleLineText'); } catch(_){}
+    await atUpdate('Auftraege', recId, { ab_datum: v });
+    const rec = (_auftragCache||[]).find(r => r.id === recId);
+    if (rec) { rec.fields = rec.fields || {}; rec.fields.ab_datum = v; }
+    toast(v ? '✅ AB-Datum: '+_deDateShort(v) : '✅ AB-Datum entfernt', 'ok');
+  } catch(e) { console.error('[AB-Datum]', e); toast('❌ '+((e&&e.message)||e), 'err'); }
+}
+
 function renderAuftraegeList() {
   const list = document.getElementById('auf-list');
   // v5.20: Berichte einmal pro Firma lazy nachladen (für Rechnungs-/FD-Zeile)
@@ -8885,6 +8914,7 @@ function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">Fabriknummer</span><span class="val">${(f.fabriknummer||'–').replace(/</g,'&lt;')}</span></div>
       ${f.angebot_typ ? `<div class="auf-row"><span class="lbl">Angebots-Typ</span><span class="val">${_fmtAngebotTyp(f.angebot_typ)}</span></div>` : ''}
       ${f.bestellform ? `<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">${String(f.bestellform).replace(/</g,'&lt;')}</span></div>` : ''}
+      <div class="auf-row"><span class="lbl">AB-Datum</span><span class="val">${_renderAbDatumField(rec)}</span></div>
       ${(canSeePrices() && f.auftragswert_netto != null) ? `<div class="auf-row"><span class="lbl">💰 Auftragswert (netto)</span><span class="val" style="font-weight:700;color:#065f46">${_fmtEUR(f.auftragswert_netto)}</span></div>` : ''}
       <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${_renderTmplPicker(rec)}</span></div>
     </div>
