@@ -2761,7 +2761,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.71';
+const APP_VERSION = 'v7.72';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32177,6 +32177,9 @@ function _angRenderSummaryBoxHtml(E) {
     const brutto = pauschal * (1 + ust/100);
     const margeAbs = pauschal - sumKone;
     const margePz = sumKone > 0 ? (margeAbs / sumKone * 100) : 0;
+    // v7.72: Anzahl Aufzüge = Hauptanlage + Zusatz-Aufzüge (aufzuege_json). Pauschalpreis gilt für alle zusammen.
+    const anzAufz = 1 + ((E.aufzuege||[]).filter(a => a && (a.fabriknummer || a.adresse)).length);
+    const proAufz = anzAufz > 0 ? pauschal/anzAufz : pauschal;
     return '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;font-size:13px;color:#7C2D12">'+
       '<div><span style="color:var(--txt3);font-size:11px">Summe EK (intern)</span><div style="font-weight:600">'+fmt(sumKone)+' € netto</div></div>'+
       '<div><span style="color:var(--txt3);font-size:11px">Pos.-Summe (intern)</span><div style="font-weight:600;color:#9A3412">'+fmt(sumVp)+' € netto</div></div>'+
@@ -32184,6 +32187,7 @@ function _angRenderSummaryBoxHtml(E) {
       '<div><span style="color:var(--txt3);font-size:11px">Marge</span><div style="font-weight:600">'+fmt(margeAbs)+' € ('+margePz.toFixed(1)+' %)</div></div>'+
       '<div><span style="color:var(--txt3);font-size:11px">USt. ('+ust+'%)</span><div style="font-weight:600">'+fmt(pauschal*ust/100)+' €</div></div>'+
       '<div style="background:#FFFBEB;padding:6px 10px;border-radius:6px;border:1px solid #FCD34D"><span style="color:#92400E;font-size:11px;font-weight:700">PAUSCHAL BRUTTO</span><div style="font-weight:800;font-size:16px;color:#7C2D12">'+fmt(brutto)+' €</div></div>'+
+      '<div style="background:#EEF2FF;padding:6px 10px;border-radius:6px;border:1px solid #C7D2FE"><span style="color:#3730A3;font-size:11px;font-weight:700">🛗 Anzahl Aufzüge</span><div style="font-weight:800;font-size:16px;color:#3730A3">'+anzAufz+(anzAufz>1?' <span style="font-size:11px;font-weight:600">('+fmt(proAufz)+' € / Aufzug)</span>':'')+'</div></div>'+
       hiddenHint+
     '</div>';
   }
@@ -33143,8 +33147,10 @@ async function _buildAngebotPdf(rec) {
     const ustBetrag = pauschal * ust/100;
     const brutto = pauschal + ustBetrag;
     const sumX = ml + cw - 80;
+    // v7.72: Anzahl Aufzüge (Hauptanlage + Zusatz-Aufzüge) — Pauschalpreis gilt für alle zusammen.
+    const _pAnz = (() => { try { return 1 + (JSON.parse(rec.aufzuege_json||'[]')||[]).filter(a => a && (a.fabriknummer||a.adresse)).length; } catch(_){ return 1; } })();
     doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
-    doc.text('Alle oben genannten Leistungen sind im folgenden Pauschalpreis enthalten:', ml, y+4);
+    doc.text(_sanPdf('Alle oben genannten Leistungen sind im folgenden Pauschalpreis enthalten'+(_pAnz>1?' (für '+_pAnz+' Aufzugsanlagen)':'')+':'), ml, y+4);
     y += 8;
     // Box um den Pauschalpreis-Block
     doc.setDrawColor(...ACCENT); doc.setLineWidth(0.6);
@@ -33155,6 +33161,12 @@ async function _buildAngebotPdf(rec) {
     doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
     doc.text(fmtEUR(pauschal)+' EUR', mr-2, y+4, { align:'right' });
     y += 5.5;
+    if (_pAnz > 1) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+      doc.text(_sanPdf('davon je Aufzugsanlage (netto)'), sumX, y+3.5);
+      doc.text(fmtEUR(pauschal/_pAnz)+' EUR', mr-2, y+3.5, { align:'right' });
+      y += 5;
+    }
     doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
     doc.text('Zuzüglich gesetzl. USt. '+ust+' %', sumX, y+4);
     doc.text(fmtEUR(ustBetrag)+' EUR', mr-2, y+4, { align:'right' });
