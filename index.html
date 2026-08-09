@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.82';
+const APP_VERSION = 'v7.83';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2778,7 +2778,7 @@ const APP_VERSION = 'v7.82';
    ════════════════════════════════════════════════════════════ */
 const DIAG = (function(){
   const KEY = 'diag_log_v1';
-  const MAX = 500;
+  const MAX = 800;   // v7.83: mehr Historie (Console-Mitschnitt + Long-Tasks) für die Handy-Diagnose
   let buf = [];
   try { const s = localStorage.getItem(KEY); if (s) { const a = JSON.parse(s); if (Array.isArray(a)) buf = a; } } catch(_){}
   let flushT = null, problem = false;
@@ -2789,8 +2789,13 @@ const DIAG = (function(){
       .replace(/([?&](key|token|secret|api_key|apikey|sig|signature|password)=)[^&#]*/gi, '$1***')
       .slice(0, 180);
   }
-  function markProblem(lvl){
-    if (lvl === 'error' || lvl === 'warn') { problem = true; try { _diagUpdateBtn(); } catch(_){} }
+  function markProblem(lvl, tag){
+    // v7.83: Console-Mitschnitt-Einträge (tag "console:*") lösen NICHT den 🩺-Alarm aus —
+    //   die App loggt viele harmlose Warnungen. Nur echte Wächter (Freeze/Long-Task/hängende
+    //   Requests/js-error) sollen das Symbol rot färben. Im Protokoll stehen sie trotzdem.
+    if ((lvl === 'error' || lvl === 'warn') && !(tag && String(tag).indexOf('console:') === 0)) {
+      problem = true; try { _diagUpdateBtn(); } catch(_){}
+    }
   }
   function push(lvl, tag, msg, data){
     const e = { t: Date.now(), lvl, tag: String(tag||''), msg: String(msg==null?'':msg).slice(0,300) };
@@ -2801,7 +2806,7 @@ const DIAG = (function(){
     }
     buf.push(e);
     if (buf.length > MAX) buf.splice(0, buf.length - MAX);
-    scheduleFlush(); markProblem(lvl);
+    scheduleFlush(); markProblem(lvl, e.tag);
     return e;
   }
   function fmt(e){
@@ -2871,6 +2876,59 @@ try {
     };
     wrapped.__diagWrapped = true;
     window.fetch = wrapped;
+  } catch(_){}
+})();
+
+/* v7.83: console.*-Mitschnitt — Fehler/Warnungen/Logs wandern ins DIAG-Protokoll.
+   Grund: Am Handy lässt sich die Browser-Konsole nicht öffnen — erst recht nicht, wenn
+   die App hängt. So steht alles bereits im persistenten 🩺-Log (überlebt Reload). */
+(function(){
+  try {
+    if (!window.console || console.__diagWrapped) return;
+    const fmtArg = function(a){
+      if (a == null) return String(a);
+      if (typeof a === 'string') return a;
+      if (a instanceof Error) return (a.message||'Error')+(a.stack ? ' | '+String(a.stack).slice(0,300) : '');
+      try { return JSON.stringify(a); } catch(_){ try { return String(a); } catch(__){ return '[unserialisierbar]'; } }
+    };
+    const emitOf = function(lvl){ return lvl==='error' ? DIAG.err : (lvl==='warn' ? DIAG.warn : DIAG.log); };
+    const wrap = function(name, lvl){
+      const orig = console[name];
+      if (typeof orig !== 'function') return;
+      const emit = emitOf(lvl);
+      console[name] = function(){
+        try { orig.apply(console, arguments); } catch(_){}
+        try {
+          const parts = [];
+          for (let i = 0; i < arguments.length && i < 8; i++) parts.push(fmtArg(arguments[i]));
+          let msg = parts.join(' ');
+          if (!msg) return;
+          if (msg.length > 600) msg = msg.slice(0,600)+'…';
+          const m = /^\s*\[([^\]]{1,40})\]/.exec(msg);   // führendes [Label] als Tag
+          emit('console:'+name+(m ? ' · '+m[1] : ''), msg);
+        } catch(_){}
+      };
+    };
+    wrap('error','error'); wrap('warn','warn'); wrap('log','info'); wrap('info','info');
+    console.__diagWrapped = true;
+    DIAG.log('diag', 'Console-Mitschnitt aktiv (error/warn/log/info → 🩺-Protokoll)');
+  } catch(_){}
+})();
+
+/* v7.83: Long-Task-Wächter — erkennt echte Main-Thread-Blockaden (>400ms), also „Hänger",
+   die weder als fetch noch als console-Fehler sichtbar wären (z.B. schwere Bild-/PDF-Verarbeitung
+   am Handy). Progressive Enhancement: nur wo PerformanceObserver/longtask unterstützt wird (Chrome/Android). */
+(function(){
+  try {
+    if (typeof PerformanceObserver !== 'function') return;
+    const obs = new PerformanceObserver(function(list){
+      try {
+        for (const entry of list.getEntries()) {
+          if (entry.duration >= 400) DIAG.warn('long-task', 'Main-Thread '+Math.round(entry.duration)+'ms blockiert (UI eingefroren)', (entry.attribution && entry.attribution[0] && entry.attribution[0].name) || entry.name || undefined);
+        }
+      } catch(_){}
+    });
+    obs.observe({ entryTypes: ['longtask'] });
   } catch(_){}
 })();
 
