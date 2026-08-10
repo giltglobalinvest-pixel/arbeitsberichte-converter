@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.86';
+const APP_VERSION = 'v7.87';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -33888,8 +33888,8 @@ function _abOpen(recId) {
     _kontaktEmail:       f.kontakt_email || '',
   };
   _abOpenFromData(v, firmaSlug);
-  // v7.86: Rechnungsempfänger aus Maxise nachladen (Anlage → Kunde → defaultrechnungsempfaenger), Fallback Kunde/KI
-  try { _abFillRechnungsempfaenger(firmaSlug, f.anlage_id || '', f.kunde_name || '', f.kunde_adresse || ''); } catch(_){}
+  // v7.86/87: Rechnungsempfänger aus Maxise nachladen (Anlage → Kunde → defaultrechnungsempfaenger; WEG-Adressierung bei Hausverwaltung), Fallback Kunde/KI
+  try { _abFillRechnungsempfaenger(firmaSlug, f.anlage_id || '', f.kunde_name || '', f.kunde_adresse || '', f.anlage_adresse || ''); } catch(_){}
 }
 
 /* v7.52: Dialog-Renderer — nimmt ein fertiges Werte-Objekt (aus App-Angebot ODER Maxise). */
@@ -34038,13 +34038,14 @@ async function _abGenerateAndSave(btn) {
 /* v7.86: Rechnungsempfänger für die AB aus Maxise laden.
    Maxise-Aufbau: Anlage → kunde → defaultrechnungsempfaenger (firmenname + adresseId).
    Adresse via bewährter Auflösung _nwvResolveKundeAdresse. Fallback: Kunde aus Angebot, dann KI (konservativ). */
-async function _abFillRechnungsempfaenger(firmaSlug, anlageId, fallbackName, fallbackAdr) {
+async function _abFillRechnungsempfaenger(firmaSlug, anlageId, fallbackName, fallbackAdr, standort) {
   const sel = () => document.querySelector('#ab-modal [data-abf="rechnungsempfaenger"]');
   const inp = sel();
   if (!inp || inp.value.trim()) return;   // schon befüllt / vom User bearbeitet
   inp.placeholder = 'lade Rechnungsempfänger aus Maxise…';
+  const cleanAdr = (s) => String(s||'').replace(/,?\s*Deutschland\s*$/i,'').replace(/\s*\n\s*/g,', ').trim();
   let result = '';
-  // 1) Maxise: Anlage → Kunde → defaultrechnungsempfaenger
+  // 1) Maxise: Anlage → Kunde → defaultrechnungsempfaenger (Hausverwaltung → WEG-Adressierung)
   try {
     if (anlageId && APP_KEYS.valtownProxyUrl && !isFirmaAll()) {
       const anlage = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(anlageId));
@@ -34057,7 +34058,17 @@ async function _abFillRechnungsempfaenger(firmaSlug, anlageId, fallbackName, fal
       if (!name && kunde) name = kunde.firmenname || '';
       let adr = '';
       try { if (kunde) adr = await _nwvResolveKundeAdresse(firmaSlug, kunde, []); } catch(e) { console.warn('[AB-Rechnungsempf] Adresse:', e.message); }
-      result = [name, adr].filter(s => s && String(s).trim()).join('\n').trim();
+      const empfBlock = [name, adr].filter(s => s && String(s).trim()).join('\n').trim();
+      // v7.87: Hausverwaltung → Rechnung an die WEG am Objekt, c/o Hausverwaltung:
+      //   WEG <Standort/Str. Nr., PLZ Ort> \n Firma \n Anschrift \n PLZ Ort
+      const istHV = /hausverwalt/i.test(String((anlage && anlage.betreiberTyp) || ''));
+      const wegStandort = cleanAdr((anlage && anlage.anzeigeAdresse) || standort);
+      if (istHV && wegStandort) {
+        result = ('WEG '+wegStandort + (empfBlock ? '\n'+empfBlock : '')).trim();
+      } else {
+        result = empfBlock;
+      }
+      try { console.log('[AB-Rechnungsempf] betreiberTyp='+((anlage&&anlage.betreiberTyp)||'?')+' · HV='+istHV+' · name='+name); } catch(_){}
     }
   } catch(e) { console.warn('[AB-Rechnungsempf] Maxise-Load:', e.message); }
   // 2) Fallback: Kunde aus dem Angebot
