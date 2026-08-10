@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.92';
+const APP_VERSION = 'v7.93';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -33931,6 +33931,12 @@ async function _ensureAbTable() {
     { name:'summe_brutto',       type:'number', options:{ precision:2 } },
     { name:'ust_prozent',        type:'number', options:{ precision:0 } },
     { name:'abrechnung_modus',   type:'singleLineText' },
+    // v7.93: verknüpfter Maxise-Auftrag (bei AB-Erstellung angelegt) — Nummer wird als AB-Nummer verwendet
+    { name:'erp_auftrag_num',        type:'singleLineText' },
+    { name:'erp_auftrag_id',         type:'singleLineText' },
+    { name:'erp_auftrag_bestellform',type:'singleLineText' },
+    { name:'local_auftrag_recid',    type:'singleLineText' },
+    { name:'nummer_quelle',          type:'singleLineText' },  // 'maxise' | 'servicebox'
     { name:'status',             type:'singleLineText' },  // entwurf | versendet
     { name:'pdf',                type:'multipleAttachments' },
     { name:'fd_ticket_id',       type:'singleLineText' },
@@ -33953,6 +33959,57 @@ async function _abNextNummer(firmaSlug) {
     if (n > max) max = n;
   }
   return max + 1;
+}
+
+/* v7.93: Bei AB-Erstellung den echten Maxise-Auftrag anlegen (mitangebot wenn Angebot im ERP, sonst ohneangebot).
+   Rückgabe: das ERP-Auftrags-Objekt (mit .id, Auftragsnummer) oder null (nicht möglich). Wirft bei echtem Fehler. */
+async function _abCreateErpAuftrag(fAng, leistungText) {
+  const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
+  if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) return null;
+  const heuteISO = new Date().toISOString();
+  const heuteDate = heuteISO.slice(0,10);
+  const auftraggeber = String((fAng && fAng.kunde_name)||'').trim() || ('Kunde '+((fAng && fAng.kunde_nummer)||''));
+  const common = { kundeMail:false, titelemail:'-', inhaltemail:'-', status:'Auftrag bestätigt', auftraggeber, datumAuftragserteilung:heuteISO, ausfuehrungstermin:heuteDate };
+  if (fAng && fAng.erp_angebot_id) {
+    // Saubere Kette: Auftrag AUS dem Angebot (Anlage/Empfänger/Leistung kommen aus dem Angebot im ERP)
+    const payload = { angebotid:+fAng.erp_angebot_id, notizen:'', ...common };
+    return await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
+  }
+  if (fAng && fAng.anlage_id) {
+    const empfaengerId = +((fAng && fAng.kontakt_id)||0);
+    if (!empfaengerId) throw new Error('Kein Ansprechpartner (kontakt_id) am Angebot — für ohneangebot nötig.');
+    const payload = { anlageid:+fAng.anlage_id, empfaengerid:empfaengerId, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
+    return await _erpCreateVorgang(firmaSlug, ['api/auftraege/ohneangebot','api/auftrag/ohneangebot','auftraege/ohneangebot'], payload, () => _erpFindRecentAuftrag(firmaSlug, +fAng.anlage_id));
+  }
+  return null; // kein Angebot im ERP und keine Anlage → kein Auftrag möglich
+}
+/* v7.93: Lokalen Auftrags-Datensatz schreiben, damit der Auftrag SOFORT in der Auftragsübersicht erscheint.
+   ext_id verhindert Duplikate beim späteren Maxise-Import. Rückgabe: lokale Record-ID. */
+async function _abWriteLocalAuftrag(fAng, created, leistungText) {
+  try {
+    const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
+    const num = _erpAuftragNumber(created) || String((created && created.vorgangsnummer)||'');
+    const fields = {
+      firma: firmaSlug,
+      auftrag_num: num,
+      ext_id: (created && created.id) || null,
+      ext_source: 'aufzugshandwerk_v1',
+      ext_vorgangsnummer: (created && created.vorgangsnummer) || null,
+      ext_last_modified: (created && created.lastmodifiedDate) || '',
+      bestellform: (created && created.bestellform) || (fAng && fAng.erp_angebot_id ? 'MITANGEBOT' : 'OHNEANGEBOT'),
+      status: _normAuftragStatus((created && created.status) || 'Auftrag bestätigt'),
+      created: (created && created.createdDate) || new Date().toISOString(),
+      created_by: (APP_KEYS.user && APP_KEYS.user.api_key) || '',
+      standort: (fAng && fAng.anlage_adresse) || '',
+      fabriknummer: (fAng && (fAng.seriennummer || fAng.equipmentnummer)) || '',
+      kunde_firmenname: (fAng && fAng.kunde_name) || '',
+      kontakt: (fAng && fAng.kontakt_name) || '',
+      leistungsbeschreibung: leistungText || (fAng && fAng.leistungsumfang) || '',
+      leistungsumfang: leistungText || (fAng && fAng.leistungsumfang) || '',
+    };
+    const rec = await atWrite('Auftraege', fields);
+    return rec && rec.id;
+  } catch(e) { console.warn('[AB-LocalAuftrag]', e && e.message); return null; }
 }
 
 function _abOpen(recId) {
@@ -34116,13 +34173,36 @@ async function _abGenerateAndSave(btn, send) {
   const orig = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ erzeuge…'; }
   try {
-    const nummer = await _abNextNummer(firmaSlug);
-    d.abNummer = String(nummer);
+    const src = m._src || {};
+    // v7.93: Direkt bei AB-Erstellung den Maxise-Auftrag anlegen + verknüpfen.
+    //   Erfolgreich → Maxise-Auftragsnummer wird zur AB-Nummer; sonst Servicebox-Nummernkreis.
+    const fAng = (function(){ try { const r=(_angeboteCache.items||[]).find(x=>x.id===(m._recId||'')); return (r&&r.fields)||null; } catch(_){ return null; } })();
+    const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
+    let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '';
+    if (fAng) {
+      if (btn) btn.textContent = '⏳ Auftrag in Maxise…';
+      try {
+        const erpAuftrag = await _abCreateErpAuftrag(fAng, leistungText);
+        if (erpAuftrag) {
+          erpAuftragNum  = _erpAuftragNumber(erpAuftrag) || String(erpAuftrag.vorgangsnummer||'');
+          erpAuftragId   = String(erpAuftrag.id||'');
+          erpBestellform = String(erpAuftrag.bestellform || (fAng.erp_angebot_id?'MITANGEBOT':'OHNEANGEBOT'));
+          localAuftragId = await _abWriteLocalAuftrag(fAng, erpAuftrag, leistungText) || '';  // → sofort in der Auftragsübersicht
+        }
+      } catch(e) {
+        console.warn('[AB-ERP-Auftrag]', e && e.message);
+        toast('⚠ Auftrag konnte nicht in Maxise angelegt werden: '+((e&&e.message)||e)+' — AB nutzt eigene Nummer.','warn');
+      }
+    }
+    const serviceboxNum = await _abNextNummer(firmaSlug);   // interner Nummernkreis (Fallback + immer belegt)
+    const nummer = erpAuftragNum || String(serviceboxNum);  // ANGEZEIGTE AB-Nummer
+    if (btn) btn.textContent = '⏳ erzeuge…';
+    d.abNummer = nummer;
+    if (erpAuftragNum) d.auftragNum = '';                    // AB-Nr IST bereits die Auftragsnummer → keine Doppelzeile im PDF
     const blob = _abBuildPdfBlob(d, firmaSlug);
     const P = d.preis || {};
-    const src = m._src || {};
     const fields = {
-      ab_nummer:          nummer,
+      ab_nummer:          serviceboxNum,   // interner Nummernkreis (integer)
       firma:              firmaSlug,
       datum:              new Date().toISOString().slice(0,10),
       angebot_num:        d.angebotNum || '',
@@ -34143,6 +34223,11 @@ async function _abGenerateAndSave(btn, send) {
       summe_brutto:       +P.bruttoGesamt || 0,
       ust_prozent:        +P.ust || 19,
       abrechnung_modus:   P.modus || '',
+      erp_auftrag_num:        erpAuftragNum,
+      erp_auftrag_id:         erpAuftragId,
+      erp_auftrag_bestellform:erpBestellform,
+      local_auftrag_recid:    localAuftragId,
+      nummer_quelle:          erpAuftragNum ? 'maxise' : 'servicebox',
       status:             'entwurf',
       created:            new Date().toISOString(),
       created_by:         (APP_KEYS.user && APP_KEYS.user.name) || '',
@@ -34151,7 +34236,7 @@ async function _abGenerateAndSave(btn, send) {
     const rec = await atWrite('Auftragsbestaetigungen', fields);
     try { await atBlobUpload(rec.id, 'pdf', blob, 'Auftragsbestaetigung-'+nummer+'.pdf', 'application/pdf'); }
     catch(e) { console.warn('[AB-Save] PDF-Upload:', e.message); }
-    toast('✅ Auftragsbestätigung '+nummer+' (Servicebox) erzeugt + gespeichert.','ok');
+    toast('✅ Auftragsbestätigung '+nummer+' erzeugt.' + (erpAuftragNum ? ' Maxise-Auftrag '+erpAuftragNum+' angelegt → Auftragsübersicht.' : ' (kein ERP-Auftrag — eigene Nummer verwendet)'), 'ok');
     document.getElementById('ab-modal')?.remove();
     // v7.92: frisch gespeicherten Datensatz für Liste/Versand verfügbar machen
     const newRec = { id: rec.id, fields: fields };
@@ -34178,6 +34263,8 @@ const AB_STATUS = {
   versendet: { label:'Versendet', bg:'#ECFDF5', color:'#065F46' },
 };
 let _abListCache = [];
+/* v7.93: Anzeige-Nummer = echte Maxise-Auftragsnummer, sonst interne Servicebox-Nummer. */
+function _abDispNum(f){ return String((f && (f.erp_auftrag_num || f.ab_nummer)) || ''); }
 async function renderAuftragsbestaetigungenView() {
   const list = document.getElementById('ab-list'); if (!list) return;
   if (isFirmaAll()) { list.innerHTML = '<div style="padding:44px 20px;text-align:center;color:var(--txt3)">Bitte oben rechts eine konkrete Firma wählen.</div>'; return; }
@@ -34197,7 +34284,7 @@ function _abRenderList() {
   let rows = items.filter(r => {
     const f = r.fields || {};
     if (flt && (f.status||'entwurf') !== flt) return false;
-    if (q) { const hay = [f.ab_nummer, f.kunde_name, f.standort, f.fabriknummer, f.angebot_num].filter(Boolean).join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
+    if (q) { const hay = [f.ab_nummer, f.erp_auftrag_num, f.kunde_name, f.standort, f.fabriknummer, f.angebot_num].filter(Boolean).join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
     return true;
   });
   rows.sort((a,b) => (+((b.fields&&b.fields.ab_nummer)||0)) - (+((a.fields&&a.fields.ab_nummer)||0)));
@@ -34216,7 +34303,7 @@ function _abRenderList() {
     const pdfUrl = (Array.isArray(f.pdf) && f.pdf[0] && f.pdf[0].url) || '';
     return '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'+
         '<div style="flex:1;min-width:220px">'+
-          '<div style="font-weight:700;color:var(--navy);font-size:14px">AB '+escapeHtml(String(f.ab_nummer||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">AB '+escapeHtml(_abDispNum(f)||'?')+' · '+escapeHtml(f.kunde_name||'?')+(f.erp_auftrag_num?' <span style="font-size:10px;font-weight:600;background:#EEF2FF;color:#3730A3;padding:1px 6px;border-radius:99px">🔗 Auftrag '+escapeHtml(String(f.erp_auftrag_num))+'</span>':'')+'</div>'+
           '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+
             (f.standort?'📍 '+escapeHtml(String(f.standort).replace(/\s*\n\s*/g,', '))+' · ':'')+
             (f.fabriknummer?'🔧 '+escapeHtml(f.fabriknummer)+' · ':'')+
@@ -34243,7 +34330,7 @@ function _abRenderList() {
 }
 function _abReconstructD(f) {
   let preis = null; try { preis = JSON.parse(f.preis_json||'null'); } catch(_){}
-  return { abNummer:String(f.ab_nummer||''), auftragNum:'', angebotNum:f.angebot_num||'', ticketNum:f.ticket_num||'',
+  return { abNummer:String_abDispNum(f), auftragNum:'', angebotNum:f.angebot_num||'', ticketNum:f.ticket_num||'',
     kunde:f.kunde_name||'', kundeAdresse:f.kunde_adresse||'', besteller:f.besteller||'', zugang:'',
     rechnungsempfaenger:f.rechnungsempfaenger||'', standort:f.standort||'', fabriknummer:f.fabriknummer||'',
     zeitrahmen:f.zeitrahmen||'', leistungsumfang:f.leistungsumfang||'', preis:preis };
@@ -34277,9 +34364,9 @@ function _abOpenSendModal(recId) {
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
   if (!APP_KEYS.valtownProxyUrl) return toast('Freshdesk/Proxy nicht eingerichtet (Admin → Integrationen).','err');
   const fdOk = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
-  const subject = 'Auftragsbestätigung Nr. ' + (f.ab_nummer||'') + (f.standort ? ' · '+String(f.standort).split(/[,\n]/)[0].trim() : '');
+  const subject = 'Auftragsbestätigung Nr. ' + _abDispNum(f) + (f.standort ? ' · '+String(f.standort).split(/[,\n]/)[0].trim() : '');
   const anrede = f.besteller ? ('Sehr geehrte/r '+f.besteller+',') : 'Sehr geehrte Damen und Herren,';
-  const body = anrede + '\n\nvielen Dank für Ihren Auftrag. Anbei erhalten Sie die Auftragsbestätigung Nr. ' + (f.ab_nummer||'') + '.\n\nFür Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nMit freundlichen Grüßen';
+  const body = anrede + '\n\nvielen Dank für Ihren Auftrag. Anbei erhalten Sie die Auftragsbestätigung Nr. ' + _abDispNum(f) + '.\n\nFür Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nMit freundlichen Grüßen';
   document.getElementById('ab-send-modal')?.remove();
   const m = document.createElement('div'); m.id='ab-send-modal'; m._recId=recId;
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10850;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
@@ -34287,7 +34374,7 @@ function _abOpenSendModal(recId) {
   m.innerHTML =
     '<div style="background:#fff;max-width:600px;width:100%;max-height:100%;min-height:0;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:12px 16px;background:#4F46E5;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
-        '<span>📤 Auftragsbestätigung '+escapeHtml(String(f.ab_nummer||''))+' senden</span>'+
+        '<span>📤 Auftragsbestätigung '+escapeHtml(String_abDispNum(f))+' senden</span>'+
         '<button onclick="document.getElementById(\'ab-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="flex:1;overflow:auto;padding:16px">'+
@@ -34337,7 +34424,7 @@ async function _abDoSend() {
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
   const g = id => (document.getElementById(id)?.value || '').trim();
   const mode = (document.querySelector('input[name="ab-send-mode"]:checked')||{}).value || 'email';
-  const subject = g('ab-send-subject') || ('Auftragsbestätigung Nr. ' + (f.ab_nummer||''));
+  const subject = g('ab-send-subject') || ('Auftragsbestätigung Nr. ' + _abDispNum(f));
   const bodyText = g('ab-send-body');
   const ccEmails = g('ab-send-cc').split(/[;,\s]+/).map(s=>s.trim()).filter(s=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
   const btn = document.getElementById('ab-send-btn'); if (btn){ btn.disabled=true; btn.textContent='⏳ Sende…'; }
@@ -34345,7 +34432,7 @@ async function _abDoSend() {
     if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
     await erpEnsureSession();
     const blob = await _abGetPdfBlob(rec);
-    const fname = 'Auftragsbestaetigung_' + String(f.ab_nummer||'').replace(/[\/ ]/g,'-') + '.pdf';
+    const fname = 'Auftragsbestaetigung_' + String_abDispNum(f).replace(/[\/ ]/g,'-') + '.pdf';
     let sig = (m && typeof m._agentSignature === 'string') ? m._agentSignature : '';
     if (!sig) { try { const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } }); if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); } } catch(_){} }
     const bodyHtml = '<p>' + escapeHtml(bodyText).replace(/\n/g,'<br>') + '</p>' + (sig ? '<br><br>'+sig : '');
