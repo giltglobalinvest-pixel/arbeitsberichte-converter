@@ -2762,7 +2762,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.85';
+const APP_VERSION = 'v7.86';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -33888,6 +33888,8 @@ function _abOpen(recId) {
     _kontaktEmail:       f.kontakt_email || '',
   };
   _abOpenFromData(v, firmaSlug);
+  // v7.86: Rechnungsempfänger aus Maxise nachladen (Anlage → Kunde → defaultrechnungsempfaenger), Fallback Kunde/KI
+  try { _abFillRechnungsempfaenger(firmaSlug, f.anlage_id || '', f.kunde_name || '', f.kunde_adresse || ''); } catch(_){}
 }
 
 /* v7.52: Dialog-Renderer — nimmt ein fertiges Werte-Objekt (aus App-Angebot ODER Maxise). */
@@ -33923,7 +33925,7 @@ function _abOpenFromData(v, firmaSlug) {
           inp('besteller','Besteller / Kontakt')+
           inp('zugang','Ansprechpartner vor Ort (Zugang)')+
         '</div>'+
-        inp('rechnungsempfaenger','Rechnungsempfänger')+
+        area('rechnungsempfaenger','Rechnungsempfänger (aus Maxise — Anlage → Kunde)', 2)+
         inp('kunde','Kunde')+
         area('kundeAdresse','Empfänger-Anschrift', 3)+
         area('leistungsumfang','Leistungsumfang (aus Angebot)', 7)+
@@ -33942,7 +33944,10 @@ function _abOpenFromData(v, firmaSlug) {
               '<span>Brutto: <strong>'+eur(P.bruttoGesamt)+'</strong> (inkl. '+P.ust+'% USt)</span>'+
             '</div>';
           }
-          return '<div style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;padding:9px 12px;margin-bottom:6px"><div style="font-size:11px;font-weight:700;color:#065F46;margin-bottom:4px">💶 Preise (aus Angebot — erscheinen in der AB)</div>'+inner+'</div>';
+          return '<div style="margin-bottom:6px">'+
+            '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--txt2);margin-bottom:8px;cursor:pointer"><input type="checkbox" id="ab-f-nopreis" onchange="var b=document.getElementById(\'ab-preis-preview\'); if(b) b.style.opacity=this.checked?\'0.4\':\'1\';" style="width:15px;height:15px;cursor:pointer"> Preise in der Auftragsbestätigung <strong>weglassen</strong> (ganzer Preisblock entfällt)</label>'+
+            '<div id="ab-preis-preview" style="background:#ECFDF5;border:1px solid #6EE7B7;border-radius:8px;padding:9px 12px"><div style="font-size:11px;font-weight:700;color:#065F46;margin-bottom:4px">💶 Preise (aus Angebot — erscheinen in der AB)</div>'+inner+'</div>'+
+          '</div>';
         })()+
       '</div>'+
       '<div style="padding:12px 20px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap">'+
@@ -33964,6 +33969,7 @@ function _abPreview() {
   const d = {};
   m.querySelectorAll('[data-abf]').forEach(el => { d[el.dataset.abf] = el.value || ''; });
   d.preis = m._preis || null;         // v7.84: Preisdaten fürs PDF
+  d.preiseAusblenden = !!(document.getElementById('ab-f-nopreis') && document.getElementById('ab-f-nopreis').checked);  // v7.86
   d.abNummer = '';                    // Entwurf → keine Nummer
   try {
     const blob = _abBuildPdfBlob(d, m._firmaSlug);
@@ -33980,6 +33986,7 @@ async function _abGenerateAndSave(btn) {
   const d = {};
   m.querySelectorAll('[data-abf]').forEach(el => { d[el.dataset.abf] = el.value || ''; });
   d.preis = m._preis || null;
+  d.preiseAusblenden = !!(document.getElementById('ab-f-nopreis') && document.getElementById('ab-f-nopreis').checked);  // v7.86
   const orig = btn ? btn.innerHTML : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ erzeuge…'; }
   try {
@@ -34026,6 +34033,61 @@ async function _abGenerateAndSave(btn) {
     toast('❌ '+(e.message||e),'err');
     if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
   }
+}
+
+/* v7.86: Rechnungsempfänger für die AB aus Maxise laden.
+   Maxise-Aufbau: Anlage → kunde → defaultrechnungsempfaenger (firmenname + adresseId).
+   Adresse via bewährter Auflösung _nwvResolveKundeAdresse. Fallback: Kunde aus Angebot, dann KI (konservativ). */
+async function _abFillRechnungsempfaenger(firmaSlug, anlageId, fallbackName, fallbackAdr) {
+  const sel = () => document.querySelector('#ab-modal [data-abf="rechnungsempfaenger"]');
+  const inp = sel();
+  if (!inp || inp.value.trim()) return;   // schon befüllt / vom User bearbeitet
+  inp.placeholder = 'lade Rechnungsempfänger aus Maxise…';
+  let result = '';
+  // 1) Maxise: Anlage → Kunde → defaultrechnungsempfaenger
+  try {
+    if (anlageId && APP_KEYS.valtownProxyUrl && !isFirmaAll()) {
+      const anlage = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(anlageId));
+      const kunde = (anlage && anlage.kunde) || null;
+      const re = anlage && anlage.rechnungsempfaenger;
+      const dre = kunde && kunde.defaultrechnungsempfaenger;
+      let name = (dre && dre.firmenname) || '';
+      // Anlage.rechnungsempfaenger nur als Name nutzen, wenn es kein Modus-Schlüsselwort ist
+      if (!name && typeof re === 'string' && re.trim() && !/^(kunde|betreiber|eigent|abweich|anlage)/i.test(re.trim())) name = re.trim();
+      if (!name && kunde) name = kunde.firmenname || '';
+      let adr = '';
+      try { if (kunde) adr = await _nwvResolveKundeAdresse(firmaSlug, kunde, []); } catch(e) { console.warn('[AB-Rechnungsempf] Adresse:', e.message); }
+      result = [name, adr].filter(s => s && String(s).trim()).join('\n').trim();
+    }
+  } catch(e) { console.warn('[AB-Rechnungsempf] Maxise-Load:', e.message); }
+  // 2) Fallback: Kunde aus dem Angebot
+  if (!result.trim() && (fallbackName || fallbackAdr)) {
+    result = [fallbackName, fallbackAdr].filter(s => s && String(s).trim()).join('\n').trim();
+  }
+  // 3) Letzter Fallback: KI (erfindet KEINE Adresse)
+  if (!result.trim() && APP_KEYS.anthropicKey && (fallbackName || fallbackAdr)) {
+    try { const txt = await _abKiRechnungsempfaenger(fallbackName, fallbackAdr); if (txt) result = txt; } catch(_){}
+  }
+  const el = sel();
+  if (el && !el.value.trim()) { el.value = result; el.placeholder = 'Rechnungsempfänger'; }
+}
+async function _abKiRechnungsempfaenger(name, adr) {
+  if (!APP_KEYS.anthropicKey) return null;
+  const prompt = 'Formatiere den Rechnungsempfänger für eine Auftragsbestätigung. Gib NUR den Empfänger-Block zurück '+
+    '(Firmenname in Zeile 1, darunter die Anschrift), ohne Erklärung, ohne Anführungszeichen. '+
+    'WICHTIG: Erfinde KEINE Adresse, PLZ oder Ort — verwende ausschließlich die gegebenen Daten. '+
+    'Wenn keine Anschrift bekannt ist, gib nur den Firmennamen zurück.\n'+
+    'Firmenname: '+(name||'(unbekannt)')+'\nBekannte Anschrift: '+(adr||'(keine)');
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:200, messages:[{ role:'user', content:[{ type:'text', text: prompt }] }] }),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return (data.content||[]).filter(b => b.type==='text').map(b => b.text).join('').trim() || null;
+  } catch(e) { console.warn('[AB-Rechnungsempf-KI]', e.message); return null; }
 }
 
 function _abBuildPdfBlob(d, firmaSlug) {
@@ -34090,8 +34152,8 @@ function _abBuildPdfBlob(d, firmaSlug) {
     }
     y += 5;
   }
-  // v7.84: Preise (aus dem Angebot) — Positionen + Summen bzw. Pauschale / Aufwand
-  if (d.preis) {
+  // v7.84/86: Preise (aus dem Angebot) — Positionen + Summen bzw. Pauschale / Aufwand; per Checkbox weglassbar
+  if (d.preis && !d.preiseAusblenden) {
     const P = d.preis;
     const eur = (n)=>Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 })+' €';
     if (y>240){ doc.addPage(); y=20; }
