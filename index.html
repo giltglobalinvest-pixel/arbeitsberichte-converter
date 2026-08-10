@@ -1443,7 +1443,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
 
     <!-- GRUPPE: Vorlagen (Admin-only) -->
-    <div class="tnav-group" id="tnav-grp-vorlagen" data-group-views="preislisten,vorlagen,dav,gwl,rahmen" style="display:none">
+    <div class="tnav-group" id="tnav-grp-vorlagen" data-group-views="preislisten,vorlagen,dav,gwl,rahmen,ab" style="display:none">
       <button class="tnav tnav-trigger" onclick="_toggleTnavGroup('tnav-grp-vorlagen', event)">📑 Vorlagen</button>
       <div class="tnav-menu">
         <button class="tnav-menu-item" id="tnav-preislisten" onclick="switchView('preislisten')">📋 Preislisten</button>
@@ -1451,6 +1451,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
         <button class="tnav-menu-item" id="tnav-dav" onclick="switchView('dav')">🔍 DA-Vorlagen</button>
         <button class="tnav-menu-item" id="tnav-gwl" onclick="switchView('gwl')">📜 Gewährleistungsbedingungen</button>
         <button class="tnav-menu-item" id="tnav-rahmen" onclick="switchView('rahmen')" title="Rahmenvereinbarungen mit Hausverwaltern (Aufzugshandwerk)">📜 Rahmenvereinbarungen</button>
+        <button class="tnav-menu-item" id="tnav-ab" onclick="switchView('ab')" title="Erstellte Auftragsbestätigungen ansehen, herunterladen und senden">📋 Auftragsbestätigungen</button>
       </div>
     </div>
 
@@ -2102,6 +2103,15 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn prim" onclick="_rvOpenForm(null)">+ Neue Rahmenvereinbarung</button>
   </div>
   <div class="firma-body" id="rahmen-list" style="padding:20px"></div>
+</div>
+
+<!-- AUFTRAGSBESTÄTIGUNGEN (Servicebox, erstellte AB ansehen/download/senden) -->
+<div class="firma-view" id="ab-view">
+  <div class="firma-hdr">
+    <h2>📋 Auftragsbestätigungen <span id="ab-count" style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">0</span></h2>
+    <button class="btn" onclick="renderAuftragsbestaetigungenView()">↻ Neu laden</button>
+  </div>
+  <div class="firma-body" id="ab-list" style="padding:20px"></div>
 </div>
 
 <!-- v6.10: BRIEFBERICHTE — Berichte auf Briefpapier pro Firma -->
@@ -2762,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.90';
+const APP_VERSION = 'v7.91';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3926,6 +3936,7 @@ async function showApp() {
     const grpAdm = document.getElementById('tnav-grp-admin');   if (grpAdm)     grpAdm.style.display = '';
     document.getElementById('tnav-firmen').style.display = '';
     document.getElementById('tnav-preislisten').style.display = '';
+    { const abNav = document.getElementById('tnav-ab'); if (abNav) abNav.style.display = ''; }
     document.getElementById('tnav-vorlagen').style.display = '';
     document.getElementById('tnav-kunden').style.display = '';
     document.getElementById('tnav-kontakte').style.display = '';
@@ -4736,7 +4747,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','gwl','rahmen','extract','angebote','briefberichte','lv','galerie'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','gwl','rahmen','ab','extract','angebote','briefberichte','lv','galerie'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -4768,6 +4779,8 @@ function switchView(view) {
   if (gwl) gwl.classList.toggle('show', view==='gwl');
   const rahmenEl = document.getElementById('rahmen-view');
   if (rahmenEl) rahmenEl.classList.toggle('show', view==='rahmen');
+  const abEl = document.getElementById('ab-view');
+  if (abEl) abEl.classList.toggle('show', view==='ab');
   const extract = document.getElementById('extract-view');
   if (extract) extract.classList.toggle('show', view==='extract');
   const angeboteEl = document.getElementById('angebote-view');
@@ -4792,6 +4805,7 @@ function switchView(view) {
   if (view==='anlagen')  renderAnlagenView();
   if (view==='preislisten') renderPreislistenView();
   if (view==='rahmen') renderRahmenvereinbarungenView();
+  if (view==='ab') renderAuftragsbestaetigungenView();
   if (view==='vorlagen') renderVertragsvorlagenView();
   if (view==='kunden') renderKundenView();
   if (view==='kontakte') renderKontakteView();
@@ -33909,6 +33923,7 @@ async function _ensureAbTable() {
     { name:'fabriknummer',       type:'singleLineText' },
     { name:'zeitrahmen',         type:'singleLineText' },
     { name:'rechnungsempfaenger',type:'singleLineText' },
+    { name:'kontakt_email',      type:'singleLineText' },
     { name:'ticket_num',         type:'singleLineText' },
     { name:'leistungsumfang',    type:'multilineText' },
     { name:'preis_json',         type:'multilineText' },
@@ -34118,6 +34133,7 @@ async function _abGenerateAndSave(btn) {
       fabriknummer:       d.fabriknummer || '',
       zeitrahmen:         d.zeitrahmen || '',
       rechnungsempfaenger:d.rechnungsempfaenger || '',
+      kontakt_email:      (src.kontaktEmail || '').trim(),
       ticket_num:         d.ticketNum || '',
       leistungsumfang:    d.leistungsumfang || '',
       preis_json:         JSON.stringify(P),
@@ -34142,6 +34158,226 @@ async function _abGenerateAndSave(btn) {
     toast('❌ '+(e.message||e),'err');
     if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v7.91: AUFTRAGSBESTÄTIGUNGEN — Listenansicht + Download + Freshdesk-Versand
+   ══════════════════════════════════════════════════════════════════ */
+const AB_STATUS = {
+  entwurf:   { label:'Entwurf',   bg:'#EEF2FF', color:'#3730A3' },
+  versendet: { label:'Versendet', bg:'#ECFDF5', color:'#065F46' },
+};
+let _abListCache = [];
+async function renderAuftragsbestaetigungenView() {
+  const list = document.getElementById('ab-list'); if (!list) return;
+  if (isFirmaAll()) { list.innerHTML = '<div style="padding:44px 20px;text-align:center;color:var(--txt3)">Bitte oben rechts eine konkrete Firma wählen.</div>'; return; }
+  const firmaSlug = getCurrentFirmaSlug();
+  list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Auftragsbestätigungen…</div>';
+  try { await _ensureAbTable(); } catch(e){ list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--err)">⚠ '+escapeHtml(e.message||'')+'</div>'; return; }
+  try { _abListCache = await atRead('Auftragsbestaetigungen', "{firma}='"+firmaSlug.replace(/'/g,"\\'")+"'"); }
+  catch(e){ list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--err)">⚠ '+escapeHtml(e.message||'')+'</div>'; return; }
+  _abRenderList();
+}
+function _abRenderList() {
+  const list = document.getElementById('ab-list'); const cnt = document.getElementById('ab-count'); if (!list) return;
+  const items = _abListCache || [];
+  if (cnt) cnt.textContent = items.length;
+  const q = (document.getElementById('ab-search')?.value || '').toLowerCase().trim();
+  const flt = document.getElementById('ab-status-filter')?.value || '';
+  let rows = items.filter(r => {
+    const f = r.fields || {};
+    if (flt && (f.status||'entwurf') !== flt) return false;
+    if (q) { const hay = [f.ab_nummer, f.kunde_name, f.standort, f.fabriknummer, f.angebot_num].filter(Boolean).join(' ').toLowerCase(); if (!hay.includes(q)) return false; }
+    return true;
+  });
+  rows.sort((a,b) => (+((b.fields&&b.fields.ab_nummer)||0)) - (+((a.fields&&a.fields.ab_nummer)||0)));
+  const eur = (n)=>Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 })+' €';
+  const bar =
+    '<div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;align-items:center">'+
+      '<input id="ab-search" type="text" placeholder="🔎 Suche (AB-Nr, Kunde, Standort, Angebot…)" oninput="_abRenderList()" value="'+escapeHtml(document.getElementById('ab-search')?.value||'')+'" style="flex:1;min-width:220px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
+      '<select id="ab-status-filter" onchange="_abRenderList()" style="padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
+        ['','entwurf','versendet'].map(v => '<option value="'+v+'"'+(flt===v?' selected':'')+'>'+(v===''?'Alle Status':AB_STATUS[v].label)+'</option>').join('')+
+      '</select>'+
+    '</div>';
+  if (rows.length === 0) { list.innerHTML = bar + '<div style="text-align:center;padding:40px 20px;color:var(--txt3);font-size:13px">'+(items.length===0?'Noch keine Auftragsbestätigung. Erzeuge eine aus einem Angebot (📋 Auftragsbestätigung → 💾 Erzeugen &amp; speichern).':'Keine Treffer.')+'</div>'; return; }
+  const html = rows.map(rec => {
+    const f = rec.fields || {};
+    const st = AB_STATUS[f.status||'entwurf'] || AB_STATUS.entwurf;
+    const pdfUrl = (Array.isArray(f.pdf) && f.pdf[0] && f.pdf[0].url) || '';
+    return '<div style="background:var(--surf);border:1px solid var(--bdr);border-radius:8px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'+
+        '<div style="flex:1;min-width:220px">'+
+          '<div style="font-weight:700;color:var(--navy);font-size:14px">AB '+escapeHtml(String(f.ab_nummer||'?'))+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
+          '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+
+            (f.standort?'📍 '+escapeHtml(String(f.standort).replace(/\s*\n\s*/g,', '))+' · ':'')+
+            (f.fabriknummer?'🔧 '+escapeHtml(f.fabriknummer)+' · ':'')+
+            (f.angebot_num?'Angebot '+escapeHtml(String(f.angebot_num)):'')+
+          '</div>'+
+          '<div style="font-size:11px;color:var(--txt3);margin-top:4px">'+
+            (f.summe_brutto?'💶 '+eur(f.summe_brutto)+' brutto · ':'')+
+            (f.datum?'📅 '+escapeHtml(f.datum)+' · ':'')+
+            (f.versendet_am?'📤 versendet '+escapeHtml(f.versendet_am):(f.kontakt_email?'✉ '+escapeHtml(f.kontakt_email):''))+
+          '</div>'+
+        '</div>'+
+        '<div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">'+
+          '<span style="background:'+st.bg+';color:'+st.color+';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700">'+escapeHtml(st.label)+'</span>'+
+          '<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">'+
+            (pdfUrl ? '<a class="btn" style="font-size:11px;padding:5px 9px;text-decoration:none" href="'+escapeHtml(pdfUrl)+'" target="_blank" rel="noopener" title="PDF öffnen / herunterladen">📄 PDF</a>' : '<button class="btn" style="font-size:11px;padding:5px 9px" onclick="_abReDownload(\''+rec.id+'\')" title="PDF neu erzeugen">📄 PDF</button>')+
+            (freshdeskIsConfigured(f.firma||getCurrentFirmaSlug()) ? '<button class="btn" style="font-size:11px;padding:5px 9px;background:#EFF6FF;border-color:rgba(33,82,169,.4);color:#2152A9" onclick="_abOpenSendModal(\''+rec.id+'\')" title="Per Freshdesk an den Kunden senden">📤 Senden</button>' : '')+
+            (f.fd_ticket_url ? '<a class="btn" style="font-size:11px;padding:5px 9px;text-decoration:none" href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener" title="Freshdesk-Ticket öffnen">🎫</a>' : '')+
+            '<button class="btn" style="font-size:11px;padding:5px 9px;color:#DC2626;border-color:#FCA5A5" onclick="_abDeleteRec(\''+rec.id+'\')" title="Löschen">🗑</button>'+
+          '</div>'+
+        '</div>'+
+      '</div>';
+  }).join('');
+  list.innerHTML = bar + html;
+}
+function _abReconstructD(f) {
+  let preis = null; try { preis = JSON.parse(f.preis_json||'null'); } catch(_){}
+  return { abNummer:String(f.ab_nummer||''), auftragNum:'', angebotNum:f.angebot_num||'', ticketNum:f.ticket_num||'',
+    kunde:f.kunde_name||'', kundeAdresse:f.kunde_adresse||'', besteller:f.besteller||'', zugang:'',
+    rechnungsempfaenger:f.rechnungsempfaenger||'', standort:f.standort||'', fabriknummer:f.fabriknummer||'',
+    zeitrahmen:f.zeitrahmen||'', leistungsumfang:f.leistungsumfang||'', preis:preis };
+}
+async function _abGetPdfBlob(rec) {
+  const f = rec.fields || {};
+  const url = (Array.isArray(f.pdf) && f.pdf[0] && f.pdf[0].url) || '';
+  if (url) { try { const b = await (await fetch(url)).blob(); if (b && b.size) return b; } catch(_){} }
+  return _abBuildPdfBlob(_abReconstructD(f), f.firma||getCurrentFirmaSlug());   // Fallback: frisch erzeugen
+}
+async function _abReDownload(recId) {
+  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  try { const blob = await _abGetPdfBlob(rec); if (typeof _showVorlagenPreview==='function'){ _showVorlagenPreview(blob, 'Auftragsbestätigung '+(rec.fields.ab_nummer||'')); try{_rvRaisePreview();}catch(_){}} else { const u=URL.createObjectURL(blob); window.open(u,'_blank'); } }
+  catch(e){ toast('❌ '+(e.message||e),'err'); }
+}
+async function _abDeleteRec(recId) {
+  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return;
+  if (!confirm('Auftragsbestätigung '+((rec.fields&&rec.fields.ab_nummer)||'')+' wirklich löschen?')) return;
+  try { await atDelete('Auftragsbestaetigungen', recId); _abListCache = _abListCache.filter(r=>r.id!==recId); _abRenderList(); toast('🗑 Gelöscht','warn'); }
+  catch(e){ toast('❌ '+(e.message||e),'err'); }
+}
+function _abSendToggleMode() {
+  const mode = (document.querySelector('input[name="ab-send-mode"]:checked')||{}).value || 'email';
+  const eb = document.getElementById('ab-send-email-box'); const tb = document.getElementById('ab-send-ticket-box'); const sb = document.getElementById('ab-send-subject-box');
+  if (eb) eb.style.display = mode==='email' ? '' : 'none';
+  if (tb) tb.style.display = mode==='ticket' ? '' : 'none';
+  if (sb) sb.style.display = mode==='email' ? '' : 'none';
+}
+function _abOpenSendModal(recId) {
+  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
+  if (!APP_KEYS.valtownProxyUrl) return toast('Freshdesk/Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  const fdOk = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
+  const subject = 'Auftragsbestätigung Nr. ' + (f.ab_nummer||'') + (f.standort ? ' · '+String(f.standort).split(/[,\n]/)[0].trim() : '');
+  const anrede = f.besteller ? ('Sehr geehrte/r '+f.besteller+',') : 'Sehr geehrte Damen und Herren,';
+  const body = anrede + '\n\nvielen Dank für Ihren Auftrag. Anbei erhalten Sie die Auftragsbestätigung Nr. ' + (f.ab_nummer||'') + '.\n\nFür Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nMit freundlichen Grüßen';
+  document.getElementById('ab-send-modal')?.remove();
+  const m = document.createElement('div'); m.id='ab-send-modal'; m._recId=recId;
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10850;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
+  const inpStyle = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box';
+  m.innerHTML =
+    '<div style="background:#fff;max-width:600px;width:100%;max-height:100%;min-height:0;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:12px 16px;background:#4F46E5;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
+        '<span>📤 Auftragsbestätigung '+escapeHtml(String(f.ab_nummer||''))+' senden</span>'+
+        '<button onclick="document.getElementById(\'ab-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="flex:1;overflow:auto;padding:16px">'+
+        (fdOk ? '' : '<div style="background:#FEF3C7;border:1px solid #FCD34D;color:#78350F;padding:8px 10px;border-radius:6px;font-size:12px;margin-bottom:12px">⚠ Für <strong>'+escapeHtml(firma)+'</strong> ist in Freshdesk keine Domain hinterlegt — Versand schlägt evtl. fehl.</div>')+
+        '<div style="display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap">'+
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="ab-send-mode" value="email" checked onchange="_abSendToggleMode()"> ✉️ Kunden-E-Mail (neue ausgehende Mail)</label>'+
+          '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="ab-send-mode" value="ticket" onchange="_abSendToggleMode()"> 🎫 Antwort auf Freshdesk-Ticket</label>'+
+        '</div>'+
+        '<div id="ab-send-email-box"><div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Empfänger-E-Mail</label>'+
+          '<input id="ab-send-email" type="email" value="'+escapeHtml(f.kontakt_email||'')+'" placeholder="kunde@example.de" style="'+inpStyle+'"></div></div>'+
+        '<div id="ab-send-ticket-box" style="display:none"><div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Freshdesk-Ticket-Nr.</label>'+
+          '<input id="ab-send-ticket" type="text" inputmode="numeric" value="'+escapeHtml(f.ticket_num||f.fd_ticket_id||'')+'" placeholder="z.B. 12345" style="'+inpStyle+'"></div></div>'+
+        '<div id="ab-send-subject-box" style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Betreff</label>'+
+          '<input id="ab-send-subject" type="text" value="'+escapeHtml(subject)+'" style="'+inpStyle+'"></div>'+
+        '<div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Nachricht</label>'+
+          '<textarea id="ab-send-body" rows="6" style="'+inpStyle+';resize:vertical">'+escapeHtml(body)+'</textarea></div>'+
+        '<div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Signatur <span style="font-weight:400;color:#6b7280">(aus Freshdesk-Agent-Profil — wird automatisch angehängt)</span></label>'+
+          '<div id="ab-send-sig" style="border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;padding:8px 10px;font-size:12px;color:#374151;min-height:34px;max-height:150px;overflow:auto">⏳ lade Signatur…</div></div>'+
+        '<div style="margin-bottom:6px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">CC (optional, kommagetrennt)</label>'+
+          '<input id="ab-send-cc" type="text" placeholder="cc1@…, cc2@…" style="'+inpStyle+'"></div>'+
+        '<div style="font-size:11px;color:#6b7280">Das gespeicherte AB-PDF wird angehängt. Nach dem Versand: Status → <strong>Versendet</strong>.</div>'+
+      '</div>'+
+      '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
+        '<button onclick="document.getElementById(\'ab-send-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px">Abbrechen</button>'+
+        '<button id="ab-send-btn" onclick="_abDoSend()" style="padding:8px 16px;border:none;border-radius:6px;background:#059669;color:#fff;font-weight:600;cursor:pointer">📤 Senden</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  m.onclick = (e) => { if (e.target === m) m.remove(); };
+  _abSendToggleMode();
+  (async () => {
+    let sig = '';
+    try {
+      await erpEnsureSession();
+      const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
+      if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); }
+    } catch(_){}
+    m._agentSignature = sig;
+    const el = document.getElementById('ab-send-sig');
+    if (el) el.innerHTML = sig ? sig : '<span style="color:#9ca3af;font-style:italic">Keine Signatur im Freshdesk-Agent-Profil hinterlegt (Freshdesk → Profil → Signatur).</span>';
+  })();
+}
+async function _abDoSend() {
+  const m = document.getElementById('ab-send-modal'); if (!m) return;
+  const recId = m._recId;
+  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const mode = (document.querySelector('input[name="ab-send-mode"]:checked')||{}).value || 'email';
+  const subject = g('ab-send-subject') || ('Auftragsbestätigung Nr. ' + (f.ab_nummer||''));
+  const bodyText = g('ab-send-body');
+  const ccEmails = g('ab-send-cc').split(/[;,\s]+/).map(s=>s.trim()).filter(s=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+  const btn = document.getElementById('ab-send-btn'); if (btn){ btn.disabled=true; btn.textContent='⏳ Sende…'; }
+  try {
+    if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
+    await erpEnsureSession();
+    const blob = await _abGetPdfBlob(rec);
+    const fname = 'Auftragsbestaetigung_' + String(f.ab_nummer||'').replace(/[\/ ]/g,'-') + '.pdf';
+    let sig = (m && typeof m._agentSignature === 'string') ? m._agentSignature : '';
+    if (!sig) { try { const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } }); if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); } } catch(_){} }
+    const bodyHtml = '<p>' + escapeHtml(bodyText).replace(/\n/g,'<br>') + '</p>' + (sig ? '<br><br>'+sig : '');
+    let ticketId = null, sentEmail = '';
+    if (mode === 'ticket') {
+      const tid = g('ab-send-ticket');
+      if (!/^\d+$/.test(tid)) throw new Error('Bitte eine gültige Ticket-Nr. angeben.');
+      const fd = new FormData(); fd.append('body', bodyHtml);
+      for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      fd.append('attachments[]', blob, fname);
+      const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/'+tid+'/reply', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+      const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
+      if (!r.ok) throw new Error(_rvFdErr(r.status, d, txt));
+      ticketId = tid;
+    } else {
+      const email = g('ab-send-email');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Bitte eine gültige Empfänger-E-Mail angeben.');
+      let ecid = null;
+      try { const cr = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/email_configs', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } }); if (cr.ok) { const arr = await cr.json(); if (Array.isArray(arr) && arr.length) { const p = arr.find(c=>c.primary_role) || arr.find(c=>c.active) || arr[0]; ecid = p.id; } } } catch(_){}
+      if (!ecid) throw new Error('Keine Freshdesk-E-Mail-Konfiguration (email_config_id) gefunden.');
+      const fd = new FormData();
+      fd.append('email', email); fd.append('subject', subject); fd.append('description', bodyHtml);
+      fd.append('status', '2'); fd.append('priority', '1'); fd.append('email_config_id', String(ecid));
+      for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      fd.append('attachments[]', blob, fname);
+      const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/outbound_email', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
+      const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
+      if (!r.ok) throw new Error(_rvFdErr(r.status, d, txt));
+      ticketId = d && d.id; sentEmail = email;
+    }
+    const tUrl = (ticketId && APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma]) ? 'https://'+APP_KEYS.freshdeskDomains[firma]+'.freshdesk.com/a/tickets/'+ticketId : '';
+    const patch = { status:'versendet', versendet_am: new Date().toLocaleString('de-DE'), fd_ticket_id: String(ticketId||''), fd_ticket_url: tUrl };
+    if (sentEmail && !f.kontakt_email) patch.kontakt_email = sentEmail;
+    try { await atUpdate('Auftragsbestaetigungen', recId, patch); } catch(_){}
+    rec.fields = Object.assign({}, rec.fields, patch);
+    toast('✅ Auftragsbestätigung gesendet' + (ticketId ? ' (Ticket #'+ticketId+')' : '') + '.','ok');
+    m.remove();
+    _abRenderList();
+  } catch(e) {
+    console.error('[AB-Send]', e);
+    toast('❌ ' + ((e && e.message) || e), 'err');
+  } finally { if (btn){ btn.disabled=false; btn.textContent='📤 Senden'; } }
 }
 
 /* v7.86: Rechnungsempfänger für die AB aus Maxise laden.
