@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.91';
+const APP_VERSION = 'v7.92';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -34078,6 +34078,7 @@ function _abOpenFromData(v, firmaSlug) {
         '<button class="btn" onclick="document.getElementById(\'ab-modal\').remove()">Schließen</button>'+
         '<button class="btn" onclick="_abPreview()" title="Entwurfs-Vorschau ohne Nummernvergabe">📄 Vorschau (Entwurf)</button>'+
         '<button class="btn prim" style="background:#4F46E5;border-color:#4F46E5" onclick="_abGenerateAndSave(this)" title="AB-Nummer vergeben, PDF erzeugen und speichern">💾 Erzeugen &amp; speichern</button>'+
+        (freshdeskIsConfigured(firmaSlug) ? '<button class="btn" style="background:#059669;border-color:#059669;color:#fff" onclick="_abGenerateAndSave(this, true)" title="AB erzeugen, speichern und direkt an den Kunden senden">📤 Erzeugen &amp; senden</button>' : '')+
       '</div>'+
     '</div>';
   document.body.appendChild(m);
@@ -34101,8 +34102,9 @@ function _abPreview() {
     else { const url = URL.createObjectURL(blob); window.open(url,'_blank'); }
   } catch(e) { console.error('[AB-PDF]', e); toast('❌ PDF-Fehler: '+(e.message||e),'err'); }
 }
-/* v7.84: AB erzeugen — Servicebox-Nummer vergeben, PDF bauen, Datensatz + PDF speichern. */
-async function _abGenerateAndSave(btn) {
+/* v7.84: AB erzeugen — Servicebox-Nummer vergeben, PDF bauen, Datensatz + PDF speichern.
+   v7.92: send=true → direkt nach dem Speichern den Freshdesk-Versand-Dialog öffnen. */
+async function _abGenerateAndSave(btn, send) {
   const m = document.getElementById('ab-modal'); if (!m) return;
   const firmaSlug = m._firmaSlug || getCurrentFirmaSlug();
   if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
@@ -34151,8 +34153,16 @@ async function _abGenerateAndSave(btn) {
     catch(e) { console.warn('[AB-Save] PDF-Upload:', e.message); }
     toast('✅ Auftragsbestätigung '+nummer+' (Servicebox) erzeugt + gespeichert.','ok');
     document.getElementById('ab-modal')?.remove();
-    if (typeof _showVorlagenPreview === 'function') { _showVorlagenPreview(blob, 'Auftragsbestätigung '+nummer); try { _rvRaisePreview(); } catch(_){} }
-    else { const url = URL.createObjectURL(blob); window.open(url,'_blank'); }
+    // v7.92: frisch gespeicherten Datensatz für Liste/Versand verfügbar machen
+    const newRec = { id: rec.id, fields: fields };
+    _abListCache = [newRec, ...((_abListCache||[]).filter(r => r.id !== rec.id))];
+    if (send && freshdeskIsConfigured(firmaSlug)) {
+      _abOpenSendModal(rec.id);   // direkt zum Versand
+    } else if (typeof _showVorlagenPreview === 'function') {
+      _showVorlagenPreview(blob, 'Auftragsbestätigung '+nummer); try { _rvRaisePreview(); } catch(_){}
+    } else {
+      const url = URL.createObjectURL(blob); window.open(url,'_blank');
+    }
   } catch(e) {
     console.error('[AB-Save]', e);
     toast('❌ '+(e.message||e),'err');
