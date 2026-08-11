@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.97';
+const APP_VERSION = 'v7.98';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -12923,11 +12923,14 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return { skipped:'no-permission' };
   if (!firmaSlug || firmaSlug === '__all__') return { skipped:'no-firma' };
 
-  // Kandidaten: abgeschlossene Aufträge mit ERP-ID, noch nicht abgerechnet
+  // Kandidaten: abgeschlossene Aufträge mit ERP-ID, noch nicht ausgeblendet
+  // v7.98: „berechnet" = ausblenden (hidden_invoiced), NICHT mehr Status→abgerechnet.
+  //   Status bleibt die Maxise-Wahrheit; bereits ausgeblendete überspringen.
   const candidates = _auftragCache.filter(r => {
     const f = r.fields || {};
     if (!f.ext_id) return false;
     if ((f.firma||'') !== firmaSlug) return false;
+    if (f.hidden_invoiced) return false;
     return _normAuftragStatus(f.status) === 'abgeschlossen';
   });
   if (!candidates.length) return { checked:0, marked:0, skipped:'no-candidates' };
@@ -12973,13 +12976,13 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
       const invId   = String(inv.id || '');
       try {
         await _patchAuftragFields(rec.id, {
-          status:        'abgerechnet',
+          hidden_invoiced: true,     // v7.98: ausblenden statt Status→abgerechnet (Maxise bleibt Status-Wahrheit)
           invoice_num:   invNum,
           invoice_date:  invDate,
           invoice_id:    invId,
         });
         // Lokal-Cache aktualisieren
-        rec.fields.status        = 'abgerechnet';
+        rec.fields.hidden_invoiced = true;
         rec.fields.invoice_num   = invNum;
         rec.fields.invoice_date  = invDate;
         rec.fields.invoice_id    = invId;
@@ -12993,7 +12996,7 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
     try { localStorage.setItem('auf_auto_invoiced_'+firmaSlug, String(Date.now())); } catch(_){}
     if (!silent || marked > 0) {
       const parts = [];
-      parts.push(marked+' Auftrag'+(marked===1?'':'e')+' auf abgerechnet gesetzt');
+      parts.push(marked+' Auftrag'+(marked===1?'':'e')+' ausgeblendet (Rechnung im ERP)');
       if (skippedWartung) parts.push(skippedWartung+' Wartungsverträge ausgenommen');
       if (atFails) parts.push(atFails+' Airtable-Fehler');
       toast('✅ '+parts.join(' · '), atFails ? 'warn' : 'ok');
@@ -44052,7 +44055,15 @@ async function runSyncForFirma(firma, userKey) {
           const hasVal = v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
           if (hasVal) delete patch[k];
         }
-        if (ex.fields.status === "abgerechnet") delete patch.status;
+        // v7.98: Maxise = Wahrheit — aktiver Maxise-Status reaktiviert lokal 'abgerechnet';
+        //   berechnete Aufträge werden dabei ausgeblendet (hidden_invoiced), sonst bleibt 'abgerechnet'.
+        if (ex.fields.status === "abgerechnet") {
+          if (normStatus(a.status) === "offen") {
+            if ((ex.fields.invoice_num || ex.fields.invoice_id) && !ex.fields.hidden_invoiced) patch.hidden_invoiced = true;
+          } else {
+            delete patch.status;
+          }
+        }
         const protectIfEmpty = ["kontakt","leistungsumfang","erlaeuterungen","standort","fabriknummer","due_date"];
         for (const k of protectIfEmpty) {
           if ((patch[k] === "" || patch[k] == null) && ex.fields[k]) delete patch[k];
@@ -45862,8 +45873,21 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
           const hasVal = v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0);
           if (hasVal) delete patchFields[k];
         }
-        // Status: terminal-Status 'abgerechnet' bleibt erhalten
-        if (existRec.fields.status === 'abgerechnet') delete patchFields.status;
+        // v7.98: Maxise ist die Wahrheit für den Status.
+        //   Meldet Maxise einen AKTIVEN Status ("Auftrag bestätigt"/"In Bearbeitung" → 'offen'),
+        //   wird ein lokal auf 'abgerechnet' gesetzter Auftrag REAKTIVIERT (erscheint wieder).
+        //   Damit berechnete Aufträge dabei die Offen-Liste nicht fluten, werden sie
+        //   ausgeblendet (hidden_invoiced) — per "Ausgeblendete zeigen"-Checkbox sichtbar.
+        //   Nur wenn Maxise selbst inaktiv/abgerechnet meldet, bleibt das lokale 'abgerechnet'.
+        if (existRec.fields.status === 'abgerechnet') {
+          if (_normAuftragStatus(a.status) === 'offen') {
+            if ((existRec.fields.invoice_num || existRec.fields.invoice_id) && !existRec.fields.hidden_invoiced) {
+              patchFields.hidden_invoiced = true;
+            }
+          } else {
+            delete patchFields.status;
+          }
+        }
         // Auch kontakt/leistungsumfang/erlaeuterungen schützen wenn ERP keinen neuen Wert liefert
         // (verhindert Überschreiben mit leerem String)
         ['kontakt','leistungsumfang','erlaeuterungen','standort','fabriknummer','due_date'].forEach(k => {
