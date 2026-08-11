@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.05';
+const APP_VERSION = 'v8.06';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29016,14 +29016,17 @@ function _renderAngeboteList() {
     if (filterTyp && f.angebot_typ !== filterTyp) return false;
     if (filterStatus && f.status !== filterStatus) return false;
     if (q) {
-      const haystack = [f.app_angebot_num, f.erp_angebot_nummer, f.erp_angebot_id, f.kone_angebot_num, f.kunde_name, f.kunde_nummer, f.anlage_adresse, f.seriennummer, f.equipmentnummer, f.erp_status]
+      const haystack = [f.angebot_nr, f.app_angebot_num, f.fdh_angebot_num, f.erp_angebot_nummer, f.erp_angebot_id, f.kone_angebot_num, f.kunde_name, f.kunde_nummer, f.anlage_adresse, f.seriennummer, f.equipmentnummer, f.erp_status]
         .filter(Boolean).join(' ').toLowerCase();
       if (!haystack.includes(q)) return false;
     }
     return true;
   });
   // Sortierung: neueste zuerst — native nach app_angebot_num, Maxise nach ERP-Angebot-ID (absteigend)
-  const _angSortKey = r => (+((r.fields && r.fields.app_angebot_num)) || +((r.fields && r.fields.erp_angebot_id)) || 0);
+  /* Angebote ohne Fabriknummer laufen im Hero-Kreis (fdh_angebot_num) und haben
+     kein app_angebot_num — ohne diesen Zweig landeten sie alle bei 0 und damit
+     gesammelt am Listenende. */
+  const _angSortKey = r => (+((r.fields && r.fields.app_angebot_num)) || +((r.fields && r.fields.fdh_angebot_num)) || +((r.fields && r.fields.erp_angebot_id)) || 0);
   filtered.sort((a,b) => _angSortKey(b) - _angSortKey(a));
   // v6.62: Restore-Focus-Helper — nach jedem innerHTML-Rebuild den vorher fokussierten
   //   Eintrag (Suchfeld, Filter-Selects) wieder fokussieren + Cursor-Position wiederherstellen.
@@ -29060,7 +29063,7 @@ function _renderAngeboteList() {
     const openFn = isMaxise ? "_angOpenMaxiseRec('"+rec.id+"')" : "openAngebotDetail('"+rec.id+"')";
     const idLabel = isMaxise
       ? '<span title="Aus Maxise (ERP) importiert" style="background:#0EA5E9;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">🔗 MAXISE</span>MX-'+escapeHtml(String(f.erp_angebot_nummer||f.erp_angebot_id||'?'))
-      : (f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+'ANG-'+escapeHtml(String(f.app_angebot_num||'?'));
+      : (f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')));
     const rightBadges = isMaxise
       ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.erp_typ)+'</span>':'')
         + (f.erp_status?'<span style="background:#6B728022;color:#374151;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.erp_status)+'</span>':'')
@@ -33919,7 +33922,7 @@ function openAngebotDetail(recId) {
   m.innerHTML =
     '<div style="background:var(--surf);max-width:880px;width:100%;max-height:100%;min-height:0;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:14px 20px;background:#2152A9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">'+
-        '<span>📄 ANG-'+escapeHtml(String(f.app_angebot_num||'?'))+'</span>'+
+        '<span>📄 '+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')))+'</span>'+
         '<button onclick="document.getElementById(\'ang-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="padding:14px 20px;background:#EFF6FF;border-bottom:1px solid var(--bdr);font-size:12px">'+
