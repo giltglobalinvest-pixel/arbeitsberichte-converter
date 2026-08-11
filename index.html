@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.98';
+const APP_VERSION = 'v7.99';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2936,9 +2936,13 @@ try {
         .replace(/([?&](key|token|secret|api_key|apikey|sig|signature|password)=)[^&#]*/gi,'$1***')
         .slice(0,180);
       const t0 = Date.now();
-      DIAG.log('fetch→', method+' '+shortUrl, '#'+id+' inflight='+inflight);
+      // v7.99: 5-Min-Versions-Poll (GitHub commits) NICHT ins 🩺-Protokoll — reines Rauschen,
+      //   das im Ringpuffer echte Einträge verdrängt (+ die harmlosen „fetch-HÄNGT"-Fehlalarme
+      //   bei schlafendem Tab und die 403-Rate-Limits des Polls bleiben so draußen).
+      const isNoise = /api\.github\.com\/repos\/[^?]*\/commits\?path=index\.html/.test(String(url));
+      if (!isNoise) DIAG.log('fetch→', method+' '+shortUrl, '#'+id+' inflight='+inflight);
       let pend = true, wd1 = null, wd2 = null;
-      try {
+      if (!isNoise) try {
         wd1 = setTimeout(function(){ if (pend) DIAG.warn('fetch-HÄNGT', method+' '+shortUrl+' — >8s noch offen', '#'+id); }, 8000);
         wd2 = setTimeout(function(){ if (pend) DIAG.err('fetch-HÄNGT', method+' '+shortUrl+' — >25s noch offen', '#'+id); }, 25000);
       } catch(_){}
@@ -2962,6 +2966,11 @@ try {
 (function(){
   try {
     if (!window.console || console.__diagWrapped) return;
+    // v7.99: hochfrequentes Fortschritts-/Debug-Rauschen NICHT im 🩺-Ringpuffer speichern (bleibt in
+    //   der echten Konsole). Ein ERP-Sync schreibt ~300 Zeilen ([N/M] #Auftrag, 📥 Angebote i/n) und
+    //   würde sonst die wirklich nützlichen Einträge aus dem 800er-Puffer verdrängen. Fehler/Warnungen
+    //   matchen dieses Muster nie.
+    const _DIAG_CONSOLE_NOISE = /\[\d+\/\d+\]\s+#|📥 Angebote \d+\/\d+|Erster Auftrag —|\bgewaehlt:/;
     const fmtArg = function(a){
       if (a == null) return String(a);
       if (typeof a === 'string') return a;
@@ -2980,6 +2989,7 @@ try {
           for (let i = 0; i < arguments.length && i < 8; i++) parts.push(fmtArg(arguments[i]));
           let msg = parts.join(' ');
           if (!msg) return;
+          if (_DIAG_CONSOLE_NOISE.test(msg)) return;   // v7.99: Fortschritts-/Debug-Rauschen nicht puffern
           if (msg.length > 600) msg = msg.slice(0,600)+'…';
           const m = /^\s*\[([^\]]{1,40})\]/.exec(msg);   // führendes [Label] als Tag
           emit('console:'+name+(m ? ' · '+m[1] : ''), msg);
@@ -7328,6 +7338,25 @@ function _canSeeAuftrag(rec) {
   return _isAssignedToMe(rec);
 }
 
+/* v7.99: Zentrale Ausblend-Regel für die Auftragsliste.
+   Ein Auftrag ist standardmäßig ausgeblendet (nur per „Ausgeblendete zeigen"-Checkbox sichtbar), wenn er:
+   - storniert ist,
+   - manuell ausgeblendet wurde (hidden_manual),
+   - als Rechnung ausgeblendet markiert ist (hidden_invoiced), ODER
+   - EINE ERP-RECHNUNG hat (invoice_num/invoice_id) und NICHT im Abgerechnet-Tab liegt
+     → GARANTIE: berechnete/abgerechnete Aufträge erscheinen NIE in der offenen Liste,
+       egal wie der Status migriert wurde. Ausnahme: explizit wieder eingeblendet (hidden_invoiced === false).
+   Abgerechnet-Status bleibt unberührt (die haben ihren eigenen Tab). */
+function _aufIstAusgeblendet(r) {
+  const f = (r && r.fields) || {};
+  const st = _normAuftragStatus(f.status);
+  if (st === 'storniert') return true;
+  if (f.hidden_manual) return true;
+  if (f.hidden_invoiced === true) return true;
+  if (st !== 'abgerechnet' && (f.invoice_num || f.invoice_id) && f.hidden_invoiced !== false) return true;
+  return false;
+}
+
 function _techNamesByKeys(keys) {
   if (!Array.isArray(keys)) return '';
   return keys.map(k => {
@@ -7466,16 +7495,16 @@ function renderAuftraegeList() {
     _aufLoadInvoicesForList(_firma);
   }
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
-  // Cache nach hidden_invoiced ODER hidden_manual ODER Storniert vorfiltern (außer Toggle ist aktiv)
-  // v7.61: Stornierte Aufträge werden standardmäßig ausgeblendet (Maxise = Quelle der Wahrheit).
-  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual && _normAuftragStatus(r.fields.status) !== 'storniert');
+  // Cache nach der zentralen Ausblend-Regel vorfiltern (außer Toggle ist aktiv).
+  // v7.61: Stornierte ausgeblendet. v7.99: berechnete (ERP-Rechnung) ebenfalls → nie im Offen-Tab.
+  const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !_aufIstAusgeblendet(r));
   // Dropdown-Optionen für Angebots-Typ aus dem (gesamten) Cache zusammensuchen
   _refreshAngebotTypFilter();
   _refreshTechnikerFilter();
   const typFilter = (document.getElementById('auf-typ-filter')?.value || '').trim();
   const techFilter = (document.getElementById('auf-tech-filter')?.value || '').trim();
   // Hidden-Counter für Toggle-Label-Hinweis (inkl. manuell ausgeblendete)
-  const hiddenCount = _auftragCache.filter(r => r.fields.hidden_invoiced || r.fields.hidden_manual || _normAuftragStatus(r.fields.status) === 'storniert').length;
+  const hiddenCount = _auftragCache.filter(_aufIstAusgeblendet).length;
   const hiddenChk = document.getElementById('auf-show-hidden');
   const hiddenLblSpan = document.getElementById('auf-show-hidden-lbl');
   if (hiddenChk && hiddenChk.parentElement) {
@@ -8873,7 +8902,7 @@ function _getCurrentlyVisibleAuftraege() {
   // Alles, was im aktiven Tab + Suchfilter sichtbar wäre. Reproduziert die Filter aus renderAuftraegeList.
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
-  const base = showHidden ? _auftragCache : _auftragCache.filter(r => !r.fields.hidden_invoiced && !r.fields.hidden_manual);
+  const base = showHidden ? _auftragCache : _auftragCache.filter(r => !_aufIstAusgeblendet(r));  // v7.99: berechnete raus
   let filtered;
   if (_auftragTab === 'all') {
     filtered = base.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
