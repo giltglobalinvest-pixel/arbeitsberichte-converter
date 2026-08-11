@@ -531,6 +531,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .auf-status.in_bearbeitung{background:rgba(224,123,16,.15);color:var(--amber)}
 .auf-status.abgeschlossen{background:rgba(5,150,105,.12);color:var(--ok)}
 .auf-status.abgerechnet{background:rgba(99,102,241,.15);color:#4338ca}
+.auf-status.storniert{background:rgba(107,114,128,.18);color:#4b5563}
 .auf-prio{display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:600;letter-spacing:.3px}
 .auf-prio.normal{background:#f1f1ec;color:var(--txt2)}
 .auf-prio.hoch{background:rgba(224,123,16,.18);color:#9a5000}
@@ -2472,6 +2473,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="auf-tab active" data-status="offen"          onclick="setAuftragTab('offen')">Offen <span class="auf-tab-count" id="auf-cnt-offen">0</span></button>
     <button class="auf-tab"        data-status="abgeschlossen"  onclick="setAuftragTab('abgeschlossen')">Abgeschlossen <span class="auf-tab-count" id="auf-cnt-abgeschlossen">0</span></button>
     <button class="auf-tab"        data-status="abgerechnet"    onclick="setAuftragTab('abgerechnet')">Abgerechnet <span class="auf-tab-count" id="auf-cnt-abgerechnet">0</span></button>
+    <button class="auf-tab"        data-status="storniert"      onclick="setAuftragTab('storniert')">⚫ Storniert <span class="auf-tab-count" id="auf-cnt-storniert">0</span></button>
     <button class="auf-tab"        data-status="all"            onclick="setAuftragTab('all')">Alle <span class="auf-tab-count" id="auf-cnt-all">0</span></button>
   </div>
   <div class="auf-body" id="auf-list"></div>
@@ -2776,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.04';
+const APP_VERSION = 'v8.05';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7593,13 +7595,18 @@ function renderAuftraegeList() {
   const countCache = hideWartungForCounts
     ? activeCache.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')))
     : activeCache;
-  const counts = { offen:0, abgeschlossen:0, abgerechnet:0, all: 0 };
+  const counts = { offen:0, abgeschlossen:0, abgerechnet:0, storniert:0, all: 0 };
   countCache.forEach(r => {
     const s = _normAuftragStatus(r.fields.status);
     if (counts[s] !== undefined) counts[s]++;
     // 'Alle' zählt explizit OHNE abgerechnete (die haben einen eigenen Tab)
     if (s !== 'abgerechnet') counts.all++;
   });
+  // v8.05: Storniert-Zähler aus dem VOLLEN Cache (stornierte sind aus activeCache ausgeblendet)
+  counts.storniert = _auftragCache.filter(r =>
+    _normAuftragStatus(r.fields.status) === 'storniert' &&
+    (!hideWartungForCounts || !/wartung/i.test(String(r.fields.angebot_typ||'')))
+  ).length;
   Object.keys(counts).forEach(k => {
     const el = document.getElementById('auf-cnt-'+k);
     if (el) el.textContent = counts[k];
@@ -7612,7 +7619,11 @@ function renderAuftraegeList() {
   //   das führte dazu, dass im "Offen"-Tab abgerechnete Aufträge auftauchten.
   //   Falls 0 Treffer im aktuellen Tab: Cross-Tab-Hinweis am Ende.
   let filtered;
-  if (_auftragTab === 'all') {
+  if (_auftragTab === 'storniert') {
+    // v8.05: Storniert-Tab aus dem VOLLEN Cache (stornierte sind aus activeCache ausgeblendet), damit sie
+    //   in ihrem eigenen Filter sichtbar bleiben — unabhängig von „Ausgeblendete zeigen"/„Mit Rechnung ausblenden".
+    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) === 'storniert');
+  } else if (_auftragTab === 'all') {
     filtered = activeCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
     filtered = activeCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
@@ -7801,7 +7812,7 @@ async function _aufLoadBerichteForList(firmaSlug) {
 function _auftragCardHtml(r) {
   const f = r.fields;
   const status = _normAuftragStatus(f.status);
-  const statusLabel = { offen:'Offen', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
+  const statusLabel = { offen:'Offen', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet', storniert:'Storniert' }[status] || status;
   const prio = f.priority || 'normal';
   const prioLabel = { normal:'Normal', hoch:'Hoch', dringend:'Dringend' }[prio] || prio;
   let techs = [];
@@ -8985,7 +8996,9 @@ function _getCurrentlyVisibleAuftraege() {
   let base = showHidden ? _auftragCache : _auftragCache.filter(r => !_aufIstAusgeblendet(r));
   if (hideInvoiced) base = base.filter(r => !_aufHatRechnung(r));  // v8.00: berechnete raus
   let filtered;
-  if (_auftragTab === 'all') {
+  if (_auftragTab === 'storniert') {
+    filtered = _auftragCache.filter(r => _normAuftragStatus(r.fields.status) === 'storniert');  // v8.05: aus vollem Cache
+  } else if (_auftragTab === 'all') {
     filtered = base.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
     filtered = base.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
@@ -9163,7 +9176,7 @@ function openAuftragDetail(recId) {
   try { techs = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
   const techNames = f.techniker_namen || _techNamesByKeys(techs);
   const status = _normAuftragStatus(f.status);
-  const statusLabel = { offen:'Offen', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet' }[status] || status;
+  const statusLabel = { offen:'Offen', abgeschlossen:'Abgeschlossen', abgerechnet:'Abgerechnet', storniert:'Storniert' }[status] || status;
   const prio = f.priority || 'normal';
 
   // Kontakt: bevorzugt das neue Textfeld; Legacy-Felder als Fallback
