@@ -2776,7 +2776,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.02';
+const APP_VERSION = 'v8.03';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9262,7 +9262,11 @@ function openAuftragDetail(recId) {
       html += '<button class="btn" style="color:#4338ca;border-color:rgba(99,102,241,.4)" onclick="checkAuftragInvoice(\''+rec.id+'\')" title="Im ERP prüfen, ob Rechnung existiert — Treffer wird nur lokal ausgeblendet">💶 Rechnung prüfen</button>';
     }
     // Hinweis: Status-Änderungen jetzt direkt über Dropdown im Body (siehe _renderAuftragStatusPicker)
-    html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')">🗑 Löschen</button>';
+    // v8.03: dedizierter Storno-Button (schreibt Status AUCH ins ERP via PUT) — vorher nur im Dropdown versteckt
+    if (f.ext_id && APP_KEYS.valtownProxyUrl && _normAuftragStatus(f.status) !== 'storniert') {
+      html += '<button class="btn" style="color:#6B7280;border-color:#D1D5DB" onclick="setAuftragStatus(\''+rec.id+'\',\'Storniert\')" title="Auftrag stornieren — setzt den Status im ERP (Maxise) UND lokal auf storniert. Verschwindet dauerhaft aus der aktiven Liste.">⚫ Stornieren</button>';
+    }
+    html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')" title="Nur den lokalen Servicebox-Datensatz löschen — ERP/Maxise bleibt unberührt (Auftrag wird beim nächsten Sync wieder importiert!)">🗑 Löschen</button>';
   }
   // Bericht erfassen / verknüpfen: zugewiesene Techniker + User mit Edit/View-All-Berechtigung (z.B. Admin/Verwalter)
   const canStartBericht = _isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all');
@@ -12364,7 +12368,13 @@ function _showErpErrorDetails(err) {
 
 async function deleteAuftrag(recId, num) {
   if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
-  if (!confirm('Auftrag #'+num+' wirklich löschen?')) return;
+  // v8.03: klarstellen, dass Löschen NUR lokal wirkt und ERP-Aufträge beim Sync zurückkommen
+  const rec = (_auftragCache||[]).find(r => r.id === recId);
+  const isErp = !!(rec && rec.fields && rec.fields.ext_id);
+  const msg = isErp
+    ? 'Auftrag #'+num+' NUR LOKAL löschen?\n\n⚠ Wichtig: Das entfernt nur den Servicebox-Datensatz. Im ERP (Maxise) bleibt der Auftrag bestehen und wird beim nächsten ERP-Sync WIEDER importiert.\n\nWenn der Auftrag im ERP falsch/überflüssig ist, nutze stattdessen „⚫ Stornieren" — das setzt ihn auch in Maxise auf storniert.\n\nTrotzdem nur lokal löschen?'
+    : 'Auftrag #'+num+' wirklich löschen?';
+  if (!confirm(msg)) return;
   try {
     await atDelete('Auftraege', recId);
     _auftragCache = _auftragCache.filter(r => r.id !== recId);
@@ -34306,6 +34316,50 @@ function _abAuftragTyp(fAng) {
   if (/wartung|notruf/.test(typ)) return 'wartung';
   return 'pauschal';
 }
+/* v8.03: KI-basierte Auftragstyp-Erkennung (User-Wunsch 11.08.: „in jedem Fall KI analysieren lassen").
+   Klassifiziert das Angebot in pauschal | wartung | modernisierung | aufwand. Deterministische Ableitung
+   (_abAuftragTyp) als Fallback, wenn kein KI-Key / API-Fehler / ungültige Antwort. */
+async function _abKiAuftragTyp(fAng) {
+  const fallback = _abAuftragTyp(fAng);
+  if (!APP_KEYS.anthropicKey) return { typ: fallback, begruendung: '(kein KI-Key — deterministisch abgeleitet)', quelle: 'fallback' };
+  let positionen = [];
+  try { positionen = (JSON.parse((fAng && fAng.positionen_json) || '[]') || []).map(p => p && p.titel).filter(Boolean).slice(0, 20); } catch(_){}
+  const hatStunden = !!((fAng && fAng.stundensaetze_json) && fAng.stundensaetze_json !== '[]' && fAng.stundensaetze_json !== '');
+  const data = {
+    titel: (fAng && (fAng.titel || fAng.position_titel)) || '',
+    abrechnung_modus: (fAng && fAng.abrechnung_modus) || '',
+    angebot_typ: (fAng && fAng.angebot_typ) || '',
+    leistungsumfang: String((fAng && fAng.leistungsumfang) || '').slice(0, 1800),
+    positionen,
+    hat_stundensaetze: hatStunden,
+    pauschalpreis_netto: (fAng && (fAng.pauschalpreis_netto || fAng.summe_netto_vp)) || null,
+  };
+  const prompt =
+    'Du bist Fachexperte für Aufzug-Aufträge (Aufzugshandwerk/Aszendio). Klassifiziere das folgende Angebot/Leistungsverzeichnis in GENAU EINEN Auftragstyp:\n'+
+    '- "pauschal": Arbeit/Reparatur/Instandsetzung zu einem FESTEN Pauschalpreis.\n'+
+    '- "wartung": Wartungsvertrag bzw. Wartung & Notruf (wiederkehrend, Jahres-/Wartungsentgelt).\n'+
+    '- "modernisierung": größere Erneuerung/Umbau/Modernisierung der Anlage (z.B. Steuerung, Türen, Kabine).\n'+
+    '- "aufwand": Abrechnung nach TATSÄCHLICHEM Aufwand (Stundensätze/Regie), KEIN Festpreis.\n\n'+
+    'Wichtig: Stundensätze/Regie ⇒ "aufwand". Fester Gesamtpreis für eine Reparatur ⇒ "pauschal". Wiederkehrende Wartung ⇒ "wartung".\n\n'+
+    'Daten:\n'+JSON.stringify(data, null, 1)+'\n\n'+
+    'Antworte AUSSCHLIESSLICH als JSON, ohne Markdown: {"typ":"pauschal|wartung|modernisierung|aufwand","begruendung":"ein kurzer Satz"}';
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-api-key':APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-haiku-4-5-20251001', max_tokens:300, messages:[{ role:'user', content:prompt }] }),
+    });
+    if (!resp.ok) throw new Error('API '+resp.status);
+    const txt = (await resp.json()).content[0].text;
+    const j = parseJ(txt);
+    const t = String((j && j.typ) || '').toLowerCase().trim();
+    const typ = ['pauschal','wartung','modernisierung','aufwand'].includes(t) ? t : fallback;
+    return { typ, begruendung: String((j && j.begruendung) || '').slice(0, 240), quelle: (typ === t ? 'ki' : 'fallback') };
+  } catch(e) {
+    console.warn('[AB-KI-Typ]', e && e.message);
+    return { typ: fallback, begruendung: '(KI nicht erreichbar — deterministisch abgeleitet)', quelle: 'fallback' };
+  }
+}
 /* v7.94: In den Maxise-Angeboten ein passendes Festpreis-Angebot suchen (Kunde + Anlage/Fabrik-Nr., kein Aufwand).
    Verhindert Duplikate (wie Angebot 2963 des Mitarbeiters). Rückgabe { id, nummer } oder null. */
 async function _abFindErpAngebot(firmaSlug, fAng) {
@@ -34334,10 +34388,10 @@ async function _abFindErpAngebot(firmaSlug, fAng) {
    Typ-korrekt: Nach Aufwand → ohneangebot; Festpreis (Pauschal/Wartung/Modernisierung) → mitangebot
    (Angebot verknüpft / gefunden / sonst neu angelegt — Pauschal geht in Maxise NICHT ohne Angebot).
    Rückgabe { created, bestellform, typ, angebotQuelle } oder null. Wirft bei echtem Fehler. */
-async function _abCreateErpAuftrag(fAng, leistungText, recId) {
+async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
   if (!APP_KEYS.valtownProxyUrl || isFirmaAll() || !fAng) return null;
-  const typ = _abAuftragTyp(fAng);
+  const typ = typOverride || _abAuftragTyp(fAng);   // v8.03: KI-Typ hat Vorrang
   const heuteISO = new Date().toISOString(), heuteDate = heuteISO.slice(0,10);
   const auftraggeber = String(fAng.kunde_name||'').trim() || ('Kunde '+(fAng.kunde_nummer||''));
   const common = { kundeMail:false, titelemail:'-', inhaltemail:'-', status:'Auftrag bestätigt', auftraggeber, datumAuftragserteilung:heuteISO, ausfuehrungstermin:heuteDate };
@@ -34369,14 +34423,14 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId) {
 }
 /* v7.93: Lokalen Auftrags-Datensatz schreiben, damit der Auftrag SOFORT in der Auftragsübersicht erscheint.
    ext_id verhindert Duplikate beim späteren Maxise-Import. Rückgabe: lokale Record-ID. */
-async function _abWriteLocalAuftrag(fAng, created, leistungText) {
+async function _abWriteLocalAuftrag(fAng, created, leistungText, typOverride) {
   try {
     const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
     const num = _erpAuftragNumber(created) || String((created && created.vorgangsnummer)||'');
     const bestellform = (created && created.bestellform) || (fAng && fAng.erp_angebot_id ? 'MITANGEBOT' : 'OHNEANGEBOT');
     // v8.02: Typ/Vorlage konsistent zur Auftragsübersicht setzen — sonst fehlt in der Karte der Typ-Teil (z.B. „Pauschal"),
     //   bis ein späterer ERP-Sync es nachfüllt. Mirror der Sync-Logik (tmpl=firma-arbeit/-wartung, angebot_typ=ERP-Enum).
-    const _typ = _abAuftragTyp(fAng);   // aufwand | modernisierung | wartung | pauschal
+    const _typ = typOverride || _abAuftragTyp(fAng);   // v8.03: KI-Typ hat Vorrang | aufwand | modernisierung | wartung | pauschal
     const _typEnum = { aufwand:'AUFWAND', modernisierung:'MODERNISIERUNG', wartung:'WARTUNG_NOTRUF', pauschal:'PAUSCHAL' }[_typ] || '';
     const isMitAngebot = String(bestellform).toUpperCase() === 'MITANGEBOT';
     const angebotTypEnum = (_typ === 'aufwand' && !isMitAngebot) ? '' : _typEnum;   // OHNEANGEBOT/Nach Aufwand → kein Typ-Badge (wie beim Mitarbeiter)
@@ -34623,20 +34677,38 @@ async function _abGenerateAndSave(btn, send) {
     const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
     let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
     if (fAng) {
-      if (btn) btn.textContent = '⏳ Auftrag in Maxise…';
-      try {
-        const res = await _abCreateErpAuftrag(fAng, leistungText, m._recId||'');
-        const erpAuftrag = res && res.created;
-        if (erpAuftrag) {
-          erpAuftragNum  = _erpAuftragNumber(erpAuftrag) || String(erpAuftrag.vorgangsnummer||'');
-          erpAuftragId   = String(erpAuftrag.id||'');
-          erpBestellform = String((res && res.bestellform) || erpAuftrag.bestellform || '');
-          erpTyp         = (res && res.typ) || '';
-          localAuftragId = await _abWriteLocalAuftrag(fAng, erpAuftrag, leistungText) || '';  // → sofort in der Auftragsübersicht
+      // v8.03: KI bestimmt IN JEDEM FALL den Auftragstyp (Pauschal/Wartung/Modernisierung/Nach Aufwand) VOR der Anlage.
+      if (btn) btn.textContent = '⏳ KI: Auftragstyp…';
+      let kiTyp = null; try { kiTyp = await _abKiAuftragTyp(fAng); } catch(_){}
+      const typ = (kiTyp && kiTyp.typ) || _abAuftragTyp(fAng);
+      const typLbl = { pauschal:'Pauschal', wartung:'Wartung', modernisierung:'Modernisierung', aufwand:'Nach Aufwand' }[typ] || typ;
+      const bestellLbl = (typ === 'aufwand') ? 'Ohne Angebot' : 'Mit Angebot';
+      const brauchtAngebot = (typ !== 'aufwand') && !(fAng && fAng.erp_angebot_id);
+      const proceed = confirm(
+        '🤖 KI-Analyse Auftragstyp:\n\n'+
+        '➡  '+typLbl+'  ·  '+bestellLbl+'\n'+
+        (kiTyp && kiTyp.begruendung ? ('\n'+kiTyp.begruendung+'\n') : '')+
+        (kiTyp && kiTyp.quelle === 'fallback' ? '\n(Hinweis: KI nicht verfügbar — Typ deterministisch abgeleitet.)\n' : '')+
+        (brauchtAngebot ? '\nℹ Für diesen Typ wird ein Maxise-Angebot benötigt — falls keins verknüpft ist, wird es zuvor angelegt.\n' : '')+
+        '\nAuftrag so in Maxise anlegen?\n(Abbrechen = AB wird nur mit Servicebox-Nummer erstellt, KEIN ERP-Auftrag)');
+      if (proceed) {
+        if (btn) btn.textContent = '⏳ Auftrag in Maxise…';
+        try {
+          const res = await _abCreateErpAuftrag(fAng, leistungText, m._recId||'', typ);
+          const erpAuftrag = res && res.created;
+          if (erpAuftrag) {
+            erpAuftragNum  = _erpAuftragNumber(erpAuftrag) || String(erpAuftrag.vorgangsnummer||'');
+            erpAuftragId   = String(erpAuftrag.id||'');
+            erpBestellform = String((res && res.bestellform) || erpAuftrag.bestellform || '');
+            erpTyp         = (res && res.typ) || typ;
+            localAuftragId = await _abWriteLocalAuftrag(fAng, erpAuftrag, leistungText, typ) || '';  // → sofort in der Auftragsübersicht
+          }
+        } catch(e) {
+          console.warn('[AB-ERP-Auftrag]', e && e.message);
+          toast('⚠ Auftrag konnte nicht in Maxise angelegt werden: '+((e&&e.message)||e)+' — AB nutzt eigene Nummer.','warn');
         }
-      } catch(e) {
-        console.warn('[AB-ERP-Auftrag]', e && e.message);
-        toast('⚠ Auftrag konnte nicht in Maxise angelegt werden: '+((e&&e.message)||e)+' — AB nutzt eigene Nummer.','warn');
+      } else {
+        toast('Kein ERP-Auftrag angelegt — AB erhält eine Servicebox-Nummer.','');
       }
     }
     const serviceboxNum = await _abNextNummer(firmaSlug);   // interner Nummernkreis (Fallback + immer belegt)
