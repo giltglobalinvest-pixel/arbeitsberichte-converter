@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.93';
+const APP_VERSION = 'v7.94';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -33961,27 +33961,76 @@ async function _abNextNummer(firmaSlug) {
   return max + 1;
 }
 
-/* v7.93: Bei AB-Erstellung den echten Maxise-Auftrag anlegen (mitangebot wenn Angebot im ERP, sonst ohneangebot).
-   Rückgabe: das ERP-Auftrags-Objekt (mit .id, Auftragsnummer) oder null (nicht möglich). Wirft bei echtem Fehler. */
-async function _abCreateErpAuftrag(fAng, leistungText) {
+/* v7.94: Auftragstyp aus den Angebotsdaten ableiten (deterministisch, kein KI).
+   'aufwand' = Nach Aufwand (→ ohneangebot). Alles andere = Festpreis (→ mitangebot, braucht ERP-Angebot). */
+function _abAuftragTyp(fAng) {
+  const mod = String((fAng && fAng.abrechnung_modus) || 'pauschal').toLowerCase();
+  if (mod === 'aufwand') return 'aufwand';
+  const typ = String((fAng && fAng.angebot_typ) || '').toLowerCase();
+  if (/modern/.test(typ)) return 'modernisierung';
+  if (/wartung|notruf/.test(typ)) return 'wartung';
+  return 'pauschal';
+}
+/* v7.94: In den Maxise-Angeboten ein passendes Festpreis-Angebot suchen (Kunde + Anlage/Fabrik-Nr., kein Aufwand).
+   Verhindert Duplikate (wie Angebot 2963 des Mitarbeiters). Rückgabe { id, nummer } oder null. */
+async function _abFindErpAngebot(firmaSlug, fAng) {
+  let list = [];
+  try { list = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote'); }
+  catch(e){ console.warn('[AB-AngebotMatch] Abruf:', e && e.message); return null; }
+  const items = Array.isArray(list) ? list : (list.content||list.items||list.data||[]);
+  const kdNr    = String((fAng && fAng.kunde_nummer)||'').trim();
+  const anlageId= String((fAng && fAng.anlage_id)||'').trim();
+  const fabrik  = String((fAng && (fAng.seriennummer||fAng.equipmentnummer))||'').trim();
+  const cands = [];
+  for (const it of items) {
+    let fx = null; try { fx = _angMaxiseListItemToFields(it, firmaSlug); } catch(_){ continue; }
+    if (!fx || !fx.erp_angebot_id) continue;
+    if (/aufwand/i.test(String(fx.abrechnung_modus||''))) continue;             // nur Festpreis-Angebote
+    if (kdNr && String(fx.kunde_nummer||'') !== kdNr) continue;                  // Kunde muss passen
+    const anlageOk = (anlageId && String(fx.anlage_id||'')===anlageId) || (fabrik && String(fx.seriennummer||'')===fabrik);
+    if (!anlageOk) continue;                                                     // Anlage/Fabrik-Nr. muss passen
+    cands.push({ id:fx.erp_angebot_id, nummer:fx.erp_angebot_nummer, datum:fx.erp_datum||'' });
+  }
+  if (!cands.length) return null;
+  cands.sort((a,b) => String(b.datum).localeCompare(String(a.datum)) || (+b.id)-(+a.id));  // neuestes zuerst
+  return cands[0];
+}
+/* v7.94: Bei AB-Erstellung den korrekten Maxise-Auftrag anlegen.
+   Typ-korrekt: Nach Aufwand → ohneangebot; Festpreis (Pauschal/Wartung/Modernisierung) → mitangebot
+   (Angebot verknüpft / gefunden / sonst neu angelegt — Pauschal geht in Maxise NICHT ohne Angebot).
+   Rückgabe { created, bestellform, typ, angebotQuelle } oder null. Wirft bei echtem Fehler. */
+async function _abCreateErpAuftrag(fAng, leistungText, recId) {
   const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
-  if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) return null;
-  const heuteISO = new Date().toISOString();
-  const heuteDate = heuteISO.slice(0,10);
-  const auftraggeber = String((fAng && fAng.kunde_name)||'').trim() || ('Kunde '+((fAng && fAng.kunde_nummer)||''));
+  if (!APP_KEYS.valtownProxyUrl || isFirmaAll() || !fAng) return null;
+  const typ = _abAuftragTyp(fAng);
+  const heuteISO = new Date().toISOString(), heuteDate = heuteISO.slice(0,10);
+  const auftraggeber = String(fAng.kunde_name||'').trim() || ('Kunde '+(fAng.kunde_nummer||''));
   const common = { kundeMail:false, titelemail:'-', inhaltemail:'-', status:'Auftrag bestätigt', auftraggeber, datumAuftragserteilung:heuteISO, ausfuehrungstermin:heuteDate };
-  if (fAng && fAng.erp_angebot_id) {
-    // Saubere Kette: Auftrag AUS dem Angebot (Anlage/Empfänger/Leistung kommen aus dem Angebot im ERP)
-    const payload = { angebotid:+fAng.erp_angebot_id, notizen:'', ...common };
-    return await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
+  // ── Nach Aufwand → ohneangebot (korrekter Typ) ──
+  if (typ === 'aufwand') {
+    if (!fAng.anlage_id) throw new Error('Keine Anlage am Angebot.');
+    const empf = +(fAng.kontakt_id||0);
+    if (!empf) throw new Error('Kein Ansprechpartner (kontakt_id) am Angebot.');
+    const payload = { anlageid:+fAng.anlage_id, empfaengerid:empf, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
+    const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/ohneangebot','api/auftrag/ohneangebot','auftraege/ohneangebot'], payload, () => _erpFindRecentAuftrag(firmaSlug, +fAng.anlage_id));
+    return { created, bestellform:'OHNEANGEBOT', typ, angebotQuelle:'—' };
   }
-  if (fAng && fAng.anlage_id) {
-    const empfaengerId = +((fAng && fAng.kontakt_id)||0);
-    if (!empfaengerId) throw new Error('Kein Ansprechpartner (kontakt_id) am Angebot — für ohneangebot nötig.');
-    const payload = { anlageid:+fAng.anlage_id, empfaengerid:empfaengerId, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
-    return await _erpCreateVorgang(firmaSlug, ['api/auftraege/ohneangebot','api/auftrag/ohneangebot','auftraege/ohneangebot'], payload, () => _erpFindRecentAuftrag(firmaSlug, +fAng.anlage_id));
+  // ── Festpreis → mitangebot → braucht ein Maxise-Angebot ──
+  let angId = fAng.erp_angebot_id ? String(fAng.erp_angebot_id) : '';
+  let quelle = angId ? 'verknüpft' : '';
+  if (!angId) {                                          // 1) bestehendes Maxise-Angebot suchen (kein Duplikat)
+    const found = await _abFindErpAngebot(firmaSlug, fAng);
+    if (found && found.id) { angId = String(found.id); quelle = 'gefunden (Nr. '+(found.nummer||found.id)+')'; }
   }
-  return null; // kein Angebot im ERP und keine Anlage → kein Auftrag möglich
+  if (!angId && recId) {                                 // 2) sonst Angebot in Maxise anlegen (Anfrage+Angebot)
+    try { await _angPushToErp(recId, null); } catch(e){ console.warn('[AB-AngebotPush]', e && e.message); }
+    const r = (_angeboteCache.items||[]).find(x=>x.id===recId);
+    if (r && r.fields && r.fields.erp_angebot_id) { angId = String(r.fields.erp_angebot_id); quelle = 'neu angelegt (Nr. '+(r.fields.erp_angebot_nummer||angId)+')'; }
+  }
+  if (!angId) throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag braucht ein Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kunde am Angebot prüfen).');
+  const payload = { angebotid:+angId, notizen:'', ...common };
+  const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
+  return { created, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
 }
 /* v7.93: Lokalen Auftrags-Datensatz schreiben, damit der Auftrag SOFORT in der Auftragsübersicht erscheint.
    ext_id verhindert Duplikate beim späteren Maxise-Import. Rückgabe: lokale Record-ID. */
@@ -34178,15 +34227,17 @@ async function _abGenerateAndSave(btn, send) {
     //   Erfolgreich → Maxise-Auftragsnummer wird zur AB-Nummer; sonst Servicebox-Nummernkreis.
     const fAng = (function(){ try { const r=(_angeboteCache.items||[]).find(x=>x.id===(m._recId||'')); return (r&&r.fields)||null; } catch(_){ return null; } })();
     const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
-    let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '';
+    let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
     if (fAng) {
       if (btn) btn.textContent = '⏳ Auftrag in Maxise…';
       try {
-        const erpAuftrag = await _abCreateErpAuftrag(fAng, leistungText);
+        const res = await _abCreateErpAuftrag(fAng, leistungText, m._recId||'');
+        const erpAuftrag = res && res.created;
         if (erpAuftrag) {
           erpAuftragNum  = _erpAuftragNumber(erpAuftrag) || String(erpAuftrag.vorgangsnummer||'');
           erpAuftragId   = String(erpAuftrag.id||'');
-          erpBestellform = String(erpAuftrag.bestellform || (fAng.erp_angebot_id?'MITANGEBOT':'OHNEANGEBOT'));
+          erpBestellform = String((res && res.bestellform) || erpAuftrag.bestellform || '');
+          erpTyp         = (res && res.typ) || '';
           localAuftragId = await _abWriteLocalAuftrag(fAng, erpAuftrag, leistungText) || '';  // → sofort in der Auftragsübersicht
         }
       } catch(e) {
@@ -34236,7 +34287,8 @@ async function _abGenerateAndSave(btn, send) {
     const rec = await atWrite('Auftragsbestaetigungen', fields);
     try { await atBlobUpload(rec.id, 'pdf', blob, 'Auftragsbestaetigung-'+nummer+'.pdf', 'application/pdf'); }
     catch(e) { console.warn('[AB-Save] PDF-Upload:', e.message); }
-    toast('✅ Auftragsbestätigung '+nummer+' erzeugt.' + (erpAuftragNum ? ' Maxise-Auftrag '+erpAuftragNum+' angelegt → Auftragsübersicht.' : ' (kein ERP-Auftrag — eigene Nummer verwendet)'), 'ok');
+    const _typLabel = { aufwand:'Nach Aufwand', pauschal:'Pauschal', wartung:'Wartung', modernisierung:'Modernisierung' }[erpTyp] || erpTyp;
+    toast('✅ Auftragsbestätigung '+nummer+' erzeugt.' + (erpAuftragNum ? ' Maxise-Auftrag '+erpAuftragNum+' angelegt ('+_typLabel+' · '+(erpBestellform==='MITANGEBOT'?'Mit Angebot':'Ohne Angebot')+') → Auftragsübersicht.' : ' (kein ERP-Auftrag — eigene Nummer verwendet)'), 'ok');
     document.getElementById('ab-modal')?.remove();
     // v7.92: frisch gespeicherten Datensatz für Liste/Versand verfügbar machen
     const newRec = { id: rec.id, fields: fields };
