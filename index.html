@@ -2412,6 +2412,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren (im Browser, App muss offen bleiben)">🔄 ERP-Sync</button>
     <button class="btn" id="auf-bg-sync-btn" onclick="startBackgroundSync()" style="display:none;color:#5b21b6;border-color:rgba(124,58,237,.4)" title="Hintergrund-Sync über Val.town – läuft serverseitig, App kann zu sein">🚀 Hintergrund-Sync</button>
     <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen — Treffer werden NUR lokal ausgeblendet, ERP bleibt unverändert">🙈 Rechnungen prüfen + ausblenden</button>
+    <button class="btn" id="auf-abrechnen-btn" onclick="_aufOpenBulkAbrechnen()" style="display:none;color:#065F46;border-color:#6EE7B7" title="Alle vollständig berechneten Aufträge auf 'abgerechnet' setzen (überspringt Teilrechnungen und Aufträge mit Bericht nach der Rechnung)">✅ Abrechnen (Rechnung)</button>
     <button class="btn" id="auf-select-btn" onclick="toggleAuftragSelectMode()" style="display:none" title="Mehrere Aufträge auswählen, um sie zu löschen">☑ Auswählen</button>
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
     <button class="btn" id="auf-erp-debug-btn" onclick="openErpAuftragDebug()" style="display:none;color:#7c2d12;border-color:rgba(180,83,9,.4)" title="ERP-Auftrag Rohdaten anzeigen — zur Identifikation des richtigen Auftragsnummern-Felds">🔍 ERP-Felder</button>
@@ -2775,7 +2776,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.00';
+const APP_VERSION = 'v8.01';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7356,10 +7357,63 @@ function _aufIstAusgeblendet(r) {
    Abgerechnet-Status-Aufträge zählen NICHT (die haben ihren eigenen Tab und sollen dort sichtbar bleiben). */
 function _aufHatRechnung(r) {
   const f = (r && r.fields) || {};
+  if (f.needs_reinvoice) return false;   // v8.01: „Bericht nach Rechnung" → NICHT ausblenden, sichtbar halten
   if (_normAuftragStatus(f.status) === 'abgerechnet') return false;
   if (f.invoice_num || f.invoice_id) return true;
   if (_aufInvoicesByAuftrag.map && f.ext_id && _aufInvoicesByAuftrag.map.get(String(f.ext_id))) return true;
   return false;
+}
+
+/* ══════ v8.01: Abrechnungs-Erkennung (Teilrechnung / vollständig / Bericht nach Rechnung) ══════ */
+/* Alle (nicht stornierten/Gutschrift) ERP-Rechnungen eines Auftrags (per ext_id) aus dem Live-Lookup. */
+function _aufRechnungenFor(extId) {
+  if (!extId || !_aufInvoicesByAuftrag.allMap) return [];
+  return (_aufInvoicesByAuftrag.allMap.get(String(extId)) || [])
+    .filter(r => !(r.storniert || r.canceled || /storn/i.test(String(r.status||'')) || /gutschrift/i.test(String(r.typ||''))));
+}
+/* Teilrechnung? prozentualeAbrechnung 1–99 ODER typ nach Teil-/Abschlagsrechnung (User-Entscheidung 11.08.). */
+function _rechnungIstTeil(r) {
+  const p = +((r && r.prozentualeAbrechnung) || 0);
+  if (p > 0 && p < 100) return true;
+  return /teil|abschlag/i.test(String((r && r.typ) || ''));
+}
+function _rechnungDatum(r) {
+  return String((r && (r.rechnungsdatum || r.datum || r.belegdatum || r.createdDate || r.leistungszeitraum)) || '').slice(0,10);
+}
+/* Vollständig abgerechnet: ≥1 Voll-/Schlussrechnung (keine Teilrechnung) ODER Summe der Prozente ≥ 100. */
+function _auftragVollAbgerechnet(rgs) {
+  if (!rgs || !rgs.length) return false;
+  if (rgs.some(r => !_rechnungIstTeil(r))) return true;
+  const sum = rgs.reduce((s,r) => s + (+(r.prozentualeAbrechnung||0)), 0);
+  return sum >= 100;
+}
+function _letzteRechnungDatum(rgs) {
+  return (rgs||[]).reduce((mx,r) => { const d=_rechnungDatum(r); return d>mx?d:mx; }, '');
+}
+/* Kam ein Arbeitsbericht NACH der letzten Rechnung rein? (Berichte je Auftrag via _aufBerichteByAuftrag, mit datum) */
+function _auftragBerichtNachRechnung(auftragRecId, letzteRgDatum) {
+  if (!letzteRgDatum) return false;
+  const bs = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[auftragRecId]) || [];
+  return bs.some(b => b.datum && String(b.datum).slice(0,10) > letzteRgDatum);
+}
+/* Kombinierte Klassifizierung eines Auftrags für den Abrechnen-Button/-Check. */
+function _auftragAbrechenInfo(r) {
+  const f = (r && r.fields) || {};
+  let rgs = _aufRechnungenFor(f.ext_id);
+  // Fallback: nur gespeichertes invoice_num (keine Live-Rechnung geladen) → als 1 Vollrechnung behandeln
+  if (!rgs.length && (f.invoice_num || f.invoice_id)) {
+    rgs = [{ prozentualeAbrechnung: 100, typ: 'Rechnung', rechnungsdatum: f.invoice_date || '' }];
+  }
+  const hatRechnung = rgs.length > 0;
+  const voll = hatRechnung && _auftragVollAbgerechnet(rgs);
+  const letzteRg = _letzteRechnungDatum(rgs);
+  const berichtNachRg = hatRechnung && _auftragBerichtNachRechnung(r.id, letzteRg);
+  const status = _normAuftragStatus(f.status);
+  return {
+    hatRechnung, voll, offeneTeil: hatRechnung && !voll,
+    berichtNachRg, letzteRg, status, anzahlRg: rgs.length,
+    abrechenbar: hatRechnung && voll && !berichtNachRg && status !== 'abgerechnet',
+  };
 }
 
 function _techNamesByKeys(keys) {
@@ -7430,15 +7484,19 @@ async function loadAuftraegeAndRender() {
     const bgBtn    = document.getElementById('auf-bg-sync-btn');
     const rechnBtn = document.getElementById('auf-rechn-check-btn');
     const canSync  = (isAdmin() || hasPermission('auftraege_edit')) && !!APP_KEYS.valtownProxyUrl;
+    const abrBtn   = document.getElementById('auf-abrechnen-btn');
     if (erpBtn)   erpBtn.style.display   = canSync ? '' : 'none';
     if (bgBtn)    bgBtn.style.display    = (canSync && !isFirmaAll()) ? '' : 'none';
     if (rechnBtn) rechnBtn.style.display = canSync ? '' : 'none';
+    if (abrBtn)   abrBtn.style.display   = (canSync && !isFirmaAll()) ? '' : 'none';
     // Letzten Sync-Status laden + anzeigen (passiert async, non-blocking)
     if (canSync) loadLastSyncStatus().catch(()=>{});
     renderAuftraegeList();
     // v6.34: Auto-Mark „abgerechnet" für abgeschlossene Aufträge mit ERP-Rechnung
     //         (gedrosselt auf 1× pro 30 Min pro Firma, silent im Hintergrund)
     if (!allMode) _aufScheduleAutoMarkAbgerechnet(firmaSlug);
+    // v8.01: Auto-Reopen für abgerechnete Aufträge mit Bericht NACH der Rechnung (throttled)
+    if (!allMode) _aufScheduleAutoReopenNachBericht(firmaSlug);
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
   }
@@ -7700,7 +7758,8 @@ async function _aufLoadInvoicesForList(firmaSlug) {
       list = await _fetchErpRechnungen(firmaSlug);
     }
     const map = _indexRechnungenByAuftrag(list);
-    _aufInvoicesByAuftrag = { firma:firmaSlug, map, loadedAt:Date.now(), loading:false };
+    const allMap = _indexAllRechnungenByAuftrag(list);   // v8.01: alle Rechnungen je Auftrag
+    _aufInvoicesByAuftrag = { firma:firmaSlug, map, allMap, loadedAt:Date.now(), loading:false };
     renderAuftraegeList();
   } catch(e) {
     console.warn('[Aufträge] Rechnungen-Lookup fehlgeschlagen:', e.message);
@@ -7835,12 +7894,16 @@ function _auftragCardHtml(r) {
   const gwlBadge = f.gewaehrleistung
     ? '<span title="Gewährleistungsprüfung" style="background:#FFEDD5;color:#9A3412;font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;border:1px solid #FDBA74;margin-left:6px">🛡 Gewährleistung</span>'
     : '';
+  // v8.01: Bericht kam nach der Rechnung → weitere Rechnung nötig (Auto-Reopen hat den Auftrag wieder geöffnet)
+  const reinvoiceBadge = f.needs_reinvoice
+    ? '<span title="Nach der letzten Rechnung kam ein Arbeitsbericht — es fehlt vermutlich eine weitere Rechnung." style="background:#FEE2E2;color:#991B1B;font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;border:1px solid #FCA5A5;margin-left:6px">⚠ Bericht nach Rechnung</span>'
+    : '';
   return `
     <div class="auf-card" style="${cardStyle}" onclick="${onClick}">
       ${checkbox}
       <div class="auf-card-num">#${String(auftragsNr).replace(/</g,'&lt;')}</div>
       <div class="auf-card-info">
-        <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}${vgBadge}${gwlBadge}</div>
+        <div class="auf-card-title">${(f.standort||'(ohne Standort)').replace(/</g,'&lt;')}${vgBadge}${gwlBadge}${reinvoiceBadge}</div>
         <div class="auf-card-meta">
           ${firmaBadge}
           <span>🏷 ${tmplLabel}</span>
@@ -12426,6 +12489,23 @@ function _indexRechnungenByAuftrag(rechnungen) {
   return m;
 }
 
+/* ── Index: Map<auftragExtId, rechnung[]> — ALLE Rechnungen je Auftrag (v8.01, für Teil-/Mehrfachrechnungen) ── */
+function _indexAllRechnungenByAuftrag(rechnungen) {
+  const m = new Map();
+  for (const r of (rechnungen||[])) {
+    const cands = [
+      r?.auftragId, r?.auftrag_id, r?.auftrag?.id,
+      typeof r?.auftrag === 'number' ? r.auftrag : null,
+      typeof r?.auftrag === 'string' ? r.auftrag : null,
+    ].filter(v => v != null && v !== '');
+    if (!cands.length) continue;
+    const key = String(cands[0]);
+    if (!m.has(key)) m.set(key, []);
+    m.get(key).push(r);
+  }
+  return m;
+}
+
 /* ── Einzelner Auftrag: Rechnung prüfen + Aktion ── */
 async function checkAuftragInvoice(recId) {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
@@ -12785,7 +12865,10 @@ function _renderAuftragStatusPicker(rec) {
       '<span style="font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.4px">Status ändern</span>'+
       '<select id="auf-status-picker" data-rec="'+rec.id+'" data-current="'+escapeHtml(current)+'" style="flex:1;min-width:160px;padding:6px 10px;border:1px solid var(--bdr);border-radius:5px;font-size:13px;background:#fff">'+opts+'</select>'+
       '<button class="btn prim" style="padding:6px 14px;font-size:13px" onclick="applyAuftragStatusFromPicker(\''+rec.id+'\')">Übernehmen</button>'+
-      '<div style="flex-basis:100%;font-size:11px;color:var(--txt3);line-height:1.4">Setzt den Status lokal in Airtable UND im ERP (PUT). Bei Wartungsverträgen wirst du gewarnt.</div>'+
+      (_normAuftragStatus(f.status) !== 'abgerechnet'
+        ? '<button class="btn" style="padding:6px 14px;font-size:13px;color:#065F46;border-color:#6EE7B7;background:#ECFDF5" onclick="_auftragMarkAbgerechnetSingle(\''+rec.id+'\')" title="Prüft die ERP-Rechnung(en) und setzt bei vollständiger Abrechnung auf abgerechnet (überspringt Teilrechnung / Bericht nach Rechnung)">✅ Als abgerechnet markieren</button>'
+        : '')+
+      '<div style="flex-basis:100%;font-size:11px;color:var(--txt3);line-height:1.4">Setzt den Status lokal in Airtable UND im ERP (PUT). Bei Wartungsverträgen wirst du gewarnt. „✅ Als abgerechnet markieren" prüft zuerst Teil-/Mehrfachrechnungen und ob ein Bericht nach der Rechnung kam.</div>'+
     '</div>';
 }
 
@@ -13073,6 +13156,165 @@ function _aufScheduleAutoMarkAbgerechnet(firmaSlug) {
   setTimeout(() => {
     _aufAutoMarkAbgerechnet(firmaSlug, { silent: true }).catch(e => console.warn('[auto-abgerechnet]', e.message));
   }, 1500);
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   v8.01: „Abrechnen"-Aktion — vollständig berechnete Aufträge auf abgerechnet setzen.
+   Sonderfälle (User 11.08.): (1) offene Teilrechnung → NICHT setzen; (2) Arbeitsbericht
+   NACH der Rechnung → NICHT setzen (Auto-Reopen kümmert sich separat). Wartungsverträge ausgenommen.
+   ══════════════════════════════════════════════════════════════════ */
+let _aufBulkAbrCats = null;
+
+/* Rechnungen (ALLE je Auftrag) + Berichte frisch laden, damit die Klassifizierung stimmt. */
+async function _aufEnsureRechnungenGeladen(firmaSlug) {
+  try {
+    const list = await _fetchErpRechnungen(firmaSlug);
+    _aufInvoicesByAuftrag = { firma:firmaSlug, map:_indexRechnungenByAuftrag(list), allMap:_indexAllRechnungenByAuftrag(list), loadedAt:Date.now(), loading:false };
+  } catch(e) { console.warn('[abrechnen] Rechnungen laden:', e && e.message); }
+  try { _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false }; await _aufLoadBerichteForList(firmaSlug); } catch(_){}
+}
+
+/* Batch: mehrere Aufträge auf abgerechnet setzen (lokal + ERP-PUT), mit Fortschritts-Pille. */
+async function _aufSetAbgerechnetBatch(recs) {
+  let ok = 0, erpFail = 0;
+  for (let i = 0; i < recs.length; i++) {
+    const rec = recs[i];
+    _aufAutoCheckPill(true, 'Abrechnen '+(i+1)+'/'+recs.length+'…');
+    try { await _setErpAuftragStatus(rec, 'Abgerechnet'); } catch(e) { erpFail++; console.warn('[abrechnen] ERP #'+(rec.fields&&rec.fields.auftrag_num)+':', e && e.message); }
+    try { await _patchAuftragFields(rec.id, { status:'Abgerechnet' }); rec.fields.status = 'Abgerechnet'; ok++; } catch(e) { console.warn('[abrechnen] Airtable:', e && e.message); }
+  }
+  _aufAutoCheckPill(false);
+  return { ok, erpFail };
+}
+
+async function _aufOpenBulkAbrechnen() {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const btn = document.getElementById('auf-abrechnen-btn');
+  if (btn) { btn._orig = btn.textContent; btn.disabled = true; btn.textContent = '⏳ lade…'; }
+  try {
+    let wartungsAngebotIds = new Set();
+    try { await _loadWartungsAnlagen(firmaSlug); wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set(); } catch(_){}
+    await _aufEnsureRechnungenGeladen(firmaSlug);
+    const cats = { abrechenbar:[], teil:[], bericht:[], wartung:[] };
+    for (const r of _auftragCache) {
+      const f = r.fields || {};
+      if ((f.firma||'') !== firmaSlug || !f.ext_id) continue;
+      const info = _auftragAbrechenInfo(r);
+      if (!info.hatRechnung || info.status === 'abgerechnet') continue;
+      if (_isWartungsvertragAuftrag(r, wartungsAngebotIds)) { cats.wartung.push(r); continue; }
+      if (info.offeneTeil)   { cats.teil.push(r); continue; }
+      if (info.berichtNachRg){ cats.bericht.push(r); continue; }
+      cats.abrechenbar.push(r);
+    }
+    _aufBulkAbrCats = cats;
+    _aufRenderBulkAbrModal(cats);
+  } catch(e) {
+    toast('❌ '+((e&&e.message)||e),'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = btn._orig || '✅ Abrechnen (Rechnung)'; }
+  }
+}
+
+function _aufRenderBulkAbrModal(cats) {
+  document.getElementById('auf-abr-modal')?.remove();
+  const nr = (r) => escapeHtml('#'+(_dispAuftragNum(r.fields)||'?'));
+  const ort = (r) => escapeHtml(String(r.fields.standort||'').split(/[,\n]/)[0].trim());
+  const rowsOf = (arr, color) => arr.slice(0,60).map(r => '<div style="font-size:12px;padding:3px 0;border-bottom:1px dashed var(--bdr)"><span style="font-family:monospace;color:'+color+';font-weight:700">'+nr(r)+'</span> '+ort(r)+'</div>').join('') + (arr.length>60?'<div style="font-size:11px;color:var(--txt3);padding:4px 0">… und '+(arr.length-60)+' weitere</div>':'');
+  const sec = (title, arr, color, hint) => '<div style="margin-bottom:12px"><div style="font-weight:700;font-size:13px;color:'+color+';margin-bottom:4px">'+title+' ('+arr.length+')</div>'+(hint?'<div style="font-size:11px;color:var(--txt3);margin-bottom:4px">'+hint+'</div>':'')+(arr.length?'<div style="max-height:150px;overflow:auto;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;padding:6px 10px">'+rowsOf(arr,color)+'</div>':'')+'</div>';
+  const m = document.createElement('div'); m.id='auf-abr-modal';
+  m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10820;display:flex;align-items:center;justify-content:center;padding:16px';
+  const canApply = cats.abrechenbar.length > 0;
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:640px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:14px 18px;background:#065F46;color:#fff;font-weight:600;display:flex;justify-content:space-between;align-items:center">'+
+        '<span>✅ Aufträge abrechnen</span>'+
+        '<button onclick="document.getElementById(\'auf-abr-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 20px;overflow-y:auto">'+
+        sec('✅ Werden auf <b>abgerechnet</b> gesetzt', cats.abrechenbar, '#065F46', 'Vollständig berechnet (keine offene Teilrechnung, kein Bericht nach der Rechnung).')+
+        (cats.teil.length ? sec('⏸ Übersprungen — offene Teilrechnung', cats.teil, '#B45309', 'Noch nicht vollständig abgerechnet (Teil-/Abschlagsrechnung < 100%).') : '')+
+        (cats.bericht.length ? sec('⚠ Übersprungen — Bericht nach Rechnung', cats.bericht, '#B91C1C', 'Nach der letzten Rechnung kam ein Arbeitsbericht → vermutlich weitere Rechnung nötig. Werden separat wieder auf „offen" gesetzt.') : '')+
+        (cats.wartung.length ? sec('🛡 Übersprungen — Wartungsverträge', cats.wartung, '#6B7280', 'Laufen über Jahre mit vielen Rechnungen, bleiben offen.') : '')+
+        (!canApply ? '<div style="font-size:12px;color:var(--txt3);padding:8px 0">Kein Auftrag erfüllt aktuell die Kriterien für „abgerechnet".</div>' : '')+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'auf-abr-modal\').remove()">Abbrechen</button>'+
+        (canApply ? '<button class="btn prim" style="background:#065F46;border-color:#065F46" onclick="_aufDoBulkAbrechnen()">'+cats.abrechenbar.length+' auf abgerechnet setzen</button>' : '')+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+}
+
+async function _aufDoBulkAbrechnen() {
+  const cats = _aufBulkAbrCats; if (!cats) return;
+  const recs = cats.abrechenbar || [];
+  document.getElementById('auf-abr-modal')?.remove();
+  if (!recs.length) return;
+  toast('⏳ Setze '+recs.length+' Aufträge auf abgerechnet (lokal + ERP)…','');
+  const { ok, erpFail } = await _aufSetAbgerechnetBatch(recs);
+  _aufBulkAbrCats = null;
+  toast(ok+' auf abgerechnet gesetzt'+(erpFail?' · ⚠ '+erpFail+' ERP-Update-Fehler (lokal gesetzt)':''), erpFail?'warn':'ok');
+  await loadAuftraegeAndRender();
+}
+
+/* Einzel-Aktion im Auftragsdetail — mit denselben Prüfungen. */
+async function _auftragMarkAbgerechnetSingle(recId) {
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  const rec = _auftragCache.find(r => r.id === recId); if (!rec) return toast('Auftrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  if (!f.ext_id) return toast('Dieser Auftrag stammt nicht aus dem ERP.','err');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  toast('⏳ prüfe Rechnungen…','');
+  await _aufEnsureRechnungenGeladen(firmaSlug);
+  const info = _auftragAbrechenInfo(rec);
+  if (!info.hatRechnung) return toast('Für diesen Auftrag ist (noch) keine Rechnung im ERP hinterlegt.','err');
+  if (info.offeneTeil)   return toast('⏸ Offene Teilrechnung — noch nicht vollständig abgerechnet. Nicht gesetzt.','warn');
+  if (info.berichtNachRg)return toast('⚠ Ein Arbeitsbericht kam NACH der letzten Rechnung — vermutlich fehlt eine weitere Rechnung. Nicht gesetzt.','warn');
+  if (!confirm('Auftrag #'+(_dispAuftragNum(f)||'?')+' auf „abgerechnet" setzen?\n\n• lokal (Airtable)\n• im ERP (PUT)\n\nFortfahren?')) return;
+  let erpOk = true;
+  try { await _setErpAuftragStatus(rec, 'Abgerechnet'); } catch(e) { erpOk = false; console.warn('[abrechnen-einzel] ERP:', e && e.message); }
+  try { await _patchAuftragFields(recId, { status:'Abgerechnet' }); } catch(e) { return toast('❌ Airtable: '+((e&&e.message)||e),'err'); }
+  toast(erpOk ? '✅ Auf abgerechnet gesetzt (lokal + ERP).' : '✅ Lokal gesetzt · ⚠ ERP-Update fehlgeschlagen.', erpOk?'ok':'warn');
+  try { closeAuftragDetail(); } catch(_){}
+  await loadAuftraegeAndRender();
+}
+
+/* Auto-Reopen: abgerechnete Aufträge mit Bericht NACH der Rechnung → zurück auf offen + Flag needs_reinvoice.
+   Läuft throttled beim Öffnen der Auftragsübersicht. Setzt/löscht das Flag auch für nicht-abgerechnete. */
+async function _aufAutoReopenNachBericht(firmaSlug, opts) {
+  opts = opts || {};
+  if (!firmaSlug || firmaSlug === '__all__') return;
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return;
+  if (!APP_KEYS.valtownProxyUrl) return;
+  try { await ensureField('Auftraege', 'needs_reinvoice', 'checkbox'); } catch(_){}
+  try { await _aufEnsureRechnungenGeladen(firmaSlug); } catch(_){ return; }
+  let changed = 0;
+  for (const r of _auftragCache) {
+    const f = r.fields || {};
+    if ((f.firma||'') !== firmaSlug || !f.ext_id) continue;
+    const info = _auftragAbrechenInfo(r);
+    const soll = info.hatRechnung && info.berichtNachRg;
+    const ist  = !!f.needs_reinvoice;
+    if (soll && !ist) {
+      const patch = { needs_reinvoice: true };
+      if (_normAuftragStatus(f.status) === 'abgerechnet') patch.status = 'Auftrag bestätigt';   // wieder auf offen
+      try { await _patchAuftragFields(r.id, patch); f.needs_reinvoice = true; if (patch.status) f.status = patch.status; changed++; } catch(_){}
+    } else if (!soll && ist) {
+      try { await _patchAuftragFields(r.id, { needs_reinvoice: false }); f.needs_reinvoice = false; changed++; } catch(_){}
+    }
+  }
+  if (changed) { if (!opts.silent) toast('ℹ '+changed+' Auftrag/Aufträge: „Bericht nach Rechnung" aktualisiert.',''); renderAuftraegeList(); }
+}
+function _aufScheduleAutoReopenNachBericht(firmaSlug) {
+  if (!firmaSlug || firmaSlug === '__all__') return;
+  if (!APP_KEYS.valtownProxyUrl) return;
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return;
+  try { const last = +localStorage.getItem('auf_auto_reopen_'+firmaSlug) || 0; if (Date.now() - last < 30*60*1000) return; } catch(_){}
+  try { localStorage.setItem('auf_auto_reopen_'+firmaSlug, String(Date.now())); } catch(_){}
+  setTimeout(() => { _aufAutoReopenNachBericht(firmaSlug, { silent:true }).catch(e => console.warn('[auto-reopen]', e && e.message)); }, 3000);
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -44110,6 +44352,7 @@ async function runSyncForFirma(firma, userKey) {
         // v7.98/v8.00: Maxise = Wahrheit — aktiver Maxise-Status reaktiviert lokal 'abgerechnet'
         //   (Status → offen). Das Ausblenden berechneter Aufträge macht die Checkbox „Mit Rechnung ausblenden".
         if (ex.fields.status === "abgerechnet" && normStatus(a.status) !== "offen") delete patch.status;
+        if (ex.fields.needs_reinvoice && normStatus(a.status) === "abgerechnet") delete patch.status;   // v8.01: Bericht nach Rechnung hält offen
         const protectIfEmpty = ["kontakt","leistungsumfang","erlaeuterungen","standort","fabriknummer","due_date"];
         for (const k of protectIfEmpty) {
           if ((patch[k] === "" || patch[k] == null) && ex.fields[k]) delete patch[k];
@@ -45925,6 +46168,10 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         //   Checkbox „🧾 Mit Rechnung ausblenden" (Live-Erkennung). Nur wenn Maxise selbst inaktiv/
         //   abgerechnet meldet, bleibt das lokale 'abgerechnet' erhalten.
         if (existRec.fields.status === 'abgerechnet' && _normAuftragStatus(a.status) !== 'offen') {
+          delete patchFields.status;
+        }
+        // v8.01: „Bericht nach Rechnung" hält den Auftrag offen — Maxise-„abgerechnet" NICHT übernehmen
+        if (existRec.fields.needs_reinvoice && _normAuftragStatus(a.status) === 'abgerechnet') {
           delete patchFields.status;
         }
         // Auch kontakt/leistungsumfang/erlaeuterungen schützen wenn ERP keinen neuen Wert liefert
