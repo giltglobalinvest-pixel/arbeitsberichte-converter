@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.94';
+const APP_VERSION = 'v7.95';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -33960,6 +33960,23 @@ async function _abNextNummer(firmaSlug) {
   }
   return max + 1;
 }
+/* v7.95: Prüfen, ob für dieses Angebot bereits eine Auftragsbestätigung existiert (Duplikat-Schutz).
+   Match über angebot_rec_id (Servicebox-Angebot) oder angebot_num. Neueste zuerst. Rückgabe: Record oder null. */
+async function _abFindExistingForAngebot(firmaSlug, angebotRecId, angebotNum) {
+  if (!angebotRecId && !angebotNum) return null;
+  try {
+    await _ensureAbTable();
+    let recs = await atRead('Auftragsbestaetigungen', "{firma}='"+String(firmaSlug||'').replace(/'/g,"\\'")+"'");
+    recs = (recs||[]).filter(r => {
+      const f = r.fields || {};
+      if (angebotRecId && String(f.angebot_rec_id||'') === String(angebotRecId)) return true;
+      if (angebotNum   && String(f.angebot_num||'')    === String(angebotNum))   return true;
+      return false;
+    });
+    recs.sort((a,b) => (+((b.fields&&b.fields.ab_nummer)||0)) - (+((a.fields&&a.fields.ab_nummer)||0)));
+    return recs[0] || null;
+  } catch(e) { console.warn('[AB-Dup-Check]', e && e.message); return null; }
+}
 
 /* v7.94: Auftragstyp aus den Angebotsdaten ableiten (deterministisch, kein KI).
    'aufwand' = Nach Aufwand (→ ohneangebot). Alles andere = Festpreis (→ mitangebot, braucht ERP-Angebot). */
@@ -34120,6 +34137,21 @@ function _abOpen(recId) {
   _abOpenFromData(v, firmaSlug);
   // v7.86/87: Rechnungsempfänger aus Maxise nachladen (Anlage → Kunde → defaultrechnungsempfaenger; WEG-Adressierung bei Hausverwaltung), Fallback Kunde/KI
   try { _abFillRechnungsempfaenger(firmaSlug, f.anlage_id || '', f.kunde_name || '', f.kunde_adresse || '', f.anlage_adresse || ''); } catch(_){}
+  // v7.95: früh prüfen, ob für dieses Angebot schon eine AB existiert → Warn-Banner
+  try { _abWarnIfExists(firmaSlug, recId, f.app_angebot_num || ''); } catch(_){}
+}
+/* v7.95: Warn-Banner in den offenen AB-Dialog setzen, falls für dieses Angebot bereits eine AB existiert. */
+async function _abWarnIfExists(firmaSlug, angebotRecId, angebotNum) {
+  const ex = await _abFindExistingForAngebot(firmaSlug, angebotRecId, angebotNum);
+  const box = document.getElementById('ab-dup-warn');
+  if (!box || !ex) return;
+  const ef = ex.fields || {};
+  box.innerHTML = '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:9px 12px;font-size:12px;color:#78350F;margin-bottom:14px">'+
+    '⚠ <strong>Für dieses Angebot existiert bereits eine Auftragsbestätigung:</strong> AB '+escapeHtml(_abDispNum(ef)||'?')+
+    (ef.erp_auftrag_num?' · Maxise-Auftrag '+escapeHtml(String(ef.erp_auftrag_num)):'')+(ef.datum?' · '+escapeHtml(String(ef.datum)):'')+'. '+
+    'Ein erneutes „Erzeugen" legt eine <strong>zweite AB + einen zweiten Auftrag</strong> an (du wirst vorher gefragt). '+
+    'Bestehende ansehen/senden: <strong>Vorlagen → 📋 Auftragsbestätigungen</strong>.'+
+  '</div>';
 }
 
 /* v7.52: Dialog-Renderer — nimmt ein fertiges Werte-Objekt (aus App-Angebot ODER Maxise). */
@@ -34145,6 +34177,7 @@ function _abOpenFromData(v, firmaSlug) {
         '<div style="background:#EEF2FF;border:1px solid #A5B4FC;border-radius:8px;padding:9px 12px;font-size:11.5px;color:#3730A3;margin-bottom:14px">'+
           'Vorbefüllt aus dem Angebot — bitte prüfen/ergänzen. Die <strong>Auftragsbestätigungs-Nummer</strong> wird beim Speichern automatisch vergeben — <strong>unabhängig von Maxise</strong> (eigener Nummernkreis). Das PDF enthält Preise + Leistungsumfang.'+
         '</div>'+
+        '<div id="ab-dup-warn"></div>'+   // v7.95: Warn-Banner, falls für dieses Angebot schon eine AB existiert
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 14px">'+
           inp('auftragNum','ERP-Auftragsnummer','(optional)')+
           inp('angebotNum','Angebotsnummer')+
@@ -34226,6 +34259,23 @@ async function _abGenerateAndSave(btn, send) {
     // v7.93: Direkt bei AB-Erstellung den Maxise-Auftrag anlegen + verknüpfen.
     //   Erfolgreich → Maxise-Auftragsnummer wird zur AB-Nummer; sonst Servicebox-Nummernkreis.
     const fAng = (function(){ try { const r=(_angeboteCache.items||[]).find(x=>x.id===(m._recId||'')); return (r&&r.fields)||null; } catch(_){ return null; } })();
+    // v7.95: Duplikat-Prüfung — existiert für dieses Angebot schon eine AB (+ Auftrag)? Dann NICHT blind neu anlegen.
+    if (btn) btn.textContent = '⏳ prüfe…';
+    const existingAb = await _abFindExistingForAngebot(firmaSlug, m._recId||'', d.angebotNum||'');
+    if (existingAb) {
+      const ef = existingAb.fields || {};
+      const proceed = confirm(
+        '⚠ Für Angebot '+(d.angebotNum||'?')+' existiert bereits eine Auftragsbestätigung:\n\n'+
+        '  • AB '+(_abDispNum(ef)||'?')+(ef.erp_auftrag_num?'  ·  Maxise-Auftrag '+ef.erp_auftrag_num:'')+(ef.datum?'  ·  '+ef.datum:'')+'\n\n'+
+        'Trotzdem eine NEUE erzeugen? Das legt AUCH einen weiteren Auftrag in Maxise an (Duplikat!).\n\n'+
+        'OK = neue AB + neuer Auftrag   ·   Abbrechen = nichts tun');
+      if (!proceed) {
+        toast('Abgebrochen — bestehende AB '+(_abDispNum(ef)||'')+' bleibt. (Ansicht: Vorlagen → 📋 Auftragsbestätigungen)','');
+        if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
+        return;
+      }
+    }
+    if (btn) btn.textContent = '⏳ erzeuge…';
     const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
     let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
     if (fAng) {
