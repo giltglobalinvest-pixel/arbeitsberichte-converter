@@ -2460,6 +2460,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Alle Aufträge mit Angebots-Typ 'Wartung' / 'Wartung & Notruf' aus der Liste ausblenden">
       <input type="checkbox" id="auf-hide-wartung" onchange="_onHideWartungChange()"> 🔧 Wartung ausblenden
     </label>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, für die im ERP bereits eine Rechnung existiert, aus der Liste ausblenden (Standard: an)">
+      <input type="checkbox" id="auf-hide-invoiced" checked onchange="_onHideInvoicedChange()"> 🧾 Mit Rechnung ausblenden
+    </label>
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die manuell oder per Rechnungs-Check ausgeblendet wurden, wieder anzeigen">
       <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"><span id="auf-show-hidden-lbl">🙈 Ausgeblendete zeigen</span>
     </label>
@@ -2772,7 +2775,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.99';
+const APP_VERSION = 'v8.00';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7338,22 +7341,24 @@ function _canSeeAuftrag(rec) {
   return _isAssignedToMe(rec);
 }
 
-/* v7.99: Zentrale Ausblend-Regel für die Auftragsliste.
-   Ein Auftrag ist standardmäßig ausgeblendet (nur per „Ausgeblendete zeigen"-Checkbox sichtbar), wenn er:
-   - storniert ist,
-   - manuell ausgeblendet wurde (hidden_manual),
-   - als Rechnung ausgeblendet markiert ist (hidden_invoiced), ODER
-   - EINE ERP-RECHNUNG hat (invoice_num/invoice_id) und NICHT im Abgerechnet-Tab liegt
-     → GARANTIE: berechnete/abgerechnete Aufträge erscheinen NIE in der offenen Liste,
-       egal wie der Status migriert wurde. Ausnahme: explizit wieder eingeblendet (hidden_invoiced === false).
-   Abgerechnet-Status bleibt unberührt (die haben ihren eigenen Tab). */
+/* Zentrale Ausblend-Regel für die „🙈 Ausgeblendete zeigen"-Logik (explizit ausgeblendet):
+   storniert, manuell ausgeblendet (hidden_manual) oder per Rechnungs-Check ausgeblendet (hidden_invoiced). */
 function _aufIstAusgeblendet(r) {
   const f = (r && r.fields) || {};
-  const st = _normAuftragStatus(f.status);
-  if (st === 'storniert') return true;
+  if (_normAuftragStatus(f.status) === 'storniert') return true;
   if (f.hidden_manual) return true;
   if (f.hidden_invoiced === true) return true;
-  if (st !== 'abgerechnet' && (f.invoice_num || f.invoice_id) && f.hidden_invoiced !== false) return true;
+  return false;
+}
+
+/* v8.00: „Hat dieser Auftrag bereits eine ERP-Rechnung?" — Erkennung exakt wie der „Rg."-Chip:
+   gespeichertes invoice_num/invoice_id ODER Live-Treffer im ERP-Rechnungs-Lookup (per ext_id).
+   Abgerechnet-Status-Aufträge zählen NICHT (die haben ihren eigenen Tab und sollen dort sichtbar bleiben). */
+function _aufHatRechnung(r) {
+  const f = (r && r.fields) || {};
+  if (_normAuftragStatus(f.status) === 'abgerechnet') return false;
+  if (f.invoice_num || f.invoice_id) return true;
+  if (_aufInvoicesByAuftrag.map && f.ext_id && _aufInvoicesByAuftrag.map.get(String(f.ext_id))) return true;
   return false;
 }
 
@@ -7377,6 +7382,12 @@ async function loadAuftraegeAndRender() {
   if (hwCb && !hwCb._initialized) {
     try { hwCb.checked = localStorage.getItem('auf_hide_wartung_'+APP_CONFIG.PROJECT_ID) === '1'; } catch(_){}
     hwCb._initialized = true;
+  }
+  // v8.00: "Mit Rechnung ausblenden" — Default AN, sonst persistierter Wert
+  const hiCb = document.getElementById('auf-hide-invoiced');
+  if (hiCb && !hiCb._initialized) {
+    try { const s = localStorage.getItem('auf_hide_invoiced_'+APP_CONFIG.PROJECT_ID); hiCb.checked = (s === null ? true : s === '1'); } catch(_){ hiCb.checked = true; }
+    hiCb._initialized = true;
   }
   const sortSel = document.getElementById('auf-sort');
   if (sortSel && !sortSel._initialized) {
@@ -7498,6 +7509,11 @@ function renderAuftraegeList() {
   // Cache nach der zentralen Ausblend-Regel vorfiltern (außer Toggle ist aktiv).
   // v7.61: Stornierte ausgeblendet. v7.99: berechnete (ERP-Rechnung) ebenfalls → nie im Offen-Tab.
   const visibleCache = showHidden ? _auftragCache : _auftragCache.filter(r => !_aufIstAusgeblendet(r));
+  // v8.00: Zusätzlicher, per Checkbox steuerbarer Filter — Aufträge mit ERP-Rechnung ausblenden (Default an).
+  //   Erkennung wie der „Rg."-Chip (gespeichert ODER Live-ERP-Lookup). Betrifft Offen/Abgeschlossen/Alle;
+  //   Abgerechnet-Tab bleibt unberührt (dort zählt _aufHatRechnung nicht).
+  const hideInvoiced = !!document.getElementById('auf-hide-invoiced')?.checked;
+  const activeCache = hideInvoiced ? visibleCache.filter(r => !_aufHatRechnung(r)) : visibleCache;
   // Dropdown-Optionen für Angebots-Typ aus dem (gesamten) Cache zusammensuchen
   _refreshAngebotTypFilter();
   _refreshTechnikerFilter();
@@ -7517,8 +7533,8 @@ function renderAuftraegeList() {
   // Counter respektieren den hide_wartung-Filter, damit Tab-Zahlen mit der sichtbaren Liste konsistent sind.
   const hideWartungForCounts = !!document.getElementById('auf-hide-wartung')?.checked;
   const countCache = hideWartungForCounts
-    ? visibleCache.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')))
-    : visibleCache;
+    ? activeCache.filter(r => !/wartung/i.test(String(r.fields.angebot_typ||'')))
+    : activeCache;
   const counts = { offen:0, abgeschlossen:0, abgerechnet:0, all: 0 };
   countCache.forEach(r => {
     const s = _normAuftragStatus(r.fields.status);
@@ -7539,9 +7555,9 @@ function renderAuftraegeList() {
   //   Falls 0 Treffer im aktuellen Tab: Cross-Tab-Hinweis am Ende.
   let filtered;
   if (_auftragTab === 'all') {
-    filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
+    filtered = activeCache.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
   } else {
-    filtered = visibleCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
+    filtered = activeCache.filter(r => _normAuftragStatus(r.fields.status) === _auftragTab);
   }
   if (typFilter) {
     if (typFilter === '__none__') {
@@ -8902,7 +8918,9 @@ function _getCurrentlyVisibleAuftraege() {
   // Alles, was im aktiven Tab + Suchfilter sichtbar wäre. Reproduziert die Filter aus renderAuftraegeList.
   const search = (document.getElementById('auf-search')?.value || '').toLowerCase().trim();
   const showHidden = !!document.getElementById('auf-show-hidden')?.checked;
-  const base = showHidden ? _auftragCache : _auftragCache.filter(r => !_aufIstAusgeblendet(r));  // v7.99: berechnete raus
+  const hideInvoiced = !!document.getElementById('auf-hide-invoiced')?.checked;
+  let base = showHidden ? _auftragCache : _auftragCache.filter(r => !_aufIstAusgeblendet(r));
+  if (hideInvoiced) base = base.filter(r => !_aufHatRechnung(r));  // v8.00: berechnete raus
   let filtered;
   if (_auftragTab === 'all') {
     filtered = base.filter(r => _normAuftragStatus(r.fields.status) !== 'abgerechnet');
@@ -12626,6 +12644,13 @@ function _onHideWartungChange() {
   renderAuftraegeList();
 }
 
+/* v8.00: Toggle "Mit Rechnung ausblenden": Auswahl persistieren + Liste neu rendern. Default: an. */
+function _onHideInvoicedChange() {
+  const cb = document.getElementById('auf-hide-invoiced');
+  try { localStorage.setItem('auf_hide_invoiced_'+APP_CONFIG.PROJECT_ID, cb?.checked ? '1' : '0'); } catch(_){}
+  renderAuftraegeList();
+}
+
 /* Sortierung wechseln + persistieren */
 function _onAuftragSortChange() {
   const sel = document.getElementById('auf-sort');
@@ -12952,14 +12977,14 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return { skipped:'no-permission' };
   if (!firmaSlug || firmaSlug === '__all__') return { skipped:'no-firma' };
 
-  // Kandidaten: abgeschlossene Aufträge mit ERP-ID, noch nicht ausgeblendet
-  // v7.98: „berechnet" = ausblenden (hidden_invoiced), NICHT mehr Status→abgerechnet.
-  //   Status bleibt die Maxise-Wahrheit; bereits ausgeblendete überspringen.
+  // Kandidaten: abgeschlossene Aufträge mit ERP-ID, deren Rechnungsdaten noch nicht erfasst sind.
+  // v8.00: Nur invoice_num/date/id persistieren (für den „Rg."-Chip). Das AUSBLENDEN übernimmt die
+  //   Checkbox „🧾 Mit Rechnung ausblenden" (Live-Erkennung); Status bleibt die Maxise-Wahrheit.
   const candidates = _auftragCache.filter(r => {
     const f = r.fields || {};
     if (!f.ext_id) return false;
     if ((f.firma||'') !== firmaSlug) return false;
-    if (f.hidden_invoiced) return false;
+    if (f.invoice_num || f.invoice_id) return false;   // Rechnungsdaten schon erfasst → überspringen
     return _normAuftragStatus(f.status) === 'abgeschlossen';
   });
   if (!candidates.length) return { checked:0, marked:0, skipped:'no-candidates' };
@@ -13005,13 +13030,11 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
       const invId   = String(inv.id || '');
       try {
         await _patchAuftragFields(rec.id, {
-          hidden_invoiced: true,     // v7.98: ausblenden statt Status→abgerechnet (Maxise bleibt Status-Wahrheit)
-          invoice_num:   invNum,
+          invoice_num:   invNum,     // v8.00: nur Rechnungsdaten erfassen; Ausblenden macht die Checkbox
           invoice_date:  invDate,
           invoice_id:    invId,
         });
         // Lokal-Cache aktualisieren
-        rec.fields.hidden_invoiced = true;
         rec.fields.invoice_num   = invNum;
         rec.fields.invoice_date  = invDate;
         rec.fields.invoice_id    = invId;
@@ -13025,7 +13048,7 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
     try { localStorage.setItem('auf_auto_invoiced_'+firmaSlug, String(Date.now())); } catch(_){}
     if (!silent || marked > 0) {
       const parts = [];
-      parts.push(marked+' Auftrag'+(marked===1?'':'e')+' ausgeblendet (Rechnung im ERP)');
+      parts.push(marked+' Auftrag'+(marked===1?'':'e')+' mit Rechnung erfasst');
       if (skippedWartung) parts.push(skippedWartung+' Wartungsverträge ausgenommen');
       if (atFails) parts.push(atFails+' Airtable-Fehler');
       toast('✅ '+parts.join(' · '), atFails ? 'warn' : 'ok');
@@ -44084,15 +44107,9 @@ async function runSyncForFirma(firma, userKey) {
           const hasVal = v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0);
           if (hasVal) delete patch[k];
         }
-        // v7.98: Maxise = Wahrheit — aktiver Maxise-Status reaktiviert lokal 'abgerechnet';
-        //   berechnete Aufträge werden dabei ausgeblendet (hidden_invoiced), sonst bleibt 'abgerechnet'.
-        if (ex.fields.status === "abgerechnet") {
-          if (normStatus(a.status) === "offen") {
-            if ((ex.fields.invoice_num || ex.fields.invoice_id) && !ex.fields.hidden_invoiced) patch.hidden_invoiced = true;
-          } else {
-            delete patch.status;
-          }
-        }
+        // v7.98/v8.00: Maxise = Wahrheit — aktiver Maxise-Status reaktiviert lokal 'abgerechnet'
+        //   (Status → offen). Das Ausblenden berechneter Aufträge macht die Checkbox „Mit Rechnung ausblenden".
+        if (ex.fields.status === "abgerechnet" && normStatus(a.status) !== "offen") delete patch.status;
         const protectIfEmpty = ["kontakt","leistungsumfang","erlaeuterungen","standort","fabriknummer","due_date"];
         for (const k of protectIfEmpty) {
           if ((patch[k] === "" || patch[k] == null) && ex.fields[k]) delete patch[k];
@@ -45902,20 +45919,13 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
           const hasVal = v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && v.length === 0);
           if (hasVal) delete patchFields[k];
         }
-        // v7.98: Maxise ist die Wahrheit für den Status.
-        //   Meldet Maxise einen AKTIVEN Status ("Auftrag bestätigt"/"In Bearbeitung" → 'offen'),
-        //   wird ein lokal auf 'abgerechnet' gesetzter Auftrag REAKTIVIERT (erscheint wieder).
-        //   Damit berechnete Aufträge dabei die Offen-Liste nicht fluten, werden sie
-        //   ausgeblendet (hidden_invoiced) — per "Ausgeblendete zeigen"-Checkbox sichtbar.
-        //   Nur wenn Maxise selbst inaktiv/abgerechnet meldet, bleibt das lokale 'abgerechnet'.
-        if (existRec.fields.status === 'abgerechnet') {
-          if (_normAuftragStatus(a.status) === 'offen') {
-            if ((existRec.fields.invoice_num || existRec.fields.invoice_id) && !existRec.fields.hidden_invoiced) {
-              patchFields.hidden_invoiced = true;
-            }
-          } else {
-            delete patchFields.status;
-          }
+        // v7.98/v8.00: Maxise ist die Wahrheit für den Status. Meldet Maxise einen AKTIVEN Status
+        //   ("Auftrag bestätigt"/"In Bearbeitung" → 'offen'), wird ein lokal auf 'abgerechnet' gesetzter
+        //   Auftrag REAKTIVIERT (Status → offen). Das Ausblenden berechneter Aufträge übernimmt die
+        //   Checkbox „🧾 Mit Rechnung ausblenden" (Live-Erkennung). Nur wenn Maxise selbst inaktiv/
+        //   abgerechnet meldet, bleibt das lokale 'abgerechnet' erhalten.
+        if (existRec.fields.status === 'abgerechnet' && _normAuftragStatus(a.status) !== 'offen') {
+          delete patchFields.status;
         }
         // Auch kontakt/leistungsumfang/erlaeuterungen schützen wenn ERP keinen neuen Wert liefert
         // (verhindert Überschreiben mit leerem String)
