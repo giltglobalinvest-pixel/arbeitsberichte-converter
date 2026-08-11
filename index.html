@@ -2776,7 +2776,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.03';
+const APP_VERSION = 'v8.04';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -13176,12 +13176,22 @@ function _aufScheduleAutoMarkAbgerechnet(firmaSlug) {
 let _aufBulkAbrCats = null;
 
 /* Rechnungen (ALLE je Auftrag) + Berichte frisch laden, damit die Klassifizierung stimmt. */
-async function _aufEnsureRechnungenGeladen(firmaSlug) {
+async function _aufEnsureRechnungenGeladen(firmaSlug, opts) {
+  opts = opts || {};
+  // v8.04: Nur (neu) laden, wenn NICHT frisch gecacht (60s) — verhindert die doppelte schwere Ladung,
+  //   die im Hintergrund-Auto-Reopen kurz nach dem View-Load für einen UI-Freeze sorgte. Manuelle
+  //   Aufrufe (Bulk/Einzel) übergeben {force:true} für frische Daten.
+  const rgFresh = !opts.force && _aufInvoicesByAuftrag.allMap && _aufInvoicesByAuftrag.firma === firmaSlug && (Date.now() - (_aufInvoicesByAuftrag.loadedAt||0)) < 60_000;
+  if (!rgFresh) {
+    try {
+      const list = await _fetchErpRechnungen(firmaSlug);
+      _aufInvoicesByAuftrag = { firma:firmaSlug, map:_indexRechnungenByAuftrag(list), allMap:_indexAllRechnungenByAuftrag(list), loadedAt:Date.now(), loading:false };
+    } catch(e) { console.warn('[abrechnen] Rechnungen laden:', e && e.message); }
+  }
+  // Berichte: vorhandenen Cache nutzen (5-min TTL in _aufLoadBerichteForList), NICHT hart zurücksetzen
   try {
-    const list = await _fetchErpRechnungen(firmaSlug);
-    _aufInvoicesByAuftrag = { firma:firmaSlug, map:_indexRechnungenByAuftrag(list), allMap:_indexAllRechnungenByAuftrag(list), loadedAt:Date.now(), loading:false };
-  } catch(e) { console.warn('[abrechnen] Rechnungen laden:', e && e.message); }
-  try { _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false }; await _aufLoadBerichteForList(firmaSlug); } catch(_){}
+    if (opts.force || !(_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.firma === firmaSlug)) await _aufLoadBerichteForList(firmaSlug);
+  } catch(_){}
 }
 
 /* Batch: mehrere Aufträge auf abgerechnet setzen (lokal + ERP-PUT), mit Fortschritts-Pille. */
@@ -13207,7 +13217,7 @@ async function _aufOpenBulkAbrechnen() {
   try {
     let wartungsAngebotIds = new Set();
     try { await _loadWartungsAnlagen(firmaSlug); wartungsAngebotIds = _wartungsAnlagenCache.angebotIds || new Set(); } catch(_){}
-    await _aufEnsureRechnungenGeladen(firmaSlug);
+    await _aufEnsureRechnungenGeladen(firmaSlug, { force: true });
     const cats = { abrechenbar:[], teil:[], bericht:[], wartung:[] };
     for (const r of _auftragCache) {
       const f = r.fields || {};
@@ -13278,7 +13288,7 @@ async function _auftragMarkAbgerechnetSingle(recId) {
   if (!f.ext_id) return toast('Dieser Auftrag stammt nicht aus dem ERP.','err');
   const firmaSlug = f.firma || getCurrentFirmaSlug();
   toast('⏳ prüfe Rechnungen…','');
-  await _aufEnsureRechnungenGeladen(firmaSlug);
+  await _aufEnsureRechnungenGeladen(firmaSlug, { force: true });
   const info = _auftragAbrechenInfo(rec);
   if (!info.hatRechnung) return toast('Für diesen Auftrag ist (noch) keine Rechnung im ERP hinterlegt.','err');
   if (info.offeneTeil)   return toast('⏸ Offene Teilrechnung — noch nicht vollständig abgerechnet. Nicht gesetzt.','warn');
@@ -13324,7 +13334,11 @@ function _aufScheduleAutoReopenNachBericht(firmaSlug) {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return;
   try { const last = +localStorage.getItem('auf_auto_reopen_'+firmaSlug) || 0; if (Date.now() - last < 30*60*1000) return; } catch(_){}
   try { localStorage.setItem('auf_auto_reopen_'+firmaSlug, String(Date.now())); } catch(_){}
-  setTimeout(() => { _aufAutoReopenNachBericht(firmaSlug, { silent:true }).catch(e => console.warn('[auto-reopen]', e && e.message)); }, 3000);
+  // v8.04: erst deutlich nach dem View-Load-Peak (Render + Auto-Mark), nur wenn Aufträge-Ansicht noch aktiv
+  setTimeout(() => {
+    try { if (!document.getElementById('app')?.classList.contains('view-auftraege')) return; } catch(_){}
+    _aufAutoReopenNachBericht(firmaSlug, { silent:true }).catch(e => console.warn('[auto-reopen]', e && e.message));
+  }, 9000);
 }
 
 /* ──────────────────────────────────────────────────────────────
