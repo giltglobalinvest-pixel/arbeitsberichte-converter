@@ -2772,7 +2772,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v7.96';
+const APP_VERSION = 'v7.97';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7371,7 +7371,7 @@ async function loadAuftraegeAndRender() {
     _auftragCache = allRecs
       .filter(r => allMode ? true : (r.fields.firma || '') === firmaSlug)
       .filter(_canSeeAuftrag)
-      .sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));
+      .sort((a,b) => _auftragSortNum(b.fields) - _auftragSortNum(a.fields));  // v7.97: nach angezeigter Nr.
     // Anlegen-Button: bei "Alle Firmen" ausgeblendet, weil Anlegen eine konkrete Firma braucht
     document.getElementById('auf-new-btn').style.display = (hasPermission('auftraege_create') && !allMode) ? '' : 'none';
     // Select-Button: sichtbar wenn User löschen darf (auftraege_edit-Permission)
@@ -7544,7 +7544,7 @@ function renderAuftraegeList() {
   }
   // Sortierung explizit anwenden (filtered erbt vom Cache, daher konsistent neu sortieren)
   const sortMode = document.getElementById('auf-sort')?.value || 'num_desc';
-  if (sortMode === 'num_asc')        filtered.sort((a,b) => (a.fields.auftrag_num||0) - (b.fields.auftrag_num||0));
+  if (sortMode === 'num_asc')        filtered.sort((a,b) => _auftragSortNum(a.fields) - _auftragSortNum(b.fields));
   else if (sortMode === 'wert_desc') filtered.sort((a,b) => (b.fields.auftragswert_netto||0) - (a.fields.auftragswert_netto||0));
   else if (sortMode === 'wert_asc')  filtered.sort((a,b) => {
     const av = a.fields.auftragswert_netto, bv = b.fields.auftragswert_netto;
@@ -7553,7 +7553,7 @@ function renderAuftraegeList() {
     if (bv == null) return -1;
     return av - bv;
   });
-  else                               filtered.sort((a,b) => (b.fields.auftrag_num||0) - (a.fields.auftrag_num||0));  // num_desc
+  else                               filtered.sort((a,b) => _auftragSortNum(b.fields) - _auftragSortNum(a.fields));  // num_desc (v7.97: nach angezeigter Nr.)
 
   if (search) {
     // Mehrere Token mit Leerzeichen getrennt → ALLE müssen matchen (AND)
@@ -11569,6 +11569,13 @@ function closeAuftragForm() {
 function _dispAuftragNum(f) {
   if (!f) return '';
   return String(f.ext_id || f.auftrag_num || '');
+}
+/* v7.97: Sortierschlüssel = ANGEZEIGTE Nummer (ext_id/AuftragID), nicht das rohe
+   auftrag_num. Bei Alt-Datensätzen (pre-v5.21-Sync) hält auftrag_num noch die
+   Vorgangsnummer → Liste wurde nach einer anderen Zahl sortiert als angezeigt
+   ("Nummern wirken durcheinander", passen nicht zu Maxise). */
+function _auftragSortNum(f) {
+  return Number((f && (f.ext_id || f.auftrag_num)) || 0) || 0;
 }
 
 function _erpAuftragNumber(a) {
