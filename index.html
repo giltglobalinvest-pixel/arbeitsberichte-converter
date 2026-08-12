@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.07';
+const APP_VERSION = 'v8.08';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -34404,7 +34404,8 @@ async function _abKiAuftragTyp(fAng) {
 }
 /* v7.94: In den Maxise-Angeboten ein passendes Festpreis-Angebot suchen (Kunde + Anlage/Fabrik-Nr., kein Aufwand).
    Verhindert Duplikate (wie Angebot 2963 des Mitarbeiters). Rückgabe { id, nummer } oder null. */
-async function _abFindErpAngebot(firmaSlug, fAng) {
+async function _abFindErpAngebot(firmaSlug, fAng, opts) {
+  const wantAufwand = !!(opts && opts.wantAufwand);   // v8.08: true → nur Aufwand-Angebote, sonst nur Festpreis
   let list = [];
   try { list = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote'); }
   catch(e){ console.warn('[AB-AngebotMatch] Abruf:', e && e.message); return null; }
@@ -34416,7 +34417,8 @@ async function _abFindErpAngebot(firmaSlug, fAng) {
   for (const it of items) {
     let fx = null; try { fx = _angMaxiseListItemToFields(it, firmaSlug); } catch(_){ continue; }
     if (!fx || !fx.erp_angebot_id) continue;
-    if (/aufwand/i.test(String(fx.abrechnung_modus||''))) continue;             // nur Festpreis-Angebote
+    const istAufwand = /aufwand/i.test(String(fx.abrechnung_modus||''));
+    if (wantAufwand ? !istAufwand : istAufwand) continue;                       // v8.08: Aufwand vs. Festpreis je nach Ziel
     if (kdNr && String(fx.kunde_nummer||'') !== kdNr) continue;                  // Kunde muss passen
     const anlageOk = (anlageId && String(fx.anlage_id||'')===anlageId) || (fabrik && String(fx.seriennummer||'')===fabrik);
     if (!anlageOk) continue;                                                     // Anlage/Fabrik-Nr. muss passen
@@ -34437,14 +34439,26 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   const heuteISO = new Date().toISOString(), heuteDate = heuteISO.slice(0,10);
   const auftraggeber = String(fAng.kunde_name||'').trim() || ('Kunde '+(fAng.kunde_nummer||''));
   const common = { kundeMail:false, titelemail:'-', inhaltemail:'-', status:'Auftrag bestätigt', auftraggeber, datumAuftragserteilung:heuteISO, ausfuehrungstermin:heuteDate };
-  // ── Nach Aufwand → ohneangebot (korrekter Typ) ──
+  // ── Nach Aufwand → v8.08: jetzt ÜBER ein Aufwand-Angebot (→ AngebotsID für Order Display), dann mitangebot.
+  //    (ohneangebot entfällt: der Auftrag hatte dann keine AngebotsID und Order Display konnte ihn nicht abrufen.) ──
   if (typ === 'aufwand') {
     if (!fAng.anlage_id) throw new Error('Keine Anlage am Angebot.');
     const empf = +(fAng.kontakt_id||0);
     if (!empf) throw new Error('Kein Ansprechpartner (kontakt_id) am Angebot.');
-    const payload = { anlageid:+fAng.anlage_id, empfaengerid:empf, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
-    const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/ohneangebot','api/auftrag/ohneangebot','auftraege/ohneangebot'], payload, () => _erpFindRecentAuftrag(firmaSlug, +fAng.anlage_id));
-    return { created, bestellform:'OHNEANGEBOT', typ, angebotQuelle:'—' };
+    let angId = fAng.erp_angebot_id ? String(fAng.erp_angebot_id) : '';
+    let quelle = angId ? 'verknüpft' : '';
+    if (!angId) {                                        // 1) bestehendes Aufwand-Angebot suchen (kein Duplikat)
+      const found = await _abFindErpAngebot(firmaSlug, fAng, { wantAufwand:true });
+      if (found && found.id) { angId = String(found.id); quelle = 'gefunden (Nr. '+(found.nummer||found.id)+')'; }
+    }
+    if (!angId && recId) {                               // 2) sonst Aufwand-Angebot in Maxise anlegen (Anfrage + Angebot)
+      const info = await _angPushAufwandToErp(recId, null);   // wirft bei echtem Fehler
+      if (info && info.id) { angId = String(info.id); quelle = 'neu angelegt (Aufwand-Angebot Nr. '+(info.nummer||info.id)+')'; }
+    }
+    if (!angId) throw new Error('Nach-Aufwand-Auftrag braucht jetzt ein Aufwand-Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kontakt am Angebot prüfen).');
+    const payload = { angebotid:+angId, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
+    const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
+    return { created, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
   }
   // ── Festpreis → mitangebot → braucht ein Maxise-Angebot ──
   let angId = fAng.erp_angebot_id ? String(fAng.erp_angebot_id) : '';
@@ -34724,11 +34738,25 @@ async function _abGenerateAndSave(btn, send) {
       let kiTyp = null; try { kiTyp = await _abKiAuftragTyp(fAng); } catch(_){}
       const typ = (kiTyp && kiTyp.typ) || _abAuftragTyp(fAng);
       const typLbl = { pauschal:'Pauschal', wartung:'Wartung', modernisierung:'Modernisierung', aufwand:'Nach Aufwand' }[typ] || typ;
-      const bestellLbl = (typ === 'aufwand') ? 'Ohne Angebot' : 'Mit Angebot';
-      const brauchtAngebot = (typ !== 'aufwand') && !(fAng && fAng.erp_angebot_id);
+      // v8.08: JEDER Auftrag läuft jetzt über ein Maxise-Angebot (auch Nach Aufwand → Aufwand-Angebot) → AngebotsID für Order Display.
+      const bestellLbl = 'Mit Angebot';
+      const brauchtAngebot = !(fAng && fAng.erp_angebot_id);
+      // v8.08: Bei Nach Aufwand die Stundensatz-/Einsatzpauschale-Quelle als Sicherheits-Vorschau zeigen.
+      let rateLine = '';
+      if (typ === 'aufwand') {
+        if (btn) btn.textContent = '⏳ Stundensatz…';
+        try {
+          const r = await _angAufwandRates(fAng, firmaSlug);
+          const eur = (n)=>Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+          rateLine = '\n💶 Stundensatz: '+eur(r.stundensatz)+'  ·  Einsatzpauschale: '+eur(r.einsatzPauschale)+'\n     (Quelle: '+r.quelle+')\n'+
+                     (!(r.stundensatz>0) ? '⚠ Kein Stundensatz gefunden — bitte Anlage/Angebot prüfen!\n' : '');
+        } catch(_){}
+        if (btn) btn.textContent = '⏳ KI: Auftragstyp…';
+      }
       const proceed = confirm(
         '🤖 KI-Analyse Auftragstyp:\n\n'+
         '➡  '+typLbl+'  ·  '+bestellLbl+'\n'+
+        rateLine+
         (kiTyp && kiTyp.begruendung ? ('\n'+kiTyp.begruendung+'\n') : '')+
         (kiTyp && kiTyp.quelle === 'fallback' ? '\n(Hinweis: KI nicht verfügbar — Typ deterministisch abgeleitet.)\n' : '')+
         (brauchtAngebot ? '\nℹ Für diesen Typ wird ein Maxise-Angebot benötigt — falls keins verknüpft ist, wird es zuvor angelegt.\n' : '')+
@@ -36155,6 +36183,205 @@ async function _angPushToErp(recId, btn) {
     }
     if (btn) { btn.disabled = false; btn.textContent = origLabel || '📤 Ins ERP pushen'; }
   }
+}
+
+/* v8.08: Stundensatz + Einsatzpauschale für ein Aufwand-Angebot bestimmen.
+   Quelle-Priorität (User 12.08.2026): 1) aus den Stundensätzen des App-Angebots (falls eins geschrieben wurde),
+   2) sonst aus der Anlage (api/anlagen/{id} → stundensatz/einsatzPauschale).
+   Rückgabe { stundensatz, einsatzPauschale, quelle }. */
+async function _angAufwandRates(f, firmaSlug) {
+  let stundensatz = 0, einsatzPauschale = 0, quelle = '';
+  let saetze = [];
+  try { saetze = JSON.parse((f && f.stundensaetze_json) || '[]') || []; } catch(_){}
+  if (Array.isArray(saetze) && saetze.length) {
+    const isE = (s) => /einsatz|anfahrt|zustell/i.test(String((s&&s.name)||'')) || /einsatz|anfahrt/i.test(String((s&&s.einheit)||''));
+    const isH = (s) => /\/\s*h|std|stunde/i.test(String((s&&s.einheit)||'')) || /stunde|monteur|regie|techniker|servicetech/i.test(String((s&&s.name)||''));
+    const hLine = saetze.find(s => isH(s) && !isE(s)) || saetze.find(isH);
+    const eLine = saetze.find(isE);
+    if (hLine && +hLine.satz > 0) stundensatz = +hLine.satz;
+    if (eLine && +eLine.satz > 0) einsatzPauschale = +eLine.satz;
+    if (stundensatz > 0) quelle = 'Angebot';
+  }
+  if (stundensatz <= 0 || einsatzPauschale <= 0) {   // fehlt (mind. der Stundensatz) → aus der Anlage nachladen
+    try {
+      if (f && f.anlage_id) {
+        const anl = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(f.anlage_id));
+        const st = +((anl && anl.stundensatz) || 0);
+        const ep = +((anl && (anl.einsatzPauschale != null ? anl.einsatzPauschale : anl.einsatzpauschale)) || 0);
+        if (stundensatz <= 0 && st > 0) { stundensatz = st; quelle = quelle || 'Anlage'; }
+        if (einsatzPauschale <= 0 && ep > 0) einsatzPauschale = ep;
+        if (!quelle && (st > 0 || ep > 0)) quelle = 'Anlage';
+      }
+    } catch(e) { console.warn('[Aufwand-Rates] Anlage-Fetch:', e && e.message); }
+  }
+  return { stundensatz: +stundensatz || 0, einsatzPauschale: +einsatzPauschale || 0, quelle: quelle || '(nicht gefunden)' };
+}
+
+/* v8.08: App-Angebot als AUFWAND-Angebot ins ERP pushen (POST /api/angebote/aufwand).
+   Analog zum Pauschal-Push (_angPushToErp), aber ohne Festpreis: stundensatz + einsatzPauschale
+   statt workPrice. So bekommt AUCH ein Nach-Aufwand-Auftrag eine AngebotsID (für Order Display).
+   Rückgabe { id, nummer, url, stundensatz, einsatzPauschale, quelle, recovered }. Wirft bei echtem Fehler. */
+async function _angPushAufwandToErp(recId, btn) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) throw new Error('Angebot nicht im Cache gefunden');
+  const f = rec.fields || {};
+  if (!f.anlage_id)    throw new Error('Keine Anlage verknüpft');
+  if (!f.kunde_nummer) throw new Error('Kein Kunde verknüpft');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const todayInstant = new Date().toISOString();
+  const inDaysInstant = (n) => { const d = new Date(); d.setDate(d.getDate()+n); d.setUTCHours(12,0,0,0); return d.toISOString(); };
+
+  // 1) Stundensatz + Einsatzpauschale (Angebot bevorzugt, sonst Anlage)
+  const rates = await _angAufwandRates(f, firmaSlug);
+
+  // 2) ERP-Anfrage sicherstellen (muss vor dem Angebot existieren)
+  let anfrageid = f.erp_anfrage_id ? +f.erp_anfrage_id : null;
+  if (!anfrageid) {
+    if (btn) btn.textContent = '⏳ ERP-Anfrage…';
+    const anfrageInfo = await _angCreateErpAnfrage(rec);
+    anfrageid = +anfrageInfo.id;
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: {
+          erp_anfrage_id: anfrageInfo.id, erp_anfrage_nummer: anfrageInfo.nummer,
+          erp_anfrage_url: anfrageInfo.url, erp_anfrage_created_at: new Date().toISOString(),
+        }}),
+      });
+    } catch(_){}
+    const i0 = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
+    if (i0 >= 0) Object.assign(_angeboteCache.items[i0].fields, { erp_anfrage_id: anfrageInfo.id, erp_anfrage_nummer: anfrageInfo.nummer, erp_anfrage_url: anfrageInfo.url });
+  }
+
+  // 3) Aufwand-Angebot POST
+  if (btn) btn.textContent = '⏳ pushe Aufwand-Angebot…';
+  const kontaktIdNum = parseInt(String(f.kontakt_id||'').replace(/[^\d]/g,''), 10);
+  const kundeIdNum   = parseInt(String(f.kunde_nummer||'').replace(/[^\d]/g,''), 10);
+  if (!Number.isFinite(kontaktIdNum) || kontaktIdNum <= 0) throw new Error('Kein Kontakt im App-Angebot hinterlegt. Bitte das Angebot bearbeiten und einen Kontakt auswählen.');
+  let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
+  const kurzTitel = (positionen[0] && positionen[0].titel) || f.leistungsumfang || 'Leistung nach Aufwand';
+  const bezeichnung = '[NACH AUFWAND] ' + String(kurzTitel).slice(0,80);
+  const angNum = String(f.app_angebot_num || '?');
+  const eur = (n)=>Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+  const serviceText = String(f.leistungsumfang || kurzTitel || 'Leistung nach tatsächlichem Aufwand').slice(0,2000);
+  const erlaeuterungText = [
+    'ABRECHNUNG NACH TATSÄCHLICHEM AUFWAND (Regie).',
+    '',
+    'App-Angebot:      ANG-'+angNum,
+    'Stundensatz:      '+eur(rates.stundensatz)+' /h',
+    'Einsatzpauschale: '+eur(rates.einsatzPauschale),
+    '(Quelle der Sätze: '+rates.quelle+')',
+    '',
+    'Leistungsumfang:',
+    serviceText,
+  ].join('\n');
+  const offerNumber = 'EXT-ANG-'+angNum;
+
+  const innerAngebot = {
+    anfrageid:              anfrageid ? +anfrageid : undefined,
+    anlageid:               +f.anlage_id,
+    datum:                  todayInstant,
+    empfaengerid:           kontaktIdNum,
+    empfaengerId:           kontaktIdNum,
+    kontaktId:              kontaktIdNum,
+    kontaktid:              kontaktIdNum,
+    ansprechpartnerId:      kontaktIdNum,
+    kundeid:                kundeIdNum,
+    kundeId:                kundeIdNum,
+    angebotsdatum:          todayInstant,
+    gueltigBis:             inDaysInstant(30),
+    gueltigkeitsdatum:      inDaysInstant(30),
+    bezeichnung:            bezeichnung,
+    titel:                  bezeichnung,
+    leistungsumfang:        serviceText,
+    leistungsbeschreibung:  serviceText,
+    erlaeuterungen:         erlaeuterungText,
+    erlaeuterung:           erlaeuterungText,
+    bestellform:            'AUFWAND',
+    kalkulationsart:        'AUFWAND',
+    ust_prozent:            +f.ust_prozent || 19,
+    umsatzsteuer:           +f.ust_prozent || 19,
+    kundeMail:              false,
+    titelemail:             '-',
+    inhaltemail:            '-',
+    kundeemail:             '-',
+    kundeEmail:             '-',
+    status:                 'In Bearbeitung',
+    typ:                    'Reparatur',
+    type:                   'Reparatur',
+    angebotsTyp:            'REPARATUR',
+    angebotstyp:            'REPARATUR',
+    angebotTyp:             'REPARATUR',
+    vorgangsart:            'REPARATUR',
+    syncFreshsales:         false,
+    syncFreshSales:         false,
+    skipFreshsalesSync:     true,
+    skipSync:               true,
+    auftraggeber:           f.kunde_name || '',
+    notizen:                '',
+    interneNotizen:         '',
+    internenotizen:         '',
+    offerNumber:            offerNumber,
+  };
+  const payload = {
+    stundensatz:             +rates.stundensatz || 0,
+    einsatzPauschale:        +rates.einsatzPauschale || 0,
+    einsatzpauschale:        +rates.einsatzPauschale || 0,
+    workPrice:               0,
+    materialPrice:           0,
+    netPrice:                0,
+    serviceDescription:      serviceText,
+    offerExplanation:        erlaeuterungText,
+    plannedInstallationDate: inDaysInstant(14),
+    offerNumber:             offerNumber,
+    offerDate:               todayInstant,
+    offerValidUntil:         inDaysInstant(30),
+    vatRate:                 +f.ust_prozent || 19,
+    anfrageid:               anfrageid ? +anfrageid : undefined,
+    angebot:                 innerAngebot,
+  };
+  console.log('[ERP-AufwandAngebot] Payload:', JSON.stringify(payload, null, 2));
+
+  let created = null, recoveredFromSync = false;
+  try {
+    created = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote/aufwand', { method:'POST', body: payload });
+    console.log('[ERP-AufwandAngebot] OK:', created);
+  } catch(e) {
+    const traceTxt = String((e && e.body && (e.body.upstream_body_excerpt || e.body.trace)) || (e && e.message) || '');
+    const isSyncNpe = e && e.status === 500 && /FreshSaleSync|findDealTypeToAngebot|NoSuchElementException/i.test(traceTxt);
+    if (isSyncNpe) {
+      console.warn('[ERP-AufwandAngebot] FreshSales-Sync-NPE erkannt — Recovery via offerNumber-Lookup');
+      await new Promise(r => setTimeout(r, 1500));
+      const found = await _angTryFindByOfferNumber(firmaSlug, offerNumber);
+      if (found) { created = found; recoveredFromSync = true; }
+    }
+    if (!created) throw e;
+  }
+  if (!created) throw new Error('Aufwand-Angebot: keine Antwort vom ERP');
+
+  const erpId = String(created.id || created.angebotid || created.angebotId || '');
+  const erpNr = String(created.angebotsnummer || created.nummer || created.belegnummer || '');
+  if (!erpId) throw new Error('Aufwand-Angebot erstellt, aber keine ID im Response');
+  const fm = (_firmenCache||[]).find(x => x.fields.slug === firmaSlug);
+  const baseUrl = fm?.fields?.erp_auftrag_url || '';
+  const erpHost = baseUrl ? String(baseUrl).replace(/\/auftraege?\/?$/i,'').replace(/\/$/,'') : '';
+  const erpUrl = erpHost && erpId ? (erpHost + '/angebote/' + erpId) : '';
+
+  // Im App-Record persistieren
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+      method:'PATCH',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: { erp_angebot_id: erpId, erp_angebot_nummer: erpNr, erp_angebot_url: erpUrl, erp_pushed_at: new Date().toISOString() }}),
+    });
+  } catch(_){}
+  const idx = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
+  if (idx >= 0) Object.assign(_angeboteCache.items[idx].fields, { erp_angebot_id: erpId, erp_angebot_nummer: erpNr, erp_angebot_url: erpUrl, erp_pushed_at: new Date().toISOString() });
+
+  return { id: erpId, nummer: erpNr, url: erpUrl, stundensatz: rates.stundensatz, einsatzPauschale: rates.einsatzPauschale, quelle: rates.quelle, recovered: recoveredFromSync };
 }
 
 async function _angSetStatus(recId, newStatus) {
