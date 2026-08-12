@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.21';
+const APP_VERSION = 'v8.22';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7431,6 +7431,35 @@ async function _ensureUsersLoaded() {
   try { await loadUsers(); } catch(e) { console.warn('loadUsers für Auftraege:', e.message); }
 }
 
+// v8.22: Preis-Map Angebot→Auftrag. Der Auftrag hat angebot_id (=ERP-Angebot-ID); das App_Angebote trägt den
+//   (per Maxise-Sync befüllten) Preis. So zeigen wir den Auftragswert auch ohne gesetztes auftragswert_netto.
+let _aufAngPreisMap = new Map();   // erp_angebot_id -> { netto, typ }
+let _aufAngPreisFirma = '';
+async function _aufLoadAngPreisMap(firmaSlug) {
+  try {
+    const map = new Map();
+    const add = (f) => { const id=String(f.erp_angebot_id||''); if (id) map.set(id, { netto:+f.summe_netto_vp||0, typ:_angEffTyp(f) }); };
+    if (_angeboteCache && _angeboteCache.firma === firmaSlug && Array.isArray(_angeboteCache.items) && _angeboteCache.items.length) {
+      for (const r of _angeboteCache.items) add(r.fields||{});   // Angebote-Cache wiederverwenden (schnell)
+    } else {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+      const base = 'https://api.airtable.com/v0/'+baseId+'/App_Angebote?pageSize=100'
+        + '&fields[]=erp_angebot_id&fields[]=summe_netto_vp&fields[]=erp_typ&fields[]=abrechnung_modus&fields[]=angebot_typ'
+        + '&filterByFormula='+encodeURIComponent("AND({firma}='"+firmaSlug.replace(/'/g,"\\'")+"',NOT({erp_angebot_id}=''))");
+      let offset=null, guard=0;
+      do {
+        const url = base + (offset?'&offset='+encodeURIComponent(offset):'');
+        const r = await fetch(url, { headers:{ 'Authorization':'Bearer '+key }});
+        if (!r.ok) break;
+        const d = await r.json();
+        for (const rec of (d.records||[])) add(rec.fields||{});
+        offset = d.offset||null;
+      } while (offset && ++guard < 40);
+    }
+    _aufAngPreisMap = map; _aufAngPreisFirma = firmaSlug;
+  } catch(e) { console.warn('[Auftraege] AngPreis-Map:', e && e.message); }
+}
 async function loadAuftraegeAndRender() {
   await _ensureUsersLoaded();
   // Persisted Filter-State auf die Checkbox anwenden (falls noch nicht initialisiert)
@@ -7493,6 +7522,7 @@ async function loadAuftraegeAndRender() {
     if (abrBtn)   abrBtn.style.display   = (canSync && !isFirmaAll()) ? '' : 'none';
     // Letzten Sync-Status laden + anzeigen (passiert async, non-blocking)
     if (canSync) loadLastSyncStatus().catch(()=>{});
+    if (!allMode) { try { await _aufLoadAngPreisMap(firmaSlug); } catch(_){} }   // v8.22: Preise aus Angeboten ableiten
     renderAuftraegeList();
     // v6.34: Auto-Mark „abgerechnet" für abgeschlossene Aufträge mit ERP-Rechnung
     //         (gedrosselt auf 1× pro 30 Min pro Firma, silent im Hintergrund)
@@ -7885,11 +7915,18 @@ function _auftragCardHtml(r) {
     : '';
   // Preis-Spalte (rechts) — nur wenn User canSeePrices() darf
   const showPrice = canSeePrices();
-  const hasPrice = f.auftragswert_netto != null;
+  // v8.22: Wert direkt vom Auftrag, sonst aus dem verknüpften Angebot (angebot_id → App_Angebote-Preis) ableiten.
+  let _wert = (f.auftragswert_netto != null) ? +f.auftragswert_netto : null;
+  let _wertLabel = '€ netto', _wertTitle = '';
+  if (_wert == null && f.angebot_id) {
+    const ap = _aufAngPreisMap.get(String(f.angebot_id));
+    if (ap && ap.netto > 0 && ap.typ !== 'aufwand') { _wert = ap.netto; _wertLabel = (ap.typ==='wartung' ? '€/Jahr' : '€ netto'); _wertTitle = 'aus verknüpftem Angebot'; }
+  }
+  const hasPrice = _wert != null;
   const priceHtml = showPrice
     ? '<div class="auf-card-price'+(hasPrice?'':' empty')+'">'
         + (hasPrice
-            ? '<div class="price-value">'+_fmtEUR(f.auftragswert_netto)+'</div><div class="price-label">€ netto</div>'
+            ? '<div class="price-value">'+_fmtEUR(_wert)+'</div><div class="price-label"'+(_wertTitle?' title="'+_wertTitle+'"':'')+'>'+_wertLabel+'</div>'
             : '<div class="price-value" style="color:var(--txt3);font-size:14px;font-weight:500">—</div><div class="price-label">nach Aufwand</div>')
         + '</div>'
     : '';
