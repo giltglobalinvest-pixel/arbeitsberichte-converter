@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.24';
+const APP_VERSION = 'v8.25';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -28990,7 +28990,10 @@ async function renderAngeboteView(opts) {
       return;
     }
   }
-  if (!isFirmaAll()) { try { await _angLoadAbMap(firmaSlug); } catch(_){} }   // v8.21: AB→Angebot-Verknüpfung für Link-Badge
+  if (!isFirmaAll()) {
+    try { await _angLoadAbMap(firmaSlug); } catch(_){}          // v8.21: AB→Angebot-Verknüpfung für Link-Badge
+    try { await _angLoadBeauftragtSet(firmaSlug); } catch(_){}  // v8.25: Maxise-Aufträge → „beauftragt"-Erkennung
+  }
   _renderAngeboteList();
 }
 
@@ -29267,18 +29270,22 @@ function _angStatusMenu(ev, recId) {
     document.addEventListener('click', close, true);
   }, 0);
 }
-/* v8.23: „Beauftragt" = Status explizit gesetzt ODER es existiert ein verknüpfter Auftrag/AB (aus der Servicebox). */
+/* v8.23/8.25: „Beauftragt" = Status explizit gesetzt ODER verknüpfte Servicebox-AB ODER es existiert IN MAXISE
+   ein Auftrag zu diesem Angebot (erp_angebot_id kommt als angebotid in api/auftraege vor). */
 function _angIstBeauftragt(rec, f) {
   f = f || (rec && rec.fields) || {};
-  return String(f.status||'') === 'beauftragt' || !!_angFindAb((rec && rec.id) || '', f);
+  if (String(f.status||'') === 'beauftragt') return true;
+  if (_angFindAb((rec && rec.id) || '', f)) return true;
+  const eid = String(f.erp_angebot_id||'');
+  return !!(eid && _angBeauftragtSet.has(eid));
 }
 /* v8.23: Bulk — alle Angebote mit verknüpftem Auftrag/AB automatisiert auf Status „beauftragt" setzen. */
 async function _angBulkBeauftragt() {
   if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
   const items = (_angeboteCache.items||[]);
-  const todo = items.filter(r => { const f=r.fields||{}; return String(f.status||'')!=='beauftragt' && !!_angFindAb(r.id, f); });
-  if (!todo.length) return toast('Keine Angebote mit verknüpftem Auftrag/AB gefunden, die noch nicht „beauftragt" sind.','');
-  if (!confirm(todo.length+' Angebot(e) mit verknüpftem Auftrag/AB auf „Beauftragt" setzen?')) return;
+  const todo = items.filter(r => { const f=r.fields||{}; return String(f.status||'')!=='beauftragt' && _angIstBeauftragt(r, f); });
+  if (!todo.length) return toast('Keine Angebote mit Auftrag (Maxise/AB) gefunden, die noch nicht „beauftragt" sind.','');
+  if (!confirm(todo.length+' Angebot(e) mit verknüpftem Auftrag (Maxise/AB) auf „Beauftragt" setzen?')) return;
   const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
   let ok=0, fail=0;
   for (let i=0;i<todo.length;i+=10) {
@@ -35283,6 +35290,23 @@ async function _angGoToAuftrag(localAuftragRecId, abRecId) {
     } catch(e){ console.warn('[Angebote-Goto-Auftrag]', e && e.message); }
   }
   toast('Kein direkt verknüpfter lokaler Auftrag — siehe Vorlagen → Auftragsbestätigungen.','');
+}
+// v8.25: Set der Angebots-IDs, die IN MAXISE einen Auftrag haben (per angebotid). So gilt „beauftragt" auch für
+//   Aufträge, die direkt in Maxise (ohne Servicebox-AB) entstanden sind — nicht nur die Servicebox-ABs.
+let _angBeauftragtSet = new Set();
+let _angBeauftragtFirma = '';
+async function _angLoadBeauftragtSet(firmaSlug) {
+  try {
+    if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) { _angBeauftragtSet = new Set(); return; }
+    const res = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
+    const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
+    const set = new Set();
+    for (const a of list) {
+      const aid = a && (a.angebotid ?? a.angebotId ?? (a.angebot && a.angebot.id));
+      if (aid != null && aid !== '') set.add(String(aid));
+    }
+    _angBeauftragtSet = set; _angBeauftragtFirma = firmaSlug;
+  } catch(e) { console.warn('[Angebote] Beauftragt-Set (Maxise-Aufträge):', e && e.message); }
 }
 /* v7.93: Anzeige-Nummer = echte Maxise-Auftragsnummer, sonst interne Servicebox-Nummer. */
 function _abDispNum(f){ return String((f && (f.erp_auftrag_num || f.ab_nummer)) || ''); }
