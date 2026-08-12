@@ -41930,8 +41930,12 @@ async function _submitCreateKontakt() {
       nachname: nachname,
       email:    email,
     };
-    if (telefon) payload.telefon = telefon;
-    if (mobile)  payload.mobile  = mobile;
+    // v8.06: telefon/mobile/fax IMMER senden (leer = '') — Aszendio-Maxise (Tenant 4) hat eine
+    //   NOT-NULL-Constraint auf 'telefon' → sonst 500 (DataIntegrityViolationException) bei leerem Feld.
+    //   (Die funktionierende „Standardansprechpartner"-Anlage schickt telefon/mobile/fax ebenfalls als ''.)
+    payload.telefon = telefon || '';
+    payload.mobile  = mobile  || '';
+    payload.fax     = '';
     if (rolle)   payload.rolle   = rolle;
     console.log('[Kontakt-Create] POST /api/kontakte:', payload);
     const created = await erpFetch('/aufzug/'+m._firmaSlug+'/api/kontakte', { method:'POST', body: payload });
