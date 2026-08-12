@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.18';
+const APP_VERSION = 'v8.19';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -20143,7 +20143,24 @@ function _renderWartungsvertraegeList() {
     list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)">'+(q?'Keine Treffer.':'Noch keine Verträge. Klick <strong>+ Neuer Vertrag</strong> oder <strong>📥 Vom ERP laden</strong>.')+'</div>';
     return;
   }
-  list.innerHTML = '<div style="display:grid;gap:8px">'+items.slice(0, 500).map(it => {
+  // v8.19: Summenzeile — Anzahl + Jahreswert (Σ €/Jahr) der aktuell gefilterten Verträge
+  const _eurSum = n => Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const _cntAktiv = items.filter(it => it.status==='aktiv').length;
+  const _sumJahr = items.reduce((s,it)=> s + (+it.jahrespreis||0), 0);
+  const _sumJahrAktiv = items.filter(it => it.status==='aktiv').reduce((s,it)=> s + (+it.jahrespreis||0), 0);
+  const _sumEinmal = items.reduce((s,it)=> s + (+it.einmalzahlung||0), 0);
+  const _withPrice = items.filter(it => +it.jahrespreis>0).length;
+  const _showP = (typeof canSeePrices==='function' && canSeePrices());
+  const summaryBar =
+    '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;padding:12px 16px;margin-bottom:12px;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;font-size:13px">'+
+      '<span><strong style="font-size:17px;color:var(--navy)">'+items.length+'</strong> Verträge'+(_cntAktiv<items.length?' <span style="color:var(--txt3)">('+_cntAktiv+' aktiv)</span>':'')+'</span>'+
+      (_showP
+        ? '<span style="border-left:1px solid var(--bdr);padding-left:22px">Jahreswert <strong style="font-size:17px;color:#065F46">'+_eurSum(_sumJahr)+' €</strong> <span style="color:var(--txt3)">/Jahr</span>'+(_sumJahrAktiv!==_sumJahr?' <span style="color:var(--txt3)">· nur aktiv '+_eurSum(_sumJahrAktiv)+' €</span>':'')+'</span>'+
+          (_sumEinmal>0?'<span style="color:var(--txt2)">Einmalzahlungen Σ <strong>'+_eurSum(_sumEinmal)+' €</strong></span>':'')+
+          (_withPrice<items.length?'<span style="color:var(--txt3);font-size:11px">('+(items.length-_withPrice)+' ohne Preis)</span>':'')
+        : '')+
+    '</div>';
+  list.innerHTML = summaryBar + '<div style="display:grid;gap:8px">'+items.slice(0, 500).map(it => {
     const srcBadge = it._src==='erp'
       ? '<span style="background:#3730A3;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600">📥 ERP</span>'
       : it._legacy
