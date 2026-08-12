@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.22';
+const APP_VERSION = 'v8.23';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29192,6 +29192,36 @@ function _angStatusMenu(ev, recId) {
     document.addEventListener('click', close, true);
   }, 0);
 }
+/* v8.23: „Beauftragt" = Status explizit gesetzt ODER es existiert ein verknüpfter Auftrag/AB (aus der Servicebox). */
+function _angIstBeauftragt(rec, f) {
+  f = f || (rec && rec.fields) || {};
+  return String(f.status||'') === 'beauftragt' || !!_angFindAb((rec && rec.id) || '', f);
+}
+/* v8.23: Bulk — alle Angebote mit verknüpftem Auftrag/AB automatisiert auf Status „beauftragt" setzen. */
+async function _angBulkBeauftragt() {
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
+  const items = (_angeboteCache.items||[]);
+  const todo = items.filter(r => { const f=r.fields||{}; return String(f.status||'')!=='beauftragt' && !!_angFindAb(r.id, f); });
+  if (!todo.length) return toast('Keine Angebote mit verknüpftem Auftrag/AB gefunden, die noch nicht „beauftragt" sind.','');
+  if (!confirm(todo.length+' Angebot(e) mit verknüpftem Auftrag/AB auf „Beauftragt" setzen?')) return;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  let ok=0, fail=0;
+  for (let i=0;i<todo.length;i+=10) {
+    const chunk = todo.slice(i,i+10);
+    try {
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
+        method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ records: chunk.map(x=>({ id:x.id, fields:{ status:'beauftragt' }})) }),
+      });
+      if (!r.ok) { fail+=chunk.length; continue; }
+      ok+=chunk.length;
+      for (const x of chunk) { const idx=items.findIndex(y=>y.id===x.id); if (idx>=0) items[idx].fields.status='beauftragt'; }
+    } catch(e){ fail+=chunk.length; console.warn('[Ang Bulk-Beauftragt]', e); }
+    await new Promise(res=>setTimeout(res,200));
+  }
+  toast('✅ '+ok+' auf „Beauftragt" gesetzt'+(fail?(' · '+fail+' fehlgeschlagen'):''), fail?'warn':'ok');
+  _renderAngeboteList();
+}
 function _renderAngeboteList() {
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
@@ -29225,7 +29255,9 @@ function _renderAngeboteList() {
         ['','servicebox','maxise'].map(v => '<option value="'+v+'"'+(document.getElementById('ang-source')?.value===v?' selected':'')+'>'+(v===''?'Alle Quellen':(v==='maxise'?'🔗 Maxise':'🏠 Servicebox'))+'</option>').join('')+
       '</select>'+
       '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);cursor:pointer;padding:6px 10px;background:'+(showArchived?'#FEF3C7':'transparent')+';border-radius:6px"><input type="checkbox" id="ang-flt-archived" '+(showArchived?'checked':'')+' onchange="_renderAngeboteList()"> 📁 Archivierte zeigen'+(totalArchived?' ('+totalArchived+')':'')+'</label>'+
+      '<label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);cursor:pointer;padding:6px 10px;background:'+(document.getElementById('ang-flt-beauftragt')?.checked?'#FFF7ED':'transparent')+';border-radius:6px" title="Nur Angebote mit verknüpftem Auftrag/AB oder Status „Beauftragt""><input type="checkbox" id="ang-flt-beauftragt" '+(document.getElementById('ang-flt-beauftragt')?.checked?'checked':'')+' onchange="_renderAngeboteList()"> ✅ Nur Beauftragte</label>'+
       '<button class="btn" onclick="_angSelectAllVisible()" style="font-size:11px;padding:6px 10px" title="Alle sichtbaren auswählen / Auswahl aufheben">☑ Alle</button>'+
+      ((isAdmin()||hasPermission('tool_angebote')) ? '<button class="btn" onclick="_angBulkBeauftragt()" style="font-size:11px;padding:6px 10px;color:#9A3412;border-color:#FED7AA;background:#FFF7ED" title="Alle Angebote mit verknüpftem Auftrag/AB automatisch auf „Beauftragt" setzen">✅ Beauftragte markieren</button>' : '')+
     '</div>'+
     // Bulk-Action-Bar — nur sichtbar wenn Auswahl > 0
     (_angSelectedIds.size > 0
@@ -29243,6 +29275,7 @@ function _renderAngeboteList() {
   const filterTyp = document.getElementById('ang-typ')?.value || '';
   const filterStatus = document.getElementById('ang-status')?.value || '';
   const filterSource = document.getElementById('ang-source')?.value || '';
+  const nurBeauftragt = document.getElementById('ang-flt-beauftragt')?.checked === true;   // v8.23
   const filtered = items.filter(rec => {
     const f = rec.fields || {};
     const isMaxise = f.herkunft === 'maxise';
@@ -29251,6 +29284,7 @@ function _renderAngeboteList() {
     if (filterSource === 'servicebox' && isMaxise) return false;
     if (filterTyp && _angEffTyp(f) !== filterTyp) return false;   // v8.13: wirkt auf Maxise (erp_typ) + native (angebot_typ)
     if (filterStatus && f.status !== filterStatus) return false;
+    if (nurBeauftragt && !_angIstBeauftragt(rec, f)) return false;   // v8.23: nur beauftragte
     if (q) {
       const haystack = [f.angebot_nr, f.app_angebot_num, f.fdh_angebot_num, f.erp_angebot_nummer, f.erp_angebot_id, f.kone_angebot_num, f.kunde_name, f.kunde_nummer, f.anlage_adresse, f.seriennummer, f.equipmentnummer, f.erp_status,
         // v8.14b: angezeigte Nummern-Formate mitsuchen (MX-2967 / ANG-123), sonst findet die Suche nach der sichtbaren Nummer nichts
@@ -29314,19 +29348,28 @@ function _renderAngeboteList() {
           ? '<span style="font-weight:700;color:var(--navy);font-size:12.5px;margin-left:6px" title="Wartung: Jahrespreis / Einmalzahlung netto">🔧 '+[(fmtEUR(+f.summe_netto_vp)+' €/Jahr'),(+f.summe_netto_kone>0?fmtEUR(+f.summe_netto_kone)+' € einmalig':'')].filter(Boolean).join(' · ')+'</span>'
           : '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px" title="Pauschalpreis netto">'+fmtEUR(+f.summe_netto_vp)+' € netto</span>')
       : '';
-    // v8.21: Hinweis/Link zur Auftragsbestätigung bzw. zum erzeugten Auftrag (ersetzt den redundanten Servicebox-Status; ERP-Status bleibt die Pille)
+    // v8.21: Hinweis/Link zur Auftragsbestätigung bzw. zum erzeugten Auftrag
     const _ab = _angFindAb(rec.id, f);
     const abBadge = _ab
       ? '<span onclick="event.stopPropagation();_angGoToAuftrag(\''+escapeHtml(String(_ab.local_auftrag_recid||''))+'\',\''+escapeHtml(String(_ab.ab_recid||''))+'\')" title="Auftragsbestätigung erstellt — zum Auftrag springen" style="cursor:pointer;background:#EEF2FF;color:#3730A3;border:1px solid #C7D2FE;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap">📋 '+(_ab.erp_auftrag_num?('Auftrag '+escapeHtml(String(_ab.erp_auftrag_num))):('AB '+escapeHtml(String(_ab.ab_nummer||''))))+' →</span>'
       : '';
+    // v8.23: EINE editierbare Status-Pille. Servicebox-Status (falls gesetzt) übersteuert die Anzeige, sonst ERP-Status (Maxise) bzw. native Status. Klick → Popup. ERP-Status im Tooltip.
+    const _statOpt = ANGEBOT_STATUS_OPTIONS.find(s => s.value === String(f.status||''));
+    const _canEditStatus = (typeof isAdmin==='function' && isAdmin()) || (typeof hasPermission==='function' && hasPermission('tool_angebote'));
+    const _statLabel = _statOpt ? _statOpt.label : (isMaxise ? String(f.erp_status||'') : String(stat.label||''));
+    const _statColor = _statOpt ? _statOpt.color : (isMaxise ? '#6B7280' : stat.color);
+    const _statTip = (isMaxise && f.erp_status ? 'ERP-Status: '+String(f.erp_status)+' · ' : '') + 'Status setzen (Servicebox)';
+    const statusPill = _canEditStatus
+      ? '<span onclick="event.stopPropagation();_angStatusMenu(event,\''+rec.id+'\')" title="'+escapeHtml(_statTip)+'" style="cursor:pointer;background:'+_statColor+'1e;color:'+_statColor+';border:1px solid '+_statColor+'55;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap">'+escapeHtml(_statLabel||'Status')+' ▾</span>'
+      : (_statLabel ? '<span style="background:'+_statColor+'22;color:'+_statColor+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_statLabel)+'</span>' : '');
     const rightBadges = isMaxise
       ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_fmtAngebotTyp(f.erp_typ))+'</span>':'')
-        + (f.erp_status?'<span style="background:#6B728022;color:#374151;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600" title="Status im ERP (Maxise)">'+escapeHtml(f.erp_status)+'</span>':'')
+        + statusPill
         + abBadge
         + maxisePreisSpan
         + aufwandSpan
       : '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'
-        + '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'
+        + statusPill
         + abBadge
         + (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')
         + aufwandSpan;
@@ -29353,7 +29396,20 @@ function _renderAngeboteList() {
         '</div>'+
       '</div>';
   }).join('');
-  list.innerHTML = filtBar + html;
+  // v8.23: Summenzeile — Anzahl (gefiltert) + Σ Angebotswert (netto, summe_netto_vp; Aufwand ohne Festwert)
+  const _eurA = n => Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const _sumWert = filtered.reduce((s,r)=> s + (+(r.fields&&r.fields.summe_netto_vp)||0), 0);
+  const _mitWert = filtered.filter(r => +(r.fields&&r.fields.summe_netto_vp)>0).length;
+  const _cntBeauftragt = filtered.filter(r => _angIstBeauftragt(r, r.fields)).length;
+  const summaryBar =
+    '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;padding:11px 16px;margin-bottom:12px;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;font-size:13px">'+
+      '<span><strong style="font-size:17px;color:var(--navy)">'+filtered.length+'</strong> Angebote'+(filtered.length!==items.length?' <span style="color:var(--txt3)">(von '+items.length+')</span>':'')+'</span>'+
+      '<span style="color:var(--txt2)">✅ '+_cntBeauftragt+' beauftragt</span>'+
+      (canSeePrices()
+        ? '<span style="border-left:1px solid var(--bdr);padding-left:22px">Angebotswert Σ <strong style="font-size:17px;color:#065F46">'+_eurA(_sumWert)+' €</strong> <span style="color:var(--txt3)">netto</span>'+(_mitWert<filtered.length?' <span style="color:var(--txt3);font-size:11px">('+_mitWert+' m. Preis)</span>':'')+'</span>'
+        : '')+
+    '</div>';
+  list.innerHTML = filtBar + summaryBar + html;
   restoreFocus();
 }
 
