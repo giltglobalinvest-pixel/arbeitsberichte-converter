@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.11';
+const APP_VERSION = 'v8.12';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -12910,6 +12910,7 @@ function _fmtAngebotTyp(t) {
   // Bekannte ERP-Enums (best-effort, fallback ist Title-Case)
   const map = {
     'WARTUNG_NOTRUF':   '🔧 Wartung & Notruf',
+    'WARTUNGNOTRUF':    '🔧 Wartung & Notruf',
     'WARTUNG':          '🔧 Wartung',
     'NOTRUF':           '☎ Notruf',
     'PAUSCHAL':         '💼 Pauschal',
@@ -29146,8 +29147,9 @@ function _renderAngeboteList() {
       ? '<span title="Aus Maxise (ERP) importiert" style="background:#0EA5E9;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">🔗 MAXISE</span>MX-'+escapeHtml(String(f.erp_angebot_nummer||f.erp_angebot_id||'?'))
       : (f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')));
     const rightBadges = isMaxise
-      ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.erp_typ)+'</span>':'')
+      ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_fmtAngebotTyp(f.erp_typ))+'</span>':'')
         + (f.erp_status?'<span style="background:#6B728022;color:#374151;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.erp_status)+'</span>':'')
+        + (canSeePrices() && f.summe_netto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px" title="Pauschalpreis netto">'+fmtEUR(f.summe_netto_vp)+' € netto</span>' : '')
       : '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'
         + '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'
         + (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '');
@@ -35488,6 +35490,13 @@ function _angMaxiseListItemToFields(item, firmaSlug) {
   const typ = String((item && item.typ) || a.typ || '').trim();
   const seg = (typeof _mxAngebotTypSeg === 'function') ? _mxAngebotTypSeg({ typ: typ, angebot: a }) : '';
   const kundeName = kunde.firmenname || [emp.vorname, emp.nachname].filter(Boolean).join(' ').trim();
+  // v8.12: Preis für die Übersicht — nur bei FESTPREIS-Typen (Pauschal/Modernisierung); Nach Aufwand + Wartung/Notruf haben keinen Pauschalpreis.
+  // Betrag defensiv aus mehreren möglichen Feld-Pfaden ziehen (Item-Ebene wie in _angMaxiseToAb, sonst verschachteltes angebot).
+  const _pn = (...vs) => { for (const v of vs) { const n = Number(v); if (Number.isFinite(n) && n !== 0) return n; } return 0; };
+  const _isFest = !/aufwand/i.test(typ) && !/wartung|notruf/i.test(typ);
+  const _net   = _isFest ? _pn(item && item.netPrice,   a.netPrice,   item && item.pauschalpreis, a.pauschalpreis) : 0;
+  const _gross = _isFest ? _pn(item && item.grossPrice, a.grossPrice) : 0;
+  const _bruttoOut = _net > 0 ? (_gross > 0 ? _gross : Math.round(_net * 1.19 * 100) / 100) : (_gross > 0 ? _gross : null);
   return {
     firma: firmaSlug,
     herkunft: 'maxise',
@@ -35502,6 +35511,10 @@ function _angMaxiseListItemToFields(item, firmaSlug) {
     anlage_adresse:     anlage.name || anlage.adresse || '',
     seriennummer:       anlage.fabriknummer || '',
     abrechnung_modus:   /aufwand/i.test(typ) ? 'aufwand' : 'pauschal',
+    // Preis (nur Festpreis) — bestehende Zahlen-Spalten wiederverwendet, kein Schema-Umbau nötig
+    pauschalpreis_netto: _net > 0 ? _net : null,
+    summe_netto_vp:      _net > 0 ? _net : null,
+    summe_brutto_vp:     _bruttoOut,
   };
 }
 
