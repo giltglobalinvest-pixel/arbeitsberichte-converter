@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.06';
+const APP_VERSION = 'v8.07';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -18770,6 +18770,18 @@ async function _plSendLoadContacts() {
     const list = Array.isArray(res) ? res : (res?.content || res?.items || res?.data || []);
     m._contacts = list;
     _plSendRenderContacts();
+    // v8.07: Kein Ansprechpartner im ERP? → Fallback auf die Rechnungsempfänger-/Kunden-E-Mail aus dem ERP,
+    //   damit das Empfänger-Feld nicht leer bleibt (z.B. Architekturbüro Walter: 0 Kontakte, aber Rechnungsempfänger-Mail).
+    if (!list.length) {
+      const emailInp0 = document.getElementById('pl-send-email');
+      if (emailInp0 && !emailInp0.value.trim()) {
+        try {
+          const kd = await erpFetch('/aufzug/'+o.firma+'/api/kunden/'+encodeURIComponent(o.kundeNr));
+          const fb = (kd && ((kd.defaultrechnungsempfaenger && kd.defaultrechnungsempfaenger.email) || kd.email)) || '';
+          if (fb && fb.includes('@')) { emailInp0.value = fb; toast('ℹ Kein Ansprechpartner im ERP — Rechnungsempfänger-E-Mail übernommen: '+fb, ''); }
+        } catch(e) { console.warn('[PL-Send] Fallback-Email:', e.message); }
+      }
+    }
     // Auto-Select: Standard-Kontakt, sonst erster mit Email, sonst erster
     const pick = list.find(k => k.isStandard || k.standard || k.isDefault) || list.find(k => _daSendContactEmail(k)) || list[0];
     // Email nur automatisch setzen, wenn noch keine (z.B. aus kontakt_email) vorbelegt ist
@@ -39862,21 +39874,23 @@ async function _nwvResolveKundeAdresse(firmaSlug, kunde, chosenAnlagen) {
   console.log('[NWV-Adresse] adresseId:', kunde.adresseId, '· defaultrechnungsempfaenger:', kunde.defaultrechnungsempfaenger);
   const direkt = [kunde.strasse, [kunde.plz, kunde.ort].filter(Boolean).join(' ')].filter(Boolean).join('\n');
   if (direkt.trim()) { console.log('[NWV-Adresse] → flache Felder'); return direkt; }
-  // Pfad 2: defaultrechnungsempfaenger.id — der proven Pfad aus dem Angebot-Modul
-  const empfId = kunde.defaultrechnungsempfaenger && kunde.defaultrechnungsempfaenger.id;
-  if (empfId) {
-    try {
-      const empfAdr = await _angResolveEmpfaengerAdresse(firmaSlug, empfId);
-      if (empfAdr && empfAdr.trim()) { console.log('[NWV-Adresse] → Empfaenger-Lookup'); return empfAdr; }
-    } catch(e) { console.warn('[NWV-Adresse] empfId Lookup failed:', e.message); }
-  }
-  // Pfad 3: adresseId (Google-Places-Style)
+  // v8.07: adresseId (Google-Maps) ZUERST — das ist der zuverlässige Pfad. Der frühere
+  //   defaultrechnungsempfaenger.id-Lookup probierte 6 Endpunkt-Varianten (Rechnungsempfaenger/{id} …),
+  //   die IMMER 404 liefern → verstopfte die Konsole mit roten Fehlern + ~5s Verzögerung bei jedem
+  //   Kundenwählen. Der Empfaenger-Lookup läuft jetzt nur noch, wenn KEINE adresseId vorhanden ist.
   const adId = kunde.adresseId || (kunde.defaultrechnungsempfaenger && kunde.defaultrechnungsempfaenger.adresseId) || '';
   if (adId) {
     try {
       const resolved = await _angResolveAdresseId(firmaSlug, adId);
       if (resolved && resolved.trim()) { console.log('[NWV-Adresse] → adresseId Google Maps'); return resolved; }
     } catch(e) { console.warn('[NWV-Adresse] adresseId Lookup failed:', e.message); }
+  }
+  const empfId = kunde.defaultrechnungsempfaenger && kunde.defaultrechnungsempfaenger.id;
+  if (empfId && !adId) {
+    try {
+      const empfAdr = await _angResolveEmpfaengerAdresse(firmaSlug, empfId);
+      if (empfAdr && empfAdr.trim()) { console.log('[NWV-Adresse] → Empfaenger-Lookup'); return empfAdr; }
+    } catch(e) { console.warn('[NWV-Adresse] empfId Lookup failed:', e.message); }
   }
   // Pfad 4: erste Anlage als Notfall — KEINE saubere Hausverwaltungs-Adresse
   const a0 = (chosenAnlagen||[])[0];
@@ -42319,7 +42333,7 @@ async function _selectKundeFromPicker(kundeOrId) {
   if (!k) { console.warn('[KundenPicker] Kunde nicht gefunden:', kundeOrId); return; }
   const firmaSlug = getCurrentFirmaSlug();
   const modal = document.getElementById('kunden-pl-modal');
-  if (!modal) { document.getElementById('kp-picker-modal').remove(); return; }
+  if (!modal) { document.getElementById('kp-picker-modal')?.remove(); return; }   // v8.07: null-sicher
   // Editor-Felder direkt befüllen
   const nameInp = modal.querySelector('[data-kk="empfaengerName"]');
   const adrInp  = modal.querySelector('[data-kk="empfaengerAdresse"]');
@@ -42364,7 +42378,7 @@ async function _selectKundeFromPicker(kundeOrId) {
   // v7.82: Kunde auch persistent in die Editor-Daten (für Ansprechpartner-Picker + Reedit)
   if (modal._stagedData) modal._stagedData.kunde = { id:k.id, kundennummer:k.kundennummer||'', firmenname:k.firmenname||'' };
   // Kontakte zum Kunden laden + Picker zeigen
-  document.getElementById('kp-picker-modal').remove();
+  document.getElementById('kp-picker-modal')?.remove();   // v8.07: null-sicher (Modal kann während der Adress-Auflösung schon zu sein)
   toast('Kunde übernommen — lade Kontakte…','');
   try {
     const kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(k.kundennummer)+'/Kontakte');
