@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.13';
+const APP_VERSION = 'v8.14';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29054,6 +29054,27 @@ const _ANG_TYP_FILTER = [
   { value:'modernisierung', label:'🏗 Modernisierung' },
   { value:'wartung',        label:'🔧 Wartung & Notruf' },
 ];
+/* v8.13: Stundensatz + Einsatzpauschale aus einem stundensaetze[]-Array (synchron, Heuristik).
+   Stundensatz = Zeile mit Einheit „/h" bzw. Name Stunde/Monteur/Regie; Einsatzpauschale = Name Einsatz/Anfahrt/Pauschal. */
+function _angAufwandRatesFromSaetze(saetze) {
+  let std = 0, eins = 0;
+  if (Array.isArray(saetze) && saetze.length) {
+    const isE = s => /einsatz|anfahrt|zustell|pauschal/i.test(String((s&&s.name)||'')) || /einsatz|anfahrt/i.test(String((s&&s.einheit)||''));
+    const isH = s => /\/\s*h|std|stunde/i.test(String((s&&s.einheit)||'')) || /stunde|monteur|regie|techniker|servicetech/i.test(String((s&&s.name)||''));
+    const hLine = saetze.find(s => isH(s) && !isE(s)) || saetze.find(isH);
+    const eLine = saetze.find(isE);
+    if (hLine && +hLine.satz > 0) std  = +hLine.satz;
+    if (eLine && +eLine.satz > 0) eins = +eLine.satz;
+  }
+  return { stundensatz: std, einsatzPauschale: eins };
+}
+/* v8.13: Aufwand-Sätze für die Übersicht — EINHEITLICH aus stundensaetze_json (Maxise-Sync schreibt es dort hin, Servicebox hat es nativ). */
+function _angAufwandDisp(f) {
+  if (!f || _angEffTyp(f) !== 'aufwand') return null;
+  let saetze = []; try { saetze = JSON.parse((f.stundensaetze_json)||'[]')||[]; } catch(_){}
+  const r = _angAufwandRatesFromSaetze(saetze);
+  return (r.stundensatz > 0 || r.einsatzPauschale > 0) ? { std: r.stundensatz, eins: r.einsatzPauschale } : null;
+}
 function _renderAngeboteList() {
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
@@ -29162,13 +29183,20 @@ function _renderAngeboteList() {
     const idLabel = isMaxise
       ? '<span title="Aus Maxise (ERP) importiert" style="background:#0EA5E9;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">🔗 MAXISE</span>MX-'+escapeHtml(String(f.erp_angebot_nummer||f.erp_angebot_id||'?'))
       : (f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')));
+    // v8.13: Aufwand-Sätze (Stundensatz · Einsatzpauschale) für die Karte — beide Quellen via stundensaetze_json
+    const _awd = (canSeePrices() && _angEffTyp(f) === 'aufwand') ? _angAufwandDisp(f) : null;
+    const aufwandSpan = _awd
+      ? '<span style="font-weight:700;color:var(--navy);font-size:12.5px;margin-left:6px" title="Angebotener Stundensatz / Einsatzpauschale">⏱ '+[(_awd.std>0?fmtEUR(_awd.std)+' €/h':''),(_awd.eins>0?fmtEUR(_awd.eins)+' € Einsatz':'')].filter(Boolean).join(' · ')+'</span>'
+      : '';
     const rightBadges = isMaxise
       ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_fmtAngebotTyp(f.erp_typ))+'</span>':'')
         + (f.erp_status?'<span style="background:#6B728022;color:#374151;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.erp_status)+'</span>':'')
         + (canSeePrices() && f.summe_netto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px" title="Pauschalpreis netto">'+fmtEUR(f.summe_netto_vp)+' € netto</span>' : '')
+        + aufwandSpan
       : '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'
         + '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'
-        + (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '');
+        + (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')
+        + aufwandSpan;
     const footer = isMaxise
       ? (f.erp_datum ? '📅 '+escapeHtml(f.erp_datum) : '') + (f.kunde_nummer ? ' · 👤 Kd. '+escapeHtml(f.kunde_nummer) : '') + ' · 🔗 ERP-ID '+escapeHtml(String(f.erp_angebot_id||'?'))
       : (f.kone_angebot_num ? '🔗 '+escapeHtml(f.anbieter||'Original')+' '+escapeHtml(f.kone_angebot_num)+' · ' : '') + (f.erstellt_am ? '📅 '+escapeHtml(f.erstellt_am) : '') + (f.bearbeiter ? ' · 👤 '+escapeHtml(f.bearbeiter) : '');
@@ -35513,6 +35541,18 @@ function _angMaxiseListItemToFields(item, firmaSlug) {
   const _net   = _isFest ? _pn(item && item.netPrice,   a.netPrice,   item && item.pauschalpreis, a.pauschalpreis) : 0;
   const _gross = _isFest ? _pn(item && item.grossPrice, a.grossPrice) : 0;
   const _bruttoOut = _net > 0 ? (_gross > 0 ? _gross : Math.round(_net * 1.19 * 100) / 100) : (_gross > 0 ? _gross : null);
+  // v8.13: Nach-Aufwand → Stundensatz + Einsatzpauschale (aus der Anlage, wie _angMaxiseToAb; Angebot-Werte als Fallback).
+  //   Werden als stundensaetze_json abgelegt, damit Übersicht Maxise + Servicebox EINHEITLICH liest.
+  const _isAufwand = /aufwand/i.test(typ);
+  const _std  = _isAufwand ? _pn(anlage.stundensatz, anlage.stundenSatz, item && item.stundensatz, a.stundensatz) : 0;
+  const _eins = _isAufwand ? _pn(anlage.einsatzPauschale, anlage.einsatzpauschale, item && item.einsatzPauschale, a.einsatzPauschale) : 0;
+  let _stdJson = '';
+  if (_isAufwand && (_std > 0 || _eins > 0)) {
+    const _rows = [];
+    if (_std  > 0) _rows.push({ nr:1, name:'Stundensatz',      satz:_std,  einheit:'€/h', hinweis:'aus Maxise/Anlage' });
+    if (_eins > 0) _rows.push({ nr:2, name:'Einsatzpauschale', satz:_eins, einheit:'€',   hinweis:'aus Maxise/Anlage' });
+    _stdJson = JSON.stringify(_rows);
+  }
   return {
     firma: firmaSlug,
     herkunft: 'maxise',
@@ -35531,6 +35571,8 @@ function _angMaxiseListItemToFields(item, firmaSlug) {
     pauschalpreis_netto: _net > 0 ? _net : null,
     summe_netto_vp:      _net > 0 ? _net : null,
     summe_brutto_vp:     _bruttoOut,
+    // v8.13: Aufwand-Sätze (Stundensatz/Einsatzpauschale) einheitlich als stundensaetze_json
+    stundensaetze_json:  _stdJson,
   };
 }
 
@@ -35594,6 +35636,7 @@ async function _angSyncFromMaxise(btn) {
       }
       for (let i = 0; i < toCreate.length; i += 10) {
         const chunk = toCreate.slice(i, i + 10);
+        if (btn) btn.textContent = '⏳ '+firma+' neu '+(i + chunk.length)+'/'+toCreate.length;   // v8.13: Live-Fortschritt
         try {
           const r = await fetch('https://api.airtable.com/v0/' + baseId + '/App_Angebote', {
             method: 'POST', headers: { 'Authorization': 'Bearer ' + wkey, 'Content-Type': 'application/json' },
@@ -35605,6 +35648,7 @@ async function _angSyncFromMaxise(btn) {
       }
       for (let i = 0; i < toUpdate.length; i += 10) {
         const chunk = toUpdate.slice(i, i + 10);
+        if (btn) btn.textContent = '⏳ '+firma+' '+(i + chunk.length)+'/'+toUpdate.length;   // v8.13: Live-Fortschritt
         try {
           const r = await fetch('https://api.airtable.com/v0/' + baseId + '/App_Angebote', {
             method: 'PATCH', headers: { 'Authorization': 'Bearer ' + wkey, 'Content-Type': 'application/json' },
