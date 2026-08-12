@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.12';
+const APP_VERSION = 'v8.13';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29038,6 +29038,22 @@ async function _angBulkDelete() {
   _renderAngeboteList();
 }
 
+/* v8.13: Einheitlicher Angebots-Typ für Filter/Anzeige — funktioniert für Maxise (erp_typ)
+   UND Servicebox-native (angebot_typ). Kanonische Kategorien: pauschal | aufwand | modernisierung | wartung. */
+function _angEffTyp(f) {
+  const raw = String((((f && f.herkunft) === 'maxise') ? (f && f.erp_typ) : (f && f.angebot_typ)) || '').toLowerCase();
+  if (/aufwand/.test(raw))                 return 'aufwand';
+  if (/wartung|notruf/.test(raw))          return 'wartung';
+  if (/modern/.test(raw))                  return 'modernisierung';
+  if (/pauschal|reparatur|festpreis/.test(raw)) return 'pauschal';
+  return '';
+}
+const _ANG_TYP_FILTER = [
+  { value:'pauschal',       label:'💼 Pauschal' },
+  { value:'aufwand',        label:'⏱ Nach Aufwand' },
+  { value:'modernisierung', label:'🏗 Modernisierung' },
+  { value:'wartung',        label:'🔧 Wartung & Notruf' },
+];
 function _renderAngeboteList() {
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
@@ -29061,7 +29077,7 @@ function _renderAngeboteList() {
         'class="auf-search-inp" style="flex:1;min-width:220px;padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px">'+
       '<select id="ang-typ" onchange="_renderAngeboteList()" style="padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
         '<option value="">Alle Typen</option>'+
-        ANGEBOT_TYP_OPTIONS.map(t => '<option value="'+t.value+'"'+(document.getElementById('ang-typ')?.value===t.value?' selected':'')+'>'+t.label+'</option>').join('')+
+        _ANG_TYP_FILTER.map(t => '<option value="'+t.value+'"'+(document.getElementById('ang-typ')?.value===t.value?' selected':'')+'>'+t.label+'</option>').join('')+
       '</select>'+
       '<select id="ang-status" onchange="_renderAngeboteList()" style="padding:8px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:12px;background:#fff;color:#222">'+
         '<option value="">Alle Status</option>'+
@@ -29095,7 +29111,7 @@ function _renderAngeboteList() {
     if (!showArchived && f.archived) return false;
     if (filterSource === 'maxise' && !isMaxise) return false;
     if (filterSource === 'servicebox' && isMaxise) return false;
-    if (filterTyp && f.angebot_typ !== filterTyp) return false;
+    if (filterTyp && _angEffTyp(f) !== filterTyp) return false;   // v8.13: wirkt auf Maxise (erp_typ) + native (angebot_typ)
     if (filterStatus && f.status !== filterStatus) return false;
     if (q) {
       const haystack = [f.angebot_nr, f.app_angebot_num, f.fdh_angebot_num, f.erp_angebot_nummer, f.erp_angebot_id, f.kone_angebot_num, f.kunde_name, f.kunde_nummer, f.anlage_adresse, f.seriennummer, f.equipmentnummer, f.erp_status]
