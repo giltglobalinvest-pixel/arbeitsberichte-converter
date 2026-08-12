@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.19';
+const APP_VERSION = 'v8.20';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -28862,6 +28862,7 @@ const ANGEBOT_STATUS_OPTIONS = [
   { value:'fertig',      label:'Fertig',      color:'#10b981' },
   { value:'gesendet',    label:'Gesendet',    color:'#2152A9' },
   { value:'angenommen',  label:'Angenommen',  color:'#059669' },
+  { value:'beauftragt',  label:'Beauftragt',  color:'#EA580C' },   // v8.20: Auftrag/AB erstellt
   { value:'abgelehnt',   label:'Abgelehnt',   color:'#DC2626' },
 ];
 
@@ -29111,6 +29112,48 @@ function _angAufwandDisp(f) {
   const r = _angAufwandRatesFromSaetze(saetze);
   return (r.stundensatz > 0 || r.einsatzPauschale > 0) ? { std: r.stundensatz, eins: r.einsatzPauschale } : null;
 }
+/* v8.20: Angebots-Bearbeitungsstatus schnell aus der Übersicht setzen (Feld `status`, gilt auch für Maxise-Angebote —
+   der Sync überschreibt `status` nicht). Aktualisiert Cache + Liste ohne Detail zu öffnen. */
+async function _angQuickStatus(recId, value) {
+  const idx = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
+  const prev = idx >= 0 ? (_angeboteCache.items[idx].fields.status || '') : '';
+  if (idx >= 0) { _angeboteCache.items[idx].fields.status = value; _renderAngeboteList(); }   // optimistisch
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+      method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ status: value }}),
+    });
+    if (!r.ok) throw new Error('HTTP '+r.status);
+    const lbl = (ANGEBOT_STATUS_OPTIONS.find(s=>s.value===value)||{}).label || (value||'—');
+    toast('Status: '+lbl, 'ok');
+  } catch(e) {
+    if (idx >= 0) { _angeboteCache.items[idx].fields.status = prev; _renderAngeboteList(); }   // Rollback
+    toast('❌ Status nicht gespeichert: '+((e&&e.message)||e), 'err');
+  }
+}
+/* v8.20: kleines geteiltes Popup-Menü (performant statt 2158 <select>) — Klick auf den Status-Chip einer Angebots-Karte. */
+function _angStatusMenu(ev, recId) {
+  try { ev.stopPropagation(); } catch(_){}
+  document.getElementById('ang-status-menu')?.remove();
+  const cur = (function(){ const r=(_angeboteCache.items||[]).find(x=>x.id===recId); return (r&&r.fields&&r.fields.status)||''; })();
+  const menu = document.createElement('div');
+  menu.id = 'ang-status-menu';
+  const x = (ev && ev.clientX) || 200, y = (ev && ev.clientY) || 200;
+  menu.style.cssText = 'position:fixed;z-index:11000;background:var(--surf,#fff);border:1px solid var(--bdr);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.2);padding:4px;min-width:170px;left:'+Math.max(8, Math.min(x, window.innerWidth-186))+'px;top:'+Math.max(8, Math.min(y, window.innerHeight-280))+'px';
+  const opts = [{ value:'', label:'— kein Status —', color:'#9ca3af' }].concat(ANGEBOT_STATUS_OPTIONS);
+  menu.innerHTML = opts.map(s =>
+    '<div onclick="event.stopPropagation();document.getElementById(\'ang-status-menu\').remove();_angQuickStatus(\''+recId+'\',\''+s.value+'\')" '+
+      'style="padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:9px'+(s.value===cur?';background:'+s.color+'1e;font-weight:700':'')+'" '+
+      'onmouseover="this.style.background=\''+s.color+'26\'" onmouseout="this.style.background=\''+(s.value===cur?s.color+'1e':'transparent')+'\'">'+
+      '<span style="width:9px;height:9px;border-radius:50%;background:'+s.color+';flex-shrink:0"></span>'+escapeHtml(s.label)+'</div>'
+  ).join('');
+  document.body.appendChild(menu);
+  setTimeout(() => {
+    const close = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('click', close, true); } };
+    document.addEventListener('click', close, true);
+  }, 0);
+}
 function _renderAngeboteList() {
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
@@ -29233,13 +29276,20 @@ function _renderAngeboteList() {
           ? '<span style="font-weight:700;color:var(--navy);font-size:12.5px;margin-left:6px" title="Wartung: Jahrespreis / Einmalzahlung netto">🔧 '+[(fmtEUR(+f.summe_netto_vp)+' €/Jahr'),(+f.summe_netto_kone>0?fmtEUR(+f.summe_netto_kone)+' € einmalig':'')].filter(Boolean).join(' · ')+'</span>'
           : '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px" title="Pauschalpreis netto">'+fmtEUR(+f.summe_netto_vp)+' € netto</span>')
       : '';
+    // v8.20: Schnell-Status-Chip (Servicebox-Bearbeitungsstatus) — Klick öffnet Popup-Menü. Gilt für Maxise + native.
+    const _statOpt = ANGEBOT_STATUS_OPTIONS.find(s => s.value === String(f.status||''));
+    const _canEditStatus = (typeof isAdmin==='function' && isAdmin()) || (typeof hasPermission==='function' && hasPermission('tool_angebote'));
+    const statusChip = _canEditStatus
+      ? '<span onclick="event.stopPropagation();_angStatusMenu(event,\''+rec.id+'\')" title="Bearbeitungs-Status ändern" style="cursor:pointer;user-select:none;background:'+(_statOpt?_statOpt.color+'18':'var(--surf)')+';color:'+(_statOpt?_statOpt.color:'var(--txt3)')+';border:1px solid '+(_statOpt?_statOpt.color+'66':'var(--bdr)')+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap">'+escapeHtml(_statOpt?_statOpt.label:'Status')+' ▾</span>'
+      : (_statOpt ? '<span style="background:'+_statOpt.color+'22;color:'+_statOpt.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_statOpt.label)+'</span>' : '');
     const rightBadges = isMaxise
       ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_fmtAngebotTyp(f.erp_typ))+'</span>':'')
-        + (f.erp_status?'<span style="background:#6B728022;color:#374151;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(f.erp_status)+'</span>':'')
+        + (f.erp_status?'<span style="background:#6B728022;color:#374151;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600" title="Status im ERP (Maxise)">'+escapeHtml(f.erp_status)+'</span>':'')
+        + statusChip
         + maxisePreisSpan
         + aufwandSpan
       : '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'
-        + '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'
+        + statusChip
         + (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')
         + aufwandSpan;
     const footer = isMaxise
@@ -34983,6 +35033,18 @@ async function _abGenerateAndSave(btn, send) {
     const rec = await atWrite('Auftragsbestaetigungen', fields);
     try { await atBlobUpload(rec.id, 'pdf', blob, 'Auftragsbestaetigung-'+nummer+'.pdf', 'application/pdf'); }
     catch(e) { console.warn('[AB-Save] PDF-Upload:', e.message); }
+    // v8.20: Angebot automatisch auf 'beauftragt' setzen (AB/Auftrag wurde erstellt) → sofort in der Angebote-Übersicht sichtbar
+    if (m._recId) {
+      try {
+        const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+m._recId, {
+          method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+          body: JSON.stringify({ fields:{ status:'beauftragt' }}),
+        });
+        const ai = (typeof _angeboteCache!=='undefined' && _angeboteCache.items || []).findIndex(x => x.id === m._recId);
+        if (ai >= 0) _angeboteCache.items[ai].fields.status = 'beauftragt';
+      } catch(e) { console.warn('[AB-Save] Angebot-Status beauftragt:', e && e.message); }
+    }
     // v7.96: Rück-Verknüpfung Auftrag → AB, damit die AB direkt in der Auftragsübersicht herunterladbar ist
     if (localAuftragId) {
       try {
