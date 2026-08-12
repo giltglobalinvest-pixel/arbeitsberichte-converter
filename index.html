@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.17';
+const APP_VERSION = 'v8.18';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -20089,6 +20089,9 @@ function _buildWartungsvertraegeViewItems() {
         anlagen_list: erpAnlagen,
         start: e.startDatum || e.start || '',
         created: e.created || e.erstelltAm || '',
+        jahrespreis:   +e.jahrespreis   || 0,
+        einmalzahlung: +e.einmalzahlung || 0,
+        pro_jahr:      +e.pro_jahr      || 0,
         erp_url: e._erpUrl || '',
         erp_id: e.id || e.vertragsId || ''
       });
@@ -20202,6 +20205,12 @@ function _renderWartungsvertraegeList() {
           : ''
         )+
         '<div>🛗 '+(it.anlagen_count||0)+' Anlagen</div>'+
+        // v8.18: Wartungspreis (nur intern sichtbar). Jahrespreis netto + optional Einmalzahlung.
+        ((typeof canSeePrices==='function' && canSeePrices() && it.jahrespreis)
+          ? '<div style="font-weight:700;color:var(--navy);font-size:13px" title="Jahrespreis netto (aus dem Wartungs-Angebot)">'+Number(it.jahrespreis).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €/Jahr</div>'
+            + (it.einmalzahlung ? '<div style="font-size:10px;color:var(--txt3)">+ '+Number(it.einmalzahlung).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € einmalig</div>' : '')
+            + (it.pro_jahr ? '<div style="font-size:10px;color:var(--txt3)">'+it.pro_jahr+'× Wartung/Jahr</div>' : '')
+          : '')+
         (it.start ? '<div style="color:var(--txt3)">Start: '+escapeHtml(String(it.start).slice(0,10))+'</div>' : '')+
       '</div>'+
     '</div>';
@@ -20499,6 +20508,11 @@ async function _loadWartungsvertraegeFromERP(opts) {
       const erpUrlAnlage  = (erpHost && anlageId) ? erpHost + '/anlagen/' + anlageId : '';
       // Primärer Klick-Link: Angebot (immer verfügbar), Auftrag falls vorhanden hat Priorität
       const erpUrl = erpUrlAuftrag || erpUrlAngebot || '';
+      // v8.18: Wartungspreise (Jahrespreis + Einmalzahlung) aus dem Wartungs-/Notruf-Angebot (Item-Top-Level wie _angMaxiseToAb data.annualPrice)
+      const _wnum = (...vs) => { for (const v of vs) { const n = Number(v); if (Number.isFinite(n) && n !== 0) return n; } return 0; };
+      const _jahr    = _wnum(w.annualPrice, ang.annualPrice);
+      const _einmal  = _wnum(w.oneTimePaymentAmount, ang.oneTimePaymentAmount);
+      const _proJahr = _wnum(w.maintenancesPerYear, ang.maintenancesPerYear);
       items.push({
         id: angId,
         vertragsnummer: String(vNr),
@@ -20517,6 +20531,9 @@ async function _loadWartungsvertraegeFromERP(opts) {
         angebotId: angId,
         startDatum: w.vertragsBeginn || w.vertragsstart || ang.datum || ang.angebotsdatum || '',
         vertragsEnde: ende,
+        jahrespreis:   _jahr   || null,
+        einmalzahlung: _einmal || null,
+        pro_jahr:      _proJahr|| null,
         created: w.erstelltAm || ang.erstelltAm || ang.datum || '',
         _erpUrl: erpUrl,
         _erpUrlAuftrag: erpUrlAuftrag,
