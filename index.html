@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.23';
+const APP_VERSION = 'v8.24';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29170,18 +29170,93 @@ async function _angQuickStatus(recId, value) {
     toast('❌ Status nicht gespeichert: '+((e&&e.message)||e), 'err');
   }
 }
+/* v8.24: Maxise-Status-Werte — genau die, die in den synchronisierten Angeboten vorkommen (erp_status). */
+function _angMaxiseStatusValues() {
+  const set = new Set();
+  for (const r of (_angeboteCache.items||[])) { const s = String((r.fields&&r.fields.erp_status)||'').trim(); if (s) set.add(s); }
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+/* v8.24: ECHTEN Maxise-Angebots-Status ändern. Kein simpler Endpunkt → GET des Angebots, ALLE Felder behalten,
+   verschachtelte Objekte → ids, nur `status` ändern, dann PUT /api/angebote/{typ}. NPE-500 (PDF/Mail) = trotzdem gesetzt. */
+async function _angErpSetStatus(recId, newStatus) {
+  const rec = (_angeboteCache.items||[]).find(x => x.id === recId);
+  if (!rec) return toast('Angebot nicht gefunden','err');
+  const f = rec.fields || {};
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  if (firmaSlug !== getCurrentFirmaSlug()) return toast('Bitte oben rechts Firma „'+firmaSlug+'" wählen.','err');
+  const seg = String(f.erp_typ||'').trim();       // pauschal | aufwand | modernisierung | wartungNotruf
+  const id  = String(f.erp_angebot_id||'').trim();
+  if (!seg || !id) return toast('Kein ERP-Typ/-ID am Angebot — Status kann nicht ins ERP geschrieben werden.','err');
+  const oldStatus = String(f.erp_status||'');
+  if (oldStatus === newStatus) return;
+  if (!confirm('Maxise-Status ins ERP schreiben?\n\nAngebot '+id+' ('+seg+')\n'+(oldStatus||'—')+'  →  '+newStatus+'\n\nSchreibt direkt in Maxise (PUT). Bitte danach im ERP gegenprüfen.')) return;
+  try {
+    let g = null;
+    for (const p of ['api/angebote/'+seg+'/'+encodeURIComponent(id), 'api/angebote/'+encodeURIComponent(id)]) {
+      try { g = await erpFetch('/aufzug/'+firmaSlug+'/'+p); if (g && (g.id||g.angebot)) break; }
+      catch(e){ if (e.status && e.status!==404) throw e; }
+    }
+    if (!g) throw new Error('Angebot '+id+' nicht ladbar (GET).');
+    // GET → SETDTO: alle Primitiven behalten, verschachtelte → ids, status ändern
+    const setDto = {};
+    for (const [k,v] of Object.entries(g)) { if (k!=='angebot' && (v===null || typeof v!=='object')) setDto[k]=v; }
+    const ang = g.angebot || {};
+    const angDto = {};
+    for (const [k,v] of Object.entries(ang)) { if (v===null || typeof v!=='object') angDto[k]=v; }
+    angDto.anfrageid    = (ang.anfrage&&ang.anfrage.id) ?? ang.anfrageid ?? null;
+    angDto.anlageid     = (ang.anlage&&ang.anlage.id) ?? ang.anlageid ?? null;
+    angDto.empfaengerid = (ang.empfaenger&&ang.empfaenger.id) ?? ang.empfaengerid ?? null;
+    angDto.kundeid      = (ang.anlage&&ang.anlage.kunde&&ang.anlage.kunde.kundennummer) ?? (ang.empfaenger&&ang.empfaenger.kunde&&ang.empfaenger.kunde.kundennummer) ?? null;
+    angDto.kundeMail    = (angDto.kundeMail!=null) ? angDto.kundeMail : false;
+    angDto.titelemail   = angDto.titelemail || '-';
+    angDto.inhaltemail  = angDto.inhaltemail || '-';
+    angDto.status       = newStatus;
+    setDto.angebot = angDto;
+    let ok = false;
+    try { await erpFetch('/aufzug/'+firmaSlug+'/api/angebote/'+seg, { method:'PUT', body: setDto }); ok = true; }
+    catch(e) {
+      const t = String((e&&e.body&&(e.body.upstream_body_excerpt||e.body.trace))||(e&&e.message)||'');
+      if (e.status===500 && /NullPointer|PDFCreator|MailGenerator|NoSuchElement/i.test(t)) { ok = true; console.warn('[Ang-ERP-Status] Maxise-NPE-500 — Status trotzdem gesetzt'); }
+      else throw e;
+    }
+    if (ok) {
+      const idx = (_angeboteCache.items||[]).findIndex(x=>x.id===recId);
+      if (idx>=0) _angeboteCache.items[idx].fields.erp_status = newStatus;
+      toast('✅ Maxise-Status: '+newStatus, 'ok');
+      _renderAngeboteList();
+    }
+  } catch(e) {
+    console.error('[Ang-ERP-Status]', e);
+    if (typeof _showErpErrorDetails==='function' && e && e.body && (e.body.upstream_body_excerpt||e.body.trace)) _showErpErrorDetails(e);
+    else toast('❌ Maxise-Status: '+(((e&&e.message)||e)+'').slice(0,200), 'err');
+  }
+}
 /* v8.20: kleines geteiltes Popup-Menü (performant statt 2158 <select>) — Klick auf den Status-Chip einer Angebots-Karte. */
 function _angStatusMenu(ev, recId) {
   try { ev.stopPropagation(); } catch(_){}
   document.getElementById('ang-status-menu')?.remove();
-  const cur = (function(){ const r=(_angeboteCache.items||[]).find(x=>x.id===recId); return (r&&r.fields&&r.fields.status)||''; })();
+  const rec = (_angeboteCache.items||[]).find(x=>x.id===recId);
+  const f = (rec&&rec.fields)||{};
+  const isMaxise = f.herkunft === 'maxise';
+  const cur = isMaxise ? String(f.erp_status||'') : String(f.status||'');
+  let opts, fn, header;
+  if (isMaxise) {
+    fn = '_angErpSetStatus'; header = 'Maxise-Status (→ ERP)';
+    const vals = _angMaxiseStatusValues();
+    if (cur && !vals.includes(cur)) vals.unshift(cur);
+    opts = (vals.length ? vals : [cur||'']).map(v => ({ value:v, label:(v||'(kein Wert)'), color:'#0369A1' }));
+  } else {
+    fn = '_angQuickStatus'; header = 'Status (Servicebox)';
+    opts = [{ value:'', label:'— kein Status —', color:'#9ca3af' }].concat(ANGEBOT_STATUS_OPTIONS.map(s=>({value:s.value,label:s.label,color:s.color})));
+  }
   const menu = document.createElement('div');
   menu.id = 'ang-status-menu';
   const x = (ev && ev.clientX) || 200, y = (ev && ev.clientY) || 200;
-  menu.style.cssText = 'position:fixed;z-index:11000;background:var(--surf,#fff);border:1px solid var(--bdr);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.2);padding:4px;min-width:170px;left:'+Math.max(8, Math.min(x, window.innerWidth-186))+'px;top:'+Math.max(8, Math.min(y, window.innerHeight-280))+'px';
-  const opts = [{ value:'', label:'— kein Status —', color:'#9ca3af' }].concat(ANGEBOT_STATUS_OPTIONS);
-  menu.innerHTML = opts.map(s =>
-    '<div onclick="event.stopPropagation();document.getElementById(\'ang-status-menu\').remove();_angQuickStatus(\''+recId+'\',\''+s.value+'\')" '+
+  menu.style.cssText = 'position:fixed;z-index:11000;background:var(--surf,#fff);border:1px solid var(--bdr);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.2);padding:4px;min-width:190px;max-height:70vh;overflow:auto;left:'+Math.max(8, Math.min(x, window.innerWidth-206))+'px;top:'+Math.max(8, Math.min(y, window.innerHeight-320))+'px';
+  const esc = v => String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  menu.innerHTML = '<div style="padding:5px 10px 6px;font-size:10px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.03em">'+escapeHtml(header)+'</div>'
+    + opts.map(s =>
+    '<div onclick="event.stopPropagation();document.getElementById(\'ang-status-menu\').remove();'+fn+'(\''+recId+'\',\''+esc(s.value)+'\')" '+
       'style="padding:8px 10px;border-radius:6px;cursor:pointer;font-size:13px;display:flex;align-items:center;gap:9px'+(s.value===cur?';background:'+s.color+'1e;font-weight:700':'')+'" '+
       'onmouseover="this.style.background=\''+s.color+'26\'" onmouseout="this.style.background=\''+(s.value===cur?s.color+'1e':'transparent')+'\'">'+
       '<span style="width:9px;height:9px;border-radius:50%;background:'+s.color+';flex-shrink:0"></span>'+escapeHtml(s.label)+'</div>'
@@ -29356,9 +29431,10 @@ function _renderAngeboteList() {
     // v8.23: EINE editierbare Status-Pille. Servicebox-Status (falls gesetzt) übersteuert die Anzeige, sonst ERP-Status (Maxise) bzw. native Status. Klick → Popup. ERP-Status im Tooltip.
     const _statOpt = ANGEBOT_STATUS_OPTIONS.find(s => s.value === String(f.status||''));
     const _canEditStatus = (typeof isAdmin==='function' && isAdmin()) || (typeof hasPermission==='function' && hasPermission('tool_angebote'));
-    const _statLabel = _statOpt ? _statOpt.label : (isMaxise ? String(f.erp_status||'') : String(stat.label||''));
-    const _statColor = _statOpt ? _statOpt.color : (isMaxise ? '#6B7280' : stat.color);
-    const _statTip = (isMaxise && f.erp_status ? 'ERP-Status: '+String(f.erp_status)+' · ' : '') + 'Status setzen (Servicebox)';
+    // Maxise: echter ERP-Status (editierbar → schreibt ins ERP). Native: Servicebox-Status.
+    const _statLabel = isMaxise ? String(f.erp_status||'') : (_statOpt ? _statOpt.label : String(stat.label||''));
+    const _statColor = isMaxise ? '#0369A1' : (_statOpt ? _statOpt.color : stat.color);
+    const _statTip = isMaxise ? 'Maxise-Status ändern (schreibt ins ERP)' : 'Status setzen (Servicebox)';
     const statusPill = _canEditStatus
       ? '<span onclick="event.stopPropagation();_angStatusMenu(event,\''+rec.id+'\')" title="'+escapeHtml(_statTip)+'" style="cursor:pointer;background:'+_statColor+'1e;color:'+_statColor+';border:1px solid '+_statColor+'55;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600;white-space:nowrap">'+escapeHtml(_statLabel||'Status')+' ▾</span>'
       : (_statLabel ? '<span style="background:'+_statColor+'22;color:'+_statColor+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_statLabel)+'</span>' : '');
