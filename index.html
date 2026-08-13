@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.63';
+const APP_VERSION = 'v8.64';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9737,7 +9737,7 @@ function _odAutofillFor(label, f){
   if (/angebot/.test(L)) return String(f.angebot_id||f.erp_angebot_nummer||'');
   if (/fabrik/.test(L)) return String(f.fabriknummer||'');
   if (/standort|objekt|aufzugsanlage|adresse/.test(L)) return String(f.standort||f.anlage_adresse||'');
-  if (/auftragstyp|auftrags-typ|art\b/.test(L)) {
+  if (/auftragstyp|auftrags-?typ|angebotstyp/.test(L)) {
     const t = String(f.angebot_typ || f.abrechnung_modus || f.bestellform || '').toLowerCase();
     if (/wartung|notruf/.test(t)) return 'Wartung';
     if (/modern/.test(t)) return 'Modernisierung';
@@ -9776,7 +9776,9 @@ function _odFieldInputHtml(def, value, recId){
     return lbl+'<textarea '+idAttr+' rows="2" style="'+inpStyle+'">'+escapeHtml(String(value||''))+'</textarea>';
   }
   const inputType = /(number|int|num)/.test(t) ? 'number' : (/date/.test(t) ? 'date' : 'text');
-  return lbl+'<input type="'+inputType+'" '+idAttr+' value="'+escapeHtml(String(value||''))+'" style="'+inpStyle+'">';
+  let vstr = String(value||'');
+  if (inputType==='date' && !/^\d{4}-\d{2}-\d{2}$/.test(vstr)) vstr = '';   // v8.64: kein ungültiger Wert im Date-Input
+  return lbl+'<input type="'+inputType+'" '+idAttr+' value="'+escapeHtml(vstr)+'" style="'+inpStyle+'">';
 }
 /* v8.60: Editierbares Order-Display-Formular. Standardfelder (Titel/Ticket-Nr/Fälligkeit) + dynamisch
    die Custom-Felder aus getOrderFields (auto-vorbefüllt per Label). „Anlegen" → _odSubmitOrder. */
@@ -9828,10 +9830,12 @@ async function _odOpenCreateModal(recId, d) {
       erpFetch('/orderdisplay/'+encodeURIComponent(d.firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderFields', arguments:{} } }),
       (edit && d.odOrderId) ? erpFetch('/orderdisplay/'+encodeURIComponent(d.firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderById', arguments:{ orderId: d.odOrderId } } }).catch(()=>null) : Promise.resolve(null)
     ]);
-    console.log('[OD-Fields raw]', (rF && (rF.result!=null?rF.result:rF.raw)));
-    const defs = _odNormFields((rF && (rF.result!=null?rF.result:rF.raw)) || []);
+    const _rawF = (rF && (rF.result!=null?rF.result:rF.raw));
+    console.log('[OD-Fields raw]', _rawF);
+    try { console.log('[OD-Fields raw JSON]', JSON.stringify(_rawF)); } catch(_){}
+    const defs = _odNormFields(_rawF || []);
     const ord = (rO && (rO.result!=null?rO.result:rO.raw)) || null;
-    if (ord) console.log('[OD-Order current]', ord);
+    if (ord) { console.log('[OD-Order current]', ord); try { console.log('[OD-Order current JSON]', JSON.stringify(ord)); } catch(_){} }
     const cur = (ord && (ord.details||ord.detail||ord.customFields||ord.custom_fields)) || {};
     const host = document.getElementById('od-dyn-fields');
     if (!host) return;
