@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.44';
+const APP_VERSION = 'v8.45';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9248,6 +9248,77 @@ async function changeAuftragTmpl(recId, newTmpl) {
 /* ── DETAIL-MODAL ───────────────────────────── */
 /* v8.44: AB-Sektion im Auftrag-Detail — zeigt die verknüpfte Auftragsbestätigung (PDF/Senden/Status/Löschen)
    direkt am Auftrag und ersetzt so die separate „Auftragsbestätigungen"-Liste. Lädt den AB-Record per ab_recid. */
+/* v8.45: Lädt die ORIGINAL-Auftragsbestätigung direkt aus Maxise (Probe-Muster wie _angMaxisePdf).
+   Für Aufträge, die NUR in Maxise erzeugt wurden (keine Servicebox-AB). Der genaue Endpunkt ist
+   nicht dokumentiert → wir probieren mehrere Kandidaten und erkennen die PDF an den %PDF-Magic-Bytes.
+   auftragId = f.ext_id (Maxise-Vorgang-ID). */
+async function _aufMaxisePdf(auftragId, firmaSlug, auftragNum) {
+  auftragId = String(auftragId || '').trim();
+  firmaSlug = firmaSlug || getCurrentFirmaSlug();
+  if (!auftragId) return toast('Keine Auftrag-ID', 'err');
+  const idEnc = encodeURIComponent(auftragId);
+  toast('⏳ Lade Auftragsbestätigung für Auftrag ' + (auftragNum || auftragId) + '…', '');
+  // Kandidaten-Endpunkte (aus dem Maxise-Vorgangs-Modell abgeleitet); der erste, der %PDF liefert, gewinnt.
+  const paths = [
+    'api/auftraege/' + idEnc + '/auftragsbestaetigung/pdf',
+    'api/auftraege/' + idEnc + '/auftragsbestaetigung',
+    'api/auftraege/' + idEnc + '/pdf',
+    'api/auftraege/' + idEnc + '/ab/pdf',
+    'api/auftragsbestaetigungen/' + idEnc + '/pdf',
+    'api/auftragsbestaetigung/' + idEnc + '/pdf',
+    'api/auftraege/' + idEnc + '/dokument/pdf',
+    'api/auftraege/' + idEnc + '/beleg/pdf'
+  ];
+  const acceptVars = ['application/octet-stream', 'application/pdf,application/octet-stream,*/*', '*/*'];
+  const diag = [];
+  for (const p of paths) {
+    for (const acc of acceptVars) {
+      try {
+        const r = await erpFetchRaw('/aufzug/' + firmaSlug + '/' + p, acc);
+        let head = ''; try { head = await r.blob.slice(0, 8).text(); } catch (_) {}
+        const looksPdf = head.indexOf('%PDF') === 0;
+        const isPdf = r.ok && (looksPdf || /pdf/i.test(r.contentType) || (/octet-stream/i.test(r.contentType) && r.blob && r.blob.size > 1000));
+        let body = ''; if (!isPdf) { try { body = (await r.blob.slice(0, 300).text()).replace(/\s+/g, ' ').trim(); } catch (_) {} }
+        diag.push(p + ' [Accept ' + acc + '] → HTTP ' + r.status + ' · ' + (r.contentType || '?') + ' · ' + (r.blob ? Math.round(r.blob.size / 1024) + 'KB' : '0KB') + (body ? ' · ' + body.slice(0, 160) : ''));
+        if (isPdf) {
+          const pdfBlob = new Blob([r.blob], { type: 'application/pdf' });
+          if (typeof _showVorlagenPreview === 'function') { _showVorlagenPreview(pdfBlob, 'Auftragsbestätigung ' + (auftragNum || auftragId) + ' (Maxise)'); try { _rvRaisePreview(); } catch (_) {} }
+          else { const u = URL.createObjectURL(pdfBlob); window.open(u, '_blank'); }
+          toast('✅ Auftragsbestätigung geladen', 'ok');
+          return;
+        }
+        if (r.status === 404) break; // dieser Pfad existiert nicht → restliche Accept-Varianten überspringen
+      } catch (e) { diag.push(p + ' → Fehler: ' + ((((e && e.message) || e) + '').slice(0, 90))); }
+    }
+  }
+  console.warn('[Maxise-AB-PDF] Kein PDF-Endpunkt. Diagnose:\n' + diag.join('\n'));
+  if (typeof _mxTextModal === 'function') {
+    _mxTextModal('📄 Auftragsbestätigung — Diagnose', 'Keine Auftragsbestätigung aus Maxise geladen (Auftrag ' + (auftragNum || auftragId) + ').\n\nWas Maxise je Endpunkt zurückgab:\n\n' + diag.join('\n') + '\n\nDiese Zeilen an Claude schicken (📋 kopieren) — dann trage ich den richtigen Endpunkt ein.');
+  } else {
+    toast('Kein Maxise-AB-PDF-Endpunkt gefunden (Details in der Konsole)', 'err');
+  }
+}
+
+/* v8.45: AB-Sektion für Aufträge OHNE Servicebox-AB (nur in Maxise erzeugt) — Download der
+   Original-Auftragsbestätigung aus Maxise. Aufträge MIT Servicebox-AB nutzen _aufLoadAbSection. */
+function _aufRenderMaxiseAbSection(rec) {
+  const f = (rec && rec.fields) || {};
+  const auftragId = f.ext_id || f.auftrag_num || '';
+  if (!auftragId || !APP_KEYS.valtownProxyUrl) return '';
+  const num = f.auftrag_num || auftragId;
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  return '<div class="auf-section"><h3>📋 Auftragsbestätigung</h3>' +
+    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px">' +
+      '<strong style="color:var(--navy)">Auftrag #' + escapeHtml(String(num)) + '</strong>' +
+      '<span style="font-size:10px;font-weight:700;background:#DCFCE7;color:#166534;border:1px solid #86EFAC;padding:1px 7px;border-radius:99px">🔗 Maxise-Auftrag</span>' +
+    '</div>' +
+    '<div style="font-size:12px;color:var(--txt3);margin-top:6px">In Maxise erstellt — die Auftragsbestätigung liegt dort und kann hier geladen werden.</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">' +
+      '<button class="btn" onclick="_aufMaxisePdf(\'' + escapeHtml(String(auftragId)) + '\',\'' + escapeHtml(String(firmaSlug)) + '\',\'' + escapeHtml(String(num)) + '\')">📄 Auftragsbestätigung (Maxise) laden</button>' +
+    '</div>' +
+  '</div>';
+}
+
 async function _aufLoadAbSection(abRecId, auftragRecId) {
   const host = document.getElementById('auf-ab-section');
   if (!host || !abRecId) return;
@@ -9400,7 +9471,7 @@ function openAuftragDetail(recId) {
       <h3>Zugewiesene Techniker</h3>
       <div id="auf-detail-techniker">${_renderInlineTechnikerPicker(rec)}</div>
     </div>
-    <div id="auf-ab-section"></div>
+    <div id="auf-ab-section">${(!f.ab_recid && typeof _aufRenderMaxiseAbSection === 'function') ? _aufRenderMaxiseAbSection(rec) : ''}</div>
     ${_aufRenderFolgeTicketsSection(rec)}
     ${_aufRenderBerichteSection(rec)}
     ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
