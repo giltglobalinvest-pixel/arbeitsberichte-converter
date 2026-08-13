@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.67';
+const APP_VERSION = 'v8.68';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9772,7 +9772,7 @@ function _odAutofillFor(label, f){
     if (/pausch/.test(t)) return 'Pauschal';
     return '';
   }
-  if (/leistung/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').trim();
+  if (/leistung|sonstiges/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').trim();   // v8.68: „Sonstiges zum Auftrag" = Leistungsumfang
   if (/ansprech|zugang/.test(L)) return String(f.kontakt_name || String(f.kontakt||'').split('\n')[0] || '');
   return '';   // Hundt Consult / Priorisierte Bearbeitung / Materiallieferung / Liftmanager … → manuell
 }
@@ -9799,8 +9799,8 @@ function _odFieldInputHtml(def, value, recId){
     const opts = ['<option value="">—</option>'].concat(optObjs.map(o => '<option value="'+escapeHtml(o.ov)+'"'+(o.ov===sel?' selected':'')+'>'+escapeHtml(o.ol||o.ov)+'</option>'));
     return lbl+'<select '+idAttr+' style="'+inpStyle+'">'+opts.join('')+'</select>';
   }
-  if (/(textarea|multiline|longtext|text_area)/.test(t)) {
-    return lbl+'<textarea '+idAttr+' rows="2" style="'+inpStyle+'">'+escapeHtml(String(value||''))+'</textarea>';
+  if (/(textarea|multiline|longtext|text_area)/.test(t) || /sonstiges|leistung|beschreibung|hinweis|notiz/.test(String(def.label||'').toLowerCase())) {
+    return lbl+'<textarea '+idAttr+' rows="3" style="'+inpStyle+'">'+escapeHtml(String(value||''))+'</textarea>';
   }
   const inputType = /(number|int|num)/.test(t) ? 'number' : (/date/.test(t) ? 'date' : 'text');
   let vstr = String(value||'');
