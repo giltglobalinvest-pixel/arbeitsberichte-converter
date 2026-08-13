@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.51';
+const APP_VERSION = 'v8.52';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35103,9 +35103,13 @@ async function _abFindExistingForAngebot(firmaSlug, angebotRecId, angebotNum) {
     let recs = await atRead('Auftragsbestaetigungen', "{firma}='"+String(firmaSlug||'').replace(/'/g,"\\'")+"'");
     recs = (recs||[]).filter(r => {
       const f = r.fields || {};
-      if (angebotRecId && String(f.angebot_rec_id||'') === String(angebotRecId)) return true;
-      if (angebotNum   && String(f.angebot_num||'')    === String(angebotNum))   return true;
-      return false;
+      const matches = (angebotRecId && String(f.angebot_rec_id||'') === String(angebotRecId))
+                   || (angebotNum   && String(f.angebot_num||'')    === String(angebotNum));
+      if (!matches) return false;
+      // v8.52: AB, deren Maxise-Auftrag storniert ist, gilt NICHT als bestehende Beauftragung
+      //   (der Auftrag existiert nicht mehr aktiv; die AB wird beim Erzeugen ohnehin ersetzt).
+      if (f.erp_auftrag_num && typeof _angStorniertAuftragNums!=='undefined' && _angStorniertAuftragNums.has(String(f.erp_auftrag_num))) return false;
+      return true;
     });
     recs.sort((a,b) => (+((b.fields&&b.fields.ab_nummer)||0)) - (+((a.fields&&a.fields.ab_nummer)||0)));
     return recs[0] || null;
@@ -35499,10 +35503,9 @@ async function _abWarnIfExists(firmaSlug, angebotRecId, angebotNum) {
   if (!box || !ex) return;
   const ef = ex.fields || {};
   box.innerHTML = '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:9px 12px;font-size:12px;color:#78350F;margin-bottom:14px">'+
-    '⚠ <strong>Für dieses Angebot existiert bereits eine Auftragsbestätigung:</strong> AB '+escapeHtml(_abDispNum(ef)||'?')+
+    'ℹ <strong>Für dieses Angebot gibt es bereits eine Auftragsbestätigung:</strong> AB '+escapeHtml(_abDispNum(ef)||'?')+
     (ef.erp_auftrag_num?' · Maxise-Auftrag '+escapeHtml(String(ef.erp_auftrag_num)):'')+(ef.datum?' · '+escapeHtml(String(ef.datum)):'')+'. '+
-    'Ein erneutes „Erzeugen" legt eine <strong>zweite AB + einen zweiten Auftrag</strong> an (du wirst vorher gefragt). '+
-    'Bestehende ansehen/senden: <strong>Vorlagen → 📋 Auftragsbestätigungen</strong>.'+
+    'Ein erneutes „Erzeugen" <strong>ersetzt</strong> diese AB und verwendet denselben Maxise-Auftrag wieder — es entsteht kein Duplikat.'+
   '</div>';
 }
 
@@ -35617,10 +35620,10 @@ async function _abGenerateAndSave(btn, send) {
     if (existingAb) {
       const ef = existingAb.fields || {};
       const proceed = confirm(
-        '⚠ Für Angebot '+(d.angebotNum||'?')+' existiert bereits eine Auftragsbestätigung:\n\n'+
+        'Für Angebot '+(d.angebotNum||'?')+' gibt es bereits eine Auftragsbestätigung:\n\n'+
         '  • AB '+(_abDispNum(ef)||'?')+(ef.erp_auftrag_num?'  ·  Maxise-Auftrag '+ef.erp_auftrag_num:'')+(ef.datum?'  ·  '+ef.datum:'')+'\n\n'+
-        'Trotzdem eine NEUE erzeugen? Das legt AUCH einen weiteren Auftrag in Maxise an (Duplikat!).\n\n'+
-        'OK = neue AB + neuer Auftrag   ·   Abbrechen = nichts tun');
+        'Neu erzeugen? Die bestehende AB wird ERSETZT und derselbe Maxise-Auftrag wiederverwendet — kein Duplikat.\n\n'+
+        'OK = AB neu erzeugen   ·   Abbrechen = nichts tun');
       if (!proceed) {
         toast('Abgebrochen — bestehende AB '+(_abDispNum(ef)||'')+' bleibt. (Ansicht: Vorlagen → 📋 Auftragsbestätigungen)','');
         if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
