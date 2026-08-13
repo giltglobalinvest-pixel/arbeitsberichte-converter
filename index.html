@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.59';
+const APP_VERSION = 'v8.60';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9689,66 +9689,124 @@ async function _odCreateOrder(recId, btn) {
   if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
 
-  // ── Pflichtfeld-Mapping (Minimal) ──
+  // ── Pflichtfelder + Titel-Vorlage „Auftragsbestätigung {auftragsnr} zu Standort {standort}" ──
   const orderNumber  = String(f.ext_vorgangsnummer || f.auftrag_num || f.ext_id || '').trim();
   if (!orderNumber) return toast('Kein orderNumber ableitbar (Maxise-Auftragsnr fehlt).','err');
-  const ticketNumber = String(f.ticket_num || f.fd_ticket_id || f.freshdesk_ticket_id || f.angebot_id || orderNumber).trim() || orderNumber;
-  const leist = String(f.leistungsbeschreibung || f.leistungsumfang || '').split('\n')[0].trim();
-  const titleParts = [];
-  if (f.kunde_firmenname) titleParts.push(String(f.kunde_firmenname).trim());
-  if (leist) titleParts.push(leist.slice(0,80));
-  const title = (titleParts.join(' — ') || ('Auftrag '+orderNumber)).slice(0,140);
-  const dlRaw = String(f.due_date || f.ausfuehrungstermin || '').slice(0,10);
-  const dlDate = /^\d{4}-\d{2}-\d{2}$/.test(dlRaw) ? dlRaw : new Date().toISOString().slice(0,10);
-  const deadline = dlDate + ' 08:00';   // Format 'YYYY-MM-DD HH:mm' laut createOrder-Schema
+  const ticketNumber = String(f.od_ticket_num || f.ticket_num || f.fd_ticket_id || f.freshdesk_ticket_id || '').trim();
+  const _std = String(f.standort || f.anlage_adresse || '').trim();
+  const title = ('Auftragsbestätigung '+orderNumber+(_std?(' zu Standort '+_std):'')).slice(0,200);
+  // Fälligkeit: 2 Wochen ab AB-Datum (sonst ab heute) — editierbar (User-Spec)
+  const _abRaw = String(f.ab_datum || f.due_date || '').slice(0,10);
+  const _base = /^\d{4}-\d{2}-\d{2}$/.test(_abRaw) ? new Date(_abRaw+'T00:00:00') : new Date();
+  _base.setDate(_base.getDate() + 14);
+  const dlDate = _base.toISOString().slice(0,10);
 
-  // v8.56: statt confirm() ein editierbares, vorbefülltes Formular (Titel/Ticket-Nr/Deadline änderbar).
+  // v8.60: dynamisches Formular — Standardfelder + Custom-Felder live aus getOrderFields.
   _odOpenCreateModal(recId, { title, orderNumber, ticketNumber, dlDate, dlTime:'08:00', firmaSlug,
     alreadyId: f.od_order_id||'', alreadyNum: f.od_order_number||f.od_order_id||'' });
 }
 
-/* v8.56: Editierbares Order-Display-Formular. Vorbefüllt aus dem Auftrag; Titel/Ticket-Nr/Deadline änderbar,
-   Auftrag-Nr/Stage/Firma fix. „Anlegen" sendet die (ggf. bearbeiteten) Werte via _odSubmitOrder. */
-function _odOpenCreateModal(recId, d) {
+/* v8.60: Normalisiert die getOrderFields-Antwort (defensiv gegen unbekannte Shape) → [{id,label,type,options}]. */
+function _odNormFields(raw){
+  let arr = Array.isArray(raw) ? raw : (raw && (raw.fields||raw.orderFields||raw.OrderFields||raw.value||raw.items||raw.data)) || [];
+  if (!Array.isArray(arr)) arr = [];
+  return arr.map(x => (x && typeof x==='object') ? ({
+    id:      x.id || x.fieldId || x.key || x.name || '',
+    label:   x.label || x.title || x.name || x.id || x.fieldId || '',
+    type:    String(x.type || x.fieldType || x.kind || x.inputType || 'text').toLowerCase(),
+    options: x.options || x.choices || x.values || x.enum || null,
+  }) : null).filter(x => x && x.id);
+}
+/* v8.60: Auto-Vorbefüllung eines OD-Custom-Felds aus dem Auftrag (per Label-Heuristik). '' = manuell. */
+function _odAutofillFor(label, f){
+  const L = String(label||'').toLowerCase();
+  if (/ticket/.test(L)) return '';                                   // Ticket-Nr ist ein eigenes Feld oben
+  if (/kunde/.test(L)) return String(f.kunde_firmenname||'');
+  if (/angebot/.test(L)) return String(f.angebot_id||f.erp_angebot_nummer||'');
+  if (/fabrik/.test(L)) return String(f.fabriknummer||'');
+  if (/standort|objekt|aufzugsanlage|adresse/.test(L)) return String(f.standort||f.anlage_adresse||'');
+  if (/auftragstyp|auftrags-typ/.test(L)) return (typeof _fmtAngebotTyp==='function'? _fmtAngebotTyp(f.angebot_typ):'')||String(f.angebot_typ||'');
+  if (/leistung/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').split('\n')[0]||'';
+  if (/ansprech|zugang/.test(L)) return String(f.kontakt_name || String(f.kontakt||'').split('\n')[0] || '');
+  return '';   // Hundt Consult / Priorisierte Bearbeitung / Materiallieferung / Liftmanager … → manuell
+}
+/* v8.60: HTML-Input für ein OD-Custom-Feld nach Typ. Trägt data-odfid/data-odtype für das Auslesen. */
+function _odFieldInputHtml(def, value){
+  const inpStyle = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box';
+  const t = def.type;
+  const idAttr = 'data-odfid="'+escapeHtml(def.id)+'" data-odtype="'+escapeHtml(t)+'"';
+  if (/(bool|check|toggle)/.test(t)) {
+    return '<label style="display:flex;align-items:center;gap:8px;margin:10px 0;font-size:13px;cursor:pointer"><input type="checkbox" '+idAttr+' '+(value===true||value==='true'?'checked':'')+' style="width:16px;height:16px"> '+escapeHtml(def.label)+'</label>';
+  }
+  const lbl = '<div style="font-size:11px;font-weight:700;color:var(--navy);margin:12px 0 3px">'+escapeHtml(def.label)+'</div>';
+  if (/(select|dropdown|choice|enum|option)/.test(t) && Array.isArray(def.options) && def.options.length) {
+    const opts = ['<option value="">—</option>'].concat(def.options.map(o=>{ const ov=(o&&typeof o==='object')?(o.value||o.id||o.label||''):o; const ol=(o&&typeof o==='object')?(o.label||o.name||ov):o; return '<option value="'+escapeHtml(String(ov))+'"'+(String(ov)===String(value)?' selected':'')+'>'+escapeHtml(String(ol))+'</option>'; }));
+    return lbl+'<select '+idAttr+' style="'+inpStyle+'">'+opts.join('')+'</select>';
+  }
+  if (/(textarea|multiline|longtext|text_area)/.test(t)) {
+    return lbl+'<textarea '+idAttr+' rows="2" style="'+inpStyle+'">'+escapeHtml(String(value||''))+'</textarea>';
+  }
+  const inputType = /(number|int|num)/.test(t) ? 'number' : (/date/.test(t) ? 'date' : 'text');
+  return lbl+'<input type="'+inputType+'" '+idAttr+' value="'+escapeHtml(String(value||''))+'" style="'+inpStyle+'">';
+}
+/* v8.60: Editierbares Order-Display-Formular. Standardfelder (Titel/Ticket-Nr/Fälligkeit) + dynamisch
+   die Custom-Felder aus getOrderFields (auto-vorbefüllt per Label). „Anlegen" → _odSubmitOrder. */
+async function _odOpenCreateModal(recId, d) {
   document.getElementById('od-create-modal')?.remove();
+  const rec = (typeof _auftragCache!=='undefined' && _auftragCache || []).find(r => r.id === recId);
+  const f = (rec && rec.fields) || {};
   const m = document.createElement('div'); m.id='od-create-modal'; m._recId=recId;
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10900;display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
   const inpStyle = 'width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box';
   const lbl = (t)=>'<div style="font-size:11px;font-weight:700;color:var(--navy);margin:12px 0 3px">'+t+'</div>';
   m.innerHTML =
-    '<div style="background:#fff;max-width:520px;width:100%;border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.3)">'+
-      '<div style="padding:12px 16px;background:#7C3AED;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+    '<div style="background:#fff;max-width:560px;width:100%;border-radius:12px;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;max-height:92vh">'+
+      '<div style="padding:12px 16px;background:#7C3AED;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;flex:none">'+
         '<span>🚀 Order-Display-Auftrag anlegen</span>'+
         '<button onclick="document.getElementById(\'od-create-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
       '</div>'+
-      '<div style="padding:16px;max-height:70vh;overflow:auto">'+
+      '<div style="padding:16px;overflow:auto;flex:1">'+
         (d.alreadyId ? '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400E;margin-bottom:8px">⚠ Für diesen Auftrag existiert bereits ein Order-Display-Auftrag (#'+escapeHtml(String(d.alreadyNum))+'). Erneutes Anlegen erzeugt einen ZWEITEN.</div>' : '')+
-        '<div style="font-size:11px;color:var(--txt3);margin-bottom:4px">Vorbefüllt aus dem Auftrag — bitte prüfen/anpassen.</div>'+
         lbl('Titel')+
         '<input id="od-f-title" value="'+escapeHtml(d.title)+'" style="'+inpStyle+'">'+
-        lbl('Ticket-Nr')+
-        '<input id="od-f-ticket" value="'+escapeHtml(String(d.ticketNumber))+'" style="'+inpStyle+'">'+
+        lbl('Ticket-Nr <span style="font-weight:400;color:var(--txt3)">(Kunden-Bestellnr — manuell)</span>')+
+        '<input id="od-f-ticket" value="'+escapeHtml(String(d.ticketNumber))+'" placeholder="z.B. 25011" style="'+inpStyle+'">'+
         '<div style="display:flex;gap:10px">'+
-          '<div style="flex:1">'+lbl('Deadline (Datum)')+'<input id="od-f-dldate" type="date" value="'+escapeHtml(d.dlDate)+'" style="'+inpStyle+'"></div>'+
+          '<div style="flex:1">'+lbl('Fälligkeit (Datum)')+'<input id="od-f-dldate" type="date" value="'+escapeHtml(d.dlDate)+'" style="'+inpStyle+'"></div>'+
           '<div style="width:120px">'+lbl('Uhrzeit')+'<input id="od-f-dltime" type="time" value="'+escapeHtml(d.dlTime)+'" style="'+inpStyle+'"></div>'+
         '</div>'+
-        '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:14px;font-size:12px;color:var(--txt3);border-top:1px solid #eee;padding-top:10px">'+
+        '<div style="font-size:11px;color:var(--txt3);margin-top:4px">Fälligkeit = 2 Wochen ab AB-Datum (anpassbar).</div>'+
+        '<div id="od-dyn-fields" style="border-top:1px solid #eee;margin-top:12px;padding-top:4px"><div style="font-size:12px;color:var(--txt3);padding:8px 0">⏳ Lade Order-Display-Felder…</div></div>'+
+        '<div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:12px;font-size:12px;color:var(--txt3);border-top:1px solid #eee;padding-top:10px">'+
           '<div><strong>Auftrag-Nr:</strong> '+escapeHtml(String(d.orderNumber))+'</div>'+
           '<div><strong>Stage:</strong> Neu</div>'+
           '<div><strong>Firma:</strong> '+escapeHtml(d.firmaSlug)+'</div>'+
         '</div>'+
       '</div>'+
-      '<div style="padding:10px 16px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end">'+
+      '<div style="padding:10px 16px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex:none">'+
         '<button class="btn" onclick="document.getElementById(\'od-create-modal\').remove()">Abbrechen</button>'+
         '<button class="btn prim" id="od-submit-btn" style="background:#7C3AED;border-color:#7C3AED" onclick="_odSubmitOrder(\''+recId+'\')">🚀 Anlegen</button>'+
       '</div>'+
     '</div>';
   m.onclick = (e)=>{ if (e.target===m) m.remove(); };
   document.body.appendChild(m);
-  setTimeout(()=>{ try { document.getElementById('od-f-title')?.focus(); } catch(_){} }, 40);
+  // v8.60: OD-Custom-Felder live laden + dynamisch rendern (auto-vorbefüllt per Label)
+  try {
+    const r = await erpFetch('/orderdisplay/'+encodeURIComponent(d.firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderFields', arguments:{} } });
+    const defs = _odNormFields((r && (r.result!=null?r.result:r.raw)) || []);
+    const host = document.getElementById('od-dyn-fields');
+    if (!host) return;
+    if (!defs.length) { host.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 10px">Keine Custom-Felder erhalten — es werden nur die Standardfelder gesendet.</div>'; return; }
+    const html = defs.map(def => _odFieldInputHtml(def, _odAutofillFor(def.label, f))).join('');
+    host.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--txt2);margin:4px 0 2px">Weitere Felder (aus Order Display · automatisch vorbefüllt, wo möglich)</div>'+html;
+  } catch(e) {
+    const host = document.getElementById('od-dyn-fields');
+    if (host) host.innerHTML = '<div style="font-size:12px;color:#991B1B;background:#FEE2E2;border:1px solid #FCA5A5;border-radius:6px;padding:8px 10px">⚠ Felder konnten nicht geladen werden ('+escapeHtml(String((e&&e.message)||e).slice(0,120))+'). Es werden nur die Standardfelder gesendet.</div>';
+  }
 }
 
-/* v8.56: Sendet den (ggf. bearbeiteten) Order-Display-Auftrag ab. Liest die Werte aus dem Formular. */
+/* v8.60: Sendet den Order-Display-Auftrag ab. Liest Standardfelder + dynamische Custom-Felder (details).
+   Merkt die Ticketnummer am Auftrag (od_ticket_num). */
 async function _odSubmitOrder(recId) {
   const m = document.getElementById('od-create-modal'); if (!m) return;
   const rec = (typeof _auftragCache!=='undefined' && _auftragCache || []).find(r => r.id === recId);
@@ -9756,14 +9814,23 @@ async function _odSubmitOrder(recId) {
   const f = rec.fields || {};
   const firmaSlug = f.firma || getCurrentFirmaSlug();
   const orderNumber = String(f.ext_vorgangsnummer || f.auftrag_num || f.ext_id || '').trim();
-  const title  = String(document.getElementById('od-f-title')?.value||'').trim().slice(0,140);
-  const ticketNumber = String(document.getElementById('od-f-ticket')?.value||'').trim() || orderNumber;
+  const title  = String(document.getElementById('od-f-title')?.value||'').trim().slice(0,200);
+  const ticketNumber = String(document.getElementById('od-f-ticket')?.value||'').trim();
   const ddate  = String(document.getElementById('od-f-dldate')?.value||'').trim();
   const dtime  = String(document.getElementById('od-f-dltime')?.value||'08:00').trim() || '08:00';
   if (!title) return toast('Titel darf nicht leer sein.','err');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(ddate)) return toast('Bitte ein gültiges Deadline-Datum wählen.','err');
+  if (!ticketNumber) return toast('Bitte die Ticketnummer (Kunden-Bestellnr) eingeben.','err');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ddate)) return toast('Bitte ein gültiges Fälligkeits-Datum wählen.','err');
   const deadline = ddate + ' ' + dtime;
+  // v8.60: Custom-Felder einsammeln → details{ fieldId: value } (leere Textfelder weglassen, Checkboxen immer)
+  const details = {};
+  m.querySelectorAll('[data-odfid]').forEach(el => {
+    const fid = el.getAttribute('data-odfid'); const typ = el.getAttribute('data-odtype')||'';
+    if (/(bool|check|toggle)/.test(typ)) { details[fid] = !!el.checked; }
+    else { const v = String(el.value||'').trim(); if (v !== '') details[fid] = v; }
+  });
   const args = { title, orderNumber, ticketNumber, stage: -1, deadline };
+  if (Object.keys(details).length) args.details = details;
   const btn = document.getElementById('od-submit-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Order Display…'; }
   try {
@@ -9777,7 +9844,8 @@ async function _odSubmitOrder(recId) {
       await ensureField('Auftraege','od_order_id','singleLineText');
       await ensureField('Auftraege','od_order_number','singleLineText');
       await ensureField('Auftraege','od_created_at','singleLineText');
-      const patch = { od_order_id:String(odId||''), od_order_number:String(odNum||''), od_created_at:new Date().toISOString() };
+      await ensureField('Auftraege','od_ticket_num','singleLineText');   // v8.60: Ticketnr merken
+      const patch = { od_order_id:String(odId||''), od_order_number:String(odNum||''), od_created_at:new Date().toISOString(), od_ticket_num:String(ticketNumber||'') };
       await atUpdate('Auftraege', recId, patch);
       rec.fields = Object.assign(rec.fields||{}, patch);
     } catch(e){ console.warn('[OD-Create] persist:', e && e.message); }
