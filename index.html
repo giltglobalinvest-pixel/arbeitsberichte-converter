@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.60';
+const APP_VERSION = 'v8.61';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9706,14 +9706,25 @@ async function _odCreateOrder(recId, btn) {
     alreadyId: f.od_order_id||'', alreadyNum: f.od_order_number||f.od_order_id||'' });
 }
 
-/* v8.60: Normalisiert die getOrderFields-Antwort (defensiv gegen unbekannte Shape) → [{id,label,type,options}]. */
+/* v8.61: robuster String aus evtl. verschachtelten/lokalisierten Werten (z.B. Label = {de:"Kunde",en:"Customer"}). */
+function _odStr(v){
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (typeof v === 'object') {
+    return String(v.de || v.deDE || v['de-DE'] || v.value || v.text || v.title || v.label || v.name || v.en ||
+                  (Object.values(v).find(x => typeof x === 'string' && x.trim()) || ''));
+  }
+  return String(v);
+}
+/* v8.60/8.61: Normalisiert die getOrderFields-Antwort (defensiv gegen unbekannte Shape) → [{id,label,type,options}]. */
 function _odNormFields(raw){
   let arr = Array.isArray(raw) ? raw : (raw && (raw.fields||raw.orderFields||raw.OrderFields||raw.value||raw.items||raw.data)) || [];
   if (!Array.isArray(arr)) arr = [];
   return arr.map(x => (x && typeof x==='object') ? ({
-    id:      x.id || x.fieldId || x.key || x.name || '',
-    label:   x.label || x.title || x.name || x.id || x.fieldId || '',
-    type:    String(x.type || x.fieldType || x.kind || x.inputType || 'text').toLowerCase(),
+    id:      _odStr(x.id || x.fieldId || x.key || x._id),
+    label:   _odStr(x.label || x.title || x.name || x.caption || x.displayName || x.id || x.fieldId),
+    type:    _odStr(x.type || x.fieldType || x.kind || x.inputType || x.dataType || 'text').toLowerCase(),
     options: x.options || x.choices || x.values || x.enum || null,
   }) : null).filter(x => x && x.id);
 }
@@ -9740,7 +9751,7 @@ function _odFieldInputHtml(def, value){
   }
   const lbl = '<div style="font-size:11px;font-weight:700;color:var(--navy);margin:12px 0 3px">'+escapeHtml(def.label)+'</div>';
   if (/(select|dropdown|choice|enum|option)/.test(t) && Array.isArray(def.options) && def.options.length) {
-    const opts = ['<option value="">—</option>'].concat(def.options.map(o=>{ const ov=(o&&typeof o==='object')?(o.value||o.id||o.label||''):o; const ol=(o&&typeof o==='object')?(o.label||o.name||ov):o; return '<option value="'+escapeHtml(String(ov))+'"'+(String(ov)===String(value)?' selected':'')+'>'+escapeHtml(String(ol))+'</option>'; }));
+    const opts = ['<option value="">—</option>'].concat(def.options.map(o=>{ const ov=_odStr((o&&typeof o==='object')?(o.value ?? o.id ?? o.key ?? o.label):o); const ol=_odStr((o&&typeof o==='object')?(o.label||o.name||o.title||o.value||o.id):o); return '<option value="'+escapeHtml(ov)+'"'+(ov===String(value)?' selected':'')+'>'+escapeHtml(ol||ov)+'</option>'; }));
     return lbl+'<select '+idAttr+' style="'+inpStyle+'">'+opts.join('')+'</select>';
   }
   if (/(textarea|multiline|longtext|text_area)/.test(t)) {
@@ -9793,7 +9804,9 @@ async function _odOpenCreateModal(recId, d) {
   // v8.60: OD-Custom-Felder live laden + dynamisch rendern (auto-vorbefüllt per Label)
   try {
     const r = await erpFetch('/orderdisplay/'+encodeURIComponent(d.firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderFields', arguments:{} } });
+    console.log('[OD-Fields raw]', (r && (r.result!=null?r.result:r.raw)));   // v8.61: echte Shape für Feinschliff
     const defs = _odNormFields((r && (r.result!=null?r.result:r.raw)) || []);
+    console.log('[OD-Fields normalized]', defs);
     const host = document.getElementById('od-dyn-fields');
     if (!host) return;
     if (!defs.length) { host.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 10px">Keine Custom-Felder erhalten — es werden nur die Standardfelder gesendet.</div>'; return; }
