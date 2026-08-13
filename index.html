@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.58';
+const APP_VERSION = 'v8.59';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9803,22 +9803,26 @@ async function _odDiscoverSchema(btn) {
   const orig = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ …'; }
   try {
-    const res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'__tools_list__' } });
-    const tools = (res && res.raw && res.raw.tools) || (res && res.result && res.result.tools) || [];
-    if (!tools.length) {
-      const hint = 'Keine Tools erhalten. Ist der Proxy-Code aktuell (⬆ Proxy-Code aktualisieren, v8.57)?\n\nAntwort:\n'+JSON.stringify(res, null, 2).slice(0, 1500);
-      if (typeof _mxTextModal==='function') _mxTextModal('🧩 Order-Display — Schema', hint); else alert(hint);
-      return;
-    }
-    // v8.58: ALLE Tools (Namen+Beschreibung) + volles Schema zeigen — um das Tool für die Custom-Feld-IDs
-    //   (Configs/OrderFields) bzw. zum Lesen einer bestehenden Order zu finden.
-    const names = tools.map(t => '• '+t.name+(t.description?(' — '+String(t.description).replace(/\s+/g,' ').slice(0,150)):''));
-    const full = JSON.stringify(tools.map(t => ({ name:t.name, description:t.description, inputSchema:(t.inputSchema||t.input_schema||t.parameters||null) })), null, 2);
-    console.log('[OD-Schema] alle Tools:', tools.map(t=>t.name));
-    console.log('[OD-Schema] tools (full):', tools);
-    const out = 'ALLE TOOLS ('+tools.length+'):\n'+names.join('\n')+'\n\n=== VOLLES SCHEMA ALLER TOOLS ===\n'+full;
-    if (typeof _mxTextModal==='function') _mxTextModal('🧩 Order-Display — alle Tools + Schemas', out+'\n\n📋 Diese Zeilen an Claude schicken.');
-    else alert(out);
+    // v8.59: Direkt die Feld-Konfiguration holen (Custom-Feld-IDs/Labels/Typen) — das brauche ich fürs details-Mapping.
+    const call = async (name) => {
+      try { const r = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name, arguments:{} } });
+            return (r && (r.result != null ? r.result : r.raw)) ?? null; }
+      catch(e){ return { __error: (e && e.message) || String(e) }; }
+    };
+    const [fields, groups, stages, locations] = await Promise.all([
+      call('getOrderFields'), call('getFieldGroups'), call('getOrderStages'), call('getOrderLocations')
+    ]);
+    console.log('[OD-Fields] getOrderFields:', fields);
+    console.log('[OD-Fields] getFieldGroups:', groups);
+    console.log('[OD-Fields] getOrderStages:', stages);
+    console.log('[OD-Fields] getOrderLocations:', locations);
+    const out =
+      '=== getOrderFields (Custom-Feld-Definitionen: id + label + typ) ===\n'+JSON.stringify(fields, null, 2)+'\n\n'+
+      '=== getFieldGroups (Tabs) ===\n'+JSON.stringify(groups, null, 2)+'\n\n'+
+      '=== getOrderStages (Stage-Index für „Neu") ===\n'+JSON.stringify(stages, null, 2)+'\n\n'+
+      '=== getOrderLocations (Standort-Optionen) ===\n'+JSON.stringify(locations, null, 2);
+    if (typeof _mxTextModal==='function') _mxTextModal('🧩 Order-Display — Feld-Konfiguration', out+'\n\n📋 Diese Zeilen an Claude schicken.');
+    else alert(out.slice(0, 4000));
   } catch(e) {
     let extra=''; try { if (e.body && e.body.mcp_error) extra=' – '+String(e.body.mcp_error.message||JSON.stringify(e.body.mcp_error)).slice(0,300); } catch(_){}
     toast('❌ Schema-Abruf: '+String((e.message||e)+extra).slice(0,300),'err');
