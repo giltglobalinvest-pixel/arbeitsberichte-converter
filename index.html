@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.41';
+const APP_VERSION = 'v8.42';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35123,6 +35123,16 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
    ext_id verhindert Duplikate beim späteren Maxise-Import. Rückgabe: lokale Record-ID. */
 async function _abWriteLocalAuftrag(fAng, created, leistungText, typOverride) {
   try {
+    // v8.41: Idempotenz — existiert schon ein lokaler Auftrag mit dieser ext_id (z.B. nach abgebrochenem AB-Save)? → den nehmen, kein Doppel-Datensatz.
+    const _extId = (created && created.id != null) ? String(created.id) : '';
+    if (_extId) {
+      try {
+        const _bid = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+        const _rk  = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+        const _rr  = await fetch('https://api.airtable.com/v0/'+_bid+'/Auftraege?maxRecords=1&filterByFormula='+encodeURIComponent("{ext_id}='"+_extId.replace(/'/g,"\\'")+"'"), { headers:{ 'Authorization':'Bearer '+_rk }});
+        if (_rr.ok) { const _dd = await _rr.json(); if (_dd && _dd.records && _dd.records[0]) return _dd.records[0].id; }
+      } catch(_){}
+    }
     const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
     const num = _erpAuftragNumber(created) || String((created && created.vorgangsnummer)||'');
     const bestellform = (created && created.bestellform) || (fAng && fAng.erp_angebot_id ? 'MITANGEBOT' : 'OHNEANGEBOT');
