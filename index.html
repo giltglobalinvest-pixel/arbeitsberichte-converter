@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.40';
+const APP_VERSION = 'v8.41';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35046,6 +35046,19 @@ async function _angEnsureMaxiseAnlage(recId, force) {
   try { Object.assign(rec.fields, patch); } catch(_){}
   return { ok:true, linked:true, patch, fab };
 }
+/* v8.41: Idempotenz — gibt es zu diesem ERP-Angebot (angId) schon einen (nicht stornierten) Auftrag in Maxise?
+   Verhindert ein Duplikat, wenn ein früherer Versuch den Auftrag anlegte, aber danach abbrach (z.B. AB-Save-422). */
+async function _abFindErpAuftragByAngebot(firmaSlug, angId) {
+  if (!angId) return null;
+  try {
+    const res = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
+    const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
+    return (list||[]).find(a => {
+      const aid = a && (a.angebotid ?? a.angebotId ?? (a.angebot && a.angebot.id));
+      return aid != null && String(aid) === String(angId) && String(a.status||'').toLowerCase() !== 'storniert';
+    }) || null;
+  } catch(e) { console.warn('[AB-ERP-Auftrag] Bestandsprüfung:', e && e.message); return null; }
+}
 async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
   if (!APP_KEYS.valtownProxyUrl || isFirmaAll() || !fAng) return null;
@@ -35071,6 +35084,8 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
     }
     if (!angId) throw new Error('Nach-Aufwand-Auftrag braucht jetzt ein Aufwand-Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kontakt am Angebot prüfen).');
     const payload = { angebotid:+angId, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
+    const _existA = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
+    if (_existA) return { created:_existA, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
     const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
     return { created, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
   }
@@ -35099,6 +35114,8 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   }
   if (!angId) throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag braucht ein Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kunde am Angebot prüfen).');
   const payload = { angebotid:+angId, notizen:'', ...common };
+  const _existP = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
+  if (_existP) return { created:_existP, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
   const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
   return { created, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
 }
@@ -35405,7 +35422,7 @@ async function _abGenerateAndSave(btn, send) {
           const res = await _abCreateErpAuftrag(fAng, leistungText, m._recId||'', typ);
           const erpAuftrag = res && res.created;
           if (erpAuftrag) {
-            erpAuftragNum  = _erpAuftragNumber(erpAuftrag) || String(erpAuftrag.vorgangsnummer||'');
+            erpAuftragNum  = String(_erpAuftragNumber(erpAuftrag) || erpAuftrag.vorgangsnummer || '');   // v8.41: IMMER String — _erpAuftragNumber liefert a.id als Zahl, aber erp_auftrag_num ist ein Text-Feld (sonst 422)
             erpAuftragId   = String(erpAuftrag.id||'');
             erpBestellform = String((res && res.bestellform) || erpAuftrag.bestellform || '');
             erpTyp         = (res && res.typ) || typ;
