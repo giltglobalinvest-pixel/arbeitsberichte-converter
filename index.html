@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.38';
+const APP_VERSION = 'v8.39';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29355,7 +29355,13 @@ function _angIstBeauftragt(rec, f) {
    missing = nicht in Maxise · unknown = Anlagen-Cache (noch) leer · nofab = keine Fabriknummer. */
 function _angMaxiseLinkStatus(f) {
   f = f || {};
-  if (f.anlage_id) return { state:'linked', label:'🔗 Maxise verlinkt', bg:'#D1FAE5', color:'#047857', tip:'Anlage ist mit Maxise verknüpft (Anlage-ID '+String(f.anlage_id)+')' };
+  if (f.anlage_id) {
+    // v8.39: Ist die verknüpfte Anlage in Maxise storniert/archiviert? Dann Warnung + Umlink-Möglichkeit.
+    const _cr = _anlagenCache && Array.isArray(_anlagenCache.items) && _anlagenCache.items.length > 0;
+    const _a = _cr ? _anlagenCache.items.find(x => x && String(x.id) === String(f.anlage_id)) : null;
+    if (_a && _a.archived) return { state:'linked_archived', label:'⚠ verlinkt, aber Anlage storniert/archiviert', bg:'#FEE2E2', color:'#991B1B', tip:'Die verknüpfte Maxise-Anlage (ID '+String(f.anlage_id)+') ist storniert/archiviert — bitte auf die aktive Anlage umlinken', anlageId:String(f.anlage_id) };
+    return { state:'linked', label:'🔗 Maxise verlinkt', bg:'#D1FAE5', color:'#047857', tip:'Anlage ist mit Maxise verknüpft (Anlage-ID '+String(f.anlage_id)+')' };
+  }
   const fab = (typeof _angNormFab==='function') ? _angNormFab(f.seriennummer || f.fabriknummer || f.equipmentnummer) : '';
   if (!fab) return { state:'nofab' };
   const cacheReady = _anlagenCache && Array.isArray(_anlagenCache.items) && _anlagenCache.items.length > 0 && _anlagenCache.firma === (f.firma||getCurrentFirmaSlug());
@@ -29364,11 +29370,12 @@ function _angMaxiseLinkStatus(f) {
   if (hit) return { state:'found', label:'🔍 In Maxise – nicht verlinkt', bg:'#FEF3C7', color:'#92400E', tip:'Anlage in Maxise gefunden (Fabrik-Nr '+String(f.seriennummer||fab)+') — 1 Klick zum Verknüpfen', fab, anlageId:String(hit.id||'') };
   return { state:'missing', label:'⚠ Nicht in Maxise', bg:'#FEE2E2', color:'#991B1B', tip:'Fabrik-Nr '+String(f.seriennummer||fab)+' nicht in Maxise gefunden — Anlage muss dort angelegt werden (Stufe 2)', fab };
 }
-/* v8.37: 1-Klick-Verknüpfen aus Übersicht/Detail — nutzt den Stufe-1-Resolver (zeigt Bestätigungs-Modal). */
-async function _angVerknuepfenAnlage(recId, btn) {
+/* v8.37/8.39: (Um-)Verknüpfen aus Übersicht/Detail. force=true → auch neu wählen, wenn schon verlinkt
+   (falsche/stornierte Anlage korrigieren). */
+async function _angVerknuepfenAnlage(recId, btn, force) {
   const _orig = btn ? btn.textContent : '';
   if (btn) { btn.style.pointerEvents='none'; btn.textContent = '⏳ …'; }
-  let ens = null; try { ens = await _angEnsureMaxiseAnlage(recId); } catch(e){ ens = { ok:false, reason:'error', msg:(e&&e.message)||String(e) }; }
+  let ens = null; try { ens = await _angEnsureMaxiseAnlage(recId, force); } catch(e){ ens = { ok:false, reason:'error', msg:(e&&e.message)||String(e) }; }
   if (ens && ens.ok && ens.patch) {
     toast('🔗 Anlage verknüpft (Fabrik-Nr '+(ens.patch.seriennummer||'')+' · Kunde '+(ens.patch.kunde_nummer||'')+').','ok');
     try { _renderAngeboteList(); } catch(_){}
@@ -29559,7 +29566,9 @@ function _renderAngeboteList() {
     const _mls = !isMaxise ? _angMaxiseLinkStatus(f) : null;
     const maxiseLinkBadge = (_mls && _mls.label)
       ? '<span title="'+escapeHtml(_mls.tip||_mls.label)+'" style="background:'+_mls.bg+';color:'+_mls.color+';border:1px solid '+_mls.color+'55;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap">'+_mls.label+'</span>'
-        + (_mls.state==='found' ? '<span onclick="event.stopPropagation();_angVerknuepfenAnlage(\''+rec.id+'\', this)" title="Anlage jetzt mit Maxise verknüpfen" style="cursor:pointer;background:#4F46E5;color:#fff;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap;margin-left:2px">🔗 Verknüpfen</span>' : '')
+        + (_mls.state==='found' ? '<span onclick="event.stopPropagation();_angVerknuepfenAnlage(\''+rec.id+'\', this)" title="Anlage jetzt mit Maxise verknüpfen" style="cursor:pointer;background:#4F46E5;color:#fff;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap;margin-left:2px">🔗 Verknüpfen</span>'
+          : _mls.state==='linked_archived' ? '<span onclick="event.stopPropagation();_angVerknuepfenAnlage(\''+rec.id+'\', this, true)" title="Auf die aktive Maxise-Anlage umlinken" style="cursor:pointer;background:#DC2626;color:#fff;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700;white-space:nowrap;margin-left:2px">🔄 Anlage ändern</span>'
+          : '')
       : '';
     const rightBadges = isMaxise
       ? (f.erp_typ?'<span style="background:#0EA5E922;color:#0369A1;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(_fmtAngebotTyp(f.erp_typ))+'</span>':'')
@@ -34466,7 +34475,11 @@ function openAngebotDetail(recId) {
         (() => {
           const s = _angMaxiseLinkStatus(f);
           if (!s || !s.label) return '';
-          const knopf = (s.state==='found') ? '<button onclick="_angVerknuepfenAnlage(\''+recId+'\', this)" style="margin-left:8px;background:#4F46E5;border:none;color:#fff;font-size:10.5px;padding:3px 10px;border-radius:99px;cursor:pointer;font-weight:700">🔗 Jetzt verknüpfen</button>' : '';
+          const knopf = (s.state==='found')
+            ? '<button onclick="_angVerknuepfenAnlage(\''+recId+'\', this)" style="margin-left:8px;background:#4F46E5;border:none;color:#fff;font-size:10.5px;padding:3px 10px;border-radius:99px;cursor:pointer;font-weight:700">🔗 Jetzt verknüpfen</button>'
+            : (s.state==='linked' || s.state==='linked_archived')
+              ? '<button onclick="_angVerknuepfenAnlage(\''+recId+'\', this, true)" style="margin-left:8px;background:'+(s.state==='linked_archived'?'#DC2626':'#6B7280')+';border:none;color:#fff;font-size:10.5px;padding:3px 10px;border-radius:99px;cursor:pointer;font-weight:700">🔄 Anlage ändern</button>'
+              : '';
           return '<div style="margin-top:6px;padding:6px 10px;background:'+s.bg+';border-left:3px solid '+s.color+';border-radius:4px;font-size:11.5px"><strong style="color:'+s.color+'">'+s.label+'</strong> <span style="color:'+s.color+'">'+escapeHtml(s.tip||'')+'</span>'+knopf+'</div>';
         })()+
         // v7.39: Ticket-Verknüpfung sichtbar + änderbar (Feld freshdesk_ticket_id,
@@ -35014,11 +35027,11 @@ function _angPickAnlageConfirm(matches, fab) {
 }
 /* Kern: stellt sicher, dass das Angebot eine verknüpfte Maxise-Anlage + Kunde hat.
    Rückgabe: {ok:true, patch?} bei Erfolg/bereits-verknüpft; sonst {ok:false, reason, fab?}. */
-async function _angEnsureMaxiseAnlage(recId) {
+async function _angEnsureMaxiseAnlage(recId, force) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return { ok:false, reason:'no_rec' };
   const f = rec.fields || {};
-  if (f.anlage_id && f.kunde_nummer) return { ok:true, alreadyLinked:true };
+  if (!force && f.anlage_id && f.kunde_nummer) return { ok:true, alreadyLinked:true };
   const firmaSlug = f.firma || getCurrentFirmaSlug();
   const fab = String(f.seriennummer || f.fabriknummer || f.equipmentnummer || '').trim();
   if (!fab) return { ok:false, reason:'no_fabriknummer' };
