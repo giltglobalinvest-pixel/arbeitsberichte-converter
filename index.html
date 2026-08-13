@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.68';
+const APP_VERSION = 'v8.69';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3348,19 +3348,31 @@ let editMode = { active: false, recId: null, num: null };
   const MAX = 4; let inflight = 0; const q = [];
   const acquire = () => new Promise(res => { if (inflight < MAX) { inflight++; res(); } else q.push(res); });
   const release = () => { inflight--; if (q.length && inflight < MAX) { inflight++; (q.shift())(); } };
+  // v8.69: Timeout via AbortController — ein hängender Request (val.town/Proxy hing im Log 300s!) blockiert sonst
+  //   einen Verbindungs-Slot und lässt die App einfrieren. Nur wenn der Aufrufer nicht selbst ein signal setzt.
+  const withTimeout = (input, init, ms) => {
+    if (init && init.signal) return _orig(input, init);
+    const ac = new AbortController();
+    const t = setTimeout(() => { try { ac.abort(); } catch(_){} }, ms);
+    return _orig(input, Object.assign({}, init, { signal: ac.signal })).finally(() => clearTimeout(t));
+  };
   window.fetch = async function(input, init){
     let url = ''; try { url = (typeof input === 'string') ? input : (input && input.url) || ''; } catch(_){}
-    if (!/(^|\/\/)(api|content)\.airtable\.com/.test(url)) return _orig(input, init);
+    const isAt = /(^|\/\/)(api|content)\.airtable\.com/.test(url);
+    const isProxy = /\.web\.val\.run\//.test(url);
+    if (!isAt && !isProxy) return _orig(input, init);
+    if (isProxy) return withTimeout(input, init, 45000);   // Proxy: nur Timeout (kein Rate-Limit)
+    // Airtable: Rate-Limit + 429-Backoff + Timeout
     await acquire();
     try {
       for (let attempt = 0; attempt < 6; attempt++){
-        const r = await _orig(input, init);
+        const r = await withTimeout(input, init, 30000);
         if (r.status !== 429) return r;
         const ra = parseFloat(r.headers.get('retry-after') || '');
         const waitMs = (ra > 0 ? ra*1000 : Math.min(8000, 400*Math.pow(2, attempt))) + Math.random()*250;
         await new Promise(res => setTimeout(res, waitMs));
       }
-      return _orig(input, init);   // letzter Versuch nach 6 Backoffs
+      return withTimeout(input, init, 30000);   // letzter Versuch nach 6 Backoffs
     } finally { release(); }
   };
 })();
@@ -9734,6 +9746,17 @@ async function _odCreateOrder(recId, btn) {
     alreadyId: f.od_order_id||'', alreadyNum: f.od_order_number||f.od_order_id||'' });
 }
 
+/* v8.69: getOrderFields cachen (Config ändert sich selten) — verhindert wiederholte Proxy-Fetches beim
+   mehrfachen Öffnen des OD-Dialogs (im Log dutzendfach). 5-Minuten-Cache je Firma. */
+const _odFieldsCache = {};
+async function _odGetFieldsCached(firmaSlug){
+  const now = Date.now();
+  const c = _odFieldsCache[firmaSlug];
+  if (c && (now - c.at) < 300000) return c.res;
+  const r = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderFields', arguments:{} } });
+  _odFieldsCache[firmaSlug] = { res: r, at: now };
+  return r;
+}
 /* v8.61: robuster String aus evtl. verschachtelten/lokalisierten Werten (z.B. Label = {de:"Kunde",en:"Customer"}). */
 function _odStr(v){
   if (v == null) return '';
@@ -9772,7 +9795,11 @@ function _odAutofillFor(label, f){
     if (/pausch/.test(t)) return 'Pauschal';
     return '';
   }
-  if (/leistung|sonstiges/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').trim();   // v8.68: „Sonstiges zum Auftrag" = Leistungsumfang
+  if (/leistung|sonstiges/.test(L)) {   // v8.68/8.69: „Sonstiges zum Auftrag" = Leistungsumfang OHNE Preiszeilen
+    return String(f.leistungsbeschreibung||f.leistungsumfang||'').split('\n')
+      .filter(l => !/€|\beur\b|gesamtpreis|pauschalpreis|\bpreis\b|brutto|netto|\bust\b|mwst|umsatzsteuer|zzgl/i.test(l))
+      .join('\n').replace(/\n{3,}/g,'\n\n').trim();
+  }
   if (/ansprech|zugang/.test(L)) return String(f.kontakt_name || String(f.kontakt||'').split('\n')[0] || '');
   return '';   // Hundt Consult / Priorisierte Bearbeitung / Materiallieferung / Liftmanager … → manuell
 }
@@ -9854,7 +9881,7 @@ async function _odOpenCreateModal(recId, d) {
   // v8.60/8.63: OD-Custom-Felder live laden; im Bearbeiten-Modus zusätzlich die aktuellen Werte (getOrderById).
   try {
     const [rF, rO] = await Promise.all([
-      erpFetch('/orderdisplay/'+encodeURIComponent(d.firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderFields', arguments:{} } }),
+      _odGetFieldsCached(d.firmaSlug),
       (edit && d.odOrderId) ? erpFetch('/orderdisplay/'+encodeURIComponent(d.firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderById', arguments:{ orderId: d.odOrderId } } }).catch(()=>null) : Promise.resolve(null)
     ]);
     const _rawF = (rF && (rF.result!=null?rF.result:rF.raw));
@@ -10000,7 +10027,8 @@ async function _odMagic(btn, recId, fieldLabel, fieldId) {
       'ZIEL-FELD: "'+fieldLabel+'"\n\nAUFTRAGSDATEN (JSON):\n'+JSON.stringify(ctx, null, 2)+'\n\n'+
       'Regeln:\n'+
       '• Gib NUR den reinen Wert für dieses eine Feld zurück — ohne Vorrede, ohne Anführungszeichen, ohne Feldname.\n'+
-      '• Für „Leistungsumfang"/„Leistung": kurze sachliche Zusammenfassung der Arbeiten (1–3 Sätze oder knappe Stichpunkte).\n'+
+      '• Für „Leistungsumfang"/„Leistung"/„Sonstiges": kurze sachliche Zusammenfassung der Arbeiten (Stichpunkte).\n'+
+      '• KEINE Preise/Beträge/€/USt ausgeben — außer das Feld verlangt ausdrücklich einen Preis.\n'+
       '• Keine Erfindungen — nur aus den Daten ableiten. Wenn nicht ableitbar, gib einen komplett leeren Text zurück.';
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
