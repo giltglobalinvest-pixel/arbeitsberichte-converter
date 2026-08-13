@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.31';
+const APP_VERSION = 'v8.32';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3027,6 +3027,26 @@ try {
   } catch(_){}
 })();
 
+/* v8.32: Dialog-Wächter — native confirm/alert/prompt BLOCKIEREN den Main-Thread solange sie offen sind,
+   und Chromes Long-Task-API zählt genau diese (menschliche Lese-/Klick-)Zeit als „Task". Das erzeugte
+   bisher falsche „UI eingefroren"-Marker (z.B. 1600ms an einem confirm). Wir messen die Offen-Dauer jedes
+   Dialogs, damit der Long-Task-Wächter unten so eine Blockade als Dialog erkennt statt als echten Hänger. */
+window.__diagDlgEndedAt = 0;   // wann der letzte native Dialog geschlossen wurde
+window.__diagDlgBlockMs = 0;   // wie lange er offen war (≈ blockierte Zeit)
+(function(){
+  try {
+    ['confirm','alert','prompt'].forEach(function(fn){
+      var orig = window[fn];
+      if (typeof orig !== 'function') return;
+      window[fn] = function(){
+        var t0 = Date.now();
+        try { return orig.apply(this, arguments); }
+        finally { window.__diagDlgEndedAt = Date.now(); window.__diagDlgBlockMs = window.__diagDlgEndedAt - t0; }
+      };
+    });
+  } catch(_){}
+})();
+
 /* v7.83: Long-Task-Wächter — erkennt echte Main-Thread-Blockaden (>400ms), also „Hänger",
    die weder als fetch noch als console-Fehler sichtbar wären (z.B. schwere Bild-/PDF-Verarbeitung
    am Handy). Progressive Enhancement: nur wo PerformanceObserver/longtask unterstützt wird (Chrome/Android). */
@@ -3036,7 +3056,17 @@ try {
     const obs = new PerformanceObserver(function(list){
       try {
         for (const entry of list.getEntries()) {
-          if (entry.duration >= 400) DIAG.warn('long-task', 'Main-Thread '+Math.round(entry.duration)+'ms blockiert (UI eingefroren)', (entry.attribution && entry.attribution[0] && entry.attribution[0].name) || entry.name || undefined);
+          if (entry.duration < 400) continue;
+          // v8.32: War es nur ein offener native Dialog (confirm/alert/prompt)? Dann KEIN echter Hänger.
+          //   Erkennung: ein Dialog schloss gerade (≤300ms) UND seine Offen-Dauer passt zur Task-Länge.
+          const now = Date.now();
+          const dlgJustClosed = (now - (window.__diagDlgEndedAt||0)) <= 300;
+          const dlgMatches = dlgJustClosed && Math.abs((window.__diagDlgBlockMs||0) - entry.duration) < 500;
+          if (dlgMatches) {
+            try { DIAG.step('dialog', 'Native Dialog ~'+Math.round(entry.duration)+'ms offen (blockiert erwartungsgemäß, KEIN Hänger)'); } catch(_){}
+            continue;   // nicht als Freeze werten, nicht hochladen
+          }
+          DIAG.warn('long-task', 'Main-Thread '+Math.round(entry.duration)+'ms blockiert (UI eingefroren)', (entry.attribution && entry.attribution[0] && entry.attribution[0].name) || entry.name || undefined);
           if (entry.duration >= 1500) { try { _diagAutoUpload('long-task '+Math.round(entry.duration)+'ms'); } catch(_){} }  // v7.89: echter Freeze → Log hochladen
         }
       } catch(_){}
