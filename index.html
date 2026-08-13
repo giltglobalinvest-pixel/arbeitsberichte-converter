@@ -2385,6 +2385,25 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
       <div class="intg-log" id="intg-lif-log"></div>
     </div>
 
+    <!-- ORDER DISPLAY (LiteLead) -->
+    <div class="intg-card">
+      <h3>🚀 Order Display (LiteLead)</h3>
+      <p class="intg-desc">
+        Legt aus einem bestätigten Auftrag automatisch einen Auftrag im <strong>Order Display</strong> an (LiteLead-MCP <code>createOrder</code>, Stage „Neu"). Der Button <strong>🚀 In Order Display anlegen</strong> erscheint dann im Auftrag-Detail.
+      </p>
+      <div style="background:var(--bg);border:1px solid var(--bdr);border-radius:8px;padding:12px 14px;font-size:12px;line-height:1.6;margin-bottom:10px">
+        <strong>Setup direkt aus der App:</strong> Klicke <strong>🔑 Schlüssel einrichten</strong>, gib <strong>Server-Token</strong> (global) und <strong>Account-Key</strong> (je Firma) ein. Die App speichert sie sicher in val.town als <code>ORDERDISPLAY_TOKEN</code> + <code>ORDERDISPLAY_ACCOUNT_KEY_&lt;FIRMA&gt;</code>, pusht den Proxy-Code und prüft, ob beide angekommen sind.<br>
+        <span style="color:var(--txt3)">Die Keys bleiben im val.town-Backend — <strong>niemals</strong> im Frontend/GitHub sichtbar. Du musst val.town nie selbst öffnen.</span>
+      </div>
+      <div class="intg-row">
+        <button class="btn prim" style="background:#7C3AED;border-color:#7C3AED" onclick="_openOrderDisplaySetupWizard()" title="Server-Token + Account-Key sicher in val.town speichern + Proxy-Code updaten + prüfen">🔑 Schlüssel einrichten</button>
+        <button class="btn" onclick="_odTestEnv(this)" title="Zeigt ob ORDERDISPLAY_TOKEN + Account-Key der aktiven Firma gesetzt sind">🩺 Env-Status prüfen</button>
+        <button class="btn" onclick="valtownUpdateProxyCode(this)" title="Push aktuellen Proxy-Code (inkl. /orderdisplay/-Route)">⬆ Proxy-Code aktualisieren</button>
+      </div>
+      <div class="intg-hint">Account-Key ist <strong>je Firma</strong> · Server-Token gilt <strong>global</strong> (nur einmal nötig). Anlegen: 🚀-Button im Auftrag-Detail.</div>
+      <div class="intg-log" id="intg-od-log"></div>
+    </div>
+
     <!-- ERP-SYNC + DEBUG -->
     <div class="intg-card">
       <h3>🔄 Aufträge synchronisieren</h3>
@@ -2778,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.29';
+const APP_VERSION = 'v8.30';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -46807,6 +46826,142 @@ async function _runLiftaroSetup() {
     _lifSetupLog('❌ Setup-Fehler: '+(e.message||'?').slice(0,400), 'err');
     if (btn) { btn.disabled = false; btn.textContent = '🚀 Einrichten + Testen'; }
   }
+}
+
+/* ═══════════════ Order Display (LiteLead) Setup-Wizard ═══════════════
+   Trägt ORDERDISPLAY_TOKEN (global) + ORDERDISPLAY_ACCOUNT_KEY_<FIRMA> (je Firma) via val.town-API
+   in die ENV ein — der User öffnet val.town NIE selbst, kein Key landet je im Frontend/GitHub.
+   Danach Proxy-Code-Push + Env-Check über /debug/env. Modelliert nach dem Liftaro-Wizard. */
+function _openOrderDisplaySetupWizard() {
+  if (!APP_KEYS.valtownKey || !APP_KEYS.valtownValId) {
+    return toast('Val.town-Proxy ist noch nicht eingerichtet — erst die Aufzugshandwerk-Integration einrichten.','err');
+  }
+  const old = document.getElementById('od-setup-modal'); if (old) old.remove();
+  const slug = getCurrentFirmaSlug();
+  const allMode = isFirmaAll();
+  const envAcct = allMode ? '' : ('ORDERDISPLAY_ACCOUNT_KEY_' + slug.toUpperCase().replace(/[^A-Z0-9_]/g,''));
+  const m = document.createElement('div');
+  m.id = 'od-setup-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:10500;display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML =
+    '<div style="background:var(--surf,#fff);max-width:560px;width:100%;border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 50px rgba(0,0,0,.5)">'+
+      '<div style="padding:14px 18px;background:#7C3AED;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🚀 Order Display einrichten</span>'+
+        '<button onclick="document.getElementById(\'od-setup-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:18px 22px;font-size:13px;line-height:1.6">'+
+        (allMode
+          ? '<div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#92400E">⚠ Bitte oben rechts <strong>eine konkrete Firma</strong> auswählen — der Account-Key wird je Firma gespeichert.</div>'
+          : '<div style="background:#F5F3FF;border-left:3px solid #7C3AED;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#5B21B6">🏢 Aktive Firma: <strong>'+escapeHtml(slug)+'</strong><br>Account-Key wird als <code>'+envAcct+'</code> gespeichert — andere Firmen bleiben unverändert.</div>')+
+        '<p style="margin:0 0 14px;color:var(--txt2)">Beide Werte werden sicher in val.town als Environment-Variablen gespeichert — niemals im Browser sichtbar.</p>'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Server-Token <span style="color:var(--txt3);font-weight:400">(global · leer lassen, wenn schon gesetzt)</span></label>'+
+        '<input id="od-setup-token" type="password" placeholder="z.B. de1fea3ed0…" autocomplete="new-password" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.05em">'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin:12px 0 4px">Account-Key '+(allMode?'':'für '+escapeHtml(slug)+' ')+'<span style="color:var(--txt3);font-weight:400">(je Firma)</span></label>'+
+        '<input id="od-setup-acct" type="password" placeholder="z.B. af77e748-db60-…" autocomplete="new-password" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.05em">'+
+        '<div style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--txt3)"><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" id="od-setup-show" onchange="var t=this.checked?\'text\':\'password\';document.getElementById(\'od-setup-token\').type=t;document.getElementById(\'od-setup-acct\').type=t;"> sichtbar anzeigen</label></div>'+
+        '<div id="od-setup-log" style="display:none;margin-top:14px;padding:10px 12px;background:#0f172a;color:#cbd5e1;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;max-height:240px;overflow-y:auto;line-height:1.6"></div>'+
+      '</div>'+
+      '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'od-setup-modal\').remove()">Abbrechen</button>'+
+        '<button class="btn prim" style="background:#7C3AED;border-color:#7C3AED" id="od-setup-go" onclick="_runOrderDisplaySetup()">🚀 Einrichten + Prüfen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
+  setTimeout(() => document.getElementById(allMode?'od-setup-token':'od-setup-acct')?.focus(), 50);
+}
+
+function _odSetupLog(msg, cls) {
+  const log = document.getElementById('od-setup-log');
+  if (!log) return;
+  log.style.display = 'block';
+  const color = cls === 'ok' ? '#6ee7b7' : cls === 'err' ? '#fca5a5' : cls === 'info' ? '#93c5fd' : '#cbd5e1';
+  const line = document.createElement('div');
+  line.style.color = color; line.textContent = msg;
+  log.appendChild(line); log.scrollTop = log.scrollHeight;
+}
+
+async function _runOrderDisplaySetup() {
+  const tokenInput = document.getElementById('od-setup-token');
+  const acctInput  = document.getElementById('od-setup-acct');
+  const token = (tokenInput?.value || '').trim();
+  const acct  = (acctInput?.value  || '').trim();
+  const firmaSlug = getCurrentFirmaSlug();
+  if (!firmaSlug || isFirmaAll()) return toast('Bitte zuerst eine konkrete Firma wählen (oben rechts).','err');
+  if (!token && !acct) return toast('Bitte mindestens einen Wert eintragen.','err');
+  const btn = document.getElementById('od-setup-go');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ läuft…'; }
+  const envAcct = 'ORDERDISPLAY_ACCOUNT_KEY_' + firmaSlug.toUpperCase().replace(/[^A-Z0-9_]/g,'');
+  try {
+    if (token) {
+      _odSetupLog('▶ speichere ORDERDISPLAY_TOKEN (global) in val.town…', 'info');
+      await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, 'ORDERDISPLAY_TOKEN', token, 'LiteLead Order-Display Server-Token (global)');
+      _odSetupLog('  ✓ ORDERDISPLAY_TOKEN gesetzt', 'ok');
+    } else {
+      _odSetupLog('• Server-Token leer gelassen → bestehender Wert bleibt.', 'info');
+    }
+    if (acct) {
+      _odSetupLog('▶ speichere '+envAcct+' für Firma "'+firmaSlug+'"…', 'info');
+      await valtownSetEnvVar(APP_KEYS.valtownKey, APP_KEYS.valtownValId, envAcct, acct, 'LiteLead Order-Display Account-Key für Firma '+firmaSlug);
+      _odSetupLog('  ✓ '+envAcct+' gesetzt', 'ok');
+    } else {
+      _odSetupLog('• Account-Key leer gelassen → bestehender Wert bleibt.', 'info');
+    }
+    _odSetupLog('▶ pushe aktuellen Proxy-Code (falls /orderdisplay/-Route noch nicht live)…', 'info');
+    const res = await valtownUpdateFile(APP_KEYS.valtownKey, APP_KEYS.valtownValId, VALTOWN_PROXY_CODE);
+    const ep = res?.links?.endpoint;
+    _odSetupLog('  ✓ Proxy-Code aktualisiert'+(ep?' · '+ep:''), 'ok');
+    erpClearSessionToken();
+    _odSetupLog('▶ prüfe Env-Status (/debug/env)…', 'info');
+    try {
+      const d = await erpFetch('/debug/env');
+      const env = d.env || {};
+      const t = env['ORDERDISPLAY_TOKEN'] || {};
+      const a = env[envAcct] || {};
+      _odSetupLog('  ORDERDISPLAY_TOKEN: '+(t.set?('✓ gesetzt ('+t.length+' Z., '+t.preview+')'):'✗ NICHT gesetzt'), t.set?'ok':'err');
+      _odSetupLog('  '+envAcct+': '+(a.set?('✓ gesetzt ('+a.length+' Z., '+a.preview+')'):'✗ NICHT gesetzt'), a.set?'ok':'err');
+      _odSetupLog('', '');
+      if (t.set && a.set) {
+        _odSetupLog('🎉 Fertig — öffne einen bestätigten Auftrag und klicke „🚀 In Order Display anlegen".', 'ok');
+        toast('🎉 Order Display eingerichtet','ok');
+        if (tokenInput) tokenInput.value = ''; if (acctInput) acctInput.value = '';
+        if (btn) { btn.disabled = false; btn.textContent = '✓ Fertig — Schließen'; btn.setAttribute('onclick',"document.getElementById('od-setup-modal').remove()"); }
+      } else {
+        _odSetupLog('→ Es fehlt noch mindestens ein Wert. Bitte eintragen und erneut „Einrichten + Prüfen".', 'err');
+        if (btn) { btn.disabled = false; btn.textContent = '🚀 Einrichten + Prüfen'; }
+      }
+    } catch(eDbg) {
+      _odSetupLog('  ⚠ Env-Check nicht erreichbar (Proxy-Push evtl. noch nicht aktiv) — in ~10 Sek „🩺 Env-Status prüfen" in der Card klicken.', 'info');
+      if (btn) { btn.disabled = false; btn.textContent = '✓ gespeichert — Schließen'; btn.setAttribute('onclick',"document.getElementById('od-setup-modal').remove()"); }
+    }
+  } catch(e) {
+    _odSetupLog('❌ Setup-Fehler: '+(e.message||'?').slice(0,400), 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '🚀 Einrichten + Prüfen'; }
+  }
+}
+
+/* 🩺 Env-Status prüfen (Card-Button) — zeigt die OD-Keys gefiltert im Card-Log. */
+async function _odTestEnv(btn) {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet.','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  const log = document.getElementById('intg-od-log');
+  const put = (msg, cls) => { if (!log) return; log.style.display='block'; const c = cls==='ok'?'#059669':cls==='err'?'#dc2626':'#334155'; const dv=document.createElement('div'); dv.style.color=c; dv.textContent=msg; log.appendChild(dv); log.scrollTop=log.scrollHeight; };
+  if (log) log.innerHTML='';
+  put('=== Order-Display Env-Status ===','info');
+  if (btn){ btn._o=btn.textContent; btn.disabled=true; btn.textContent='⏳ …'; }
+  try {
+    const d = await erpFetch('/debug/env');
+    const env = d.env || {};
+    const t = env['ORDERDISPLAY_TOKEN'] || {};
+    put('ORDERDISPLAY_TOKEN (global): '+(t.set?('✓ gesetzt ('+t.length+' Z.)'):'✗ NICHT gesetzt'), t.set?'ok':'err');
+    if (!isFirmaAll()) {
+      const en = 'ORDERDISPLAY_ACCOUNT_KEY_'+firmaSlug.toUpperCase().replace(/[^A-Z0-9_]/g,'');
+      const a = env[en] || {};
+      put(en+': '+(a.set?('✓ gesetzt ('+a.length+' Z.)'):'✗ NICHT gesetzt'), a.set?'ok':'err');
+    } else {
+      put('(Für den firmenspezifischen Account-Key oben rechts eine Firma wählen.)','info');
+    }
+  } catch(e){ put('❌ '+(e.message||e),'err'); }
+  if (btn){ btn.disabled=false; btn.textContent=btn._o||'🩺 Env-Status prüfen'; }
 }
 
 /* Fire-and-forget Sync mit dezentem Toast — keine Exceptions nach außen. */
