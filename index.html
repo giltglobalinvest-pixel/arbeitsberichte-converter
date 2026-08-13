@@ -2437,6 +2437,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn prim" id="auf-new-btn" onclick="openAuftragForm()" style="display:none">+ Neuer Auftrag</button>
     <button class="btn" id="auf-erp-debug-btn" onclick="openErpAuftragDebug()" style="display:none;color:#7c2d12;border-color:rgba(180,83,9,.4)" title="ERP-Auftrag Rohdaten anzeigen — zur Identifikation des richtigen Auftragsnummern-Felds">🔍 ERP-Felder</button>
     <button class="btn" id="auf-erp-check-btn" onclick="_erpCheckAuftrag()" style="display:none;color:#3730A3;border-color:#A5B4FC" title="Eine konkrete Auftragsnummer direkt im ERP nachschlagen (Status + ob er synchronisiert wird)">🔎 Auftrag prüfen</button>
+    <button class="btn" id="auf-tv-check-btn" onclick="_erpCheckTeilvorgangSync(this)" style="display:none;color:#6D28D9;border-color:#C4B5FD" title="Prüft, ob die Teilvorgänge eines Mehr-Aufzug-Splits über den Sync zurückkommen (Klartext-Ergebnis)">🛗 Teilvorgang-Check</button>
     <button class="btn" id="auf-dedup-btn" onclick="openAuftragDedupModal()" style="display:none;color:#9a3412;border-color:rgba(180,83,9,.4)" title="Doppelte Aufträge finden und bereinigen">🧹 Duplikate</button>
     <!-- v6.35: Auto-„abgerechnet"-Indikator — sichtbar während die Hintergrund-Prüfung läuft -->
     <div id="auf-auto-check-pill" style="display:none;align-items:center;gap:8px;padding:6px 14px;background:#EFF6FF;border:1px solid #93C5FD;border-radius:99px;font-size:12px;color:#1E40AF;font-weight:600">
@@ -2797,7 +2798,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.70';
+const APP_VERSION = 'v8.71';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7628,6 +7629,8 @@ async function loadAuftraegeAndRender() {
     if (dbgBtn) dbgBtn.style.display = (isAdmin() && APP_KEYS.valtownProxyUrl) ? '' : 'none';
     const chkBtn = document.getElementById('auf-erp-check-btn');
     if (chkBtn) chkBtn.style.display = (isAdmin() && APP_KEYS.valtownProxyUrl && !isFirmaAll()) ? '' : 'none';
+    const tvChkBtn = document.getElementById('auf-tv-check-btn');
+    if (tvChkBtn) tvChkBtn.style.display = (isAdmin() && APP_KEYS.valtownProxyUrl && !isFirmaAll()) ? '' : 'none';
     // Dedup-Button (nur Admin)
     const ddBtn = document.getElementById('auf-dedup-btn');
     if (ddBtn) ddBtn.style.display = isAdmin() ? '' : 'none';
@@ -12598,6 +12601,65 @@ async function _erpCheckAuftrag() {
     (inSync
       ? 'Status passt — wenn er trotzdem fehlt, war die Liste evtl. paginiert (jetzt behoben). Bitte nochmal „🔄 ERP-Sync" starten.'
       : 'Diesen Status („'+st+'") nehme ich in den Sync-Filter auf — sag mir kurz Bescheid.'));
+}
+
+/* v8.71: Ein-Klick-Check für die offene Frage aus mehrere-aufzuege.md — kommen die Teilvorgänge
+   eines Mehr-Aufzug-Splits über den Sync (api/auftraege) zurück? Nimmt ein Angebot mit
+   erp_auftrag_split_json, lädt die volle Auftragsliste + den Teilvorgang-Kind-Endpunkt und
+   prüft die Mitgliedschaft der Teilvorgänge in der Liste. Reiner Lesezugriff. Klartext-Ergebnis. */
+async function _erpCheckTeilvorgangSync(btn){
+  if (!isAdmin()) return toast('Nur für Admins','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  const _lbl = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ prüfe…'; }
+  try {
+    // 1) Ein Angebot dieser Firma mit gelaufenem Split finden (hat Teil-Einträge im split_json)
+    const angs = await atRead('App_Angebote', null);
+    let splitAng = null, plan = null;
+    for (const r of angs) {
+      if ((r.fields.firma||'') !== firmaSlug) continue;
+      let arr; try { arr = JSON.parse(r.fields.erp_auftrag_split_json||'[]'); } catch(_){ arr = []; }
+      if (Array.isArray(arr) && arr.some(x => x && x.art==='teil' && (x.id||x.num))) { splitAng = r; plan = arr; break; }
+    }
+    if (!splitAng) { alert('Kein Angebot mit ERP-Split (Teilvorgängen) für „'+firmaSlug+'" gefunden.\n\n→ Bitte zuerst auf einem Angebot mit mehreren Aufzügen „🛗 ERP-Aufträge anlegen" ausführen, dann diesen Knopf erneut drücken.'); return; }
+    const hauptEntry = plan.find(x => x && x.art==='haupt') || {};
+    const hauptId = splitAng.fields.erp_auftrag_id || hauptEntry.id;
+    const teil = plan.filter(x => x && x.art==='teil' && (x.id||x.num));
+
+    // 2) Volle (paginierte) Auftragsliste laden
+    const all = await _erpFetchAllAuftraege(firmaSlug, m=>console.log('[TV-Check]',m));
+    const ids  = new Set(all.map(a => String(a.id)));
+    const nums = new Set(all.map(a => String(_erpAuftragNumber(a))));
+    const inList = teil.filter(t => (t.id && ids.has(String(t.id))) || (t.num && nums.has(String(t.num))));
+    const hauptInList = (hauptId && ids.has(String(hauptId))) || (hauptEntry.num && nums.has(String(hauptEntry.num)));
+
+    // 3) Kind-Endpunkt (zur Gegenprobe, wie viele Teilvorgänge das ERP unter dem Hauptauftrag führt)
+    let tvCount = null;
+    if (hauptId) { try {
+      const tv = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege/'+encodeURIComponent(hauptId)+'/teilvorgang');
+      const tvArr = Array.isArray(tv) ? tv : (tv && (tv.content||tv.items||tv.data)) || [];
+      tvCount = tvArr.length;
+    } catch(_){} }
+
+    const verdict = (teil.length && inList.length===0)
+      ? '✅ BESTÄTIGT: Die Teilvorgänge kommen NICHT über den Sync zurück.\n\nNur der Hauptauftrag (Aufzug 1) landet in der App — die übrigen '+teil.length+' Aufzüge fehlen (kein Order-Display, kein Bericht, keine Einzel-Abrechnung). → Sync-Fix nötig.'
+      : (inList.length===teil.length && teil.length)
+        ? '❗ WIDERLEGT: Alle '+teil.length+' Teilvorgänge stehen in api/auftraege → sie kommen über den Sync. Dann fehlt „nur" die Bündel-Verknüpfung (bundle_id).'
+        : '⚠ TEILWEISE: '+inList.length+' von '+teil.length+' Teilvorgängen in der Liste. Bitte Screenshot schicken.';
+
+    alert('🛗 Teilvorgang-Sync-Check · '+firmaSlug+'\n'+
+      '────────────────────────\n'+
+      'Getestetes Angebot: '+(splitAng.fields.angebot_nr || splitAng.fields.app_angebot_num || '—')+'\n'+
+      'Hauptauftrag '+(hauptId||'—')+': '+(hauptInList?'in der Liste ✓':'NICHT in der Liste ✗')+'\n'+
+      'Teilvorgänge laut Split: '+teil.length+(tvCount!=null?(' · laut ERP-Kind-Endpunkt: '+tvCount):'')+'\n'+
+      'Davon in api/auftraege: '+inList.length+'  (Liste geladen: '+all.length+' Aufträge)\n'+
+      '────────────────────────\n\n'+verdict);
+  } catch(e){
+    alert('Fehler beim Teilvorgang-Check:\n'+((e&&e.message)||e));
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = _lbl || '🛗 Teilvorgang-Check'; }
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
