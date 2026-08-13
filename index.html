@@ -2090,6 +2090,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" id="angebote-maxise-sync-btn" onclick="_angSyncFromMaxise(this)" title="ALLE Angebote aus Maxise (beide Mandanten) in die Servicebox synchronisieren — dedupliziert über die ERP-Angebot-ID, deine eigenen Angebote bleiben unberührt">↻ Aus Maxise synchronisieren</button>
     <button class="btn" onclick="openAngLernModal()" title="KI-Lern-Beispiele verwalten — die KI nutzt aktive Beispiele beim Generieren neuer Angebote als Stilvorbild">📚 KI-Lern-Beispiele</button>
     <button class="btn" id="angebote-anhang-vorl-btn" onclick="openAngVorlagenManager()" title="Anhang-Vorlagen verwalten — wiederverwendbare PDFs (Datenblätter, AGB etc.) die beim Angebot-Versand mitgeschickt werden" style="display:none">📎 Anhang-Vorlagen</button>
+    <button class="btn" id="angebote-aufzug-check-btn" onclick="_angCheckAufzugStruktur()" title="Prüft alle Mehr-Aufzug-Angebote (inkl. Wartung) auf saubere Struktur: jeder Aufzug mit Fabriknummer + verknüpfter Maxise-Anlage" style="display:none;color:#6D28D9;border-color:#C4B5FD">🛗 Aufzug-Struktur prüfen</button>
     <button class="btn prim" id="angebote-new-btn" onclick="openAngebotWizard()">+ Neues Angebot</button>
   </div>
   <div class="firma-body" id="angebote-list" style="padding:20px"></div>
@@ -2798,7 +2799,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.71';
+const APP_VERSION = 'v8.72';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29731,6 +29732,8 @@ async function renderAngeboteView(opts) {
   // v6.49: Anhang-Vorlagen-Button nur für Admins
   const vorlBtn = document.getElementById('angebote-anhang-vorl-btn');
   if (vorlBtn) vorlBtn.style.display = isAdmin() ? '' : 'none';
+  const aufChkBtn = document.getElementById('angebote-aufzug-check-btn');
+  if (aufChkBtn) aufChkBtn.style.display = (isAdmin() && !isFirmaAll()) ? '' : 'none';
   const firmaSlug = getCurrentFirmaSlug();
   const fresh = !opts.force && _angeboteCache.firma === firmaSlug && _angeboteCache.items && (Date.now() - _angeboteCache.loadedAt) < 60_000;
   if (!fresh) {
@@ -35383,6 +35386,119 @@ function _angSplitPlan(f) {
     'Pauschalpreis: '+_rvEur(jeAufzugNetto)+' € netto zzgl. '+ust+'% USt ('+_rvEur(jeAufzugBrutto)+' € brutto)\n'+
     'Leistungsumfang:\n'+leistBasis;
   return { aufzuege, N, missing, empfaengerId, auftraggeberName, jeAufzugNetto, jeAufzugBrutto, ust, angNum, txtFn };
+}
+/* v8.72: Struktur-Check für Mehr-Aufzug-Angebote (regulär + Wartung) — schon auf ANGEBOTS-Ebene, bevor
+   ein ERP-Auftrag/Split entsteht. Prüft je Angebot mit >1 Aufzug, ob jeder Aufzug (Haupt + aufzuege_json)
+   eine Fabriknummer und eine verknüpfte Maxise-Anlage (anlage_id) hat. Fehlt die anlage_id, wird per
+   Fabriknummer im Anlagen-Cache geprüft, ob sie matchbar wäre. Reiner Lesezugriff → Klartext-Modal. */
+function _angCheckAufzugStruktur(){
+  if (!hasPermission('tool_angebote')) return toast('Keine Berechtigung','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  const norm = s => String(s||'').replace(/[^0-9a-z]/gi,'').toLowerCase();
+  const anlagen = (typeof _anlagenCache!=='undefined' && _anlagenCache && Array.isArray(_anlagenCache.items)) ? _anlagenCache.items : [];
+  const anlagenGeladen = anlagen.length > 0;
+  const matchAnlage = fab => { const fn = norm(fab); if (!fn) return null; return anlagen.find(a => norm(a.seriennummer||a.fabriknummer||a.equipmentnummer) === fn) || null; };
+  const TYP = { pauschal:'Pauschal', aufwand:'Aufwand', modernisierung:'Modernisierung', wartungNotruf:'Wartung/Notruf', wartung:'Wartung/Notruf', reparatur:'Reparatur', sonstiges:'Sonstiges' };
+
+  const items = (_angeboteCache.items||[]).filter(r => r && r.fields && (r.fields.firma||'')===firmaSlug);
+  const multi = [];
+  for (const r of items) {
+    const f = r.fields;
+    if (String(f.status||'')==='entwurf') continue;
+    if (/storn/i.test(String(f.status||''))) continue;
+    if (_angAufzahl(f) <= 1) continue;
+    let extra=[]; try{ extra=JSON.parse(f.aufzuege_json||'[]')||[]; }catch(_){}
+    extra = extra.filter(a=>a&&(a.fabriknummer||a.adresse));
+    const aufzuege = [
+      { fab:String(f.seriennummer||f.equipmentnummer||''), anlage_id:String(f.anlage_id||''), adr:String(f.anlage_adresse||'') },
+      ...extra.map(a=>({ fab:String(a.fabriknummer||''), anlage_id:String(a.anlage_id||''), adr:String(a.adresse||'') })),
+    ];
+    aufzuege.forEach(a => {
+      if (a.anlage_id) a.st='ok';
+      else if (!a.fab) a.st='nofab';
+      else if (!anlagenGeladen) a.st='unknown';
+      else a.st = matchAnlage(a.fab) ? 'matchbar' : 'nomatch';
+    });
+    const typ = _angEffTyp(f);
+    const nOhne     = aufzuege.filter(a=>a.st!=='ok').length;
+    const nMatchbar = aufzuege.filter(a=>a.st==='matchbar').length;
+    multi.push({ num:(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?'))),
+      kunde:(f.kunde_name||f.kunde_firmenname||'—'), typ, typLabel:(TYP[typ]||typ||'—'),
+      kontakt:+(f.kontakt_id||0)>0, preis:(+f.pauschalpreis_netto||+f.summe_netto_vp||0), aufzuege, nOhne, nMatchbar });
+  }
+
+  // Aggregat
+  const vollstaendig = multi.filter(m=>m.nOhne===0).length;
+  const luecken      = multi.filter(m=>m.nOhne>0).length;
+  const aufzOhne     = multi.reduce((s,m)=>s+m.nOhne,0);
+  const aufzMatchbar = multi.reduce((s,m)=>s+m.nMatchbar,0);
+  const wartung      = multi.filter(m=>/wartung|notruf/i.test(m.typ||'')).length;
+
+  const chip = (st) => {
+    const map = {
+      ok:       ['#065F46','#D1FAE5','✓ verknüpft'],
+      matchbar: ['#92400E','#FEF3C7','⟳ in Maxise, nicht verknüpft'],
+      nomatch:  ['#991B1B','#FEE2E2','✗ nicht in Maxise'],
+      nofab:    ['#991B1B','#FEE2E2','✗ keine Fabriknummer'],
+      unknown:  ['#374151','#E5E7EB','? Anlagen nicht geladen'],
+    }[st] || ['#374151','#E5E7EB',st];
+    return '<span style="font-size:11px;font-weight:600;color:'+map[0]+';background:'+map[1]+';padding:2px 7px;border-radius:99px;white-space:nowrap">'+map[2]+'</span>';
+  };
+
+  const cards = multi.map(m => {
+    const rows = m.aufzuege.map((a,i) =>
+      '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12.5px;border-top:1px solid var(--bdr)">'+
+        '<span style="width:20px;color:var(--txt3);font-family:monospace">'+(i+1)+'</span>'+
+        '<span style="width:120px;font-family:monospace;color:var(--txt)">'+escapeHtml(a.fab||'—')+'</span>'+
+        '<span style="flex:1">'+chip(a.st)+'</span>'+
+        '<span style="flex:2;color:var(--txt3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(a.adr||'')+'</span>'+
+      '</div>').join('');
+    const status = m.nOhne===0
+      ? '<span style="font-size:12px;font-weight:700;color:#065F46;background:#D1FAE5;padding:3px 10px;border-radius:99px">✅ alle '+m.aufzuege.length+' Aufzüge verknüpft</span>'
+      : '<span style="font-size:12px;font-weight:700;color:#92400E;background:#FEF3C7;padding:3px 10px;border-radius:99px">⚠ '+m.nOhne+'/'+m.aufzuege.length+' ohne Anlage'+(m.nMatchbar?' ('+m.nMatchbar+' matchbar)':'')+'</span>';
+    const flags = [];
+    if (!m.kontakt) flags.push('kein Ansprechpartner');
+    if (m.preis<=0) flags.push('Preis 0');
+    return '<div style="border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--surf)">'+
+      '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">'+
+        '<strong style="font-size:14px">'+escapeHtml(m.num)+'</strong>'+
+        '<span style="font-size:11px;font-weight:600;color:#3730A3;background:#EEF2FF;padding:2px 8px;border-radius:99px">'+escapeHtml(m.typLabel)+'</span>'+
+        '<span style="color:var(--txt3);font-size:12px">'+escapeHtml(m.kunde)+'</span>'+
+        '<span style="margin-left:auto">'+status+'</span>'+
+      '</div>'+
+      rows +
+      (flags.length?'<div style="margin-top:6px;font-size:11.5px;color:#92400E">⚠ '+flags.join(' · ')+'</div>':'')+
+    '</div>';
+  }).join('');
+
+  const old = document.getElementById('ang-aufcheck-modal'); if (old) old.remove();
+  const m = document.createElement('div');
+  m.id = 'ang-aufcheck-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11000;display:flex;align-items:center;justify-content:center;padding:14px';
+  m.onclick = (e)=>{ if (e.target===m) m.remove(); };
+  m.innerHTML =
+    '<div style="background:var(--surf);max-width:720px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:13px 18px;background:#6D28D9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between">'+
+        '<span>🛗 Aufzug-Struktur der Angebote · '+escapeHtml(firmaSlug)+'</span>'+
+        '<button onclick="document.getElementById(\'ang-aufcheck-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
+      '</div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto">'+
+        (multi.length===0
+          ? '<div style="text-align:center;padding:30px 10px;color:var(--txt3)">Keine Angebote mit mehreren Aufzügen für diese Firma gefunden.<br><span style="font-size:12px">(Geprüft: '+items.length+' Angebote · ein Angebot ist „mehrfach", sobald es Einträge in <code>aufzuege_json</code> hat.)</span></div>'
+          : '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.7">'+
+              '<strong>'+multi.length+'</strong> Mehr-Aufzug-Angebote'+(wartung?' · davon '+wartung+' Wartung/Notruf':'')+'<br>'+
+              '<span style="color:#065F46;font-weight:600">✅ '+vollstaendig+' vollständig verknüpft</span> · '+
+              '<span style="color:#92400E;font-weight:600">⚠ '+luecken+' mit Lücken</span><br>'+
+              'Aufzüge ohne Anlage-Verknüpfung: <strong>'+aufzOhne+'</strong>'+(aufzMatchbar?' (davon <strong>'+aufzMatchbar+'</strong> per Fabriknummer matchbar → nur noch verknüpfen)':'')+
+              (!anlagenGeladen?'<br><span style="color:#92400E">⚠ Maxise-Anlagen sind nicht geladen — „matchbar" konnte nicht geprüft werden.</span>':'')+
+            '</div>' + cards)+
+      '</div>'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end">'+
+        '<button class="btn" onclick="document.getElementById(\'ang-aufcheck-modal\').remove()">Schließen</button>'+
+      '</div>'+
+    '</div>';
+  document.body.appendChild(m);
 }
 async function _angErpAuftragSplit(recId) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
