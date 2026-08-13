@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.61';
+const APP_VERSION = 'v8.62';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9736,7 +9736,14 @@ function _odAutofillFor(label, f){
   if (/angebot/.test(L)) return String(f.angebot_id||f.erp_angebot_nummer||'');
   if (/fabrik/.test(L)) return String(f.fabriknummer||'');
   if (/standort|objekt|aufzugsanlage|adresse/.test(L)) return String(f.standort||f.anlage_adresse||'');
-  if (/auftragstyp|auftrags-typ/.test(L)) return (typeof _fmtAngebotTyp==='function'? _fmtAngebotTyp(f.angebot_typ):'')||String(f.angebot_typ||'');
+  if (/auftragstyp|auftrags-typ|art\b/.test(L)) {
+    const t = String(f.angebot_typ || f.abrechnung_modus || f.bestellform || '').toLowerCase();
+    if (/wartung|notruf/.test(t)) return 'Wartung';
+    if (/modern/.test(t)) return 'Modernisierung';
+    if (/aufwand/.test(t)) return 'Nach Aufwand';
+    if (/pausch/.test(t)) return 'Pauschal';
+    return '';
+  }
   if (/leistung/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').split('\n')[0]||'';
   if (/ansprech|zugang/.test(L)) return String(f.kontakt_name || String(f.kontakt||'').split('\n')[0] || '');
   return '';   // Hundt Consult / Priorisierte Bearbeitung / Materiallieferung / Liftmanager … → manuell
@@ -9751,7 +9758,16 @@ function _odFieldInputHtml(def, value){
   }
   const lbl = '<div style="font-size:11px;font-weight:700;color:var(--navy);margin:12px 0 3px">'+escapeHtml(def.label)+'</div>';
   if (/(select|dropdown|choice|enum|option)/.test(t) && Array.isArray(def.options) && def.options.length) {
-    const opts = ['<option value="">—</option>'].concat(def.options.map(o=>{ const ov=_odStr((o&&typeof o==='object')?(o.value ?? o.id ?? o.key ?? o.label):o); const ol=_odStr((o&&typeof o==='object')?(o.label||o.name||o.title||o.value||o.id):o); return '<option value="'+escapeHtml(ov)+'"'+(ov===String(value)?' selected':'')+'>'+escapeHtml(ol||ov)+'</option>'; }));
+    const optObjs = def.options.map(o => ({ ov:_odStr((o&&typeof o==='object')?(o.value ?? o.id ?? o.key ?? o.label):o), ol:_odStr((o&&typeof o==='object')?(o.label||o.name||o.title||o.value||o.id):o) }));
+    // v8.62: passende Option zum Auto-Fill-Wert finden (exakt, sonst enthält)
+    const wanted = String(value||'').trim().toLowerCase();
+    let sel = '';
+    if (wanted) {
+      const hit = optObjs.find(o => o.ov.toLowerCase()===wanted || o.ol.toLowerCase()===wanted)
+               || optObjs.find(o => o.ol && (o.ol.toLowerCase().includes(wanted) || wanted.includes(o.ol.toLowerCase())));
+      if (hit) sel = hit.ov;
+    }
+    const opts = ['<option value="">—</option>'].concat(optObjs.map(o => '<option value="'+escapeHtml(o.ov)+'"'+(o.ov===sel?' selected':'')+'>'+escapeHtml(o.ol||o.ov)+'</option>'));
     return lbl+'<select '+idAttr+' style="'+inpStyle+'">'+opts.join('')+'</select>';
   }
   if (/(textarea|multiline|longtext|text_area)/.test(t)) {
