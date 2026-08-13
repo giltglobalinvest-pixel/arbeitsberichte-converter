@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.27';
+const APP_VERSION = 'v8.28';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -5887,6 +5887,8 @@ function canSeePrices() {
   if (p.auftraege_view_all === true) return true;
   return false;
 }
+// v8.28: In den ÜBERSICHTEN (Angebote-/Aufträge-Liste) werden Preise NUR Admins gezeigt (strenger als canSeePrices).
+function _canSeeUebersichtPreise() { return isAdmin(); }
 
 /* Reiner Techniker (Außendienst) ODER Subunternehmer: Auftrags-zentrierte Sicht.
    Sieht NUR seine Aufträge + eigene Berichte. Keine anderen Tools/Admin-Features.
@@ -7480,8 +7482,8 @@ async function loadAuftraegeAndRender() {
       const saved = localStorage.getItem('auf_sort_'+APP_CONFIG.PROJECT_ID);
       if (saved && [...sortSel.options].some(o => o.value === saved)) sortSel.value = saved;
     } catch(_){}
-    // Wert-Optionen ausgrauen wenn keine Preis-Berechtigung
-    if (!canSeePrices()) {
+    // v8.28: Wert-Sortierung in der Übersicht nur für Admins (konsistent zur Preis-Anzeige)
+    if (!_canSeeUebersichtPreise()) {
       [...sortSel.options].forEach(o => { if (o.dataset.needsPrices === '1') o.disabled = true; });
       if (sortSel.value === 'wert_asc' || sortSel.value === 'wert_desc') sortSel.value = 'num_desc';
     }
@@ -7913,8 +7915,8 @@ function _auftragCardHtml(r) {
   const extraMeta = (rechnungChip || abChip || linkChips || followupChips)
     ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+rechnungChip+abChip+fdCountBadge+linkChips+followupChips+'</div>'
     : '';
-  // Preis-Spalte (rechts) — nur wenn User canSeePrices() darf
-  const showPrice = canSeePrices();
+  // Preis-Spalte (rechts) — v8.28: in der Übersicht NUR Admins
+  const showPrice = _canSeeUebersichtPreise();
   // v8.22: Wert direkt vom Auftrag, sonst aus dem verknüpften Angebot (angebot_id → App_Angebote-Preis) ableiten.
   let _wert = (f.auftragswert_netto != null) ? +f.auftragswert_netto : null;
   let _wertLabel = '€ netto', _wertTitle = '';
@@ -29426,11 +29428,11 @@ function _renderAngeboteList() {
       : (f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')));
     // v8.13/8.15: Wert-Span je Angebots-Typ — Aufwand: Stundensatz/Einsatz · Pauschal: netto · Wartung: /Jahr (+ Einmalzahlung)
     const _et = _angEffTyp(f);
-    const _awd = (canSeePrices() && _et === 'aufwand') ? _angAufwandDisp(f) : null;
+    const _awd = (_canSeeUebersichtPreise() && _et === 'aufwand') ? _angAufwandDisp(f) : null;
     const aufwandSpan = _awd
       ? '<span style="font-weight:700;color:var(--navy);font-size:12.5px;margin-left:6px" title="Angebotener Stundensatz / Einsatzpauschale">⏱ '+[(_awd.std>0?fmtEUR(_awd.std)+' €/h':''),(_awd.eins>0?fmtEUR(_awd.eins)+' € Einsatz':'')].filter(Boolean).join(' · ')+'</span>'
       : '';
-    const maxisePreisSpan = (isMaxise && canSeePrices() && _et !== 'aufwand' && +f.summe_netto_vp > 0)
+    const maxisePreisSpan = (isMaxise && _canSeeUebersichtPreise() && _et !== 'aufwand' && +f.summe_netto_vp > 0)
       ? (_et === 'wartung'
           ? '<span style="font-weight:700;color:var(--navy);font-size:12.5px;margin-left:6px" title="Wartung: Jahrespreis / Einmalzahlung netto">🔧 '+[(fmtEUR(+f.summe_netto_vp)+' €/Jahr'),(+f.summe_netto_kone>0?fmtEUR(+f.summe_netto_kone)+' € einmalig':'')].filter(Boolean).join(' · ')+'</span>'
           : '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px" title="Pauschalpreis netto">'+fmtEUR(+f.summe_netto_vp)+' € netto</span>')
@@ -29465,7 +29467,7 @@ function _renderAngeboteList() {
         + statusPill
         + abBadge
         + beauftragtBadge
-        + (canSeePrices() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')
+        + (_canSeeUebersichtPreise() && f.summe_brutto_vp ? '<span style="font-weight:700;color:var(--navy);font-size:13px;margin-left:6px">'+fmtEUR(f.summe_brutto_vp)+' € brutto</span>' : '')
         + aufwandSpan;
     const footer = isMaxise
       ? (f.erp_datum ? '📅 '+escapeHtml(f.erp_datum) : '') + (f.kunde_nummer ? ' · 👤 Kd. '+escapeHtml(f.kunde_nummer) : '') + ' · 🔗 ERP-ID '+escapeHtml(String(f.erp_angebot_id||'?'))
@@ -29499,7 +29501,7 @@ function _renderAngeboteList() {
     '<div style="display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;padding:11px 16px;margin-bottom:12px;background:var(--bg);border:1px solid var(--bdr);border-radius:10px;font-size:13px">'+
       '<span><strong style="font-size:17px;color:var(--navy)">'+filtered.length+'</strong> Angebote'+(filtered.length!==items.length?' <span style="color:var(--txt3)">(von '+items.length+')</span>':'')+'</span>'+
       '<span style="color:var(--txt2)">✅ '+_cntBeauftragt+' beauftragt</span>'+
-      (canSeePrices()
+      (_canSeeUebersichtPreise()
         ? '<span style="border-left:1px solid var(--bdr);padding-left:22px">Angebotswert Σ <strong style="font-size:17px;color:#065F46">'+_eurA(_sumWert)+' €</strong> <span style="color:var(--txt3)">netto</span>'+(_mitWert<filtered.length?' <span style="color:var(--txt3);font-size:11px">('+_mitWert+' m. Preis)</span>':'')+'</span>'
         : '')+
     '</div>';
