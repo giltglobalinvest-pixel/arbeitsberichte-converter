@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.30';
+const APP_VERSION = 'v8.31';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -46839,6 +46839,7 @@ function _openOrderDisplaySetupWizard() {
   const old = document.getElementById('od-setup-modal'); if (old) old.remove();
   const slug = getCurrentFirmaSlug();
   const allMode = isFirmaAll();
+  const firmaName = (getCurrentFirma() && getCurrentFirma().name) || slug;   // Anzeigename (z.B. „Aufzugshandwerk"), nicht der Slug
   const envAcct = allMode ? '' : ('ORDERDISPLAY_ACCOUNT_KEY_' + slug.toUpperCase().replace(/[^A-Z0-9_]/g,''));
   const m = document.createElement('div');
   m.id = 'od-setup-modal';
@@ -46852,11 +46853,11 @@ function _openOrderDisplaySetupWizard() {
       '<div style="padding:18px 22px;font-size:13px;line-height:1.6">'+
         (allMode
           ? '<div style="background:#FEF3C7;border-left:3px solid #F59E0B;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#92400E">⚠ Bitte oben rechts <strong>eine konkrete Firma</strong> auswählen — der Account-Key wird je Firma gespeichert.</div>'
-          : '<div style="background:#F5F3FF;border-left:3px solid #7C3AED;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#5B21B6">🏢 Aktive Firma: <strong>'+escapeHtml(slug)+'</strong><br>Account-Key wird als <code>'+envAcct+'</code> gespeichert — andere Firmen bleiben unverändert.</div>')+
+          : '<div style="background:#F5F3FF;border-left:3px solid #7C3AED;padding:10px 14px;border-radius:4px;margin-bottom:14px;font-size:12px;color:#5B21B6">🏢 Aktive Firma: <strong>'+escapeHtml(firmaName)+'</strong><br>Account-Key wird als <code>'+envAcct+'</code> gespeichert — andere Firmen bleiben unverändert.</div>')+
         '<p style="margin:0 0 14px;color:var(--txt2)">Beide Werte werden sicher in val.town als Environment-Variablen gespeichert — niemals im Browser sichtbar.</p>'+
         '<label style="font-weight:600;font-size:12px;display:block;margin-bottom:4px">Server-Token <span style="color:var(--txt3);font-weight:400">(global · leer lassen, wenn schon gesetzt)</span></label>'+
         '<input id="od-setup-token" type="password" placeholder="z.B. de1fea3ed0…" autocomplete="new-password" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.05em">'+
-        '<label style="font-weight:600;font-size:12px;display:block;margin:12px 0 4px">Account-Key '+(allMode?'':'für '+escapeHtml(slug)+' ')+'<span style="color:var(--txt3);font-weight:400">(je Firma)</span></label>'+
+        '<label style="font-weight:600;font-size:12px;display:block;margin:12px 0 4px">Account-Key '+(allMode?'':'für '+escapeHtml(firmaName)+' ')+'<span style="color:var(--txt3);font-weight:400">(je Firma)</span></label>'+
         '<input id="od-setup-acct" type="password" placeholder="z.B. af77e748-db60-…" autocomplete="new-password" style="width:100%;padding:9px 11px;border:1px solid var(--bdr);border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:13px;letter-spacing:.05em">'+
         '<div style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--txt3)"><label style="cursor:pointer;display:flex;align-items:center;gap:4px"><input type="checkbox" id="od-setup-show" onchange="var t=this.checked?\'text\':\'password\';document.getElementById(\'od-setup-token\').type=t;document.getElementById(\'od-setup-acct\').type=t;"> sichtbar anzeigen</label></div>'+
         '<div id="od-setup-log" style="display:none;margin-top:14px;padding:10px 12px;background:#0f172a;color:#cbd5e1;border-radius:6px;font-family:ui-monospace,Menlo,monospace;font-size:11px;max-height:240px;overflow-y:auto;line-height:1.6"></div>'+
