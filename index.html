@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.45';
+const APP_VERSION = 'v8.46';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -6788,6 +6788,7 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Auftraege',    'bilder',               'multipleAttachments');
   await ensureField('Auftraege',    'subunternehmer_preis', 'multilineText');
   await ensureField('Auftraege',    'ext_last_modified',    'singleLineText');
+  await ensureField('Auftraege',    'anlage_id',            'singleLineText');   // v8.46: Maxise-Anlagen-ID am Auftrag (nicht Fabriknummer)
   // v7.27: Gewährleistungsprüfung — markiert Auftrag UND (übernommen) Arbeitsbericht
   await ensureField('Auftraege',    'gewaehrleistung',      'checkbox');
   await ensureField('Berichte',     'gewaehrleistung',      'checkbox');
@@ -7891,6 +7892,24 @@ async function _aufLoadBerichteForList(firmaSlug) {
   }
 }
 
+/* v8.46: Anzahl Aufzüge eines Auftrags — aus erp_auftrag_split_json (Haupt+Teilvorgänge), sonst 1. */
+function _aufAufzugCount(f){
+  try { const a = JSON.parse((f&&f.erp_auftrag_split_json)||'[]'); if (Array.isArray(a) && a.length) return a.length; } catch(_){}
+  return 1;
+}
+/* v8.46: Maxise-Anlagen-ID eines Auftrags — direkt am Record, sonst Best-effort per Fabriknummer im Anlagen-Cache. */
+function _aufAnlageId(f){
+  if (f && f.anlage_id) return String(f.anlage_id);
+  try {
+    const fab = f && f.fabriknummer;
+    if (fab && typeof _anlagenCache!=='undefined' && _anlagenCache && Array.isArray(_anlagenCache.items)) {
+      const norm = s => String(s||'').replace(/[^0-9a-z]/gi,'').toLowerCase();
+      const fn = norm(fab);
+      if (fn) { const hit = _anlagenCache.items.find(a => norm(a.seriennummer||a.fabriknummer||a.equipmentnummer) === fn); if (hit && hit.id != null) return String(hit.id); }
+    }
+  } catch(_){}
+  return '';
+}
 function _auftragCardHtml(r) {
   const f = r.fields;
   const status = _normAuftragStatus(f.status);
@@ -7958,12 +7977,30 @@ function _auftragCardHtml(r) {
       }
     } catch(_){}
   }
-  // v7.96: Auftragsbestätigung (aus der Servicebox erzeugt) direkt hier herunterladbar
-  const abChip = f.ab_recid
-    ? '<span onclick="event.stopPropagation();_aufDownloadAb(\''+f.ab_recid+'\',event)" title="Auftragsbestätigung ansehen / herunterladen" style="cursor:pointer;background:#EEF2FF;color:#3730A3;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #A5B4FC">📄 AB ↓</span>'
+  // v8.46: AB-Status + Downloads + Maxise-Anlagen-ID + Aufzug-Anzahl direkt in der Übersicht.
+  const _extId  = f.ext_id || '';
+  const _aufNum = f.auftrag_num || _extId || '';
+  const _fslug  = f.firma || getCurrentFirmaSlug();
+  const _anlId  = _aufAnlageId(f);
+  const _aufCnt = _aufAufzugCount(f);
+  const _hasProxy = !!APP_KEYS.valtownProxyUrl;
+  let abBadge = '', abDlChips = '';
+  if (f.ab_recid) {
+    abBadge = _extId
+      ? '<span title="Auftragsbestätigung vorhanden · mit Maxise-Auftrag verknüpft" style="background:#DCFCE7;color:#166534;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;border:1px solid #86EFAC">📋 AB · 🔗 Maxise '+escapeHtml(String(_extId))+'</span>'
+      : '<span title="Auftragsbestätigung vorhanden · noch NICHT mit Maxise verknüpft" style="background:#FEF3C7;color:#92400E;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;border:1px solid #FCD34D">📋 AB · ⚠ ohne Maxise</span>';
+    abDlChips += '<span onclick="event.stopPropagation();_aufDownloadAb(\''+f.ab_recid+'\',event)" title="Servicebox-Auftragsbestätigung ansehen/herunterladen" style="cursor:pointer;background:#EEF2FF;color:#3730A3;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #A5B4FC">📄 AB (Servicebox) ↓</span>';
+    if (_extId && _hasProxy) abDlChips += '<span onclick="event.stopPropagation();_aufMaxisePdf(\''+escapeHtml(String(_extId))+'\',\''+escapeHtml(String(_fslug))+'\',\''+escapeHtml(String(_aufNum))+'\')" title="Original-Auftragsbestätigung aus Maxise laden" style="cursor:pointer;background:#ECFDF5;color:#065F46;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #6EE7B7">📄 AB (Maxise) ↓</span>';
+  } else if (_extId && _hasProxy) {
+    abBadge = '<span title="Auftrag nur in Maxise · Auftragsbestätigung dort" style="background:#DCFCE7;color:#166534;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;border:1px solid #86EFAC">🔗 Maxise-AB</span>';
+    abDlChips += '<span onclick="event.stopPropagation();_aufMaxisePdf(\''+escapeHtml(String(_extId))+'\',\''+escapeHtml(String(_fslug))+'\',\''+escapeHtml(String(_aufNum))+'\')" title="Auftragsbestätigung aus Maxise laden" style="cursor:pointer;background:#ECFDF5;color:#065F46;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #6EE7B7">📄 AB (Maxise) ↓</span>';
+  }
+  const anlageChip = _anlId
+    ? '<span title="Maxise-Anlagen-ID (nicht die Fabriknummer)" style="background:#EFF6FF;color:#1E3A8A;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #BFDBFE">🏢 Anlage '+escapeHtml(String(_anlId))+'</span>'
     : '';
-  const extraMeta = (rechnungChip || abChip || linkChips || followupChips)
-    ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+rechnungChip+abChip+fdCountBadge+linkChips+followupChips+'</div>'
+  const aufzugChip = '<span title="Anzahl Aufzüge in diesem Auftrag (Haupt- + Teilvorgänge)" style="background:'+(_aufCnt>1?'#EEF2FF':'#F3F4F6')+';color:'+(_aufCnt>1?'#3730A3':'#6B7280')+';font-size:11px;font-weight:'+(_aufCnt>1?'700':'600')+';padding:2px 8px;border-radius:99px;border:1px solid '+(_aufCnt>1?'#C7D2FE':'#E5E7EB')+'">🛗 '+_aufCnt+' Aufzug'+(_aufCnt===1?'':'e')+'</span>';
+  const extraMeta = (anlageChip || aufzugChip || rechnungChip || abBadge || abDlChips || linkChips || followupChips)
+    ? '<div class="auf-card-extrameta" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px">'+anlageChip+aufzugChip+rechnungChip+abBadge+abDlChips+fdCountBadge+linkChips+followupChips+'</div>'
     : '';
   // Preis-Spalte (rechts) — v8.28: in der Übersicht NUR Admins
   const showPrice = _canSeeUebersichtPreise();
@@ -9343,6 +9380,13 @@ async function _aufLoadAbSection(abRecId, auftragRecId) {
   const maxiseBadge = f.erp_auftrag_num
     ? '<span style="font-size:10px;font-weight:700;background:#DCFCE7;color:#166534;border:1px solid #86EFAC;padding:1px 7px;border-radius:99px">🔗 Maxise · Auftrag '+escapeHtml(String(f.erp_auftrag_num))+'</span>'
     : '<span style="font-size:10px;font-weight:600;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;padding:1px 7px;border-radius:99px">⚠ ohne Maxise</span>';
+  // v8.46: Maxise-AB zusätzlich zum Servicebox-PDF anbieten (für Testzwecke beide Links).
+  const _aufRec = (typeof _auftragCache!=='undefined'?_auftragCache:[]).find(r=>r.id===auftragRecId);
+  const _extId  = (_aufRec && _aufRec.fields && _aufRec.fields.ext_id) || f.erp_auftrag_id || f.erp_auftrag_num || '';
+  const _aufNum = (_aufRec && _aufRec.fields && _aufRec.fields.auftrag_num) || f.erp_auftrag_num || _extId || '';
+  const maxiseDlBtn = (_extId && APP_KEYS.valtownProxyUrl)
+    ? '<button class="btn" style="background:#ECFDF5;border-color:#6EE7B7;color:#065F46" onclick="_aufMaxisePdf(\''+escapeHtml(String(_extId))+'\',\''+escapeHtml(String(firmaSlug))+'\',\''+escapeHtml(String(_aufNum))+'\')" title="Original-Auftragsbestätigung aus Maxise laden">📄 AB (Maxise)</button>'
+    : '';
   host2.innerHTML =
     '<div class="auf-section"><h3>📋 Auftragsbestätigung</h3>'+
       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px">'+
@@ -9352,7 +9396,8 @@ async function _aufLoadAbSection(abRecId, auftragRecId) {
         (f.versendet_am?'<span style="font-size:11px;color:var(--txt3)">📤 versendet '+escapeHtml(f.versendet_am)+'</span>':'')+
       '</div>'+
       '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">'+
-        (pdfUrl ? '<a class="btn" style="text-decoration:none" href="'+escapeHtml(pdfUrl)+'" target="_blank" rel="noopener">📄 PDF</a>' : '<button class="btn" onclick="_abReDownload(\''+rec.id+'\')">📄 PDF</button>')+
+        (pdfUrl ? '<a class="btn" style="text-decoration:none" href="'+escapeHtml(pdfUrl)+'" target="_blank" rel="noopener">📄 AB (Servicebox)</a>' : '<button class="btn" onclick="_abReDownload(\''+rec.id+'\')">📄 AB (Servicebox)</button>')+
+        maxiseDlBtn+
         (freshdeskIsConfigured(firmaSlug) ? '<button class="btn" style="background:#EFF6FF;border-color:rgba(33,82,169,.4);color:#2152A9" onclick="_abOpenSendModal(\''+rec.id+'\')">📤 An Kunde senden</button>' : '')+
         (f.fd_ticket_url ? '<a class="btn" style="text-decoration:none" href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener">🎫 Ticket</a>' : '')+
         '<button class="btn" style="color:#DC2626;border-color:#FCA5A5" onclick="_abDeleteRec(\''+rec.id+'\')" title="Auftragsbestätigung löschen (Auftrag bleibt bestehen)">🗑 AB löschen</button>'+
@@ -9437,6 +9482,8 @@ function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">Auftragsnummer</span><span class="val" style="font-family:monospace;font-weight:700;color:var(--amber)">#${f.auftrag_num || '–'}</span></div>
       <div class="auf-row"><span class="lbl">Standort</span><span class="val">${(f.standort||'–').replace(/</g,'&lt;')}</span></div>
       <div class="auf-row"><span class="lbl">Fabriknummer</span><span class="val">${(f.fabriknummer||'–').replace(/</g,'&lt;')}</span></div>
+      ${_aufAnlageId(f) ? `<div class="auf-row"><span class="lbl">🏢 Maxise-Anlagen-ID</span><span class="val" style="font-family:monospace;font-weight:700">${escapeHtml(String(_aufAnlageId(f)))}</span></div>` : ''}
+      <div class="auf-row"><span class="lbl">🛗 Aufzüge im Auftrag</span><span class="val">${_aufAufzugCount(f)}${_aufAufzugCount(f)>1?' <span style="font-size:10px;font-weight:700;background:#EEF2FF;color:#3730A3;border:1px solid #C7D2FE;padding:1px 7px;border-radius:99px;margin-left:4px">Sammelauftrag</span>':''}</span></div>
       ${f.angebot_typ ? `<div class="auf-row"><span class="lbl">Angebots-Typ</span><span class="val">${_fmtAngebotTyp(f.angebot_typ)}</span></div>` : ''}
       ${f.bestellform ? `<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">${String(f.bestellform).replace(/</g,'&lt;')}</span></div>` : ''}
       <div class="auf-row"><span class="lbl">AB-Datum</span><span class="val">${_renderAbDatumField(rec)}</span></div>
@@ -29709,11 +29756,11 @@ function _renderAngeboteList() {
           '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:space-between">'+
             '<div style="flex:1;min-width:200px">'+
               '<div style="font-weight:700;color:var(--navy);font-size:14px">'+(isArchived?'<span title="Archiviert" style="background:#6B7280;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">📁 ARCHIV</span>':'')+idLabel+' · '+escapeHtml(f.kunde_name||'?')+'</div>'+
-              '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+'</div>'+
+              '<div style="font-size:12px;color:var(--txt3);margin-top:2px">'+escapeHtml(f.anlage_adresse||'')+(f.seriennummer?' · Fabrik-Nr. '+escapeHtml(f.seriennummer):'')+(f.anlage_id?' · <span title="Maxise-Anlagen-ID (nicht die Fabriknummer)">🏢 Anlage-ID '+escapeHtml(String(f.anlage_id))+'</span>':'')+'</div>'+
             '</div>'+
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
               // v7.11: Gesamtangebot-Badge (mehrere Aufzüge)
-              ((()=>{ try { const n = JSON.parse(f.aufzuege_json||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length; return n>0 ? '<span title="Gesamtangebot über mehrere Aufzüge (kein ERP-Vorgang)" style="background:#3730A3;color:#fff;padding:3px 9px;border-radius:99px;font-size:11px;font-weight:700">🛗 '+(n+1)+' Aufzüge</span>' : ''; } catch(_){ return ''; } })())+
+              ((()=>{ try { const n = JSON.parse(f.aufzuege_json||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length; const c=n+1; return '<span title="Anzahl Aufzüge in diesem Angebot'+(c>1?' · Gesamtangebot (kein einzelner ERP-Vorgang)':'')+'" style="background:'+(c>1?'#3730A3':'#F3F4F6')+';color:'+(c>1?'#fff':'#6B7280')+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:'+(c>1?'700':'600')+';border:1px solid '+(c>1?'#3730A3':'#E5E7EB')+'">🛗 '+c+' Aufzug'+(c===1?'':'e')+'</span>'; } catch(_){ return ''; } })())+
               rightBadges+
             '</div>'+
           '</div>'+
@@ -34584,7 +34631,10 @@ function openAngebotDetail(recId) {
           }
           return '<div style="margin-top:6px;padding:8px 10px;background:#FEF2F2;border-left:3px solid #EF4444;border-radius:4px;font-size:11.5px"><strong style="color:#991B1B">⚠ Empfänger-Adresse unvollständig:</strong> '+(adrLines.length?adrLines.join(', '):'(leer)')+'<br><span style="color:#7F1D1D">Bitte über „Bearbeiten" ergänzen — sonst fehlt sie im PDF.</span></div>';
         })()+
-        '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+'</div>'+
+        '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+
+          (f.anlage_id?' · <span title="Maxise-Anlagen-ID (nicht die Fabriknummer)">🏢 Anlage-ID '+escapeHtml(String(f.anlage_id))+'</span>':'')+
+          (()=>{ try{ const n=JSON.parse(f.aufzuege_json||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length+1; return ' · 🛗 '+n+' Aufzug'+(n===1?'':'e'); }catch(_){ return ''; } })()+
+        '</div>'+
         // v8.37: Maxise-Link-Status der Anlage (verlinkt / gefunden-nicht-verlinkt / nicht in Maxise) + 1-Klick-Verknüpfen
         (() => {
           const s = _angMaxiseLinkStatus(f);
@@ -35296,6 +35346,7 @@ async function _abWriteLocalAuftrag(fAng, created, leistungText, typOverride) {
       tmpl: tmplKey,
       angebot_typ: angebotTypEnum,
       angebot_id: (created && created.angebotid) || (fAng && fAng.erp_angebot_id) || null,
+      anlage_id: (fAng && fAng.anlage_id) || null,   // v8.46: Maxise-Anlagen-ID am Servicebox-Auftrag mitschreiben
       techniker_keys: JSON.stringify(techKeys),
       techniker_namen: techNames,
       ab_datum: heute,
@@ -35804,8 +35855,16 @@ async function _abGetPdfBlob(rec) {
   if (url) { try { const b = await (await fetch(url)).blob(); if (b && b.size) return b; } catch(_){} }
   return _abBuildPdfBlob(_abReconstructD(f), f.firma||getCurrentFirmaSlug());   // Fallback: frisch erzeugen
 }
+/* v8.46: AB-Record holen — aus dem Cache ODER frisch aus Airtable (das AB-Menü ist weg, der
+   _abListCache wird darum oft nicht mehr befüllt; die AB-Aktionen im Auftrag-Detail müssen trotzdem laufen). */
+async function _abGetRec(recId){
+  let rec = (typeof _abListCache!=='undefined' && _abListCache || []).find(r=>r.id===recId);
+  if (rec) return rec;
+  try { const recs = await atRead('Auftragsbestaetigungen', "RECORD_ID()='"+String(recId).replace(/'/g,'')+"'"); rec = recs && recs[0]; } catch(_){}
+  return rec || null;
+}
 async function _abReDownload(recId) {
-  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  const rec = await _abGetRec(recId); if (!rec) return toast('Nicht gefunden','err');
   try { const blob = await _abGetPdfBlob(rec); if (typeof _showVorlagenPreview==='function'){ _showVorlagenPreview(blob, 'Auftragsbestätigung '+(rec.fields.ab_nummer||'')); try{_rvRaisePreview();}catch(_){}} else { const u=URL.createObjectURL(blob); window.open(u,'_blank'); } }
   catch(e){ toast('❌ '+(e.message||e),'err'); }
 }
@@ -35826,15 +35885,26 @@ async function _aufDownloadAb(abRecId, ev) {
   } catch(e){ toast('❌ '+((e&&e.message)||e),'err'); }
 }
 async function _abDeleteRec(recId) {
-  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return;
+  const rec = await _abGetRec(recId); if (!rec) return;
   if (!confirm('Auftragsbestätigung '+((rec.fields&&rec.fields.ab_nummer)||'')+' wirklich löschen?')) return;
-  try { await atDelete('Auftragsbestaetigungen', recId); _abListCache = _abListCache.filter(r=>r.id!==recId); _abRenderList(); toast('🗑 Gelöscht','warn'); }
-  catch(e){ toast('❌ '+(e.message||e),'err'); }
+  try {
+    await atDelete('Auftragsbestaetigungen', recId);
+    _abListCache = (_abListCache||[]).filter(r=>r.id!==recId);
+    if (typeof _abRenderList==='function') { try { _abRenderList(); } catch(_){} }
+    // v8.46: Aus dem Auftrag-Detail gelöscht → AB-Sektion leeren + ab_recid am Auftrag lösen (Cache + Airtable)
+    const _lid = rec.fields && rec.fields.local_auftrag_recid;
+    if (_lid) {
+      try { const _ar = (typeof _auftragCache!=='undefined'?_auftragCache:[]).find(r=>r.id===_lid); if (_ar && _ar.fields) delete _ar.fields.ab_recid; } catch(_){}
+      try { await _patchAuftragFields(_lid, { ab_recid: '' }); } catch(_){}
+    }
+    try { const host=document.getElementById('auf-ab-section'); if (host) host.innerHTML=''; } catch(_){}
+    toast('🗑 Gelöscht','warn');
+  } catch(e){ toast('❌ '+(e.message||e),'err'); }
 }
 /* v7.96: Verknüpften Maxise-Auftrag stornieren (ERP-PUT auf "Storniert") + AB und lokalen Auftrag markieren.
    Nutzt dieselbe GET→SETDTO→PUT-Logik wie der Status-Picker in der Auftragsübersicht (_setErpAuftragStatus). */
 async function _abStornoAuftrag(recId) {
-  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  const rec = await _abGetRec(recId); if (!rec) return toast('Nicht gefunden','err');
   const f = rec.fields || {};
   const erpId = f.erp_auftrag_id;
   if (!erpId) return toast('Diese AB hat keinen verknüpften Maxise-Auftrag.','err');
@@ -35875,8 +35945,8 @@ function _abSendToggleMode() {
   if (tb) tb.style.display = mode==='ticket' ? '' : 'none';
   if (sb) sb.style.display = mode==='email' ? '' : 'none';
 }
-function _abOpenSendModal(recId) {
-  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+async function _abOpenSendModal(recId) {
+  const rec = await _abGetRec(recId); if (!rec) return toast('Nicht gefunden','err');
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
   if (!APP_KEYS.valtownProxyUrl) return toast('Freshdesk/Proxy nicht eingerichtet (Admin → Integrationen).','err');
   const fdOk = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
@@ -47590,6 +47660,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         erlaeuterungen:        angebot?.offerExplanation || '',
         angebot_typ:           angebot?.typ || '',
         angebot_id:            a.angebotid || null,
+        anlage_id:             (anlage && anlage.id) || a.anlageid || null,  // v8.46: Maxise-Anlagen-ID
         bestellform:           a.bestellform || '',
         auftragswert_netto:    _extractAuftragswertNetto(angebot),
       };
