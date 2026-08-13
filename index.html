@@ -1925,6 +1925,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <h2>📑 Wartungsverträge <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="wv-count">0</span></h2>
     <button class="btn" onclick="renderWartungsvertraegeView({force:true})">↻ Neu laden</button>
     <button class="btn" id="wv-erp-btn" onclick="_loadWartungsvertraegeFromERP()" title="Bestehende Verträge aus dem Aufzugshandwerk-ERP nachladen (read-only)">📥 Vom ERP laden</button>
+    <button class="btn" id="wv-aufzug-check-btn" onclick="_wvCheckAufzugStruktur(this)" title="Prüft alle App-Wartungsverträge, ob jeder Aufzug mit einer Maxise-Anlage verknüpft ist (fehlende per Fabriknummer matchbar)" style="color:#6D28D9;border-color:#C4B5FD">🛗 Aufzug-Struktur prüfen</button>
     <button class="btn prim" onclick="openNeuerVertragWizard()">+ Neuer Vertrag</button>
   </div>
   <div class="anl-search-bar">
@@ -2799,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.72';
+const APP_VERSION = 'v8.73';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -20757,6 +20758,68 @@ let _erpVertraegeCache = { firma: null, items: [], loadedAt: 0 };
 // Preislisten-Cache für Legacy-Vertrag-Anreicherung (Kunde-Daten aus Preisliste joinen)
 let _preislistenForVtCache = { items: [], loadedAt: 0 };
 
+/* v8.73: Struktur-Check für Wartungsverträge (Tabelle Vertraege, App-Quelle) — analog zum Angebots-Check,
+   aber die Aufzüge stehen in anlagen_json (Maxise-Link je Aufzug = entry.id, sonst .anlage_id). Prüft je
+   Vertrag, ob jeder Aufzug eine Fabriknummer + verknüpfte Maxise-Anlage hat; fehlende werden per
+   Fabriknummer im Anlagen-Cache auf „matchbar" geprüft. Reiner Lesezugriff → Klartext-Modal. */
+async function _wvCheckAufzugStruktur(btn){
+  if (!isAdmin()) return toast('Nur für Admins','err');
+  const firmaSlug = getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  const _l = btn ? btn.textContent : '';
+  if (btn){ btn.disabled=true; btn.textContent='⏳ prüfe…'; }
+  try {
+    try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}
+    const norm = s => String(s||'').replace(/[^0-9a-z]/gi,'').toLowerCase();
+    const anlagen = (typeof _anlagenCache!=='undefined' && _anlagenCache && Array.isArray(_anlagenCache.items)) ? _anlagenCache.items : [];
+    const anlagenGeladen = anlagen.length>0;
+    const matchAnlage = fab => { const fn=norm(fab); if(!fn) return null; return anlagen.find(a=>norm(a.seriennummer||a.fabriknummer||a.equipmentnummer)===fn)||null; };
+
+    let recs = (typeof _wartungsvertraegeCache!=='undefined' && _wartungsvertraegeCache && Array.isArray(_wartungsvertraegeCache.items)) ? _wartungsvertraegeCache.items : [];
+    if (!recs.length) { try { recs = await atRead('Vertraege', null); } catch(e){ return toast('Verträge konnten nicht geladen werden: '+e.message,'err'); } }
+    recs = recs.filter(r=>r&&r.fields&&(r.fields.firma||'')===firmaSlug && !/archiv/i.test(String(r.fields.status||'')));
+
+    const chip = (st)=>{ const map={ ok:['#065F46','#D1FAE5','✓ verknüpft'], matchbar:['#92400E','#FEF3C7','⟳ matchbar'], nomatch:['#991B1B','#FEE2E2','✗ nicht in Maxise'], nofab:['#991B1B','#FEE2E2','✗ keine Fabriknr'], unknown:['#374151','#E5E7EB','? Anlagen nicht geladen'] }[st]||['#374151','#E5E7EB',st]; return '<span style="font-size:11px;font-weight:600;color:'+map[0]+';background:'+map[1]+';padding:2px 7px;border-radius:99px;white-space:nowrap">'+map[2]+'</span>'; };
+
+    const cards=[]; let tOhne=0, tMatchbar=0, vollst=0, luecken=0, leer=0, geprueft=0;
+    for (const r of recs){
+      const f=r.fields;
+      let anl=[]; try{ anl=JSON.parse(f.anlagen_json||'[]')||[]; }catch(_){}
+      if (!anl.length){ leer++; continue; }
+      geprueft++;
+      const aufzuege = anl.map(a=>{
+        const fab=String(a.fabriknummer||''); const link=String(a.id||a.anlage_id||'');
+        let st; if(link) st='ok'; else if(!fab) st='nofab'; else if(!anlagenGeladen) st='unknown'; else st=matchAnlage(fab)?'matchbar':'nomatch';
+        return { fab, adr:String(a.adresse||''), st };
+      });
+      const nOhne=aufzuege.filter(a=>a.st!=='ok').length, nMatchbar=aufzuege.filter(a=>a.st==='matchbar').length;
+      tOhne+=nOhne; tMatchbar+=nMatchbar; if(nOhne===0) vollst++; else luecken++;
+      const typL = (f.abrechnung_typ==='einzel')?'Einzel':'Sammel';
+      const status = nOhne===0
+        ? '<span style="font-size:12px;font-weight:700;color:#065F46;background:#D1FAE5;padding:3px 10px;border-radius:99px">✅ alle '+aufzuege.length+' verknüpft</span>'
+        : '<span style="font-size:12px;font-weight:700;color:#92400E;background:#FEF3C7;padding:3px 10px;border-radius:99px">⚠ '+nOhne+'/'+aufzuege.length+' ohne Anlage'+(nMatchbar?' ('+nMatchbar+' matchbar)':'')+'</span>';
+      const CAP=25; let show=aufzuege, note='';
+      if (aufzuege.length>CAP){ show=aufzuege.filter(a=>a.st!=='ok').slice(0,CAP); note='<div style="font-size:11.5px;color:var(--txt3);padding:4px 0">'+(aufzuege.length-aufzuege.filter(a=>a.st!=='ok').length)+' verknüpfte ausgeblendet · zeige '+show.length+' Lücken von '+aufzuege.length+' Aufzügen</div>'; }
+      const rowHtml = show.map(a=>'<div style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:12.5px;border-top:1px solid var(--bdr)"><span style="width:120px;font-family:monospace;color:var(--txt)">'+escapeHtml(a.fab||'—')+'</span><span style="flex:1">'+chip(a.st)+'</span><span style="flex:2;color:var(--txt3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(a.adr||'')+'</span></div>').join('');
+      cards.push('<div style="border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--surf)"><div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px"><strong style="font-size:14px">'+escapeHtml(String(f.vertragsnummer||f.titel||'Vertrag'))+'</strong><span style="font-size:11px;font-weight:600;color:#3730A3;background:#EEF2FF;padding:2px 8px;border-radius:99px">'+typL+' · '+aufzuege.length+' Aufz.</span><span style="color:var(--txt3);font-size:12px">'+escapeHtml(String(f.kunde_name||'—'))+'</span><span style="margin-left:auto">'+status+'</span></div>'+note+rowHtml+'</div>');
+    }
+
+    const old=document.getElementById('wv-aufcheck-modal'); if(old) old.remove();
+    const m=document.createElement('div'); m.id='wv-aufcheck-modal';
+    m.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11000;display:flex;align-items:center;justify-content:center;padding:14px';
+    m.onclick=(e)=>{ if(e.target===m) m.remove(); };
+    m.innerHTML='<div style="background:var(--surf);max-width:720px;width:100%;max-height:92vh;border-radius:14px;display:flex;flex-direction:column;overflow:hidden">'+
+      '<div style="padding:13px 18px;background:#6D28D9;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between"><span>🛗 Aufzug-Struktur der Wartungsverträge · '+escapeHtml(firmaSlug)+'</span><button onclick="document.getElementById(\'wv-aufcheck-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button></div>'+
+      '<div style="padding:16px 18px;flex:1;overflow-y:auto">'+
+        (geprueft===0
+          ? '<div style="text-align:center;padding:30px 10px;color:var(--txt3)">Keine App-Wartungsverträge mit Aufzugsliste für diese Firma gefunden.'+(leer?'<br><span style="font-size:12px">('+leer+' Verträge ohne <code>anlagen_json</code> — evtl. Legacy/ERP-Quelle.)</span>':'')+'</div>'
+          : '<div style="background:var(--bg);border:1px solid var(--bdr);border-radius:10px;padding:12px 14px;margin-bottom:14px;font-size:13px;line-height:1.7"><strong>'+geprueft+'</strong> App-Verträge geprüft'+(leer?' · '+leer+' ohne Aufzugsliste (Legacy/ERP)':'')+'<br><span style="color:#065F46;font-weight:600">✅ '+vollst+' vollständig verknüpft</span> · <span style="color:#92400E;font-weight:600">⚠ '+luecken+' mit Lücken</span><br>Aufzüge ohne Anlage-Verknüpfung: <strong>'+tOhne+'</strong>'+(tMatchbar?' (davon <strong>'+tMatchbar+'</strong> per Fabriknummer matchbar)':'')+(!anlagenGeladen?'<br><span style="color:#92400E">⚠ Maxise-Anlagen nicht geladen — „matchbar" nicht geprüft.</span>':'')+'<br><span style="font-size:11.5px;color:var(--txt3)">Geprüft werden App-Verträge (Tabelle Vertraege). ERP-/Legacy-Verträge sind bereits Maxise-seitig.</span></div>'+cards.join(''))+
+      '</div>'+
+      '<div style="padding:10px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end"><button class="btn" onclick="document.getElementById(\'wv-aufcheck-modal\').remove()">Schließen</button></div>'+
+    '</div>';
+    document.body.appendChild(m);
+  } finally { if (btn){ btn.disabled=false; btn.textContent=_l||'🛗 Aufzug-Struktur prüfen'; } }
+}
 async function renderWartungsvertraegeView(opts) {
   if (!isAdmin()) return;
   const list = document.getElementById('wv-list');
