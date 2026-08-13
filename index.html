@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.49';
+const APP_VERSION = 'v8.50';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7892,9 +7892,19 @@ async function _aufLoadBerichteForList(firmaSlug) {
   }
 }
 
-/* v8.46: Anzahl Aufzüge eines Auftrags — aus erp_auftrag_split_json (Haupt+Teilvorgänge), sonst 1. */
+/* v8.46/8.50: Anzahl Aufzüge — bevorzugt die ECHTE Maxise-Zahl aus der verknüpften Anlage (anzahlAufzuege),
+   sonst Servicebox-Herleitung (Haupt+Teilvorgänge bzw. Gesamtangebot über mehrere Aufzüge), sonst 1.
+   Generisch für Aufträge UND Angebote. */
 function _aufAufzugCount(f){
-  try { const a = JSON.parse((f&&f.erp_auftrag_split_json)||'[]'); if (Array.isArray(a) && a.length) return a.length; } catch(_){}
+  try {
+    const aid = f && f.anlage_id;
+    if (aid && typeof _anlagenCache!=='undefined' && _anlagenCache && Array.isArray(_anlagenCache.items)){
+      const a = _anlagenCache.items.find(x => String(x.id) === String(aid));
+      if (a && a.anzahlAufzuege != null && +a.anzahlAufzuege > 0) return +a.anzahlAufzuege;
+    }
+  } catch(_){}
+  try { const s = JSON.parse((f&&f.erp_auftrag_split_json)||'[]'); if (Array.isArray(s) && s.length) return s.length; } catch(_){}
+  try { const n = JSON.parse((f&&f.aufzuege_json)||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length; if (n>0) return n+1; } catch(_){}
   return 1;
 }
 /* v8.46: Maxise-Anlagen-ID eines Auftrags — direkt am Record, sonst Best-effort per Fabriknummer im Anlagen-Cache. */
@@ -9323,6 +9333,7 @@ async function _aufMaxisePdf(auftragId, firmaSlug, auftragNum) {
   toast('⏳ Lade Auftragsbestätigung für Auftrag ' + (auftragNum || auftragId) + '…', '');
   // Kandidaten-Endpunkte (Vorgangs-Modell + typ-segmentiert wie Angebote); der erste, der %PDF liefert, gewinnt.
   const paths = [
+    'api/auftrag/' + idEnc + '/pdf',                                          // v8.50: BESTÄTIGT (aus Maxise-OpenAPI, SINGULAR „auftrag")
     'api/auftraege/' + encodeURIComponent(_typSeg) + '/' + idEnc + '/pdf',
     'api/auftraege/' + idEnc + '/auftragsbestaetigung/pdf',
     'api/auftraege/' + idEnc + '/auftragsbestaetigung',
@@ -29823,7 +29834,7 @@ function _renderAngeboteList() {
             '</div>'+
             '<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">'+
               // v7.11: Gesamtangebot-Badge (mehrere Aufzüge)
-              ((()=>{ try { const n = JSON.parse(f.aufzuege_json||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length; const c=n+1; return '<span title="Anzahl Aufzüge in diesem Angebot'+(c>1?' · Gesamtangebot (kein einzelner ERP-Vorgang)':'')+'" style="background:'+(c>1?'#3730A3':'#F3F4F6')+';color:'+(c>1?'#fff':'#6B7280')+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:'+(c>1?'700':'600')+';border:1px solid '+(c>1?'#3730A3':'#E5E7EB')+'">🛗 '+c+' Aufzug'+(c===1?'':'e')+'</span>'; } catch(_){ return ''; } })())+
+              ((()=>{ const c=_aufAufzugCount(f); return '<span title="Anzahl Aufzüge in diesem Angebot'+(c>1?' · mehrere Aufzüge':'')+'" style="background:'+(c>1?'#3730A3':'#F3F4F6')+';color:'+(c>1?'#fff':'#6B7280')+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:'+(c>1?'700':'600')+';border:1px solid '+(c>1?'#3730A3':'#E5E7EB')+'">🛗 '+c+' Aufzug'+(c===1?'':'e')+'</span>'; })())+
               rightBadges+
             '</div>'+
           '</div>'+
@@ -34696,7 +34707,7 @@ function openAngebotDetail(recId) {
         })()+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+
           (f.anlage_id?' · <span title="Maxise-Anlagen-ID (nicht die Fabriknummer)">🏢 Anlage-ID '+escapeHtml(String(f.anlage_id))+'</span>':'')+
-          (()=>{ try{ const n=JSON.parse(f.aufzuege_json||'[]').filter(a=>a&&(a.fabriknummer||a.adresse)).length+1; return ' · 🛗 '+n+' Aufzug'+(n===1?'':'e'); }catch(_){ return ''; } })()+
+          (()=>{ const c=_aufAufzugCount(f); return ' · 🛗 '+c+' Aufzug'+(c===1?'':'e'); })()+
         '</div>'+
         // v8.37: Maxise-Link-Status der Anlage (verlinkt / gefunden-nicht-verlinkt / nicht in Maxise) + 1-Klick-Verknüpfen
         (() => {
