@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.52';
+const APP_VERSION = 'v8.53';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32392,28 +32392,40 @@ async function _angResolveEmpfaengerAdresse(firmaSlug, empfId) {
   return '';
 }
 
+/* v8.53: Cache-Wrapper — dieselbe adresseId wird nicht mehrfach über die langsamen ERP-Endpunkte aufgelöst
+   (verhindert Roundtrip-Stau/„Einfrieren" bei wiederholten Auflösungen). */
+const _angAdresseIdCache = new Map();
+async function _angResolveAdresseId(firmaSlug, adresseId) {
+  if (!adresseId) return '';
+  const _ck = String(firmaSlug)+'|'+String(adresseId);
+  if (_angAdresseIdCache.has(_ck)) return _angAdresseIdCache.get(_ck);
+  let _res = '';
+  try { _res = await _angResolveAdresseIdRaw(firmaSlug, adresseId); } catch(_){ _res = ''; }
+  _angAdresseIdCache.set(_ck, _res || '');
+  return _res;
+}
 /**
  * Versucht eine ERP-`adresseId` (Google-Places-Style) zu Klartext aufzulösen.
  * Probiert mehrere bekannte und vermutete Endpoint-Patterns durch.
  * Erwartet als Antwort entweder einen flachen Adress-Record oder einen
  * Google-Places-ähnlichen Body mit formatted_address / address_components.
  */
-async function _angResolveAdresseId(firmaSlug, adresseId) {
+async function _angResolveAdresseIdRaw(firmaSlug, adresseId) {
   if (!adresseId) return '';
   const enc = encodeURIComponent(adresseId);
+  // v8.53: Funktionierender Service-Account-Endpoint ZUERST. 'api/users/me/...' 404t mit dem X-Partner-Key
+  //   des Proxys (kein User-Kontext) und kostete bisher als ERSTER Kandidat je Auflösung einen langsamen
+  //   val.town-Roundtrip — das fühlte sich wie „eingefroren" an. Jetzt als letzter Fallback.
   const candidates = [
-    // Vom User identifizierter Endpoint (braucht User-Login-Token):
-    'api/users/me/google/maps/adresse/'+enc,
-    // Service-Account-Varianten OHNE /users/me/ — Proxy nutzt X-Partner-Key
-    'api/google/maps/adresse/'+enc,
+    'api/google/maps/adresse/'+enc,        // bestätigt funktionierend (X-Partner-Key)
     'api/google/maps/adressen/'+enc,
-    'api/google/maps/'+enc,
     'api/maps/adresse/'+enc,
+    'api/google/maps/'+enc,
     'api/maps/'+enc,
-    // Klassische Adresse-Endpoints
     'api/Adressen/'+enc,
     'api/adressen/'+enc,
     'api/google/places/'+enc,
+    'api/users/me/google/maps/adresse/'+enc,   // 404 mit Service-Account — nur als letzter Fallback
   ];
   console.log('[Angebot] Probiere '+candidates.length+' Endpoints fuer adresseId='+adresseId);
   for (const path of candidates) {
