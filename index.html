@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.37';
+const APP_VERSION = 'v8.38';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -10220,6 +10220,7 @@ function _anlageCardHtml(a, idx, wartungsSet) {
   if (a.objektTyp)         metaParts.push('🏗 '+a.objektTyp);
   if (a.anzahlAufzuege)    metaParts.push('🛗 '+a.anzahlAufzuege+' Aufzug'+(a.anzahlAufzuege!==1?'/Aufzüge':''));
   const side = [];
+  if (a.id)      side.push('🆔 Maxise-ID '+String(a.id).replace(/</g,'&lt;'));   // v8.38: Maxise-Anlagen-ID sichtbar (Dubletten erkennen/unterscheiden)
   if (a.kennung) side.push('Kennung: '+a.kennung.replace(/</g,'&lt;'));
   if (archived)  side.push('<span class="anl-archived-badge">archiviert</span>');
   return '<div class="anl-card '+(archived?'anl-archived':'')+'" onclick="openAnlageDetail('+idx+')">'
@@ -34974,13 +34975,17 @@ function _angPickAnlageConfirm(matches, fab) {
     m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11200;display:flex;align-items:center;justify-content:center;padding:16px';
     const done = (val) => { m.remove(); resolve(val); };
     const multi = matches.length > 1;
+    // v8.38: aktive Anlagen zuerst (archivierte Dubletten nach unten) — der data-i-Index bleibt konsistent zur Klick-Zuordnung.
+    matches.sort((a,b) => ((a&&a.archived)?1:0) - ((b&&b.archived)?1:0));
     const rowHtml = (a, i) => {
       const k = a.kunde || {};
       const adr = a.anzeigeAdresse || (typeof _buildAnlageAdresse==='function' ? _buildAnlageAdresse(a) : '') || a.name || '—';
       const kn  = (k.firmenname||k.name||'—') + ((k.kundennummer||k.id) ? ' (Nr. '+(k.kundennummer||k.id)+')' : '');
-      return '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px">'+
-        '<div style="font-weight:600;font-size:13px">🏛 '+escapeHtml(String(a.fabriknummer||fab))+' · '+escapeHtml(adr)+'</div>'+
-        '<div style="font-size:12px;color:var(--txt2);margin-top:2px">👥 '+escapeHtml(kn)+' · Anlage-ID '+escapeHtml(String(a.id||''))+'</div>'+
+      const arch = a.archived ? ' <span style="background:#FEE2E2;color:#991B1B;border-radius:99px;padding:1px 7px;font-size:10px;font-weight:700">📁 archiviert</span>' : '';
+      const kenn = a.kennung ? ' · Kennung '+escapeHtml(String(a.kennung)) : '';
+      return '<div style="border:1px solid var(--bdr);border-radius:8px;padding:10px 12px;margin-bottom:8px;opacity:'+(a.archived?'0.7':'1')+'">'+
+        '<div style="font-weight:600;font-size:13px">🏛 '+escapeHtml(String(a.fabriknummer||fab))+' · '+escapeHtml(adr)+arch+'</div>'+
+        '<div style="font-size:12px;color:var(--txt2);margin-top:2px">👥 '+escapeHtml(kn)+' · <strong>Maxise-ID '+escapeHtml(String(a.id||''))+'</strong>'+kenn+'</div>'+
         '<div style="margin-top:8px"><button class="btn prim" style="background:#10B981;border-color:#10B981" data-i="'+i+'">✓ Diese verknüpfen</button></div>'+
       '</div>';
     };
@@ -34991,7 +34996,9 @@ function _angPickAnlageConfirm(matches, fab) {
           '<button id="_angmatch-x" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
         '</div>'+
         '<div style="padding:16px 20px;font-size:13px;line-height:1.55;max-height:60vh;overflow:auto">'+
-          '<p style="margin:0 0 12px;color:var(--txt2)">Für Fabriknummer <strong>'+escapeHtml(fab)+'</strong> '+(multi?('gibt es '+matches.length+' Anlagen in Maxise — bitte die richtige wählen:'):'wurde in Maxise diese Anlage gefunden. Zum Auftrag verknüpfen?')+'</p>'+
+          (multi
+            ? '<div style="margin:0 0 12px;padding:9px 12px;background:#FEF3C7;border-left:3px solid #F59E0B;border-radius:4px;color:#92400E;font-size:12px">⚠ <strong>Dublette im ERP:</strong> Für Fabriknummer <strong>'+escapeHtml(fab)+'</strong> gibt es <strong>'+matches.length+'</strong> Anlagen in Maxise. Wähle die <strong>aktive/korrekte</strong> (z.B. mit Kunde „win-win") — die andere sollte in Maxise <strong>archiviert</strong> werden, sonst passiert das immer wieder.</div>'
+            : '<p style="margin:0 0 12px;color:var(--txt2)">Für Fabriknummer <strong>'+escapeHtml(fab)+'</strong> wurde in Maxise diese Anlage gefunden. Zum Auftrag verknüpfen?</p>')+
           matches.map(rowHtml).join('')+
         '</div>'+
         '<div style="padding:12px 18px;background:var(--bg);border-top:1px solid var(--bdr);display:flex;justify-content:flex-end">'+
