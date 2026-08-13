@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.65';
+const APP_VERSION = 'v8.66';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9834,6 +9834,7 @@ async function _odOpenCreateModal(recId, d) {
     console.log('[OD-Fields raw]', _rawF);
     try { console.log('[OD-Fields raw JSON]', JSON.stringify(_rawF)); } catch(_){}
     const defs = _odNormFields(_rawF || []);
+    console.log('[OD-Fields labels ('+defs.length+')]', defs.map(x=>x.label+' ['+x.type+']').join(' | '));
     const ord = (rO && (rO.result!=null?rO.result:rO.raw)) || null;
     if (ord) { console.log('[OD-Order current]', ord); try { console.log('[OD-Order current JSON]', JSON.stringify(ord)); } catch(_){} }
     const cur = (ord && (ord.details||ord.detail||ord.customFields||ord.custom_fields)) || {};
@@ -9928,10 +9929,6 @@ async function _odSubmitOrder(recId) {
   // ── NEU ANLEGEN ──
   const args = { title, orderNumber, ticketNumber, stage: -1, deadline };
   if (Object.keys(details).length) args.details = details;
-  // v8.65: Kunde (customer) als Firestore-Referenz auflösen (nur beim Anlegen setzbar)
-  if (btn) btn.textContent = '⏳ suche Kunde…';
-  try { const cp = await _odResolveCustomerPath(firmaSlug, f.kunde_firmenname, f.kunde_nummer); if (cp) { args.customer = cp; console.log('[OD-Create] Kunde verknüpft:', cp); } else console.log('[OD-Create] Kein OD-Kunde für „'+(f.kunde_firmenname||'')+'" gefunden.'); } catch(_){}
-  if (btn) btn.textContent = '⏳ Order Display…';
   try {
     const res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', {
       method:'POST', body:{ name:'createOrder', arguments: args }
