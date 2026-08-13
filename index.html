@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.57';
+const APP_VERSION = 'v8.58';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9810,14 +9810,14 @@ async function _odDiscoverSchema(btn) {
       if (typeof _mxTextModal==='function') _mxTextModal('🧩 Order-Display — Schema', hint); else alert(hint);
       return;
     }
-    const create = tools.find(t => /create.*order/i.test(t.name||'')) || null;
-    const schema = create ? (create.inputSchema || create.input_schema || create.parameters || create) : null;
-    const out = create
-      ? ('Tool: '+create.name+'\n\ninputSchema:\n'+JSON.stringify(schema, null, 2))
-      : ('createOrder nicht gefunden. Verfügbare Tools:\n'+tools.map(t=>'• '+t.name+(t.description?(' — '+t.description):'')).join('\n')+'\n\n(Bitte den richtigen Tool-Namen nennen.)');
+    // v8.58: ALLE Tools (Namen+Beschreibung) + volles Schema zeigen — um das Tool für die Custom-Feld-IDs
+    //   (Configs/OrderFields) bzw. zum Lesen einer bestehenden Order zu finden.
+    const names = tools.map(t => '• '+t.name+(t.description?(' — '+String(t.description).replace(/\s+/g,' ').slice(0,150)):''));
+    const full = JSON.stringify(tools.map(t => ({ name:t.name, description:t.description, inputSchema:(t.inputSchema||t.input_schema||t.parameters||null) })), null, 2);
     console.log('[OD-Schema] alle Tools:', tools.map(t=>t.name));
-    console.log('[OD-Schema] createOrder:', create);
-    if (typeof _mxTextModal==='function') _mxTextModal('🧩 Order-Display createOrder — Schema', out+'\n\n📋 Diese Zeilen an Claude schicken.');
+    console.log('[OD-Schema] tools (full):', tools);
+    const out = 'ALLE TOOLS ('+tools.length+'):\n'+names.join('\n')+'\n\n=== VOLLES SCHEMA ALLER TOOLS ===\n'+full;
+    if (typeof _mxTextModal==='function') _mxTextModal('🧩 Order-Display — alle Tools + Schemas', out+'\n\n📋 Diese Zeilen an Claude schicken.');
     else alert(out);
   } catch(e) {
     let extra=''; try { if (e.body && e.body.mcp_error) extra=' – '+String(e.body.mcp_error.message||JSON.stringify(e.body.mcp_error)).slice(0,300); } catch(_){}
