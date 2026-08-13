@@ -2778,7 +2778,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.28';
+const APP_VERSION = 'v8.29';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7437,7 +7437,10 @@ async function _ensureUsersLoaded() {
 //   (per Maxise-Sync befüllten) Preis. So zeigen wir den Auftragswert auch ohne gesetztes auftragswert_netto.
 let _aufAngPreisMap = new Map();   // erp_angebot_id -> { netto, typ }
 let _aufAngPreisFirma = '';
-async function _aufLoadAngPreisMap(firmaSlug) {
+async function _aufLoadAngPreisMap(firmaSlug, force) {
+  // v8.29: Schon für diese Firma geladen → NICHT erneut ~2000 Angebote ziehen.
+  //   Der frühere Voll-Reload nach jeder Aktion (z.B. Auftrag-Fertigstellen) lud die Map jedes Mal neu → Hänger.
+  if (!force && _aufAngPreisFirma === firmaSlug && _aufAngPreisMap && _aufAngPreisMap.size > 0) return;
   try {
     const map = new Map();
     const add = (f) => { const id=String(f.erp_angebot_id||''); if (id) map.set(id, { netto:+f.summe_netto_vp||0, typ:_angEffTyp(f) }); };
@@ -8176,14 +8179,23 @@ async function _aufCompleteWithFd(auftragRecId, btn) {
             body: JSON.stringify({ fields:{ fd_ticket_id:result.ticketId, fd_ticket_url:result.ticketUrl||'' }}),
           });
         } catch(_){}
+        // v8.29: Bericht lokal in-place aktualisieren (primary zeigt in die _aufBerichteByAuftrag-Map),
+        //   damit die Ticket-Verlinkung ohne Voll-Reload sichtbar bleibt.
+        try { primary.fd_ticket_id = result.ticketId; primary.fd_ticket_url = result.ticketUrl||''; } catch(_){}
         toast('✅ Auftrag abgeschlossen · 🎫 Ticket #'+result.ticketId+' erstellt','ok');
       } else {
         toast('✅ Auftrag abgeschlossen (Ticket konnte nicht erzeugt werden)','warn');
       }
     }
-    _aufBerichteByAuftrag = { firma:null, map:null, loadedAt:0, loading:false };
-    DIAG.step('auftrag-abschluss','Aufträge neu laden + rendern…');
-    await loadAuftraegeAndRender();
+    // v8.29: KEIN Voll-Reload mehr — der lud ~900 Aufträge + (seit v8.22) alle Angebote für die Preis-Map neu
+    //   und blockierte danach den Render → „Hänger nach Auftrag-Fertigstellen". Stattdessen NUR den einen
+    //   Auftrag lokal im Cache auf abgeschlossen setzen und neu rendern (kein Netz-Reload).
+    try {
+      const _i = _auftragCache.findIndex(r => r.id === auftragRecId);
+      if (_i >= 0) _auftragCache[_i].fields = Object.assign({}, _auftragCache[_i].fields, { status:'abgeschlossen', completed_at:new Date().toISOString() });
+    } catch(_){}
+    DIAG.step('auftrag-abschluss','lokal aktualisieren + rendern…');
+    renderAuftraegeList();
     openAuftragDetail(auftragRecId);
     DIAG.step('auftrag-abschluss','FERTIG · Auftrag '+auftragRecId);
   } catch(e) {
