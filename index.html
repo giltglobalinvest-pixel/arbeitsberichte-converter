@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.69';
+const APP_VERSION = 'v8.70';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2866,6 +2866,31 @@ const DIAG = (function(){
   };
 })();
 window.DIAG = DIAG;
+
+/* v8.70: Synchroner „Hung-Op"-Marker — lokalisiert HARTE Freezes (Endlosschleifen), die weder
+   long-task noch Fehler loggen: der Loop yielded nie → nichts wird geflusht, das Protokoll bricht
+   einfach ab. Prinzip: vor einer schweren SYNCHRONEN Operation den Namen SOFORT nach localStorage
+   schreiben; ein setTimeout(0) räumt ihn nach normalem (nicht-hängendem) Durchlauf wieder weg.
+   Hängt die Operation, feuert das Timeout nie → der Marker überlebt bis zum nächsten Start und
+   nennt die exakte Operation. Token verhindert, dass ein späterer Op den Marker eines anderen löscht. */
+let _diagOpSeq = 0;
+function _diagOp(name){
+  try {
+    const tok = String(name)+' #'+(++_diagOpSeq)+' @'+new Date().toISOString();
+    localStorage.setItem('diag_hung_op', tok);
+    setTimeout(function(){ try { if (localStorage.getItem('diag_hung_op')===tok) localStorage.removeItem('diag_hung_op'); } catch(_){} }, 0);
+  } catch(_){}
+}
+function _diagReportHungOp(){
+  try {
+    const op = localStorage.getItem('diag_hung_op');
+    if (!op) return;
+    localStorage.removeItem('diag_hung_op');
+    try { DIAG.err('main-stall', 'Vorsession HING (harter Freeze) in: '+op); } catch(_){}
+    try { _diagAutoUpload('HARD-HANG in '+String(op).slice(0,90), {force:true}); } catch(_){}
+  } catch(_){}
+}
+window.__appReady = false;   // v8.70: erst true, wenn die Aufträge geladen sind (Früh-Klick-Schutz)
 
 /* v7.89: Diagnose-Log automatisch zu uns nach Airtable schicken — bei Freeze/Fehler.
    Ziel (User-Wunsch): Hänger jedes Nutzers landen zentral bei uns, damit wir sie direkt sehen
@@ -3752,6 +3777,8 @@ async function loginWithUserKey(userKey) {
   localStorage.setItem('user_key_'+APP_CONFIG.PROJECT_ID, userKey);
   // v7.89: nach Login prüfen, ob die Vorsession abgestürzt ist → Log automatisch nachreichen
   try { setTimeout(function(){ try { _diagUploadPreviousIfCrash(); } catch(_){} }, 9000); } catch(_){}
+  // v8.70: harten Freeze der Vorsession (Hung-Op-Marker) sofort melden/hochladen
+  try { _diagReportHungOp(); } catch(_){}
   return APP_KEYS.user;
 }
 
@@ -4797,6 +4824,7 @@ function _updateTnavGroupActiveState(view) {
 }
 
 function switchView(view) {
+  _diagOp('switchView:'+view);   // v8.70: Freeze-Lokalisierung
   // Techniker-Only Gate: nur dashboard, auftraege, overview, anlagen + info + da erlaubt
   if (isTechnikerOnly() && !['dashboard','auftraege','overview','anlagen','info','da'].includes(view)) {
     return toast('🔒 Diese Ansicht ist im Techniker-Modus nicht verfügbar.', 'err');
@@ -7625,6 +7653,7 @@ async function loadAuftraegeAndRender() {
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
   }
+  window.__appReady = true;   // v8.70: Aufträge geladen (oder Fehler) → Interaktion freigegeben
 }
 
 function setAuftragTab(status) {
@@ -7678,6 +7707,7 @@ async function _aufSaveAbDatum(recId, value) {
 }
 
 function renderAuftraegeList() {
+  _diagOp('renderAuftraegeList');   // v8.70: Freeze-Lokalisierung
   const list = document.getElementById('auf-list');
   // v5.20: Berichte einmal pro Firma lazy nachladen (für Rechnungs-/FD-Zeile)
   const _firma = getCurrentFirmaSlug();
@@ -9519,6 +9549,8 @@ async function _aufLoadAbSection(abRecId, auftragRecId) {
     '</div>';
 }
 function openAuftragDetail(recId) {
+  if (!window.__appReady) { try { toast('⏳ Daten werden noch geladen – einen Moment…','err'); } catch(_){} return; }   // v8.70: Früh-Klick-Schutz
+  _diagOp('openAuftragDetail '+recId);   // v8.70: Freeze-Lokalisierung
   const rec = _auftragCache.find(r => r.id === recId);
   if (!rec) return;
   const f = rec.fields;
@@ -9721,6 +9753,8 @@ function closeAuftragDetail() {
    stage=-1 ("Neu"), deadline. Secrets (ORDERDISPLAY_TOKEN + ORDERDISPLAY_ACCOUNT_KEY_<FIRMA>)
    liegen NUR im Proxy-ENV — nie in dieser (öffentlichen) index.html. */
 async function _odCreateOrder(recId, btn) {
+  if (!window.__appReady) return toast('⏳ Daten werden noch geladen – einen Moment…','err');   // v8.70: Früh-Klick-Schutz
+  _diagOp('_odCreateOrder '+recId);   // v8.70: Freeze-Lokalisierung
   const rec = (typeof _auftragCache!=='undefined' && _auftragCache || []).find(r => r.id === recId);
   if (!rec) return toast('Auftrag nicht gefunden','err');
   const f = rec.fields || {};
@@ -9896,6 +9930,7 @@ async function _odOpenCreateModal(recId, d) {
     if (!host) return;
     if (!defs.length) { host.innerHTML = '<div style="font-size:12px;color:#92400E;background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:8px 10px">Keine Custom-Felder erhalten — es werden nur die Standardfelder gesendet.</div>'; return; }
     const valFor = (def) => (edit && cur && Object.prototype.hasOwnProperty.call(cur, def.id)) ? cur[def.id] : _odAutofillFor(def.label, f);
+    _diagOp('_odRenderFields ('+defs.length+')');   // v8.70: Freeze-Lokalisierung
     const html = defs.map(def => _odFieldInputHtml(def, valFor(def), recId)).join('');
     host.innerHTML = '<div style="font-size:11px;font-weight:700;color:var(--txt2);margin:4px 0 2px">Weitere Felder (aus Order Display · '+(edit?'aktuelle Werte, mit ✨ neu füllbar':'automatisch vorbefüllt, wo möglich · ✨ = KI-Füllung')+')</div>'+html;
   } catch(e) {
@@ -15380,6 +15415,7 @@ async function trackEvent(tool, action, meta) {
    DASHBOARD
    ────────────────────────────────────────────────────────────── */
 function renderDashboard() {
+  _diagOp('renderDashboard');   // v8.70: Freeze-Lokalisierung
   const f = getCurrentFirma();
   document.getElementById('dash-greet').textContent =
     'Willkommen, ' + (APP_KEYS.user?.name || '') + '! · ' + (f?.icon||'') + ' ' + (f?.name||'');
