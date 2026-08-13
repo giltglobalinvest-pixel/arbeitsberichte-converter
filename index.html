@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.48';
+const APP_VERSION = 'v8.49';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9349,18 +9349,19 @@ async function _aufMaxisePdf(auftragId, firmaSlug, auftragNum) {
     let body = ''; if (!isPdf) { try { body = (await r.blob.slice(0, 300).text()).replace(/\s+/g, ' ').trim(); } catch (_) {} }
     return { r, isPdf, body };
   };
-  const _deliver = (blob) => {
+  const _deliver = (blob, winPath) => {
+    if (winPath) console.log('[Maxise-AB-PDF] ✅ Treffer-Endpunkt: ' + winPath + '  (Typ ' + _typSeg + ', Auftrag ' + auftragId + ')');
     const pdfBlob = new Blob([blob], { type: 'application/pdf' });
     if (typeof _showVorlagenPreview === 'function') { _showVorlagenPreview(pdfBlob, 'Auftragsbestätigung ' + (auftragNum || auftragId) + ' (Maxise)'); try { _rvRaisePreview(); } catch (_) {} }
     else { const u = URL.createObjectURL(pdfBlob); window.open(u, '_blank'); }
-    toast('✅ Auftragsbestätigung geladen', 'ok');
+    toast('✅ Auftragsbestätigung geladen · Endpunkt in der Konsole', 'ok');
   };
   for (const p of paths) {
     for (const acc of acceptVars) {
       try {
         const { r, isPdf, body } = await _tryPdf(p, acc);
         diag.push(p + ' [Accept ' + acc + '] → HTTP ' + r.status + ' · ' + (r.contentType || '?') + ' · ' + (r.blob ? Math.round(r.blob.size / 1024) + 'KB' : '0KB') + (body ? ' · ' + body.slice(0, 140) : ''));
-        if (isPdf) { _deliver(r.blob); return; }
+        if (isPdf) { _deliver(r.blob, p); return; }
         if (r.status === 404) break; // Pfad existiert nicht → restliche Accept-Varianten überspringen
       } catch (e) { diag.push(p + ' → Fehler: ' + ((((e && e.message) || e) + '').slice(0, 90))); }
     }
@@ -9380,7 +9381,7 @@ async function _aufMaxisePdf(auftragId, firmaSlug, auftragNum) {
         try {
           const { r, isPdf } = await _tryPdf(p, 'application/octet-stream');
           diag.push('[api-docs:' + oa.src + '] ' + p + ' → HTTP ' + r.status + ' · ' + (r.contentType || '?') + ' · ' + (r.blob ? Math.round(r.blob.size / 1024) + 'KB' : '0KB'));
-          if (isPdf) { _deliver(r.blob); return; }
+          if (isPdf) { _deliver(r.blob, p + '   (aus OpenAPI-Template: ' + tmpl + ')'); return; }
         } catch (e) { diag.push('[api-docs] ' + p + ' → Fehler: ' + ((((e && e.message) || e) + '').slice(0, 80))); }
       }
       discInfo = '\n\n📖 OpenAPI-Doku gefunden über „' + oa.src + '" (' + oa.paths.length + ' Pfade).' +
