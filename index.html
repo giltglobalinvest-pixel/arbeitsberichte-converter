@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.34';
+const APP_VERSION = 'v8.35';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9383,6 +9383,12 @@ function openAuftragDetail(recId) {
     if (APP_KEYS.valtownProxyUrl && (f.ext_id || f.auftrag_num || f.ext_vorgangsnummer)) {
       const odDone = !!f.od_order_id;
       html += '<button class="btn" style="color:#fff;border-color:#7C3AED;background:#7C3AED" onclick="_odCreateOrder(\''+rec.id+'\', this)" title="Diesen Auftrag als Auftrag im Order Display (LiteLead) anlegen (createOrder via MCP)">🚀 '+(odDone ? 'Order Display ✓ (erneut)' : 'In Order Display anlegen')+'</button>';
+    }
+    // v8.35: Archivieren/Wiederherstellen (hidden_manual) — Auftrag bleibt erhalten, verschwindet aber aus der aktiven Liste.
+    if (f.hidden_manual) {
+      html += '<button class="btn" style="color:#3730A3;border-color:#A5B4FC" onclick="toggleHideAuftragManual(\''+rec.id+'\', false)" title="Auftrag wieder in der aktiven Liste anzeigen">↺ Aus Archiv holen</button>';
+    } else {
+      html += '<button class="btn" style="color:#3730A3;border-color:#A5B4FC;background:#EEF2FF" onclick="toggleHideAuftragManual(\''+rec.id+'\', true)" title="Auftrag archivieren — bleibt in Airtable/ERP erhalten, verschwindet aber aus der aktiven Liste. Über „🙈 Ausgeblendete zeigen“ wieder auffindbar.">🗄 Archivieren</button>';
     }
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')" title="Nur den lokalen Servicebox-Datensatz löschen — ERP/Maxise bleibt unberührt (Auftrag wird beim nächsten Sync wieder importiert!)">🗑 Löschen</button>';
   }
@@ -35314,7 +35320,7 @@ async function _abGenerateAndSave(btn, send) {
         (kiTyp && kiTyp.begruendung ? ('\n'+kiTyp.begruendung+'\n') : '')+
         (kiTyp && kiTyp.quelle === 'fallback' ? '\n(Hinweis: KI nicht verfügbar — Typ deterministisch abgeleitet.)\n' : '')+
         (brauchtAngebot ? '\nℹ Für diesen Typ wird ein Maxise-Angebot benötigt — falls keins verknüpft ist, wird es zuvor angelegt.\n' : '')+
-        '\nAuftrag so in Maxise anlegen?\n(Abbrechen = AB wird nur mit Servicebox-Nummer erstellt, KEIN ERP-Auftrag)');
+        '\nAuftrag so in Maxise anlegen?\n(Abbrechen = KEINE Auftragsbestätigung — der Auftrag muss in Maxise entstehen)');
       if (proceed) {
         // v8.34: STUFE 1 — vor dem ERP-Push die Maxise-Anlage sicherstellen (Auto-Match per Fabriknummer).
         //   Ohne anlage_id/kunde_nummer scheitert der Push zwangsläufig → hier vorab verknüpfen.
@@ -35345,11 +35351,19 @@ async function _abGenerateAndSave(btn, send) {
           toast('⚠ Auftrag konnte nicht in Maxise angelegt werden: '+((e&&e.message)||e)+' — AB nutzt eigene Nummer.','warn');
         }
       } else {
-        toast('Kein ERP-Auftrag angelegt — AB erhält eine Servicebox-Nummer.','');
+        // v8.35: proceed=false → kein ERP-Auftrag → die Block-Regel unten verhindert die AB.
       }
     }
-    const serviceboxNum = await _abNextNummer(firmaSlug);   // interner Nummernkreis (Fallback + immer belegt)
-    const nummer = erpAuftragNum || String(serviceboxNum);  // ANGEZEIGTE AB-Nummer
+    // v8.35: BLOCK-REGEL (User-Entscheidung) — ohne Maxise-Auftrag KEINE AB. Reihenfolge muss stimmen:
+    //   Kunde + Anlage in Maxise → Angebot → Auftrag. Bricht die Kette, wird nichts erzeugt und der
+    //   50001-Servicebox-Nummernkreis kommt als angezeigte AB-Nummer gar nicht mehr zum Einsatz.
+    if (fAng && !erpAuftragNum) {
+      toast('Keine Auftragsbestätigung erstellt: Es entstand kein Maxise-Auftrag. Reihenfolge sicherstellen — Kunde + Anlage müssen in Maxise stimmen, dann Angebot → Auftrag (liefert die Nummer).','err');
+      if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
+      return;
+    }
+    const serviceboxNum = await _abNextNummer(firmaSlug);   // Fallback-Integer nur noch für die interne Spalte ab_nummer; ANGEZEIGT wird erpAuftragNum
+    const nummer = erpAuftragNum || String(serviceboxNum);  // ANGEZEIGTE AB-Nummer — mit Block-Regel immer die Maxise-Auftragsnummer
     if (btn) btn.textContent = '⏳ erzeuge…';
     d.abNummer = nummer;
     if (erpAuftragNum) d.auftragNum = '';                    // AB-Nr IST bereits die Auftragsnummer → keine Doppelzeile im PDF
