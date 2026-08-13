@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.35';
+const APP_VERSION = 'v8.36';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35408,7 +35408,7 @@ async function _abGenerateAndSave(btn, send) {
     try {
       const _info = { ab_recid: rec.id, ab_nummer: fields.ab_nummer, erp_auftrag_num: fields.erp_auftrag_num, local_auftrag_recid: fields.local_auftrag_recid };
       if (fields.angebot_rec_id) _angAbByRec.set(String(fields.angebot_rec_id), _info);
-      if (fields.angebot_num)    _angAbByNum.set(String(fields.angebot_num), _info);
+      else if (fields.angebot_num) _angAbByNum.set(String(fields.angebot_num), _info);  // v8.36: Nummern-Map nur ohne rec-id (kein Fehlmatch auf fremde Angebote)
     } catch(_){}
     // v8.33: Angebote-Liste sofort neu rendern — sonst blieb die Karte badge-los bis zum manuellen Neuladen.
     //   Die Map ist oben schon aktualisiert; _renderAngeboteList() liest aus dem Cache (Filter/Fokus bleiben erhalten).
@@ -35463,8 +35463,11 @@ async function _angLoadAbMap(firmaSlug) {
     for (const r of (abs||[])) {
       const f = r.fields||{};
       const info = { ab_recid:r.id, ab_nummer:f.ab_nummer, erp_auftrag_num:f.erp_auftrag_num, local_auftrag_recid:f.local_auftrag_recid };
-      const rid = String(f.angebot_rec_id||''); if (rid) _angAbByRec.set(rid, info);
-      const num = String(f.angebot_num||'');     if (num) _angAbByNum.set(num, info);
+      // v8.36: AB mit rec-id → NUR in die Rec-ID-Map. Nummern-Map ist ausschließlich Fallback für
+      //   Legacy-ABs OHNE rec-id — sonst matcht eine AB fälschlich ein fremdes Angebot mit gleicher Nummer.
+      const rid = String(f.angebot_rec_id||'');
+      if (rid) { _angAbByRec.set(rid, info); }
+      else { const num = String(f.angebot_num||''); if (num) _angAbByNum.set(num, info); }
     }
   } catch(e) { console.warn('[Angebote] AB-Map:', e && e.message); }
 }
