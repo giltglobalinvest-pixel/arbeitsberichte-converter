@@ -1405,13 +1405,12 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="tnav active" id="tnav-dashboard" onclick="switchView('dashboard')">🏠 Dashboard</button>
 
     <!-- GRUPPE: Operativ (immer sichtbar) -->
-    <div class="tnav-group" id="tnav-grp-operativ" data-group-views="conv,overview,auftraege,ab,anlagen,wartung,angebote,projekte,verantw,vertraege">
+    <div class="tnav-group" id="tnav-grp-operativ" data-group-views="conv,overview,auftraege,anlagen,wartung,angebote,projekte,verantw,vertraege">
       <button class="tnav tnav-trigger" onclick="_toggleTnavGroup('tnav-grp-operativ', event)">🛠 Operativ</button>
       <div class="tnav-menu">
         <button class="tnav-menu-item" id="tnav-conv" onclick="switchView('conv')">🔧 Arbeitsberichte-Konverter</button>
         <button class="tnav-menu-item" id="tnav-overview" onclick="switchView('overview')">📋 Berichts-Übersicht</button>
         <button class="tnav-menu-item" id="tnav-auftraege" onclick="switchView('auftraege')">🛠 Aufträge</button>
-        <button class="tnav-menu-item" id="tnav-ab" onclick="switchView('ab')" style="display:none" title="Erstellte Auftragsbestätigungen ansehen, herunterladen und senden">📋 Auftragsbestätigungen</button>
         <button class="tnav-menu-item" id="tnav-angebote" onclick="switchView('angebote')">📄 Angebote</button>
         <button class="tnav-menu-item" id="tnav-lv" onclick="switchView('lv')">📑 Leistungsverzeichnisse</button>
         <button class="tnav-menu-item" id="tnav-briefberichte" onclick="switchView('briefberichte')">📝 Berichte (Briefpapier)</button>
@@ -2797,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.43';
+const APP_VERSION = 'v8.44';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -4001,7 +4000,6 @@ async function showApp() {
     const grpAdm = document.getElementById('tnav-grp-admin');   if (grpAdm)     grpAdm.style.display = '';
     document.getElementById('tnav-firmen').style.display = '';
     document.getElementById('tnav-preislisten').style.display = '';
-    { const abNav = document.getElementById('tnav-ab'); if (abNav) abNav.style.display = ''; }
     document.getElementById('tnav-vorlagen').style.display = '';
     document.getElementById('tnav-kunden').style.display = '';
     document.getElementById('tnav-kontakte').style.display = '';
@@ -9248,6 +9246,48 @@ async function changeAuftragTmpl(recId, newTmpl) {
 }
 
 /* ── DETAIL-MODAL ───────────────────────────── */
+/* v8.44: AB-Sektion im Auftrag-Detail — zeigt die verknüpfte Auftragsbestätigung (PDF/Senden/Status/Löschen)
+   direkt am Auftrag und ersetzt so die separate „Auftragsbestätigungen"-Liste. Lädt den AB-Record per ab_recid. */
+async function _aufLoadAbSection(abRecId, auftragRecId) {
+  const host = document.getElementById('auf-ab-section');
+  if (!host || !abRecId) return;
+  let rec = null;
+  try {
+    rec = (typeof _abListCache!=='undefined' && _abListCache || []).find(r => r.id === abRecId) || null;
+    if (!rec) {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftragsbestaetigungen/'+encodeURIComponent(abRecId), { headers:{ 'Authorization':'Bearer '+key }});
+      if (r.ok) rec = await r.json();
+    }
+  } catch(_){}
+  const host2 = document.getElementById('auf-ab-section');
+  if (!host2) return;   // Detail zwischenzeitlich geschlossen/neu gerendert
+  if (!rec || !rec.fields) { host2.innerHTML = ''; return; }
+  const f = rec.fields;
+  const st = (typeof AB_STATUS!=='undefined' && AB_STATUS[f.status||'entwurf']) || { label:(f.status||'Entwurf'), bg:'#EEF2FF', color:'#3730A3' };
+  const pdfUrl = (Array.isArray(f.pdf) && f.pdf[0] && f.pdf[0].url) || '';
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const num = (typeof _abDispNum==='function') ? _abDispNum(f) : String(f.erp_auftrag_num||f.ab_nummer||'');
+  const maxiseBadge = f.erp_auftrag_num
+    ? '<span style="font-size:10px;font-weight:700;background:#DCFCE7;color:#166534;border:1px solid #86EFAC;padding:1px 7px;border-radius:99px">🔗 Maxise · Auftrag '+escapeHtml(String(f.erp_auftrag_num))+'</span>'
+    : '<span style="font-size:10px;font-weight:600;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;padding:1px 7px;border-radius:99px">⚠ ohne Maxise</span>';
+  host2.innerHTML =
+    '<div class="auf-section"><h3>📋 Auftragsbestätigung</h3>'+
+      '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px">'+
+        '<strong style="color:var(--navy)">AB '+escapeHtml(String(num||'?'))+'</strong>'+
+        '<span style="background:'+st.bg+';color:'+st.color+';padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700">'+escapeHtml(st.label)+'</span>'+
+        maxiseBadge+
+        (f.versendet_am?'<span style="font-size:11px;color:var(--txt3)">📤 versendet '+escapeHtml(f.versendet_am)+'</span>':'')+
+      '</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">'+
+        (pdfUrl ? '<a class="btn" style="text-decoration:none" href="'+escapeHtml(pdfUrl)+'" target="_blank" rel="noopener">📄 PDF</a>' : '<button class="btn" onclick="_abReDownload(\''+rec.id+'\')">📄 PDF</button>')+
+        (freshdeskIsConfigured(firmaSlug) ? '<button class="btn" style="background:#EFF6FF;border-color:rgba(33,82,169,.4);color:#2152A9" onclick="_abOpenSendModal(\''+rec.id+'\')">📤 An Kunde senden</button>' : '')+
+        (f.fd_ticket_url ? '<a class="btn" style="text-decoration:none" href="'+escapeHtml(f.fd_ticket_url)+'" target="_blank" rel="noopener">🎫 Ticket</a>' : '')+
+        '<button class="btn" style="color:#DC2626;border-color:#FCA5A5" onclick="_abDeleteRec(\''+rec.id+'\')" title="Auftragsbestätigung löschen (Auftrag bleibt bestehen)">🗑 AB löschen</button>'+
+      '</div>'+
+    '</div>';
+}
 function openAuftragDetail(recId) {
   const rec = _auftragCache.find(r => r.id === recId);
   if (!rec) return;
@@ -9360,10 +9400,13 @@ function openAuftragDetail(recId) {
       <h3>Zugewiesene Techniker</h3>
       <div id="auf-detail-techniker">${_renderInlineTechnikerPicker(rec)}</div>
     </div>
+    <div id="auf-ab-section"></div>
     ${_aufRenderFolgeTicketsSection(rec)}
     ${_aufRenderBerichteSection(rec)}
     ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
   `;
+  // v8.44: verknüpfte Auftragsbestätigung (PDF/Senden/Status/Löschen) direkt im Auftrag-Detail — ersetzt das separate AB-Menü.
+  try { if (f.ab_recid && typeof _aufLoadAbSection === 'function') _aufLoadAbSection(f.ab_recid, rec.id); } catch(_){}
 
   // Footer-Buttons abhängig von Permissions + Status
   const foot = document.getElementById('auf-detail-foot');
