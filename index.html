@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.50';
+const APP_VERSION = 'v8.51';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35739,6 +35739,18 @@ async function _abGenerateAndSave(btn, send) {
       created_by:         (APP_KEYS.user && APP_KEYS.user.name) || '',
     };
     await _ensureAbTable();
+    // v8.51: Ersetzen statt Duplizieren — existiert schon eine AB für dieses Angebot (z.B. nach Storno/Neu-Anlage),
+    //   die alte zuerst löschen, damit nicht zwei AB-Datensätze pro Angebot entstehen.
+    try {
+      const _old = fields.angebot_rec_id ? _angAbByRec.get(String(fields.angebot_rec_id))
+                 : (fields.angebot_num ? _angAbByNum.get(String(fields.angebot_num)) : null);
+      const _oldRid = _old && _old.ab_recid;
+      if (_oldRid) {
+        await atDelete('Auftragsbestaetigungen', _oldRid);
+        _abListCache = (_abListCache||[]).filter(r=>r.id!==_oldRid);
+        console.log('[AB-Save] alte AB '+_oldRid+' ersetzt (Neu-Erstellung für dasselbe Angebot).');
+      }
+    } catch(e){ console.warn('[AB-Save] Alt-AB-Löschung:', e && e.message); }
     const rec = await atWrite('Auftragsbestaetigungen', fields);
     try { await atBlobUpload(rec.id, 'pdf', blob, 'Auftragsbestaetigung-'+nummer+'.pdf', 'application/pdf'); }
     catch(e) { console.warn('[AB-Save] PDF-Upload:', e.message); }
@@ -35814,10 +35826,15 @@ async function _angLoadAbMap(firmaSlug) {
   } catch(e) { console.warn('[Angebote] AB-Map:', e && e.message); }
 }
 function _angFindAb(recId, f) {
-  const byRec = _angAbByRec.get(String(recId)); if (byRec) return byRec;
-  const nums = [f && f.erp_angebot_id, f && f.erp_angebot_nummer, f && f.app_angebot_num, f && f.angebot_nr].filter(Boolean).map(String);
-  for (const n of nums) { const hit = _angAbByNum.get(n); if (hit) return hit; }
-  return null;
+  let ab = _angAbByRec.get(String(recId)) || null;
+  if (!ab) {
+    const nums = [f && f.erp_angebot_id, f && f.erp_angebot_nummer, f && f.app_angebot_num, f && f.angebot_nr].filter(Boolean).map(String);
+    for (const n of nums) { const hit = _angAbByNum.get(n); if (hit) { ab = hit; break; } }
+  }
+  if (!ab) return null;
+  // v8.51: AB, deren Maxise-Auftrag storniert ist, gelten nicht mehr als aktive Beauftragung/Verknüpfung.
+  if (ab.erp_auftrag_num && typeof _angStorniertAuftragNums!=='undefined' && _angStorniertAuftragNums.has(String(ab.erp_auftrag_num))) return null;
+  return ab;
 }
 async function _angGoToAuftrag(localAuftragRecId, abRecId) {
   if (localAuftragRecId) {
@@ -35836,18 +35853,24 @@ async function _angGoToAuftrag(localAuftragRecId, abRecId) {
 // v8.25: Set der Angebots-IDs, die IN MAXISE einen Auftrag haben (per angebotid). So gilt „beauftragt" auch für
 //   Aufträge, die direkt in Maxise (ohne Servicebox-AB) entstanden sind — nicht nur die Servicebox-ABs.
 let _angBeauftragtSet = new Set();
+let _angStorniertAuftragNums = new Set();   // v8.51: Maxise-Auftragsnummern (a.id) mit Status storniert
 let _angBeauftragtFirma = '';
 async function _angLoadBeauftragtSet(firmaSlug) {
   try {
-    if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) { _angBeauftragtSet = new Set(); return; }
+    if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) { _angBeauftragtSet = new Set(); _angStorniertAuftragNums = new Set(); return; }
     const res = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
     const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
     const set = new Set();
+    const storno = new Set();
     for (const a of list) {
+      const isStorno = /storn/i.test(String((a && a.status) || ''));
+      const num = String((a && (a.id ?? a.auftragid ?? a.auftragId)) || '');   // Maxise-Auftragsnummer = a.id
+      if (isStorno && num) storno.add(num);
       const aid = a && (a.angebotid ?? a.angebotId ?? (a.angebot && a.angebot.id));
-      if (aid != null && aid !== '') set.add(String(aid));
+      // v8.51: stornierte Aufträge zählen NICHT als „beauftragt"
+      if (aid != null && aid !== '' && !isStorno) set.add(String(aid));
     }
-    _angBeauftragtSet = set; _angBeauftragtFirma = firmaSlug;
+    _angBeauftragtSet = set; _angStorniertAuftragNums = storno; _angBeauftragtFirma = firmaSlug;
   } catch(e) { console.warn('[Angebote] Beauftragt-Set (Maxise-Aufträge):', e && e.message); }
 }
 /* v7.93: Anzeige-Nummer = echte Maxise-Auftragsnummer, sonst interne Servicebox-Nummer. */
