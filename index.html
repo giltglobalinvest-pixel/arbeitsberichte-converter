@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.54';
+const APP_VERSION = 'v8.55';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32392,6 +32392,15 @@ async function _angResolveEmpfaengerAdresse(firmaSlug, empfId) {
   return '';
 }
 
+/* v8.55: Ist die Empfänger-Adresse eines Angebots unvollständig? Spiegelt exakt die Banner-Prüfung:
+   leer ODER < 2 verwertbare Adresszeilen (nur der Firmenname zählt NICHT als Adresse). */
+function _angEmpfUnvollstaendig(f){
+  const raw = String((f&&f.kunde_adresse)||'').trim();
+  if (!raw) return true;
+  const lines = (raw.indexOf('\n')>=0?raw.split('\n'):raw.split(',')).map(s=>s.trim()).filter(Boolean)
+                  .filter(l => l.toLowerCase() !== String((f&&f.kunde_name)||'').toLowerCase());
+  return lines.length < 2;
+}
 /* v8.54: Empfänger-(Kunden-)Adresse eines Angebots aus Maxise auflösen (Anlage→Kunde, sonst per Kundennummer).
    Liefert Straße + PLZ/Ort als Mehrzeiler (ohne Firmenname — der steht im PDF separat). '' wenn nicht auflösbar. */
 async function _angResolveKundeAdresseFromMaxise(firmaSlug, f) {
@@ -34861,7 +34870,7 @@ function openAngebotDetail(recId) {
     '</div>';
   document.body.appendChild(m);
   // v8.54: fehlende Empfänger-Adresse im Hintergrund aus Maxise nachladen (Anlage→Kunde), Banner + Feld aktualisieren
-  try { if (!String(f.kunde_adresse||'').trim() && typeof _angFillEmpfaengerFromMaxise==='function') _angFillEmpfaengerFromMaxise(recId, f); } catch(_){}
+  try { if (_angEmpfUnvollstaendig(f) && typeof _angFillEmpfaengerFromMaxise==='function') _angFillEmpfaengerFromMaxise(recId, f); } catch(_){}
 }
 /* v8.54: Lädt die fehlende Empfänger-Adresse eines Angebots aus Maxise, schreibt sie ins Feld zurück
    und aktualisiert den Banner im offenen Detail (aus „unvollständig" wird „📬 Empfänger (aus Maxise)"). */
@@ -37552,7 +37561,7 @@ async function _angRegeneratePdf(recId, btn) {
     } catch(e) { console.warn('[Angebot-PDF] reload rec fail:', e.message); }
     // v8.54: Empfänger-Adresse fehlt lokal? Aus Maxise nachladen (Anlage→Kunde) + zurückschreiben,
     //   sonst bliebe der Empfänger-Block im PDF leer (Warnung „Empfänger-Adresse unvollständig").
-    if (!String(freshFields.kunde_adresse||'').trim()) {
+    if (_angEmpfUnvollstaendig(freshFields)) {
       try {
         const _adr = await _angResolveKundeAdresseFromMaxise(freshFields.firma||getCurrentFirmaSlug(), freshFields);
         if (_adr) {
