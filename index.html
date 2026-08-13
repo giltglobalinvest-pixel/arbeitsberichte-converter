@@ -2796,7 +2796,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.53';
+const APP_VERSION = 'v8.54';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -32392,6 +32392,26 @@ async function _angResolveEmpfaengerAdresse(firmaSlug, empfId) {
   return '';
 }
 
+/* v8.54: Empfänger-(Kunden-)Adresse eines Angebots aus Maxise auflösen (Anlage→Kunde, sonst per Kundennummer).
+   Liefert Straße + PLZ/Ort als Mehrzeiler (ohne Firmenname — der steht im PDF separat). '' wenn nicht auflösbar. */
+async function _angResolveKundeAdresseFromMaxise(firmaSlug, f) {
+  try {
+    if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) return '';
+    f = f || {};
+    let kunde = null;
+    if (f.anlage_id) {
+      try { const anlage = await erpFetch('/aufzug/'+firmaSlug+'/api/anlagen/'+encodeURIComponent(f.anlage_id)); kunde = (anlage && anlage.kunde) || null; } catch(_){}
+    }
+    if (!kunde && f.kunde_nummer) {
+      try { const k = await erpFetch('/aufzug/'+firmaSlug+'/api/kunden/'+encodeURIComponent(f.kunde_nummer)); kunde = (k && (k.kundennummer||k.id||k.firmenname)) ? k : null; } catch(_){}
+      if (!kunde) kunde = { kundennummer: String(f.kunde_nummer) };
+    }
+    if (!kunde) return '';
+    const adr = await _nwvResolveKundeAdresse(firmaSlug, kunde, []);
+    return (adr && String(adr).trim()) ? String(adr).trim() : '';
+  } catch(e) { console.warn('[Angebot-Empfaenger] Maxise-Load:', e && e.message); return ''; }
+}
+
 /* v8.53: Cache-Wrapper — dieselbe adresseId wird nicht mehrfach über die langsamen ERP-Endpunkte aufgelöst
    (verhindert Roundtrip-Stau/„Einfrieren" bei wiederholten Auflösungen). */
 const _angAdresseIdCache = new Map();
@@ -34707,8 +34727,8 @@ function openAngebotDetail(recId) {
           (f.erstellt_am ? '<span style="color:var(--txt3);font-size:11px">📅 '+escapeHtml(f.erstellt_am)+'</span>' : '')+
         '</div>'+
         '<div><strong>👥 Kunde:</strong> '+escapeHtml(f.kunde_name||'?')+(f.kunde_nummer?' (Nr. '+escapeHtml(f.kunde_nummer)+')':'')+'</div>'+
-        // Empfänger-Anschrift wie sie ins PDF kommt — sofort sichtbar
-        (() => {
+        // Empfänger-Anschrift wie sie ins PDF kommt — sofort sichtbar (v8.54: id für Maxise-Nachladung)
+        '<div id="ang-empf-box">'+(() => {
           const adrRaw = String(f.kunde_adresse||'').trim();
           const adrLines = adrRaw ? (adrRaw.indexOf('\n')>=0 ? adrRaw.split('\n') : adrRaw.split(',')).map(s=>s.trim()).filter(Boolean).filter(l => l.toLowerCase() !== String(f.kunde_name||'').toLowerCase()) : [];
           const kontakt = f.kontakt_name ? '<div>z.Hd. '+escapeHtml(f.kontakt_name)+'</div>' : '';
@@ -34716,7 +34736,7 @@ function openAngebotDetail(recId) {
             return '<div style="margin-top:6px;padding:8px 10px;background:#F0FDF4;border-left:3px solid #10b981;border-radius:4px;font-size:11.5px"><strong style="color:#065F46">📬 Empfänger (PDF):</strong>'+kontakt+adrLines.map(l => '<div>'+escapeHtml(l)+'</div>').join('')+'</div>';
           }
           return '<div style="margin-top:6px;padding:8px 10px;background:#FEF2F2;border-left:3px solid #EF4444;border-radius:4px;font-size:11.5px"><strong style="color:#991B1B">⚠ Empfänger-Adresse unvollständig:</strong> '+(adrLines.length?adrLines.join(', '):'(leer)')+'<br><span style="color:#7F1D1D">Bitte über „Bearbeiten" ergänzen — sonst fehlt sie im PDF.</span></div>';
-        })()+
+        })()+'</div>'+
         '<div><strong>🛗 Anlage:</strong> '+escapeHtml(f.seriennummer||'?')+' · '+escapeHtml(f.anlage_adresse||'')+
           (f.anlage_id?' · <span title="Maxise-Anlagen-ID (nicht die Fabriknummer)">🏢 Anlage-ID '+escapeHtml(String(f.anlage_id))+'</span>':'')+
           (()=>{ const c=_aufAufzugCount(f); return ' · 🛗 '+c+' Aufzug'+(c===1?'':'e'); })()+
@@ -34840,6 +34860,31 @@ function openAngebotDetail(recId) {
       '</div>'+
     '</div>';
   document.body.appendChild(m);
+  // v8.54: fehlende Empfänger-Adresse im Hintergrund aus Maxise nachladen (Anlage→Kunde), Banner + Feld aktualisieren
+  try { if (!String(f.kunde_adresse||'').trim() && typeof _angFillEmpfaengerFromMaxise==='function') _angFillEmpfaengerFromMaxise(recId, f); } catch(_){}
+}
+/* v8.54: Lädt die fehlende Empfänger-Adresse eines Angebots aus Maxise, schreibt sie ins Feld zurück
+   und aktualisiert den Banner im offenen Detail (aus „unvollständig" wird „📬 Empfänger (aus Maxise)"). */
+async function _angFillEmpfaengerFromMaxise(recId, f) {
+  const firmaSlug = (f && f.firma) || getCurrentFirmaSlug();
+  const box = document.getElementById('ang-empf-box');
+  if (box) box.innerHTML = '<div style="margin-top:6px;padding:8px 10px;background:#EFF6FF;border-left:3px solid #2152A9;border-radius:4px;font-size:11.5px;color:#1E3A8A">📥 Empfänger-Adresse wird aus Maxise geladen …</div>';
+  let adr = '';
+  try { adr = await _angResolveKundeAdresseFromMaxise(firmaSlug, f); } catch(_){}
+  let box2 = document.getElementById('ang-empf-box');
+  if (!box2) return;   // Detail zwischenzeitlich geschlossen
+  if (!adr) {
+    box2.innerHTML = '<div style="margin-top:6px;padding:8px 10px;background:#FEF2F2;border-left:3px solid #EF4444;border-radius:4px;font-size:11.5px"><strong style="color:#991B1B">⚠ Empfänger-Adresse unvollständig:</strong> (leer)<br><span style="color:#7F1D1D">In Maxise keine Adresse gefunden — bitte über „Bearbeiten" ergänzen.</span></div>';
+    return;
+  }
+  // Ins Feld zurückschreiben (Record + Cache), damit PDF + Warnung dauerhaft stimmen
+  try { await atUpdate('App_Angebote', recId, { kunde_adresse: adr }); } catch(e){ console.warn('[Angebot-Empfaenger] Patch:', e && e.message); }
+  try { const r=(_angeboteCache.items||[]).find(x=>x.id===recId); if (r&&r.fields) r.fields.kunde_adresse = adr; } catch(_){}
+  box2 = document.getElementById('ang-empf-box');
+  if (box2) {
+    const kontakt = f.kontakt_name ? '<div>z.Hd. '+escapeHtml(f.kontakt_name)+'</div>' : '';
+    box2.innerHTML = '<div style="margin-top:6px;padding:8px 10px;background:#F0FDF4;border-left:3px solid #10b981;border-radius:4px;font-size:11.5px"><strong style="color:#065F46">📬 Empfänger (aus Maxise):</strong>'+kontakt+String(adr).split('\n').map(l=>'<div>'+escapeHtml(l)+'</div>').join('')+'</div>';
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -37505,6 +37550,18 @@ async function _angRegeneratePdf(recId, btn) {
         rec.fields = dR.fields; // Cache nachziehen
       }
     } catch(e) { console.warn('[Angebot-PDF] reload rec fail:', e.message); }
+    // v8.54: Empfänger-Adresse fehlt lokal? Aus Maxise nachladen (Anlage→Kunde) + zurückschreiben,
+    //   sonst bliebe der Empfänger-Block im PDF leer (Warnung „Empfänger-Adresse unvollständig").
+    if (!String(freshFields.kunde_adresse||'').trim()) {
+      try {
+        const _adr = await _angResolveKundeAdresseFromMaxise(freshFields.firma||getCurrentFirmaSlug(), freshFields);
+        if (_adr) {
+          freshFields.kunde_adresse = _adr; rec.fields.kunde_adresse = _adr;
+          try { await atUpdate('App_Angebote', recId, { kunde_adresse: _adr }); } catch(_){}
+          console.log('[Angebot-PDF] Empfänger-Adresse aus Maxise ergänzt: '+_adr.replace(/\n/g,', '));
+        }
+      } catch(_){}
+    }
     const blob = await _buildAngebotPdf(Object.assign({}, freshFields, { id: recId }));
     const fname = 'Angebot-ANG'+(freshFields.app_angebot_num||'')+'.pdf';
     // v5.42: WICHTIG — Attachment-Feld erst leeren, sonst haengt Airtable das neue
