@@ -2797,7 +2797,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.64';
+const APP_VERSION = 'v8.65';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9745,7 +9745,7 @@ function _odAutofillFor(label, f){
     if (/pausch/.test(t)) return 'Pauschal';
     return '';
   }
-  if (/leistung/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').split('\n')[0]||'';
+  if (/leistung/.test(L)) return String(f.leistungsbeschreibung||f.leistungsumfang||'').trim();
   if (/ansprech|zugang/.test(L)) return String(f.kontakt_name || String(f.kontakt||'').split('\n')[0] || '');
   return '';   // Hundt Consult / Priorisierte Bearbeitung / Materiallieferung / Liftmanager … → manuell
 }
@@ -9849,6 +9849,35 @@ async function _odOpenCreateModal(recId, d) {
   }
 }
 
+/* v8.65: Löst den „Kunde" (createOrder.customer = Firestore-Pfad) über getCustomers per Namensabgleich auf.
+   customer ist NUR beim Anlegen setzbar (updateOrderFields kennt es nicht). Best-effort, max. 3 Seiten. */
+async function _odResolveCustomerPath(firmaSlug, kundeName, kundeNr){
+  try {
+    const norm = s => String(s||'').toLowerCase().replace(/\b(gmbh|mbh|e\.?\s?k\.?|kg|ag|co\.?|und|&)\b/g,' ').replace(/[^a-z0-9äöüß ]/g,' ').replace(/\s+/g,' ').trim();
+    const want = norm(kundeName);
+    const wantNr = String(kundeNr||'').trim();
+    if (!want && !wantNr) return '';
+    let cursor = '', logged = false;
+    for (let page=0; page<3; page++) {
+      const args = { limit: 100 }; if (cursor) args.cursor = cursor;
+      const r = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'getCustomers', arguments: args } });
+      const res = (r && (r.result!=null?r.result:r.raw)) || {};
+      if (!logged) { console.log('[OD-Customers sample]', res); logged = true; }
+      const list = Array.isArray(res) ? res : (res.customers||res.items||res.data||res.results||res.docs||[]);
+      if (!Array.isArray(list) || !list.length) break;
+      for (const c of list) {
+        const nm = norm(c.name||c.firmenname||c.customerName||c.company||_odStr(c.label));
+        const nr = String(c.customerNumber||c.kundennummer||c.number||'').trim();
+        const path = c.path || c.documentPath || c.ref || '';
+        if (path && ((wantNr && nr && nr===wantNr) || (want && nm && (nm===want || nm.includes(want) || want.includes(nm))))) return path;
+      }
+      cursor = res.cursor || res.nextCursor || res.next || (res.pageInfo && res.pageInfo.nextCursor) || '';
+      if (!cursor) break;
+    }
+  } catch(e){ console.warn('[OD-Customer]', e && e.message); }
+  return '';
+}
+
 /* v8.60: Sendet den Order-Display-Auftrag ab. Liest Standardfelder + dynamische Custom-Felder (details).
    Merkt die Ticketnummer am Auftrag (od_ticket_num). */
 async function _odSubmitOrder(recId) {
@@ -9899,6 +9928,10 @@ async function _odSubmitOrder(recId) {
   // ── NEU ANLEGEN ──
   const args = { title, orderNumber, ticketNumber, stage: -1, deadline };
   if (Object.keys(details).length) args.details = details;
+  // v8.65: Kunde (customer) als Firestore-Referenz auflösen (nur beim Anlegen setzbar)
+  if (btn) btn.textContent = '⏳ suche Kunde…';
+  try { const cp = await _odResolveCustomerPath(firmaSlug, f.kunde_firmenname, f.kunde_nummer); if (cp) { args.customer = cp; console.log('[OD-Create] Kunde verknüpft:', cp); } else console.log('[OD-Create] Kein OD-Kunde für „'+(f.kunde_firmenname||'')+'" gefunden.'); } catch(_){}
+  if (btn) btn.textContent = '⏳ Order Display…';
   try {
     const res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', {
       method:'POST', body:{ name:'createOrder', arguments: args }
