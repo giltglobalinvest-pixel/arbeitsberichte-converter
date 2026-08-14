@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.77';
+const APP_VERSION = 'v8.78';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9788,12 +9788,22 @@ async function _odCreateOrder(recId, btn) {
   if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
 
+  // v8.78: Angebotsnummer (Servicebox, z.B. 2608) + Ticketnummer stehen am AB-Datensatz, NICHT am Auftrag
+  //   (der Auftrag trägt nur die Maxise-Angebot-ID, z.B. 2970). Über ab_recid nachladen und vorbefüllen.
+  let _abTicket = '', _abAngNum = '';
+  if (f.ab_recid) { try {
+    const _ab = await _abGetRec(f.ab_recid); const _af = (_ab && _ab.fields) || {};
+    _abTicket = String(_af.ticket_num || '').trim();
+    _abAngNum = String(_af.angebot_num || '').replace(/^ANG[-\s]?/i,'').trim();
+  } catch(_){} }
+  if (_abAngNum) rec.fields._odAngebotNum = _abAngNum;   // → _odAutofillFor nutzt das für „Angebotsnummer"
+
   // ── Pflichtfelder + Titel-Vorlage „Auftragsbestätigung {auftragsnr} zu Standort {standort}" ──
   // v8.75-FIX: die ANGEZEIGTE Auftragsnummer nehmen (ext_id = Maxise-Auftrag-ID = das, was auf der AB steht),
   //   NICHT die interne Vorgangsnummer (ext_vorgangsnummer) — die wich vom sichtbaren #2035 ab (z.B. 3176).
   const orderNumber  = String(f.ext_id || f.auftrag_num || f.ext_vorgangsnummer || '').trim();
   if (!orderNumber) return toast('Kein orderNumber ableitbar (Maxise-Auftragsnr fehlt).','err');
-  const ticketNumber = String(f.od_ticket_num || f.ticket_num || f.fd_ticket_id || f.freshdesk_ticket_id || '').trim();
+  const ticketNumber = String(f.od_ticket_num || _abTicket || f.ticket_num || f.fd_ticket_id || f.freshdesk_ticket_id || '').trim();   // v8.78: AB-Ticketnummer vorbefüllen (editierbar)
   const _std = String(f.standort || f.anlage_adresse || '').trim();
   const title = ('Auftragsbestätigung '+orderNumber+(_std?(' zu Standort '+_std):'')).slice(0,200);
   // Fälligkeit: 2 Wochen ab AB-Datum (sonst ab heute) — editierbar (User-Spec)
@@ -9846,7 +9856,7 @@ function _odAutofillFor(label, f){
   const L = String(label||'').toLowerCase();
   if (/ticket/.test(L)) return '';                                   // Ticket-Nr ist ein eigenes Feld oben
   if (/kunde/.test(L)) return String(f.kunde_firmenname||'');
-  if (/angebot/.test(L)) return String(f.angebot_id||f.erp_angebot_nummer||'');
+  if (/angebot/.test(L)) return String(f._odAngebotNum||f.angebot_id||f.erp_angebot_nummer||'');   // v8.78: Servicebox-Angebotsnr (z.B. 2608) statt Maxise-ID
   if (/fabrik/.test(L)) return String(f.fabriknummer||'');
   if (/standort|objekt|aufzugsanlage|adresse/.test(L)) return String(f.standort||f.anlage_adresse||'');
   if (/auftragstyp|auftrags-?typ|angebotstyp/.test(L)) {
