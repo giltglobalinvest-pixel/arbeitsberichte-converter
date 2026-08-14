@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.84';
+const APP_VERSION = 'v8.85';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7468,6 +7468,7 @@ let _auftragCache = [];       // alle geladenen Auftraege-Records (gefiltert auf
 let _auftragTab   = 'offen';  // aktiver Status-Tab: offen|in_bearbeitung|abgeschlossen|all
 let _currentAuftragForm = null;  // beim Bearbeiten: rec.id; bei neu: null
 let _currentBerichtAuftragId = null;
+let _currentBerichtNacharbeit = false;   // v8.85: aktueller Bericht ist eine Nacharbeit (fasst den abgerechneten Hauptauftrag nicht an)
 let _auftragSelectMode = false;            // Bulk-Auswahl-Modus aktiv
 const _auftragSelected = new Set();        // ausgewählte rec.ids
 
@@ -7538,7 +7539,8 @@ function _letzteRechnungDatum(rgs) {
 function _auftragBerichtNachRechnung(auftragRecId, letzteRgDatum) {
   if (!letzteRgDatum) return false;
   const bs = (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.map[auftragRecId]) || [];
-  return bs.some(b => b.datum && String(b.datum).slice(0,10) > letzteRgDatum);
+  // v8.85: Nacharbeit-Berichte zählen NICHT als „Bericht nach Rechnung" → reaktivieren den abgerechneten Auftrag nicht.
+  return bs.some(b => !b.nacharbeit && b.datum && String(b.datum).slice(0,10) > letzteRgDatum);
 }
 /* Kombinierte Klassifizierung eines Auftrags für den Abrechnen-Button/-Check. */
 function _auftragAbrechenInfo(r) {
@@ -7974,6 +7976,7 @@ async function _aufLoadBerichteForList(firmaSlug) {
         fd_ticket_id:  f.fd_ticket_id  || null,
         fd_ticket_url: f.fd_ticket_url || '',
         datum: f.datum || '',
+        nacharbeit: !!f.nacharbeit,   // v8.85: Nacharbeit-Kennzeichen
       });
     }
     // pro Auftrag: chronologisch sortieren (älteste zuerst → Ticket #1, #2 …)
@@ -8226,6 +8229,7 @@ function _aufRenderBerichteSection(rec) {
     return '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;margin-bottom:6px;flex-wrap:wrap">'+
       '<div style="flex:1;min-width:160px;font-size:13px">'+
         '<a href="#" onclick="event.preventDefault();event.stopPropagation();viewAuftragsBericht(\''+b.id+'\')" style="color:var(--navy);font-weight:600;text-decoration:none">📄 Bericht Nr. '+escapeHtml(String(b.bericht_num||'?'))+'</a>'+
+        (b.nacharbeit ? '<span style="background:#FEF3C7;color:#7c2d12;font-size:10px;font-weight:700;padding:1px 6px;border-radius:99px;border:1px solid #FCD34D;margin-left:6px">🔧 Nacharbeit</span>' : '')+
         '<span style="color:var(--txt3);font-size:11px">'+datumLabel+'</span>'+
       '</div>'+
       '<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">'+
@@ -9732,6 +9736,10 @@ function openAuftragDetail(recId) {
   if (canStartBericht && status !== 'abgerechnet') {
     html += '<button class="btn" onclick="openBerichtPicker(\''+rec.id+'\')" title="Vorhandenen Bericht aus der Übersicht zuweisen (z.B. konvertierter Subunternehmer-Bericht)">📎 Bericht verknüpfen</button>';
     html += '<button class="btn succ" onclick="openBerichtForm(\''+rec.id+'\')">📝 Neuer Bericht</button>';
+  } else if (canStartBericht && status === 'abgerechnet') {
+    // v8.85: Auftrag ist abgerechnet — „Neuer Bericht" würde ihn reaktivieren (Bericht-nach-Rechnung).
+    //   Stattdessen einen Nacharbeit-Bericht erfassen, der den Hauptauftrag NICHT anfasst.
+    html += '<button class="btn" style="color:#7c2d12;border-color:rgba(217,119,6,.5);background:#FFFBEB" onclick="openNacharbeitBericht(\''+rec.id+'\')" title="Nachträglichen Arbeitsbericht (Nacharbeit) zu diesem abgerechneten Auftrag erfassen — der Hauptauftrag bleibt abgerechnet und wird NICHT wieder geöffnet. Eigenes PDF zum Download.">🔧 Nacharbeit-Bericht</button>';
   }
   if (status !== 'abgeschlossen' && status !== 'abgerechnet') {
     // v5.22: Auftrag fertigstellen → setzt Status + erzeugt FD-Ticket (idempotent)
@@ -14452,13 +14460,22 @@ let _bfExistingSigKunde = null;
 let _bfExistingKundeAbwesend = false;
 let _bfKeepBilder = [];              // [{id, url, filename, thumbnails}] – existing attachments to keep
 
-async function openBerichtForm(auftragId, berichtId) {
+/* v8.85: Nacharbeit-Bericht — nachträglicher Arbeitsbericht zu einem bereits ABGERECHNETEN Auftrag,
+   OHNE den Hauptauftrag zu reaktivieren. Setzt am Bericht das Feld `nacharbeit` → wird von der
+   „Bericht-nach-Rechnung"-Automatik (_auftragBerichtNachRechnung/_aufAutoReopenNachBericht) ignoriert. */
+async function openNacharbeitBericht(auftragId) {
+  try { await ensureField('Berichte', 'nacharbeit', 'checkbox'); } catch(_){}
+  return openBerichtForm(auftragId, null, { nacharbeit:true });
+}
+
+async function openBerichtForm(auftragId, berichtId, opts) {
   const rec = _auftragCache.find(r => r.id === auftragId);
   if (!rec) return toast('Auftrag nicht gefunden.', 'err');
   if (!_isAssignedToMe(rec) && !hasPermission('auftraege_view_all') && !hasPermission('auftraege_edit')) {
     return toast('🔒 Du bist diesem Auftrag nicht zugewiesen.', 'err');
   }
   _currentBerichtAuftragId = auftragId;
+  _currentBerichtNacharbeit = !!(opts && opts.nacharbeit);   // v8.85
   closeAuftragDetail();
   _bfClearError();  // v7.07: evtl. altes Fehler-Banner aus vorheriger Session entfernen
   const f = rec.fields;
@@ -14519,8 +14536,8 @@ async function openBerichtForm(auftragId, berichtId) {
       return;
     }
   } else {
-    document.getElementById('bf-title').textContent = tmplLabel;
-    document.getElementById('bf-sub').textContent   = '#'+_dispAuftragNum(f)+' · '+(f.standort||'');
+    document.getElementById('bf-title').textContent = tmplLabel + (_currentBerichtNacharbeit ? ' · 🔧 Nacharbeit' : '');
+    document.getElementById('bf-sub').textContent   = (_currentBerichtNacharbeit ? 'Nacharbeit zu ' : '')+'#'+_dispAuftragNum(f)+' · '+(f.standort||'');
   }
 
   // Form aus Vorlage rendern (gleiche Felder + gleiche Klassen wie Konverter)
@@ -14640,6 +14657,7 @@ function closeBerichtForm() {
   _bfCropperQueue = [];
   document.getElementById('bf-view').classList.remove('show');
   _currentBerichtAuftragId = null;
+  _currentBerichtNacharbeit = false;   // v8.85
   if (!document.querySelector('.auf-modal.show, .kone-modal.show, .pdf-modal.show')) {
     document.body.classList.remove('has-modal');
   }
@@ -15420,6 +15438,7 @@ async function saveBerichtFromForm() {
         auftrag_id:   _currentBerichtAuftragId,
         // v5.60: korrekte Nummer aus ext_id, falls auftrag_num veraltet ist
         auftrag_num:  +_dispAuftragNum(af) || af.auftrag_num || null,
+        nacharbeit:   _currentBerichtNacharbeit || undefined,   // v8.85: nur setzen wenn Nacharbeit (undefined → Feld wird weggelassen)
         created:      new Date().toISOString(),
       });
       _invalidateBerichte();   // v7.90: Berichte-Cache nach Neuanlage frisch halten
@@ -15445,7 +15464,7 @@ async function saveBerichtFromForm() {
       // immer noch, aber NUR wenn der Auftrag noch keinen verknüpften
       // Bericht hat (so bleibt die Legacy-Ansicht "Verknüpfter Bericht"
       // beim ersten Bericht stehen, ohne dass weitere Berichte sie kapern).
-      if (!af.bericht_id) {
+      if (!af.bericht_id && !_currentBerichtNacharbeit) {   // v8.85: Nacharbeit übernimmt NIE die Haupt-Bericht-Verknüpfung
         btn.textContent = '☁ Auftrag verknüpfen…';
         await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+_currentBerichtAuftragId, {
           method:'PATCH',
