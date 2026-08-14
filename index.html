@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.86';
+const APP_VERSION = 'v8.87';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -4955,7 +4955,7 @@ function switchView(view) {
   if (view==='users')    renderUsers();
   if (view==='wartung')  renderWartungKalk();
   if (view==='firmen')   renderFirmaView();
-  if (view==='auftraege') loadAuftraegeAndRender();
+  if (view==='auftraege') _aufEnterView();   // v8.87: stale-while-revalidate
   if (view==='intg')     renderIntegrationView();
   if (view==='anlagen')  renderAnlagenView();
   if (view==='preislisten') renderPreislistenView();
@@ -7465,6 +7465,8 @@ async function createNewFirma() {
      - sonst → nur wo techniker_keys den eigenen api_key enthält
    ────────────────────────────────────────────────────────────── */
 let _auftragCache = [];       // alle geladenen Auftraege-Records (gefiltert auf Firma + Sichtbarkeit)
+let _auftragCacheAt = 0;        // v8.87: Zeitstempel für stale-while-revalidate beim View-Wechsel
+let _auftragCacheFirma = null;  // v8.87: Firma-Schlüssel des aktuellen Caches
 let _auftragTab   = 'offen';  // aktiver Status-Tab: offen|in_bearbeitung|abgeschlossen|all
 let _currentAuftragForm = null;  // beim Bearbeiten: rec.id; bei neu: null
 let _currentBerichtAuftragId = null;
@@ -7607,7 +7609,22 @@ async function _aufLoadAngPreisMap(firmaSlug, force) {
     _aufAngPreisMap = map; _aufAngPreisFirma = firmaSlug;
   } catch(e) { console.warn('[Auftraege] AngPreis-Map:', e && e.message); }
 }
-async function loadAuftraegeAndRender() {
+// v8.87: View-Wechsel in die Aufträge-Ansicht — bei frischem Cache SOFORT aus dem Cache rendern
+//   und still im Hintergrund auffrischen (stale-while-revalidate). Direkte loadAuftraegeAndRender()-
+//   Aufrufe nach Mutationen laden weiterhin voll (mit Spinner).
+function _aufEnterView() {
+  const key = isFirmaAll() ? '__all__' : getCurrentFirmaSlug();
+  const fresh = _auftragCache.length && _auftragCacheFirma === key && (Date.now() - _auftragCacheAt) < 60_000;
+  if (fresh) {
+    renderAuftraegeList();                     // sofort aus dem Cache (instant)
+    loadAuftraegeAndRender({ silent:true });     // still im Hintergrund aktualisieren (kein Spinner)
+  } else {
+    loadAuftraegeAndRender();
+  }
+}
+
+async function loadAuftraegeAndRender(opts) {
+  opts = opts || {};
   await _ensureUsersLoaded();
   // Persisted Filter-State auf die Checkbox anwenden (falls noch nicht initialisiert)
   const hwCb = document.getElementById('auf-hide-wartung');
@@ -7635,7 +7652,7 @@ async function loadAuftraegeAndRender() {
     sortSel._initialized = true;
   }
   const list = document.getElementById('auf-list');
-  list.innerHTML = '<div class="auf-empty"><div class="spinner" style="margin:0 auto 12px"></div>Lade Aufträge…</div>';
+  if (!opts.silent) list.innerHTML = '<div class="auf-empty"><div class="spinner" style="margin:0 auto 12px"></div>Lade Aufträge…</div>';  // v8.87: still = kein Spinner-Flash
   try {
     const allRecs = await atRead('Auftraege', null);
     const firmaSlug = getCurrentFirmaSlug();
@@ -7644,6 +7661,7 @@ async function loadAuftraegeAndRender() {
       .filter(r => allMode ? true : (r.fields.firma || '') === firmaSlug)
       .filter(_canSeeAuftrag)
       .sort((a,b) => _auftragSortNum(b.fields) - _auftragSortNum(a.fields));  // v7.97: nach angezeigter Nr.
+    _auftragCacheAt = Date.now(); _auftragCacheFirma = allMode ? '__all__' : firmaSlug;   // v8.87: für stale-while-revalidate
     // Anlegen-Button: bei "Alle Firmen" ausgeblendet, weil Anlegen eine konkrete Firma braucht
     document.getElementById('auf-new-btn').style.display = (hasPermission('auftraege_create') && !allMode) ? '' : 'none';
     // Select-Button: sichtbar wenn User löschen darf (auftraege_edit-Permission)
@@ -7671,8 +7689,8 @@ async function loadAuftraegeAndRender() {
     if (abrBtn)   abrBtn.style.display   = (canSync && !isFirmaAll()) ? '' : 'none';
     // Letzten Sync-Status laden + anzeigen (passiert async, non-blocking)
     if (canSync) loadLastSyncStatus().catch(()=>{});
-    if (!allMode) { try { await _aufLoadAngPreisMap(firmaSlug); } catch(_){} }   // v8.22: Preise aus Angeboten ableiten
-    renderAuftraegeList();
+    renderAuftraegeList();   // v8.87: SOFORT rendern — die Preis-Map (nur Admin-Preisspalte) danach nicht-blockierend nachladen
+    if (!allMode) { _aufLoadAngPreisMap(firmaSlug).then(() => renderAuftraegeList()).catch(()=>{}); }   // v8.22/8.87
     // v6.34: Auto-Mark „abgerechnet" für abgeschlossene Aufträge mit ERP-Rechnung
     //         (gedrosselt auf 1× pro 30 Min pro Firma, silent im Hintergrund)
     if (!allMode) _aufScheduleAutoMarkAbgerechnet(firmaSlug);
@@ -29927,12 +29945,17 @@ async function renderAngeboteView(opts) {
       return;
     }
   }
+  _renderAngeboteList();   // v8.87: SOFORT mit den (gecachten) Angeboten rendern
+  // v8.87: Enrichment-Maps (AB-Link, „beauftragt", Anlagen-Link) NICHT-blockierend + PARALLEL nachladen,
+  //   dann die Badges per Re-Render einblenden. Vorher liefen die 3 Loads SEQUENZIELL VOR dem Render
+  //   (ERP api/auftraege ~4s + api/anlagen ~3s) → die Liste erschien erst nach ~7s.
   if (!isFirmaAll()) {
-    try { await _angLoadAbMap(firmaSlug); } catch(_){}          // v8.21: AB→Angebot-Verknüpfung für Link-Badge
-    try { await _angLoadBeauftragtSet(firmaSlug); } catch(_){}  // v8.25: Maxise-Aufträge → „beauftragt"-Erkennung
-    try { await _loadAnlagenForFirma(firmaSlug); } catch(_){}   // v8.37: Maxise-Anlagen für Live-Link-Status je Angebot (Fabriknummer-Match)
+    Promise.all([
+      _angLoadAbMap(firmaSlug).catch(()=>{}),         // AB→Angebot-Verknüpfung
+      _angLoadBeauftragtSet(firmaSlug).catch(()=>{}), // Maxise-Aufträge → „beauftragt"
+      _loadAnlagenForFirma(firmaSlug).catch(()=>{}),  // Anlagen für Live-Link-Status
+    ]).then(() => { if (document.getElementById('angebote-list')) _renderAngeboteList(); });
   }
-  _renderAngeboteList();
 }
 
 async function _loadAngebote(firmaSlug) {
