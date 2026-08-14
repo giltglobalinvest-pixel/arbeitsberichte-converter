@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.81';
+const APP_VERSION = 'v8.82';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -48569,7 +48569,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         erlaeuterungen:        angebot?.offerExplanation || '',
         angebot_typ:           angebot?.typ || '',
         angebot_id:            a.angebotid || null,
-        anlage_id:             (anlage && anlage.id) || a.anlageid || null,  // v8.46: Maxise-Anlagen-ID
+        anlage_id:             String((anlage && anlage.id) || a.anlageid || ''),  // v8.82: als String (Feld ist singleLineText → Zahl gab 422)
         bestellform:           a.bestellform || '',
         auftragswert_netto:    _extractAuftragswertNetto(angebot),
       };
@@ -48638,7 +48638,7 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+existRec.id, {
           method:'PATCH',
           headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-          body: JSON.stringify({ fields: changedFields }),
+          body: JSON.stringify({ fields: changedFields, typecast: true }),   // v8.82: typecast → Zahl→Text-Feld ok
         }).then(r=>r.json());
         if (r.error) throw new Error(r.error.message);
         updated++;
