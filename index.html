@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.78';
+const APP_VERSION = 'v8.79';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9795,6 +9795,10 @@ async function _odCreateOrder(recId, btn) {
     const _ab = await _abGetRec(f.ab_recid); const _af = (_ab && _ab.fields) || {};
     _abTicket = String(_af.ticket_num || '').trim();
     _abAngNum = String(_af.angebot_num || '').replace(/^ANG[-\s]?/i,'').trim();
+    // v8.79: Leistungsumfang + Kunde ebenfalls aus dem AB (= aus dem Angebot, bzw. für die AB geänderter Wert)
+    if (String(_af.leistungsumfang||'').trim()) rec.fields._odLeistung  = String(_af.leistungsumfang).trim();
+    if (String(_af.kunde_name||'').trim())      rec.fields._odKundeName = String(_af.kunde_name).trim();
+    if (String(_af.kunde_nummer||'').trim())    rec.fields._odKundeNr   = String(_af.kunde_nummer).trim();
   } catch(_){} }
   if (_abAngNum) rec.fields._odAngebotNum = _abAngNum;   // → _odAutofillFor nutzt das für „Angebotsnummer"
 
@@ -9855,7 +9859,7 @@ function _odNormFields(raw){
 function _odAutofillFor(label, f){
   const L = String(label||'').toLowerCase();
   if (/ticket/.test(L)) return '';                                   // Ticket-Nr ist ein eigenes Feld oben
-  if (/kunde/.test(L)) return String(f.kunde_firmenname||'');
+  if (/kunde/.test(L)) return String(f._odKundeName||f.kunde_firmenname||f.kunde_name||'');   // v8.79: Kunde aus Angebot/AB
   if (/angebot/.test(L)) return String(f._odAngebotNum||f.angebot_id||f.erp_angebot_nummer||'');   // v8.78: Servicebox-Angebotsnr (z.B. 2608) statt Maxise-ID
   if (/fabrik/.test(L)) return String(f.fabriknummer||'');
   if (/standort|objekt|aufzugsanlage|adresse/.test(L)) return String(f.standort||f.anlage_adresse||'');
@@ -9868,7 +9872,7 @@ function _odAutofillFor(label, f){
     return '';
   }
   if (/leistung|sonstiges/.test(L)) {   // v8.68/8.69: „Sonstiges zum Auftrag" = Leistungsumfang OHNE Preiszeilen
-    return String(f.leistungsbeschreibung||f.leistungsumfang||'').split('\n')
+    return String(f._odLeistung||f.leistungsbeschreibung||f.leistungsumfang||'').split('\n')   // v8.79: Leistung aus Angebot/AB
       .filter(l => !/€|\beur\b|gesamtpreis|pauschalpreis|\bpreis\b|brutto|netto|\bust\b|mwst|umsatzsteuer|zzgl/i.test(l))
       .join('\n').replace(/\n{3,}/g,'\n\n').trim();
   }
@@ -10014,7 +10018,7 @@ async function _odSubmitOrder(recId) {
   if (!rec) return toast('Auftrag nicht gefunden','err');
   const f = rec.fields || {};
   const firmaSlug = f.firma || getCurrentFirmaSlug();
-  const orderNumber = String(f.ext_vorgangsnummer || f.auftrag_num || f.ext_id || '').trim();
+  const orderNumber = String(f.ext_id || f.auftrag_num || f.ext_vorgangsnummer || '').trim();   // v8.79-FIX: angezeigte Auftragsnr (ext_id), nicht Vorgangsnummer
   const title  = String(document.getElementById('od-f-title')?.value||'').trim().slice(0,200);
   const ticketNumber = String(document.getElementById('od-f-ticket')?.value||'').trim();
   const ddate  = String(document.getElementById('od-f-dldate')?.value||'').trim();
@@ -10056,6 +10060,14 @@ async function _odSubmitOrder(recId) {
   // ── NEU ANLEGEN ──
   const args = { title, orderNumber, ticketNumber, stage: -1, deadline };
   if (Object.keys(details).length) args.details = details;
+  // v8.79: Kunde (createOrder.customer = Firestore-Pfad) aus dem Angebot/AB auflösen (kunde_name; für die AB
+  //   geänderter Wert gewinnt). Nur setzbar, wenn der Kunde in Order Display existiert (getCustomers-Match).
+  try {
+    const kName = String(f._odKundeName || f.kunde_name || f.kunde_firmenname || '').trim();
+    const kNr   = String(f._odKundeNr || f.kunde_nummer || '').trim();
+    if (kName || kNr) { if (btn) btn.textContent = '⏳ Kunde…'; const cp = await _odResolveCustomerPath(firmaSlug, kName, kNr); if (cp) args.customer = cp; }
+    if (btn) btn.textContent = '⏳ Order Display…';
+  } catch(_){}
   try {
     const res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', {
       method:'POST', body:{ name:'createOrder', arguments: args }
