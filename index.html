@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.75';
+const APP_VERSION = 'v8.76';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -2880,7 +2880,11 @@ let _diagOpSeq = 0;
 function _diagOp(name){
   try {
     const tok = String(name)+' #'+(++_diagOpSeq)+' @'+new Date().toISOString();
-    localStorage.setItem('diag_hung_op', tok);
+    try { localStorage.setItem('diag_hung_op', tok); }
+    catch(e){   // v8.76: localStorage voll → ERP-Caches evakuieren, dann Marker (winzig) erneut schreiben
+      try { for (let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i); if (k && k.indexOf('erp_cache_v1::')===0) localStorage.removeItem(k); } } catch(_){}
+      try { localStorage.setItem('diag_hung_op', tok); } catch(_){}
+    }
     setTimeout(function(){ try { if (localStorage.getItem('diag_hung_op')===tok) localStorage.removeItem('diag_hung_op'); } catch(_){} }, 0);
   } catch(_){}
 }
@@ -2893,6 +2897,23 @@ function _diagReportHungOp(){
     try { _diagAutoUpload('HARD-HANG in '+String(op).slice(0,90), {force:true}); } catch(_){}
   } catch(_){}
 }
+/* v8.76: localStorage-Entlastung. Ist der Speicher voll, scheitern stillschweigend Marker-Schreiben,
+   DIAG-Persistenz und Caches — und der Freeze-Locator wird lahmgelegt. Beim Start einmal per Probe
+   testen; wenn voll, die (jederzeit neu ladbaren) ERP-Caches evakuieren. Login/Einstellungen bleiben. */
+function _storageReliefIfFull(){
+  try {
+    const probe = new Array(140*1024).join('x');   // ~140 KB
+    try { localStorage.setItem('__diag_probe__', probe); localStorage.removeItem('__diag_probe__'); }
+    catch(e){
+      let n=0;
+      try { for (let i=localStorage.length-1;i>=0;i--){ const k=localStorage.key(i); if (k && k.indexOf('erp_cache_v1::')===0){ localStorage.removeItem(k); n++; } } } catch(_){}
+      try { localStorage.removeItem('__diag_probe__'); } catch(_){}
+      console.warn('[Storage] localStorage war voll → '+n+' ERP-Cache(s) geleert');
+      try { DIAG.warn('storage-full', 'localStorage war voll — '+n+' ERP-Cache(s) geleert'); } catch(_){}
+    }
+  } catch(_){}
+}
+try { _storageReliefIfFull(); } catch(_){}
 window.__appReady = false;   // v8.70: erst true, wenn die Aufträge geladen sind (Früh-Klick-Schutz)
 
 /* v7.89: Diagnose-Log automatisch zu uns nach Airtable schicken — bei Freeze/Fehler.
@@ -30170,6 +30191,7 @@ async function _angBulkBeauftragt(btn) {
   _renderAngeboteList();
 }
 function _renderAngeboteList() {
+  _diagOp('_renderAngeboteList');   // v8.76: Freeze-Lokalisierung
   const list = document.getElementById('angebote-list');
   const cnt = document.getElementById('angebote-count');
   if (!list) return;
@@ -36404,6 +36426,7 @@ async function _abGenerateAndSave(btn, send) {
     if (btn) btn.textContent = '⏳ erzeuge…';
     d.abNummer = nummer;
     if (erpAuftragNum) d.auftragNum = '';                    // AB-Nr IST bereits die Auftragsnummer → keine Doppelzeile im PDF
+    _diagOp('_abBuildPdfBlob '+firmaSlug);   // v8.76: Freeze-Lokalisierung (PDF-Bau)
     const blob = _abBuildPdfBlob(d, firmaSlug);
     const P = d.preis || {};
     const fields = {
@@ -36536,6 +36559,7 @@ function _angFindAb(recId, f) {
   return ab;
 }
 async function _angGoToAuftrag(localAuftragRecId, abRecId) {
+  _diagOp('_angGoToAuftrag '+localAuftragRecId);   // v8.76: Freeze-Lokalisierung
   if (localAuftragRecId) {
     try {
       switchView('auftraege');
