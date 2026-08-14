@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.76';
+const APP_VERSION = 'v8.77';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17570,6 +17570,7 @@ async function _rvDoSend() {
       const fd = new FormData();
       fd.append('body', bodyHtml);
       for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      for (const bcc of bccEmails) fd.append('bcc_emails[]', bcc);   // v8.77: immer BCC ans Freshdesk
       fd.append('attachments[]', blob, fname);
       const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/'+tid+'/reply', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
       const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
@@ -17592,6 +17593,7 @@ async function _rvDoSend() {
       fd.append('priority', '1');
       fd.append('email_config_id', String(ecid));
       for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      for (const bcc of bccEmails) fd.append('bcc_emails[]', bcc);   // v8.77: immer BCC ans Freshdesk
       fd.append('attachments[]', blob, fname);
       const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/outbound_email', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
       const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
@@ -36765,6 +36767,17 @@ function _abSendToggleMode() {
   if (tb) tb.style.display = mode==='ticket' ? '' : 'none';
   if (sb) sb.style.display = mode==='email' ? '' : 'none';
 }
+/* v8.77: Festes BCC ans Freshdesk je Firma. Bevorzugt Firmen-Feld 'freshdesk_bcc', sonst Default.
+   So landet jede an den Kunden gesendete AB immer auch als Kopie im Freshdesk-Posteingang. */
+function _abFreshdeskBcc(firma){
+  try {
+    const rec = (_firmenCache||[]).find(fr => fr.fields && fr.fields.slug === firma);
+    const v = rec && rec.fields && rec.fields.freshdesk_bcc;
+    if (v && String(v).trim()) return String(v).trim();
+  } catch(_){}
+  const DEF = { aufzug:'service@aufzugshandwerk.de' };   // je Firma erweiterbar; für Aszendio hier eintragen
+  return DEF[firma] || '';
+}
 async function _abOpenSendModal(recId) {
   const rec = await _abGetRec(recId); if (!rec) return toast('Nicht gefunden','err');
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
@@ -36801,6 +36814,8 @@ async function _abOpenSendModal(recId) {
           '<div id="ab-send-sig" style="border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;padding:8px 10px;font-size:12px;color:#374151;min-height:34px;max-height:150px;overflow:auto">⏳ lade Signatur…</div></div>'+
         '<div style="margin-bottom:6px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">CC (optional, kommagetrennt)</label>'+
           '<input id="ab-send-cc" type="text" placeholder="cc1@…, cc2@…" style="'+inpStyle+'"></div>'+
+        '<div style="margin-bottom:6px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">BCC ans Freshdesk <span style="font-weight:400;color:#6b7280">(immer — landet als Kopie im Freshdesk; leeren zum Weglassen)</span></label>'+
+          '<input id="ab-send-bcc" type="text" value="'+escapeHtml(_abFreshdeskBcc(firma))+'" placeholder="service@…" style="'+inpStyle+'"></div>'+
         '<div style="font-size:11px;color:#6b7280">Das gespeicherte AB-PDF wird angehängt. Nach dem Versand: Status → <strong>Versendet</strong>.</div>'+
       '</div>'+
       '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
@@ -36833,6 +36848,7 @@ async function _abDoSend() {
   const subject = g('ab-send-subject') || ('Auftragsbestätigung Nr. ' + _abDispNum(f));
   const bodyText = g('ab-send-body');
   const ccEmails = g('ab-send-cc').split(/[;,\s]+/).map(s=>s.trim()).filter(s=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+  const bccEmails = g('ab-send-bcc').split(/[;,\s]+/).map(s=>s.trim()).filter(s=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));   // v8.77: festes Freshdesk-BCC
   const btn = document.getElementById('ab-send-btn'); if (btn){ btn.disabled=true; btn.textContent='⏳ Sende…'; }
   try {
     if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
@@ -36848,6 +36864,7 @@ async function _abDoSend() {
       if (!/^\d+$/.test(tid)) throw new Error('Bitte eine gültige Ticket-Nr. angeben.');
       const fd = new FormData(); fd.append('body', bodyHtml);
       for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      for (const bcc of bccEmails) fd.append('bcc_emails[]', bcc);   // v8.77: immer BCC ans Freshdesk
       fd.append('attachments[]', blob, fname);
       const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/'+tid+'/reply', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
       const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
@@ -36863,6 +36880,7 @@ async function _abDoSend() {
       fd.append('email', email); fd.append('subject', subject); fd.append('description', bodyHtml);
       fd.append('status', '2'); fd.append('priority', '1'); fd.append('email_config_id', String(ecid));
       for (const cc of ccEmails) fd.append('cc_emails[]', cc);
+      for (const bcc of bccEmails) fd.append('bcc_emails[]', bcc);   // v8.77: immer BCC ans Freshdesk
       fd.append('attachments[]', blob, fname);
       const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/outbound_email', { method:'POST', headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }, body: fd });
       const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
