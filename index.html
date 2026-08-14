@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.85';
+const APP_VERSION = 'v8.86';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9587,8 +9587,16 @@ function openAuftragDetail(recId) {
   // v5.22: Berichte-Cache anstoßen, damit die Liste im Detail-View befüllt ist.
   // Wenn der Cache schon da ist (vom Listen-Render), kein Reload — sonst lazy laden + Detail re-rendern.
   if (rec.fields.firma && (!_aufBerichteByAuftrag.map || _aufBerichteByAuftrag.firma !== rec.fields.firma)) {
-    _aufLoadBerichteForList(rec.fields.firma).then(() => {
-      if (document.getElementById('auf-detail-modal')?.classList.contains('show')) openAuftragDetail(recId);
+    // v8.86: HARTER-FREEZE-FIX — re-render NUR, wenn die Berichte-Map DANACH wirklich für diese Firma geladen ist.
+    //   Vorher wurde openAuftragDetail bedingungslos aus dem .then() neu aufgerufen. Lieferte _aufLoadBerichteForList
+    //   einen Early-Return (z.B. weil bereits ein Load lief → Map unverändert null/andere Firma), re-triggerte sich
+    //   openAuftragDetail in einer Microtask-Endlosschleife → Main-Thread dauerblockiert (App muss abgewürgt werden).
+    const _wantFirma = rec.fields.firma;
+    _aufLoadBerichteForList(_wantFirma).then(() => {
+      if (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.firma === _wantFirma &&
+          document.getElementById('auf-detail-modal')?.classList.contains('show')) {
+        openAuftragDetail(recId);
+      }
     }).catch(() => {});
   }
   // v5.71: Status-Badge prominent im Title — sonst übersieht der Mitarbeiter dass
