@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.74';
+const APP_VERSION = 'v8.75';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9768,7 +9768,9 @@ async function _odCreateOrder(recId, btn) {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
 
   // ── Pflichtfelder + Titel-Vorlage „Auftragsbestätigung {auftragsnr} zu Standort {standort}" ──
-  const orderNumber  = String(f.ext_vorgangsnummer || f.auftrag_num || f.ext_id || '').trim();
+  // v8.75-FIX: die ANGEZEIGTE Auftragsnummer nehmen (ext_id = Maxise-Auftrag-ID = das, was auf der AB steht),
+  //   NICHT die interne Vorgangsnummer (ext_vorgangsnummer) — die wich vom sichtbaren #2035 ab (z.B. 3176).
+  const orderNumber  = String(f.ext_id || f.auftrag_num || f.ext_vorgangsnummer || '').trim();
   if (!orderNumber) return toast('Kein orderNumber ableitbar (Maxise-Auftragsnr fehlt).','err');
   const ticketNumber = String(f.od_ticket_num || f.ticket_num || f.fd_ticket_id || f.freshdesk_ticket_id || '').trim();
   const _std = String(f.standort || f.anlage_adresse || '').trim();
