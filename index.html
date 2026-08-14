@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.83';
+const APP_VERSION = 'v8.84';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -14022,14 +14022,16 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
   if (!hasPermission('auftraege_edit') && !isAdmin()) return { skipped:'no-permission' };
   if (!firmaSlug || firmaSlug === '__all__') return { skipped:'no-firma' };
 
-  // Kandidaten: abgeschlossene Aufträge mit ERP-ID, deren Rechnungsdaten noch nicht erfasst sind.
-  // v8.00: Nur invoice_num/date/id persistieren (für den „Rg."-Chip). Das AUSBLENDEN übernimmt die
-  //   Checkbox „🧾 Mit Rechnung ausblenden" (Live-Erkennung); Status bleibt die Maxise-Wahrheit.
+  // Kandidaten: ALLE abgeschlossenen Aufträge mit ERP-ID.
+  // v8.00: invoice_num/date/id persistieren (für den „Rg."-Chip).
+  // v8.84: VOLL berechnete (keine offene Teilrechnung) zusätzlich lokal auf 'abgerechnet' setzen,
+  //   damit sie in den „Abgerechnet"-Tab wandern und auffindbar sind. Teilrechnungen bleiben „abgeschlossen".
+  //   Der invoice_num-Skip von früher entfällt, damit bereits erfasste Aufträge nachträglich hochgestuft werden
+  //   (redundante Writes verhindert der Diff im Loop).
   const candidates = _auftragCache.filter(r => {
     const f = r.fields || {};
     if (!f.ext_id) return false;
     if ((f.firma||'') !== firmaSlug) return false;
-    if (f.invoice_num || f.invoice_id) return false;   // Rechnungsdaten schon erfasst → überspringen
     return _normAuftragStatus(f.status) === 'abgeschlossen';
   });
   if (!candidates.length) return { checked:0, marked:0, skipped:'no-candidates' };
@@ -14060,30 +14062,38 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
       if (!silent) toast('❌ Rechnungen aus ERP nicht erreichbar: '+e.message,'err');
       return { skipped:'erp-fail' };
     }
-    const idx = _indexRechnungenByAuftrag(list);
+    const idxAll = _indexAllRechnungenByAuftrag(list);   // v8.84: ALLE Rechnungen je Auftrag (für Voll/Teil-Erkennung)
 
-    let marked = 0, skippedWartung = 0, atFails = 0;
+    let marked = 0, markedVoll = 0, skippedWartung = 0, atFails = 0;
     for (let i = 0; i < candidates.length; i++) {
       const rec = candidates[i];
       const f   = rec.fields || {};
       _aufAutoCheckPill(true, 'Prüfe '+(i+1)+'/'+candidates.length+'…');
       if (_isWartungsvertragAuftrag(rec, wartungsAngebotIds)) { skippedWartung++; continue; }
-      const inv = idx.get(String(f.ext_id));
-      if (!inv) continue;
-      const invNum  = String(inv.rechnungsnummer || inv.id || '');
-      const invDate = String(inv.rechnungsdatum || inv.createdDate || inv.leistungszeitraum || '').slice(0,10);
-      const invId   = String(inv.id || '');
+      const rgs = idxAll.get(String(f.ext_id));
+      if (!rgs || !rgs.length) continue;                 // (noch) keine Rechnung → nichts zu tun
+      // Neueste Rechnung für den „Rg."-Chip
+      const latest  = rgs.reduce((a,b) => (_rechnungDatum(b) >= _rechnungDatum(a) ? b : a), rgs[0]);
+      const invNum  = String(latest.rechnungsnummer || latest.id || '');
+      const invDate = String(latest.rechnungsdatum || latest.createdDate || latest.leistungszeitraum || '').slice(0,10);
+      const invId   = String(latest.id || '');
+      // v8.84: NUR voll berechnet (keine offene Teilrechnung) UND kein Bericht NACH der Rechnung
+      //   → Status lokal auf 'abgerechnet' (klein, damit der Sync ihn bewahrt). KEIN ERP-PUT (vermeidet den Mail-500).
+      //   Teilrechnungen bleiben „abgeschlossen" und bekommen nur den Rg.-Chip.
+      const voll            = _auftragVollAbgerechnet(rgs);
+      const berichtNachRg   = _auftragBerichtNachRechnung(rec.id, _letzteRechnungDatum(rgs));
+      const sollAbgerechnet = voll && !berichtNachRg;
+      const patch = {};
+      if (f.invoice_num  !== invNum)  patch.invoice_num  = invNum;
+      if (f.invoice_date !== invDate) patch.invoice_date = invDate;
+      if (f.invoice_id   !== invId)   patch.invoice_id   = invId;
+      if (sollAbgerechnet && _normAuftragStatus(f.status) !== 'abgerechnet') patch.status = 'abgerechnet';
+      if (!Object.keys(patch).length) continue;          // nichts geändert → kein Write
       try {
-        await _patchAuftragFields(rec.id, {
-          invoice_num:   invNum,     // v8.00: nur Rechnungsdaten erfassen; Ausblenden macht die Checkbox
-          invoice_date:  invDate,
-          invoice_id:    invId,
-        });
-        // Lokal-Cache aktualisieren
-        rec.fields.invoice_num   = invNum;
-        rec.fields.invoice_date  = invDate;
-        rec.fields.invoice_id    = invId;
+        await _patchAuftragFields(rec.id, patch);
+        Object.assign(rec.fields, patch);                // Lokal-Cache aktualisieren
         marked++;
+        if (patch.status) markedVoll++;
       } catch(e) {
         atFails++;
         console.warn('[auto-abgerechnet] Patch fail #'+f.auftrag_num+':', e.message);
@@ -14093,13 +14103,14 @@ async function _aufAutoMarkAbgerechnet(firmaSlug, opts) {
     try { localStorage.setItem('auf_auto_invoiced_'+firmaSlug, String(Date.now())); } catch(_){}
     if (!silent || marked > 0) {
       const parts = [];
+      if (markedVoll) parts.push(markedVoll+' voll berechnet → „Abgerechnet"');
       parts.push(marked+' Auftrag'+(marked===1?'':'e')+' mit Rechnung erfasst');
       if (skippedWartung) parts.push(skippedWartung+' Wartungsverträge ausgenommen');
       if (atFails) parts.push(atFails+' Airtable-Fehler');
       toast('✅ '+parts.join(' · '), atFails ? 'warn' : 'ok');
       if (marked > 0) renderAuftraegeList();
     }
-    return { checked: candidates.length, marked, skippedWartung, atFails };
+    return { checked: candidates.length, marked, markedVoll, skippedWartung, atFails };
   } finally {
     _aufAutoCheckPill(false);
   }
@@ -48601,8 +48612,8 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         //   Auftrag REAKTIVIERT (Status → offen). Das Ausblenden berechneter Aufträge übernimmt die
         //   Checkbox „🧾 Mit Rechnung ausblenden" (Live-Erkennung). Nur wenn Maxise selbst inaktiv/
         //   abgerechnet meldet, bleibt das lokale 'abgerechnet' erhalten.
-        if (existRec.fields.status === 'abgerechnet' && _normAuftragStatus(a.status) !== 'offen') {
-          delete patchFields.status;
+        if (_normAuftragStatus(existRec.fields.status) === 'abgerechnet' && _normAuftragStatus(a.status) !== 'offen') {
+          delete patchFields.status;   // v8.84: case-insensitiv — manuell gesetztes 'Abgerechnet' (groß) wurde sonst zurückgedreht
         }
         // v8.01: „Bericht nach Rechnung" hält den Auftrag offen — Maxise-„abgerechnet" NICHT übernehmen
         if (existRec.fields.needs_reinvoice && _normAuftragStatus(a.status) === 'abgerechnet') {
