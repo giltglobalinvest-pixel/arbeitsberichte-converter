@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.82';
+const APP_VERSION = 'v8.83';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36199,7 +36199,7 @@ async function _abWriteLocalAuftrag(fAng, created, leistungText, typOverride) {
       tmpl: tmplKey,
       angebot_typ: angebotTypEnum,
       angebot_id: (created && created.angebotid) || (fAng && fAng.erp_angebot_id) || null,
-      anlage_id: (fAng && fAng.anlage_id) || null,   // v8.46: Maxise-Anlagen-ID am Servicebox-Auftrag mitschreiben
+      anlage_id: String((fAng && fAng.anlage_id) || ''),   // v8.83: als String (Feld=singleLineText) — Zahl gab 422 → Auftrag wurde still verworfen
       techniker_keys: JSON.stringify(techKeys),
       techniker_namen: techNames,
       ab_datum: heute,
@@ -48635,12 +48635,26 @@ async function erpImportAuftraege(firmaSlug, onProgress) {
         }
 
         const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-        const r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+existRec.id, {
-          method:'PATCH',
-          headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-          body: JSON.stringify({ fields: changedFields, typecast: true }),   // v8.82: typecast → Zahl→Text-Feld ok
-        }).then(r=>r.json());
-        if (r.error) throw new Error(r.error.message);
+        // v8.83: Retry bei Netzwerk-Abbruch (Failed to fetch / CORS-Preflight bei Rate-Limit).
+        // 422 & andere API-Fehler werden weiterhin SOFORT geworfen (Retry würde nichts bringen).
+        let r = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            r = await fetch('https://api.airtable.com/v0/'+baseId+'/Auftraege/'+existRec.id, {
+              method:'PATCH',
+              headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+              body: JSON.stringify({ fields: changedFields, typecast: true }),   // v8.82: typecast → Zahl→Text-Feld ok
+            }).then(x=>x.json());
+          } catch(netErr) {
+            if (attempt < 3) { log('  ↻ Netzwerkfehler bei #'+a.vorgangsnummer+', Versuch '+(attempt+1)+'/3…'); await new Promise(res=>setTimeout(res, 900*attempt)); continue; }
+            throw netErr;
+          }
+          if (r && r.error) {
+            if (/rate|too many|429/i.test(r.error.message||'') && attempt < 3) { await new Promise(res=>setTimeout(res, 900*attempt)); continue; }
+            throw new Error(r.error.message);
+          }
+          break;
+        }
         updated++;
       } else {
         await atWrite('Auftraege', fields);
