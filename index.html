@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.73';
+const APP_VERSION = 'v8.74';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36638,7 +36638,7 @@ function _abRenderList() {
 }
 function _abReconstructD(f) {
   let preis = null; try { preis = JSON.parse(f.preis_json||'null'); } catch(_){}
-  return { abNummer:String_abDispNum(f), auftragNum:'', angebotNum:f.angebot_num||'', ticketNum:f.ticket_num||'',
+  return { abNummer:_abDispNum(f), auftragNum:'', angebotNum:f.angebot_num||'', ticketNum:f.ticket_num||'',
     kunde:f.kunde_name||'', kundeAdresse:f.kunde_adresse||'', besteller:f.besteller||'', zugang:'',
     rechnungsempfaenger:f.rechnungsempfaenger||'', standort:f.standort||'', fabriknummer:f.fabriknummer||'',
     zeitrahmen:f.zeitrahmen||'', leistungsumfang:f.leistungsumfang||'', preis:preis };
@@ -36754,7 +36754,7 @@ async function _abOpenSendModal(recId) {
   m.innerHTML =
     '<div style="background:#fff;max-width:600px;width:100%;max-height:100%;min-height:0;border-radius:12px;display:flex;flex-direction:column;overflow:hidden">'+
       '<div style="padding:12px 16px;background:#4F46E5;color:#fff;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:8px">'+
-        '<span>📤 Auftragsbestätigung '+escapeHtml(String_abDispNum(f))+' senden</span>'+
+        '<span>📤 Auftragsbestätigung '+escapeHtml(_abDispNum(f))+' senden</span>'+
         '<button onclick="document.getElementById(\'ab-send-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:17px;cursor:pointer">×</button>'+
       '</div>'+
       '<div style="flex:1;overflow:auto;padding:16px">'+
@@ -36812,7 +36812,7 @@ async function _abDoSend() {
     if (!APP_KEYS.valtownProxyUrl) throw new Error('Proxy nicht eingerichtet');
     await erpEnsureSession();
     const blob = await _abGetPdfBlob(rec);
-    const fname = 'Auftragsbestaetigung_' + String_abDispNum(f).replace(/[\/ ]/g,'-') + '.pdf';
+    const fname = 'Auftragsbestaetigung_' + _abDispNum(f).replace(/[\/ ]/g,'-') + '.pdf';
     let sig = (m && typeof m._agentSignature === 'string') ? m._agentSignature : '';
     if (!sig) { try { const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } }); if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); } } catch(_){} }
     const bodyHtml = '<p>' + escapeHtml(bodyText).replace(/\n/g,'<br>') + '</p>' + (sig ? '<br><br>'+sig : '');
