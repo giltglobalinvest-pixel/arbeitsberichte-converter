@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.87';
+const APP_VERSION = 'v8.88';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -34890,28 +34890,13 @@ async function _angEditorSave() {
     if (istGesamtangebot) {
       toast('🛗 Gesamtangebot über '+(angAufzuege.length+1)+' Aufzüge — kein ERP-Vorgang. Versand per Freshdesk aus dem Angebot-Detail.','');
     }
-    if (!E.editMode && !isAufwand && !istGesamtangebot) {
-      if (btn) btn.textContent = '⏳ ERP-Anfrage anlegen…';
-      try {
-        const recForAnfrage = { id: recId, fields };
-        anfrageInfo = await _angCreateErpAnfrage(recForAnfrage);
-        // Anfrage-IDs in Airtable persistieren
-        await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
-          method:'PATCH',
-          headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-          body: JSON.stringify({ fields: {
-            erp_anfrage_id: anfrageInfo.id,
-            erp_anfrage_nummer: anfrageInfo.nummer,
-            erp_anfrage_url: anfrageInfo.url,
-            erp_anfrage_created_at: new Date().toISOString(),
-          }}),
-        });
-        console.log('[Angebote] ERP-Anfrage angelegt:', anfrageInfo);
-      } catch(anfErr) {
-        anfrageErr = anfErr;
-        console.error('[Angebote] ERP-Anfrage fehlgeschlagen:', anfErr);
-      }
-    }
+    // v8.88: KEIN eager-Anlegen der ERP-Anfrage mehr beim Angebot-Speichern.
+    //   Grund (User 15.08.2026): Maxise verschickt bei JEDER neuen Anfrage eine Backoffice-Benachrichtigung
+    //   an service@aufzugshandwerk.de → für jedes gespeicherte Angebot ein (leeres) Freshdesk-Ticket,
+    //   auch für Angebote, die nie zum Auftrag werden (z.B. extern erfasste KONE-Angebote).
+    //   Die Anfrage wird jetzt erst ON-DEMAND angelegt, wenn das Angebot bewusst ins ERP gepusht
+    //   oder in einen Auftrag/AB gewandelt wird — _angPushToErp (Z.~37882) und _abCreateErpAuftrag
+    //   legen sie bei Bedarf selbst an, dann mit echten Mail-Daten (s. _angCreateErpAnfrage titelemail/inhaltemail).
 
     toast(E.editMode ? '✅ ANG-'+angebotNum+' aktualisiert' : '✅ Angebot ANG-'+angebotNum+' angelegt','ok');
     if (anfrageInfo) toast('🔗 ERP-Anfrage angelegt: '+(anfrageInfo.nummer || anfrageInfo.id),'ok');
@@ -37714,8 +37699,9 @@ async function _angCreateErpAnfrage(rec) {
     interneNotizen:         beschreibung,  // DB-Spalte 'internenotizen' ist NOT NULL
     internenotizen:         beschreibung,  // Fallback Schreibweise
     kundeMail:              false,
-    titelemail:             '-',
-    inhaltemail:            '-',
+    // v8.88: echte Daten statt '-' — falls Maxise trotz kundeMail:false eine Backoffice-Mail schickt, ist sie NICHT leer
+    titelemail:             bezeichnung || '-',
+    inhaltemail:            beschreibung || '-',
   };
   console.log('[ERP-Anfrage] Payload:', JSON.stringify(payload, null, 2));
   // Verschiedene Endpoint-Kandidaten probieren
@@ -37955,8 +37941,9 @@ async function _angPushToErp(recId, btn) {
       ust_prozent:            +f.ust_prozent || 19,
       umsatzsteuer:           +f.ust_prozent || 19,
       kundeMail:              false,
-      titelemail:             '-',
-      inhaltemail:            '-',
+      // v8.88: echte Daten statt '-' (leere Backoffice-Mail vermeiden)
+      titelemail:             bezeichnung || '-',
+      inhaltemail:            erlaeuterungText || '-',
       kundeemail:             '-',          // NOT NULL DB-Spalte
       kundeEmail:             '-',
       status:                 'In Bearbeitung',
@@ -38228,8 +38215,9 @@ async function _angPushAufwandToErp(recId, btn) {
     ust_prozent:            +f.ust_prozent || 19,
     umsatzsteuer:           +f.ust_prozent || 19,
     kundeMail:              false,
-    titelemail:             '-',
-    inhaltemail:            '-',
+    // v8.88: echte Daten statt '-' (leere Backoffice-Mail vermeiden)
+    titelemail:             bezeichnung || '-',
+    inhaltemail:            serviceText || '-',
     kundeemail:             '-',
     kundeEmail:             '-',
     status:                 'In Bearbeitung',
