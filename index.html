@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.06';
+const APP_VERSION = 'v9.07';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -45058,11 +45058,9 @@ function _showKundenpreislisteEditor(data, hkRef) {
         '<div style="border:1px dashed #A5B4FC;background:#F8FAFF;border-radius:8px;padding:12px 14px;margin:16px 0 6px">'+
           '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:var(--navy);font-size:13px">'+
             '<input type="checkbox" data-kk="zusatzBlock.enabled" id="kpl-zusatz-enabled" '+(zb.enabled?'checked':'')+' onchange="_kplZusatzToggle(this)" style="width:16px;height:16px;cursor:pointer">'+
-            '➕ Zusatz-Block (optional)</label>'+
-          '<div style="font-size:11px;color:var(--txt3);margin:3px 0 0 24px;line-height:1.5">Frei editierbarer Abschnitt direkt unter „Sonstiges". Häkchen raus = wird <strong>nicht</strong> ins PDF gedruckt. Leere Zeilen werden automatisch weggelassen.</div>'+
+            '➕ Weitere „Sonstiges"-Zeilen (optional)</label>'+
+          '<div style="font-size:11px;color:var(--txt3);margin:3px 0 0 24px;line-height:1.5">Diese Zeilen werden direkt an <strong>„Sonstiges"</strong> angehängt — keine eigene Überschrift. Häkchen raus = <strong>nicht</strong> im PDF. Preis leer/0 = reine Textzeile; leere Zeilen werden weggelassen.</div>'+
           '<div id="kpl-zusatz-fields" style="margin-top:10px;opacity:'+(zb.enabled?'1':'0.5')+'">'+
-            '<div style="margin-bottom:8px"><strong style="font-size:12px">Überschrift</strong><br>'+
-              '<input type="text" data-kk="zusatzBlock.titel" value="'+escapeHtml(zb.titel||'')+'" placeholder="z. B. Zusätzliche Leistungen / Sondervereinbarungen" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
             '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>'+
               '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Bezeichnung</th>'+
               '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Preis</th>'+
@@ -45516,22 +45514,15 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
     const preisTxt = eur(s.preis) + (s.einheit && s.einheit !== '€' ? (' / '+String(s.einheit).replace('€/','').replace('€','').trim()) : '');
     tableRow([s.label, preisTxt], [120,62]);
   });
-  y += 4;
-  // v9.05: modularer Zusatz-Block (optional) — nur drucken wenn aktiv UND mind. eine befüllte Zeile.
+  // v9.07: modularer Zusatz-Block — Zeilen direkt an „Sonstiges" anhängen (keine eigene Überschrift, KEIN tableReset → nahtlose Fortsetzung).
   const _zb = data.zusatzBlock;
   if (_zb && _zb.enabled) {
-    const _zRows = (Array.isArray(_zb.zeilen) ? _zb.zeilen : []).filter(z => z && String(z.label||'').trim());
-    if (_zRows.length) {
-      drawSectionTitle(String(_zb.titel||'').trim() || 'Zusätzliche Leistungen');
-      tableReset();
-      _zRows.forEach(z => {
-        // v9.06: keine Einheit mehr — Preis zeigen wenn Betrag > 0, sonst reine Text-Zeile.
-        const preisTxt = (+z.preis || 0) > 0 ? eur(z.preis) : '';
-        tableRow([z.label, preisTxt], [120,62]);
-      });
-      y += 4;
-    }
+    (Array.isArray(_zb.zeilen) ? _zb.zeilen : []).filter(z => z && String(z.label||'').trim()).forEach(z => {
+      const preisTxt = (+z.preis || 0) > 0 ? eur(z.preis) : '';   // Preis>0 zeigen, sonst reine Textzeile
+      tableRow([z.label, preisTxt], [120,62]);
+    });
   }
+  y += 4;
   if ((data.fussnote||'').trim()) {
     if (y > H - 30) { doc.addPage(); y = 14; }
     doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(100,100,100);
