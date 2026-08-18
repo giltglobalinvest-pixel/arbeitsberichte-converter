@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.05';
+const APP_VERSION = 'v9.06';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -44965,8 +44965,7 @@ function _showKundenpreislisteEditor(data, hkRef) {
   const zusatzRows = (zb.zeilen||[]).map((z,i) =>
     '<tr>'+
       '<td><input type="text" value="'+escapeHtml(z.label||'')+'" data-kk="zusatzBlock.zeilen.'+i+'.label" placeholder="Bezeichnung" style="width:100%;min-width:180px"></td>'+
-      '<td><input type="number" min="0" step="0.01" value="'+((+z.preis)?(+z.preis).toFixed(2):'')+'" data-kk="zusatzBlock.zeilen.'+i+'.preis" placeholder="—" style="width:90px"> €</td>'+
-      '<td><input type="text" value="'+escapeHtml(z.einheit||'€')+'" data-kk="zusatzBlock.zeilen.'+i+'.einheit" style="width:80px"></td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+((+z.preis)?(+z.preis).toFixed(2):'')+'" data-kk="zusatzBlock.zeilen.'+i+'.preis" placeholder="— (nur Text)" style="width:120px"> €</td>'+
       '<td style="text-align:center"><button type="button" onclick="_kplZusatzDelRow('+i+')" title="Zeile entfernen" style="background:none;border:none;color:var(--err);cursor:pointer;font-size:15px">🗑</button></td>'+
     '</tr>'
   ).join('');
@@ -45067,7 +45066,6 @@ function _showKundenpreislisteEditor(data, hkRef) {
             '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>'+
               '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Bezeichnung</th>'+
               '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Preis</th>'+
-              '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Einheit</th>'+
               '<th style="border-bottom:1px solid var(--bdr);width:34px"></th>'+
             '</tr></thead><tbody>'+zusatzRows+'</tbody></table>'+
             '<button type="button" class="btn" onclick="_kplZusatzAddRow()" style="margin-top:8px;font-size:12px;background:#EEF2FF;border-color:#A5B4FC;color:#3730A3">➕ Zeile hinzufügen</button>'+
@@ -45527,9 +45525,8 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
       drawSectionTitle(String(_zb.titel||'').trim() || 'Zusätzliche Leistungen');
       tableReset();
       _zRows.forEach(z => {
-        // Preis nur zeigen, wenn ein Betrag > 0 ODER eine von „€" abweichende Einheit gesetzt ist → sonst reine Text-Zeile.
-        const hasPreis = (+z.preis || 0) > 0 || (z.einheit && String(z.einheit).trim() && String(z.einheit).trim() !== '€');
-        const preisTxt = hasPreis ? (eur(z.preis) + (z.einheit && z.einheit !== '€' ? (' / '+String(z.einheit).replace('€/','').replace('€','').trim()) : '')) : '';
+        // v9.06: keine Einheit mehr — Preis zeigen wenn Betrag > 0, sonst reine Text-Zeile.
+        const preisTxt = (+z.preis || 0) > 0 ? eur(z.preis) : '';
         tableRow([z.label, preisTxt], [120,62]);
       });
       y += 4;
