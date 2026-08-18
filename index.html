@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.91';
+const APP_VERSION = 'v8.92';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9835,6 +9835,8 @@ async function _odCreateOrder(recId, btn) {
     if (String(_af.zugang||'').trim())       rec.fields._odZugang    = String(_af.zugang).trim();     // v8.81: Kontaktperson für Zugang (aus AB)
     if (String(_af.kunde_name||'').trim())   rec.fields._odKundeName = String(_af.kunde_name).trim(); // v8.81: Kunde (aus AB/Angebot)
     if (String(_af.kunde_nummer||'').trim()) rec.fields._odKundeNr   = String(_af.kunde_nummer).trim();
+    if (String(_af.kontakt_email||'').trim()) rec.fields._odEmail     = String(_af.kontakt_email).trim();  // v8.92: Besteller-Mail → OD-Benutzer
+    if (String(_af.besteller||'').trim())     rec.fields._odBesteller = String(_af.besteller).trim();      // v8.92: Besteller-Name
     // v8.80: Leistungsumfang = Positions-TITEL aus dem Angebot (exakt wie im Angebots-PDF, ohne Sub-Bullets/Preise)
     const _angRid = _af.angebot_rec_id;
     if (_angRid) { try {
@@ -9967,6 +9969,12 @@ function _odFieldInputHtml(def, value, recId){
 }
 /* v8.60: Editierbares Order-Display-Formular. Standardfelder (Titel/Ticket-Nr/Fälligkeit) + dynamisch
    die Custom-Felder aus getOrderFields (auto-vorbefüllt per Label). „Anlegen" → _odSubmitOrder. */
+/* v8.92: Immer-BCC für Order-Display-Mails je Firma (User: aufzug→info@…, aszendio→service@aszendio.com). Editierbar im Dialog. */
+function _odBccDefault(firma){
+  try { const rec = (_firmenCache||[]).find(fr => fr.fields && fr.fields.slug === firma); const v = rec && rec.fields && rec.fields.od_bcc; if (v && String(v).trim()) return String(v).trim(); } catch(_){}
+  const DEF = { aufzug:'info@aufzugshandwerk.de', aszendio:'service@aszendio.com' };
+  return DEF[firma] || '';
+}
 async function _odOpenCreateModal(recId, d) {
   document.getElementById('od-create-modal')?.remove();
   const rec = (typeof _auftragCache!=='undefined' && _auftragCache || []).find(r => r.id === recId);
@@ -9996,6 +10004,13 @@ async function _odOpenCreateModal(recId, d) {
           '<div style="width:120px">'+lbl('Uhrzeit')+'<input id="od-f-dltime" type="time" value="'+escapeHtml(d.dlTime)+'" style="'+inpStyle+'"></div>'+
         '</div>'+
         (edit?'':'<div style="font-size:11px;color:var(--txt3);margin-top:4px">Fälligkeit = 2 Wochen ab AB-Datum (anpassbar).</div>')+
+        // v8.92: Besteller-E-Mail (→ OD-Benutzer) + Name + BCC — editierbar, vorbefüllt wo bekannt, damit die richtige Kunden-Mail hinterlegt ist
+        lbl('E-Mail Besteller/Kunde <span style="font-weight:400;color:var(--txt3)">(wird als Order-Display-Benutzer gesetzt · prüfen/eintragen)</span>')+
+        '<input id="od-f-email" type="email" value="'+escapeHtml(String(f._odEmail||''))+'" placeholder="kunde@example.de" style="'+inpStyle+'">'+
+        '<div style="display:flex;gap:10px">'+
+          '<div style="flex:1">'+lbl('Name Besteller <span style="font-weight:400;color:var(--txt3)">(optional)</span>')+'<input id="od-f-ename" value="'+escapeHtml(String(f._odBesteller||f._odKundeName||''))+'" placeholder="Vorname Nachname" style="'+inpStyle+'"></div>'+
+          '<div style="flex:1">'+lbl('BCC <span style="font-weight:400;color:var(--txt3)">(immer)</span>')+'<input id="od-f-bcc" value="'+escapeHtml(_odBccDefault(d.firmaSlug))+'" placeholder="info@…" style="'+inpStyle+'"></div>'+
+        '</div>'+
         // v8.91: explizites, editierbares Leistungsumfang-Feld (vorbefüllt = 1. Zeile der Leistungsbeschreibung, Maxise/Servicebox) → geht ins Order Display
         lbl('Leistungsumfang <span style="font-weight:400;color:var(--txt3)">(1. Zeile aus dem Angebot · editierbar · wird ins Order Display übernommen)</span>')+
         '<textarea id="od-f-leistung" rows="2" placeholder="Leistungsumfang…" style="'+inpStyle+';resize:vertical">'+escapeHtml(String(f._odLeistung1||''))+'</textarea>'+
@@ -10159,6 +10174,12 @@ async function _odSubmitOrder(recId) {
   // ── NEU ANLEGEN ──
   const args = { title, orderNumber, ticketNumber, stage: -1, deadline };
   if (Object.keys(details).length) args.details = details;
+  // v8.92: Besteller-E-Mail als OD-Benutzer + BCC (immer, je Firma) — createOrder unterstützt users[{name,email}] + bcc.
+  const _odEmail = String(document.getElementById('od-f-email')?.value||'').trim();
+  const _odEName = String(document.getElementById('od-f-ename')?.value||'').trim();
+  const _odBcc   = String(document.getElementById('od-f-bcc')?.value||'').split(/[;,\s]+/).map(s=>s.trim()).filter(s=>/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s));
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(_odEmail)) args.users = [{ email:_odEmail, name:(_odEName||_odEmail) }];
+  if (_odBcc.length) args.bcc = _odBcc;
   // v8.81: Kunde aus Angebot/AB — im Order Display auflösen oder anlegen, dann als Firestore-Referenz setzen.
   try {
     const kName = String(f._odKundeName || f.kunde_name || f.kunde_firmenname || '').trim();
@@ -10166,9 +10187,17 @@ async function _odSubmitOrder(recId) {
     if (kName || kNr) { if (btn) btn.textContent = '⏳ Kunde…'; const cp = await _odResolveOrCreateCustomer(firmaSlug, kName, kNr); if (cp) args.customer = cp; if (btn) btn.textContent = '⏳ Order Display…'; }
   } catch(_){}
   try {
-    const res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', {
-      method:'POST', body:{ name:'createOrder', arguments: args }
-    });
+    let res;
+    try {
+      res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'createOrder', arguments: args } });
+    } catch(e1) {
+      // v8.92: Falls das createOrder-Schema users/bcc ablehnt → einmal OHNE erneut versuchen (Auftrag trotzdem anlegen)
+      if ((args.users || args.bcc) && /invalid|unexpected|unknown|not allowed|users|bcc|-32602/i.test(String((e1&&e1.message)||''))) {
+        delete args.users; delete args.bcc;
+        res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'createOrder', arguments: args } });
+        toast('⚠ E-Mail/BCC konnten im Order Display nicht automatisch gesetzt werden — Auftrag ist angelegt, bitte dort prüfen.','warn');
+      } else { throw e1; }
+    }
     const od = (res && res.result) || {};
     const odId  = od.id || od.orderId || od.docId || (od.order && od.order.id) || '';
     const odNum = od.orderNumber || od.number || (od.order && od.order.orderNumber) || orderNumber;
