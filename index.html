@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.92';
+const APP_VERSION = 'v8.94';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9829,7 +9829,7 @@ async function _odCreateOrder(recId, btn) {
   let _abTicket = '', _abAngNum = '', _abLeist = '';
   if (f.ab_recid) { try {
     const _ab = await _abGetRec(f.ab_recid); const _af = (_ab && _ab.fields) || {};
-    _abTicket = String(_af.ticket_num || '').trim();
+    _abTicket = String(_af.ticket_num || _af.fd_ticket_id || '').trim();   // v8.93: auch die Freshdesk-Ticket-Nr der AB als Vorbefüllung
     _abAngNum = String(_af.angebot_num || '').replace(/^ANG[-\s]?/i,'').trim();
     _abLeist  = String(_af.leistungsumfang || '').trim();   // Fallback
     if (String(_af.zugang||'').trim())       rec.fields._odZugang    = String(_af.zugang).trim();     // v8.81: Kontaktperson für Zugang (aus AB)
@@ -10109,10 +10109,17 @@ async function _odResolveOrCreateCustomer(firmaSlug, kName, kNr){
     if (kNr) args.customerNumber = kNr;
     const r = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'createCustomer', arguments: args } });
     const res = (r && (r.result!=null?r.result:r.raw)) || {};
+    console.log('[OD-createCustomer] response:', JSON.stringify(res).slice(0,400));
+    // v8.93: createCustomer liefert oft nur eine id (kein Firestore-Pfad) → OD zeigt sonst „Unavailable".
+    //   Deshalb nach dem Anlegen den ECHTEN Pfad via getCustomers-Match holen. Nur einen gültigen Pfad zurückgeben.
+    let path2 = '';
+    try { path2 = await _odResolveCustomerPath(firmaSlug, kName, kNr); } catch(_){}
+    if (path2) { console.log('[OD] Kunde angelegt + Pfad aufgelöst:', path2); return path2; }
     const c = res.customer || res.data || res.result || res;
-    path = (c && (c.path || c.documentPath || c.ref)) || (c && c.id ? String(c.id) : '');
-    if (path) console.log('[OD] Kunde in LiteLead angelegt: '+kName+' → '+path);
-    return path;
+    const raw = (c && (c.path || c.documentPath || c.ref)) || '';
+    if (/\//.test(raw)) { console.log('[OD] Kunde angelegt, Pfad aus Response:', raw); return raw; }   // nur echte Pfade (mit /), keine nackte id
+    console.warn('[OD-createCustomer] kein gültiger Firestore-Pfad ableitbar → Kunde bleibt ungesetzt.');
+    return '';
   } catch(e){ console.warn('[OD-createCustomer] fehlgeschlagen (Schema?):', e && e.message); return ''; }
 }
 /* v8.91: OD-Leistungsumfang setzen, wenn er built-in ist (kein getOrderFields-Custom-Feld). Best-effort via
@@ -10186,6 +10193,7 @@ async function _odSubmitOrder(recId) {
     const kNr   = String(f._odKundeNr || f.kunde_nummer || '').trim();
     if (kName || kNr) { if (btn) btn.textContent = '⏳ Kunde…'; const cp = await _odResolveOrCreateCustomer(firmaSlug, kName, kNr); if (cp) args.customer = cp; if (btn) btn.textContent = '⏳ Order Display…'; }
   } catch(_){}
+  console.log('[OD-Create args]', JSON.stringify(args));   // v8.93: Diagnose — was genau gesendet wird (customer/users/bcc/details)
   try {
     let res;
     try {
@@ -10201,6 +10209,8 @@ async function _odSubmitOrder(recId) {
     const od = (res && res.result) || {};
     const odId  = od.id || od.orderId || od.docId || (od.order && od.order.id) || '';
     const odNum = od.orderNumber || od.number || (od.order && od.order.orderNumber) || orderNumber;
+    // v8.93: Diagnose — angelegten OD-Auftrag komplett loggen, um den echten built-in-Feldschlüssel für „Leistungsumfang" zu finden + customer/users zu prüfen
+    if (odId) { try { const _chk = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'getOrderById', arguments:{ orderId: odId } } }); const _co = (_chk && (_chk.result!=null?_chk.result:_chk.raw)) || _chk; console.log('[OD-Order created JSON]', JSON.stringify(_co).slice(0,3000)); } catch(_){} }
     try {
       await ensureField('Auftraege','od_order_id','singleLineText');
       await ensureField('Auftraege','od_order_number','singleLineText');
@@ -36217,7 +36227,8 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
       if (info && info.id) { angId = String(info.id); quelle = 'neu angelegt (Aufwand-Angebot Nr. '+(info.nummer||info.id)+')'; }
     }
     if (!angId) throw new Error('Nach-Aufwand-Auftrag braucht jetzt ein Aufwand-Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kontakt am Angebot prüfen).');
-    const payload = { angebotid:+angId, notizen:'', leistungsbeschreibung: leistungText || (fAng.leistungsumfang||'-'), ...common };
+    const _leistTxtA = leistungText || (fAng.leistungsumfang||'-');   // v8.94: mehrere Feldnamen → trifft das angezeigte „Leistungsumfang"
+    const payload = { angebotid:+angId, notizen:'', leistungsbeschreibung:_leistTxtA, leistung:_leistTxtA, leistungsumfang:_leistTxtA, ...common };
     const _existA = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
     if (_existA) return { created:_existA, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
     const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
@@ -36247,7 +36258,10 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
     }
   }
   if (!angId) throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag braucht ein Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kunde am Angebot prüfen).');
-  const payload = { angebotid:+angId, notizen:'', ...common };
+  // v8.94: Leistung MITSENDEN (Festpreis-Zweig sendete sie bisher NICHT) — sonst blieb „Leistungsumfang" im Maxise-Auftrag LEER → Problem bei der Rechnung.
+  //   Mehrere plausible Feldnamen (Maxise/Spring ignoriert unbekannte Felder, wie bei anderen Payloads auch) → trifft das angezeigte Feld sicher.
+  const _leistTxt = leistungText || (fAng.leistungsumfang||'');
+  const payload = { angebotid:+angId, notizen:'', leistungsbeschreibung:_leistTxt, leistung:_leistTxt, leistungsumfang:_leistTxt, ...common };
   const _existP = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
   if (_existP) return { created:_existP, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
   const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
