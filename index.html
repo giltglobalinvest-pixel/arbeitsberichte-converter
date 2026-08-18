@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.95';
+const APP_VERSION = 'v8.96';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36994,14 +36994,40 @@ function _abFreshdeskBcc(firma){
   const DEF = { aufzug:'service@aufzugshandwerk.de' };   // je Firma erweiterbar; für Aszendio hier eintragen
   return DEF[firma] || '';
 }
+/* v8.96: Feste AB-Mail-Signatur je Firma (User-Vorgabe 18.08.2026). aszendio noch offen → Fallback Freshdesk-Agent-Signatur. */
+function _abMailSignature(firma){
+  const SIG = {
+    aufzug: 'Mit freundlichen Grüßen<br><br>Aufzugshandwerk Service Center<br>Aufzugshandwerk GmbH<br>071196882904<br>Ludwig-Pfau-Str. 17<br>70176 Stuttgart',
+  };
+  return SIG[firma] || '';
+}
+/* v8.96: Anrede (Herr/Frau) best-effort aus dem Besteller-Vornamen — editierbar in der Mail; unbekannt → neutral (kein Misgendering). */
+function _abAnrede(vorname){
+  const v = String(vorname||'').trim().toLowerCase().replace(/[^a-zäöüß]/g,'');
+  if (!v) return '';
+  const female = new Set(['anna','maria','julia','sabine','petra','sandra','claudia','andrea','nicole','stefanie','stephanie','katrin','katharina','christina','martina','monika','susanne','birgit','gabriele','ute','ursula','angelika','heike','manuela','elke','karin','brigitte','renate','silke','tanja','melanie','nadine','jessica','laura','lena','lisa','sarah','sara','vanessa','jennifer','franziska','johanna','sophie','sophia','marie','emma','hannah','lea','mia','clara','klara','eva','ingrid','helga','gerda','erika','antje','anja','kerstin','bettina','cornelia','daniela','diana','doris','ines','iris','jana','judith','jutta','kirsten','marion','miriam','nina','ramona','regina','rita','ruth','simone','sonja','svenja','theresa','ulrike','verena','victoria','viktoria','yvonne']);
+  const male = new Set(['martin','thomas','michael','andreas','peter','stefan','stephan','christian','klaus','wolfgang','jürgen','juergen','frank','uwe','matthias','hans','werner','dieter','manfred','helmut','günter','guenter','horst','walter','heinz','joachim','bernd','ralf','rolf','jörg','joerg','markus','marcus','oliver','dirk','holger','sven','sascha','daniel','alexander','sebastian','tobias','florian','benjamin','patrick','dennis','marcel','kevin','tim','tom','felix','jan','lukas','luca','leon','paul','max','maximilian','moritz','niklas','jonas','david','simon','philipp','fabian','johannes','georg','karl','ludwig','robert','richard','norbert','reinhard','volker','wilhelm','heiko','ingo','kai','lars','mario','nico','rene','torsten','thorsten','axel','jens','pascal','roman','anton','ben','erik','emil']);
+  if (female.has(v)) return 'Frau';
+  if (male.has(v)) return 'Herr';
+  return '';
+}
+function _abSalutation(besteller){
+  const name = String(besteller||'').trim();
+  if (!name) return 'Sehr geehrte Damen und Herren,';
+  const parts = name.split(/\s+/);
+  const nachname = parts[parts.length-1];
+  const anrede = _abAnrede(parts[0]);
+  if (anrede && nachname) return 'Sehr geehrte/r '+anrede+' '+nachname+',';
+  return 'Sehr geehrte/r '+name+',';   // unbekanntes Geschlecht → voller Name (kein Titel)
+}
 async function _abOpenSendModal(recId) {
   const rec = await _abGetRec(recId); if (!rec) return toast('Nicht gefunden','err');
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
   if (!APP_KEYS.valtownProxyUrl) return toast('Freshdesk/Proxy nicht eingerichtet (Admin → Integrationen).','err');
   const fdOk = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
   const subject = 'Auftragsbestätigung Nr. ' + _abDispNum(f) + (f.standort ? ' · '+String(f.standort).split(/[,\n]/)[0].trim() : '');
-  const anrede = f.besteller ? ('Sehr geehrte/r '+f.besteller+',') : 'Sehr geehrte Damen und Herren,';
-  const body = anrede + '\n\nvielen Dank für Ihren Auftrag. Anbei erhalten Sie die Auftragsbestätigung Nr. ' + _abDispNum(f) + '.\n\nFür Rückfragen stehen wir Ihnen jederzeit gerne zur Verfügung.\n\nMit freundlichen Grüßen';
+  const anrede = _abSalutation(f.besteller);   // v8.96: „Sehr geehrte/r Herr/Frau Nachname" aus dem Besteller
+  const body = anrede + '\n\nim Anhang bestätigen wir Ihnen unsere Service- und Montageleistungen gemäß Auftragsbestätigung. Sollten Sie hierzu noch Fragen haben, so stehen wir Ihnen gerne telefonisch oder per E-Mail zur Verfügung.';
   document.getElementById('ab-send-modal')?.remove();
   const m = document.createElement('div'); m.id='ab-send-modal'; m._recId=recId;
   m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:10850;display:flex;align-items:center;justify-content:center;box-sizing:border-box;padding:max(8px,env(safe-area-inset-top)) max(8px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(8px,env(safe-area-inset-left))';
@@ -37050,15 +37076,17 @@ async function _abOpenSendModal(recId) {
   m.onclick = (e) => { if (e.target === m) m.remove(); };
   _abSendToggleMode();
   (async () => {
-    let sig = '';
-    try {
-      await erpEnsureSession();
-      const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
-      if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); }
-    } catch(_){}
+    let sig = _abMailSignature(firma);   // v8.96: feste Firmen-Signatur bevorzugen
+    if (!sig) {
+      try {
+        await erpEnsureSession();
+        const meR = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/agents/me', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() } });
+        if (meR.ok) { const me = await meR.json(); sig = String((me && (me.signature||me.signature_html)) || '').trim(); }
+      } catch(_){}
+    }
     m._agentSignature = sig;
     const el = document.getElementById('ab-send-sig');
-    if (el) el.innerHTML = sig ? sig : '<span style="color:#9ca3af;font-style:italic">Keine Signatur im Freshdesk-Agent-Profil hinterlegt (Freshdesk → Profil → Signatur).</span>';
+    if (el) el.innerHTML = sig ? sig : '<span style="color:#9ca3af;font-style:italic">Keine Signatur hinterlegt.</span>';
   })();
 }
 async function _abDoSend() {
