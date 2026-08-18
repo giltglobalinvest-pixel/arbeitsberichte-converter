@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.02';
+const APP_VERSION = 'v9.03';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36373,8 +36373,21 @@ function _abOpen(recId) {
   let lu = '';
   try {
     if (f.abrechnung_modus === 'aufwand') {
+      // v9.03: AB bestätigt „nach Aufwand wie angeboten" + Arbeit (nicht-versteckte Positionen) + Stundensatz/Einsatzpauschale.
       const s = JSON.parse(f.stundensaetze_json||'[]');
-      lu = 'Abrechnung nach tatsächlichem Aufwand.\n' + s.map(x => '- '+(x.name||'')+(x.satz?(' ('+x.satz+' '+(x.einheit||'')+')'):'')).join('\n');
+      let workDesc = '';
+      try {
+        const pos = (JSON.parse(f.positionen_json||'[]')||[]).filter(p => p && !p.hidden);
+        workDesc = pos.map(p => { const t=String(p.titel||'').trim(); const subs=Array.isArray(p.leistungsbeschreibung)?p.leistungsbeschreibung:[]; return t + (subs.length?('\n'+subs.map(l=>'  - '+l).join('\n')):''); }).filter(Boolean).join('\n\n');
+      } catch(_){}
+      const _eur = n => (Number(n)||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
+      const std  = s.find(x => /stunde|monteur|regie/i.test(String((x&&x.name)||'')));
+      const eins = s.find(x => /einsatz|anfahrt|zustell|pauschal/i.test(String((x&&x.name)||'')));
+      lu = (workDesc ? (workDesc+'\n\n') : '')
+        + 'Abrechnung nach tatsächlichem Aufwand (Regie) — wie angeboten:\n'
+        + (std  ? ('  - Stundensatz: '+_eur(std.satz)+' / Std.\n') : '')
+        + (eins ? ('  - Einsatzpauschale: '+_eur(eins.satz)+'\n') : '')
+        + 'Der tatsächlich angefallene Aufwand wird per Stundenrapport nachgewiesen; Material gegen Nachweis. Alle Preise zzgl. gesetzl. USt.';
     } else {
       // v9.00: NUR nicht-versteckte Positionen (= TECHNISCHE SPEZIFIKATION, wie im Angebot-PDF) — Kostenpositionen (hidden) raus.
       const pos = (JSON.parse(f.positionen_json||'[]')||[]).filter(p => p && !p.hidden);
@@ -38412,11 +38425,18 @@ async function _angPushAufwandToErp(recId, btn) {
   const kundeIdNum   = parseInt(String(f.kunde_nummer||'').replace(/[^\d]/g,''), 10);
   if (!Number.isFinite(kontaktIdNum) || kontaktIdNum <= 0) throw new Error('Kein Kontakt im App-Angebot hinterlegt. Bitte das Angebot bearbeiten und einen Kontakt auswählen.');
   let positionen = []; try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
-  const kurzTitel = (positionen[0] && positionen[0].titel) || f.leistungsumfang || 'Leistung nach Aufwand';
+  // v9.03: Arbeitsbeschreibung NUR aus nicht-versteckten Positionen (Kostenpositionen raus, wie Pauschal v9.00) — nicht f.leistungsumfang.
+  const _techPos = positionen.filter(p => p && !p.hidden);
+  const _workDesc = _techPos.map(p => {
+    const t = String(p.titel||'').trim();
+    const subs = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung.map(x=>String(x||'').trim()).filter(Boolean) : [];
+    return subs.length ? (t+'\n'+subs.map(s=>'• '+s).join('\n')) : t;
+  }).filter(Boolean).join('\n\n');
+  const kurzTitel = (_techPos[0] && _techPos[0].titel) || (positionen[0] && positionen[0].titel) || 'Leistung nach Aufwand';
   const bezeichnung = '[NACH AUFWAND] ' + String(kurzTitel).slice(0,80);
   const angNum = String(f.app_angebot_num || '?');
   const eur = (n)=>Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
-  const serviceText = String(f.leistungsumfang || kurzTitel || 'Leistung nach tatsächlichem Aufwand').slice(0,2000);
+  const serviceText = String(_workDesc || 'Leistung nach tatsächlichem Aufwand (Regie).').slice(0,2000);
   const erlaeuterungText = [
     'ABRECHNUNG NACH TATSÄCHLICHEM AUFWAND (Regie).',
     '',
@@ -38457,7 +38477,7 @@ async function _angPushAufwandToErp(recId, btn) {
     kundeMail:              false,
     // v8.88: echte Daten statt '-' (leere Backoffice-Mail vermeiden)
     titelemail:             bezeichnung || '-',
-    inhaltemail:            serviceText || '-',
+    inhaltemail:            'Über die Servicebox angelegt — Details in der Servicebox.',   // v9.03: kein Text-Dump + Marker für Auto-Close (v9.01)
     kundeemail:             '-',
     kundeEmail:             '-',
     status:                 'In Bearbeitung',
