@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.07';
+const APP_VERSION = 'v9.08';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -44912,7 +44912,7 @@ function openKonePreislisteKundeEditor() {
     markupPct:   markupPct,
     // v9.05: modularer Zusatz-Block (optional, editierbar) — erscheint unter „Sonstiges"/Notruf.
     //         enabled:true bei neuen Listen; leere Zeilen werden im PDF ausgefiltert → kein Effekt bis befüllt.
-    zusatzBlock: { enabled:true, titel:'', zeilen:[{ label:'', preis:0, einheit:'€' }] },
+    zusatzBlock: { enabled:true, titel:'', zeilen:[{ label:'', preis:'', einheit:'€' }] },
     // v7.80/81: Brief-Deckblatt (optional) — Anschreiben auf Aszendio-Briefpapier vor der Preisliste
     briefEnabled:       false,
     briefText:          KPL_BRIEF_DEFAULT_TEXT,
@@ -44929,7 +44929,7 @@ function _showKundenpreislisteEditor(data, hkRef) {
   //         damit bestehende Listen sich NICHT verändern. Immer mind. 1 Zeile zum Editieren.
   if (!data.zusatzBlock || typeof data.zusatzBlock !== 'object') data.zusatzBlock = { enabled:false, titel:'', zeilen:[] };
   if (!Array.isArray(data.zusatzBlock.zeilen)) data.zusatzBlock.zeilen = [];
-  if (!data.zusatzBlock.zeilen.length) data.zusatzBlock.zeilen = [{ label:'', preis:0, einheit:'€' }];
+  if (!data.zusatzBlock.zeilen.length) data.zusatzBlock.zeilen = [{ label:'', preis:'', einheit:'€' }];
   const old = document.getElementById('kunden-pl-modal'); if (old) old.remove();
   const modal = document.createElement('div');
   modal.id = 'kunden-pl-modal';
@@ -44965,7 +44965,7 @@ function _showKundenpreislisteEditor(data, hkRef) {
   const zusatzRows = (zb.zeilen||[]).map((z,i) =>
     '<tr>'+
       '<td><input type="text" value="'+escapeHtml(z.label||'')+'" data-kk="zusatzBlock.zeilen.'+i+'.label" placeholder="Bezeichnung" style="width:100%;min-width:180px"></td>'+
-      '<td><input type="number" min="0" step="0.01" value="'+((+z.preis)?(+z.preis).toFixed(2):'')+'" data-kk="zusatzBlock.zeilen.'+i+'.preis" placeholder="— (nur Text)" style="width:120px"> €</td>'+
+      '<td><input type="text" value="'+escapeHtml(z.preis==null?'':String(z.preis))+'" data-kk="zusatzBlock.zeilen.'+i+'.preis" placeholder="z. B. 900 · 0 · entfällt · (leer = nur Text)" style="width:190px"></td>'+
       '<td style="text-align:center"><button type="button" onclick="_kplZusatzDelRow('+i+')" title="Zeile entfernen" style="background:none;border:none;color:var(--err);cursor:pointer;font-size:15px">🗑</button></td>'+
     '</tr>'
   ).join('');
@@ -45103,7 +45103,7 @@ function _kplZusatzAddRow() {
   const cur = _readKundenpreislisteEditor(); if (!cur) return;
   if (!cur.zusatzBlock || typeof cur.zusatzBlock !== 'object') cur.zusatzBlock = { enabled:true, titel:'', zeilen:[] };
   if (!Array.isArray(cur.zusatzBlock.zeilen)) cur.zusatzBlock.zeilen = [];
-  cur.zusatzBlock.zeilen.push({ label:'', preis:0, einheit:'€' });
+  cur.zusatzBlock.zeilen.push({ label:'', preis:'', einheit:'€' });
   cur.zusatzBlock.enabled = true;  // Zeile hinzufügen ⇒ Block aktiv
   _showKundenpreislisteEditor(cur, modal._hkRef);
   // Fokus auf die neu angelegte Bezeichnungs-Zelle
@@ -45116,8 +45116,19 @@ function _kplZusatzDelRow(i) {
   const modal = document.getElementById('kunden-pl-modal'); if (!modal) return;
   const cur = _readKundenpreislisteEditor(); if (!cur || !cur.zusatzBlock || !Array.isArray(cur.zusatzBlock.zeilen)) return;
   cur.zusatzBlock.zeilen.splice(i, 1);
-  if (!cur.zusatzBlock.zeilen.length) cur.zusatzBlock.zeilen = [{ label:'', preis:0, einheit:'€' }];
+  if (!cur.zusatzBlock.zeilen.length) cur.zusatzBlock.zeilen = [{ label:'', preis:'', einheit:'€' }];
   _showKundenpreislisteEditor(cur, modal._hkRef);
+}
+/* v9.08: Preis-Anzeige für Zusatz-Zeilen — leer = reine Textzeile; reine Zahl (auch 0) → „X,XX €";
+   Freitext wie „entfällt"/„inklusive"/„kostenfrei" wird 1:1 gezeigt. Akzeptiert Zahl oder String. */
+function _zusatzPreisAnzeige(raw) {
+  const s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  if (/^[\d.,\s]+$/.test(s)) {
+    const num = parseFloat(s.replace(/\./g,'').replace(',','.'));
+    if (!isNaN(num)) return num.toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  }
+  return s;
 }
 
 /* ── v7.18: Benannte Preis-Standards für die Kundenpreisliste (Airtable, firma-weit geteilt) ── */
@@ -45475,18 +45486,21 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
   let _rowIdx = 0;
   const tableReset = () => { _rowIdx = 0; };
   const tableRow = (cols, widths, bold) => {
-    if (y > H - 22) { doc.addPage(); y = 14; _rowIdx = 0; }
-    const rowH = 6.5;
+    doc.setFont('helvetica', bold?'bold':'normal'); doc.setFontSize(10);
+    // v9.08: Bezeichnung (Spalte 0) umbrechen, damit lange Texte NICHT in den Preis laufen (Überlappungs-Fix).
+    const labelLines = doc.splitTextToSize(String(cols[0]), widths[0] - 3);
+    const lineH = 4.6;
+    const rowH  = Math.max(6.5, labelLines.length * lineH + 1.9);
+    if (y - 4.5 + rowH > H - 16) { doc.addPage(); y = 14; _rowIdx = 0; }
     if (!bold && _rowIdx % 2 === 1) {
       doc.setFillColor(248,250,252);
       doc.rect(ml-1, y-4.5, (mr-ml)+2, rowH, 'F');
     }
-    doc.setFont('helvetica', bold?'bold':'normal'); doc.setFontSize(10); doc.setTextColor(40,40,40);
-    let x = ml;
-    for (let i = 0; i < cols.length; i++) {
-      const align = (i > 0) ? 'right' : 'left';
-      const tx = (align==='right') ? (x + widths[i] - 1) : x;
-      doc.text(String(cols[i]), tx, y, { align });
+    doc.setTextColor(40,40,40);
+    for (let li = 0; li < labelLines.length; li++) doc.text(labelLines[li], ml, y + li*lineH);
+    let x = ml + widths[0];
+    for (let i = 1; i < cols.length; i++) {
+      doc.text(String(cols[i]), x + widths[i] - 1, y, { align:'right' });   // restliche Spalten rechtsbündig, auf erster Zeile
       x += widths[i];
     }
     y += rowH;
@@ -45518,8 +45532,7 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
   const _zb = data.zusatzBlock;
   if (_zb && _zb.enabled) {
     (Array.isArray(_zb.zeilen) ? _zb.zeilen : []).filter(z => z && String(z.label||'').trim()).forEach(z => {
-      const preisTxt = (+z.preis || 0) > 0 ? eur(z.preis) : '';   // Preis>0 zeigen, sonst reine Textzeile
-      tableRow([z.label, preisTxt], [120,62]);
+      tableRow([z.label, _zusatzPreisAnzeige(z.preis)], [120,62]);   // v9.08: Zahl (auch 0) → „X,XX €", Freitext bleibt, leer → reine Textzeile
     });
   }
   y += 4;
