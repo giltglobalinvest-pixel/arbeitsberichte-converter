@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.96';
+const APP_VERSION = 'v8.97';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36569,10 +36569,18 @@ async function _abGenerateAndSave(btn, send) {
     const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
     let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
     if (fAng) {
-      // v8.03: KI bestimmt IN JEDEM FALL den Auftragstyp (Pauschal/Wartung/Modernisierung/Nach Aufwand) VOR der Anlage.
-      if (btn) btn.textContent = '⏳ KI: Auftragstyp…';
-      let kiTyp = null; try { kiTyp = await _abKiAuftragTyp(fAng); } catch(_){}
-      const typ = (kiTyp && kiTyp.typ) || _abAuftragTyp(fAng);
+      // v8.03: KI bestimmt den Auftragstyp VOR der Anlage. v8.97: ABER bei Maxise-Angeboten NICHT raten —
+      //   der Typ steht im Maxise-Angebot fest (erp_typ/abrechnung_modus). Die KI lag hier falsch (Modernisierung statt Pauschal).
+      if (btn) btn.textContent = '⏳ Auftragstyp…';
+      let kiTyp = null, typ;
+      if (fAng.herkunft === 'maxise') {
+        typ = _abAuftragTyp(fAng);   // deterministisch aus dem Maxise-Angebot
+        kiTyp = { typ, begruendung:'Typ direkt aus dem Maxise-Angebot übernommen (ohne KI).', quelle:'maxise' };
+      } else {
+        if (btn) btn.textContent = '⏳ KI: Auftragstyp…';
+        try { kiTyp = await _abKiAuftragTyp(fAng); } catch(_){}
+        typ = (kiTyp && kiTyp.typ) || _abAuftragTyp(fAng);
+      }
       const typLbl = { pauschal:'Pauschal', wartung:'Wartung', modernisierung:'Modernisierung', aufwand:'Nach Aufwand' }[typ] || typ;
       // v8.08: JEDER Auftrag läuft jetzt über ein Maxise-Angebot (auch Nach Aufwand → Aufwand-Angebot) → AngebotsID für Order Display.
       const bestellLbl = 'Mit Angebot';
@@ -37069,6 +37077,7 @@ async function _abOpenSendModal(recId) {
       '</div>'+
       '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button onclick="document.getElementById(\'ab-send-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px">Abbrechen</button>'+
+        '<button onclick="_abPreviewSelected()" style="padding:8px 14px;border:1px solid #7C3AED;border-radius:6px;background:#F5F3FF;color:#6D28D9;font-weight:600;cursor:pointer" title="Die gewählte AB (Servicebox oder Maxise) vor dem Senden ansehen">👁 Vorschau</button>'+
         '<button id="ab-send-btn" onclick="_abDoSend()" style="padding:8px 16px;border:none;border-radius:6px;background:#059669;color:#fff;font-weight:600;cursor:pointer">📤 Senden</button>'+
       '</div>'+
     '</div>';
@@ -37088,6 +37097,22 @@ async function _abOpenSendModal(recId) {
     const el = document.getElementById('ab-send-sig');
     if (el) el.innerHTML = sig ? sig : '<span style="color:#9ca3af;font-style:italic">Keine Signatur hinterlegt.</span>';
   })();
+}
+/* v8.97: Vorschau der GEWÄHLTEN AB (Servicebox- oder Maxise-PDF) vor dem Senden — zum Lesen/Prüfen. */
+async function _abPreviewSelected(){
+  const m = document.getElementById('ab-send-modal'); if(!m) return;
+  const recId = m._recId;
+  const rec = await _abGetRec(recId); if(!rec) return toast('Nicht gefunden','err');
+  const f = rec.fields||{}; const firma = f.firma||getCurrentFirmaSlug();
+  const src = (document.querySelector('input[name="ab-send-src"]:checked')||{}).value || 'servicebox';
+  toast('⏳ Vorschau wird geladen…','');
+  let blob = null;
+  try { if (src==='maxise' && f.erp_auftrag_id) blob = await _aufMaxisePdf(f.erp_auftrag_id, firma, _abDispNum(f), {returnBlob:true}); } catch(_){}
+  if (!blob) { try { blob = await _abGetPdfBlob(rec); } catch(_){} }
+  if (!blob) return toast('Vorschau nicht verfügbar','err');
+  const label = 'AB '+_abDispNum(f)+(src==='maxise'?' · Maxise':' · Servicebox');
+  if (typeof _showVorlagenPreview==='function'){ _showVorlagenPreview(blob, label); try{_rvRaisePreview();}catch(_){} }
+  else { const u=URL.createObjectURL(blob); window.open(u,'_blank'); }
 }
 async function _abDoSend() {
   const m = document.getElementById('ab-send-modal'); if (!m) return;
@@ -37155,7 +37180,10 @@ async function _abDoSend() {
     rec.fields = Object.assign({}, rec.fields, patch);
     toast('✅ Auftragsbestätigung gesendet' + (ticketId ? ' (Ticket #'+ticketId+')' : '') + '.','ok');
     m.remove();
-    _abRenderList();
+    // v8.97: nach dem Versand zum verknüpften Auftrag springen (User: „erst AB versenden, dann automatisch zum Aufträge-Reiter")
+    const _auftragRec = f.local_auftrag_recid || '';
+    if (_auftragRec && typeof _angGoToAuftrag === 'function') { try { _angGoToAuftrag(_auftragRec, recId); } catch(_){ try{_abRenderList();}catch(_){} } }
+    else { try { _abRenderList(); } catch(_){} }
   } catch(e) {
     console.error('[AB-Send]', e);
     toast('❌ ' + ((e && e.message) || e), 'err');
