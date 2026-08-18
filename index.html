@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.01';
+const APP_VERSION = 'v9.02';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36327,14 +36327,9 @@ async function _abWriteLocalAuftrag(fAng, created, leistungText, typOverride) {
     const isMitAngebot = String(bestellform).toUpperCase() === 'MITANGEBOT';
     const angebotTypEnum = (_typ === 'aufwand' && !isMitAngebot) ? '' : _typEnum;   // OHNEANGEBOT/Nach Aufwand → kein Typ-Badge (wie beim Mitarbeiter)
     const tmplKey = firmaSlug + (_typ === 'wartung' ? '-wartung' : '-arbeit');
-    // v8.02: Techniker initial IMMER Niklas Langer (bei Auftragserstellung durch die Servicebox).
+    // v9.02: KEINE automatische Techniker-Zuweisung mehr (User-Wunsch — vorher immer „Niklas Langer", v8.02).
+    //   Techniker bleibt beim Anlegen LEER und wird manuell in der Auftragsübersicht zugewiesen.
     let techKeys = [], techNames = '';
-    try {
-      await _ensureUsersLoaded();
-      const u = (_usersCache||[]).find(x => /niklas\s+langer/i.test(String((x.fields && x.fields.name) || '')));
-      if (u && u.fields && u.fields.api_key) { techKeys = [u.fields.api_key]; techNames = u.fields.name; }
-      else console.warn('[AB-LocalAuftrag] Techniker „Niklas Langer" nicht in _usersCache gefunden — keine Zuweisung.');
-    } catch(_){}
     // v8.02: AB-Datum = Tag der AB-Erstellung/-Versand
     try { await ensureField('Auftraege', 'ab_datum', 'singleLineText'); } catch(_){}
     const heute = new Date().toISOString().slice(0,10);
