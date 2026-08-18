@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.99';
+const APP_VERSION = 'v9.00';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36379,7 +36379,8 @@ function _abOpen(recId) {
       const s = JSON.parse(f.stundensaetze_json||'[]');
       lu = 'Abrechnung nach tatsächlichem Aufwand.\n' + s.map(x => '- '+(x.name||'')+(x.satz?(' ('+x.satz+' '+(x.einheit||'')+')'):'')).join('\n');
     } else {
-      const pos = JSON.parse(f.positionen_json||'[]');
+      // v9.00: NUR nicht-versteckte Positionen (= TECHNISCHE SPEZIFIKATION, wie im Angebot-PDF) — Kostenpositionen (hidden) raus.
+      const pos = (JSON.parse(f.positionen_json||'[]')||[]).filter(p => p && !p.hidden);
       lu = pos.map(p => {
         const lines = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung : [];
         return (p.titel||'') + (lines.length ? '\n'+lines.map(l => '  - '+l).join('\n') : '');
@@ -38031,11 +38032,16 @@ async function _angPushToErp(recId, btn) {
     // Positionen für Kurztitel
     let positionen = [];
     try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
-    const kurzTitel = positionen[0]?.titel || 'Reparatur / externes Angebot';
-    // v8.98: VOLLER Leistungstext für Maxise (nicht nur der erste Positionstitel) — sonst bleibt der Leistungsumfang im Angebot/Auftrag leer.
-    const leistungVoll = String(f.leistungsumfang||'').trim()
-      || positionen.map(p => { if(!p) return ''; const t=String(p.titel||'').trim(); const d=String(p.beschreibung||p.text||p.details||'').trim(); return d?(t+'\n'+d):t; }).filter(Boolean).join('\n\n')
-      || kurzTitel;
+    // v9.00: NUR die TECHNISCHE SPEZIFIKATION (nicht-versteckte Positionen) — exakt wie das Angebot-PDF (Filter !p.hidden).
+    //   Sub-Punkte liegen in p.leistungsbeschreibung[]. NICHT f.leistungsumfang nehmen — das enthält auch die
+    //   Kostenpositionen (Fracht/Entsorgung/Monteur-/Fahrzeug-/Einsatzpauschale/Energiekostenbeitrag), die NICHT in den Leistungsumfang gehören.
+    const _techPos = positionen.filter(p => p && !p.hidden);
+    const kurzTitel = _techPos[0]?.titel || positionen[0]?.titel || 'Reparatur / externes Angebot';
+    const leistungVoll = _techPos.map(p => {
+      const t = String(p.titel||'').trim();
+      const subs = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung.map(x=>String(x||'').trim()).filter(Boolean) : [];
+      return subs.length ? (t+'\n'+subs.map(s=>'• '+s).join('\n')) : t;
+    }).filter(Boolean).join('\n\n') || kurzTitel;
     const bezeichnung = '['+(f.angebot_typ||'sonstiges').toUpperCase()+'] '+kurzTitel.slice(0,80);
     // Erläuterung — der entscheidende Hinweis für ERP-User
     const erlaeuterung = [
