@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.04';
+const APP_VERSION = 'v9.05';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -44910,6 +44910,9 @@ function openKonePreislisteKundeEditor() {
     sonstiges:   hk.sonstiges.map(s => ({ label: s.label, preis: r2(+s.preis||0), einheit: s.einheit, highlight: s.highlight })),
     fussnote:    'Alle Preise verstehen sich netto, zzgl. der gesetzlichen Mehrwertsteuer.',
     markupPct:   markupPct,
+    // v9.05: modularer Zusatz-Block (optional, editierbar) — erscheint unter „Sonstiges"/Notruf.
+    //         enabled:true bei neuen Listen; leere Zeilen werden im PDF ausgefiltert → kein Effekt bis befüllt.
+    zusatzBlock: { enabled:true, titel:'', zeilen:[{ label:'', preis:0, einheit:'€' }] },
     // v7.80/81: Brief-Deckblatt (optional) — Anschreiben auf Aszendio-Briefpapier vor der Preisliste
     briefEnabled:       false,
     briefText:          KPL_BRIEF_DEFAULT_TEXT,
@@ -44922,6 +44925,11 @@ function _showKundenpreislisteEditor(data, hkRef) {
   // v7.81: Brief-Felder immer vorbelegen — auch bei älteren Preislisten (data_json ohne diese Felder).
   for (const k in KPL_BRIEF_DEFAULTS) { if (!String(data[k]||'').trim()) data[k] = KPL_BRIEF_DEFAULTS[k]; }
   if (data.briefText == null || !String(data.briefText).trim()) data.briefText = KPL_BRIEF_DEFAULT_TEXT;
+  // v9.05: Zusatz-Block normalisieren. Fehlt er ganz (alte gespeicherte Preislisten) → aus (enabled:false),
+  //         damit bestehende Listen sich NICHT verändern. Immer mind. 1 Zeile zum Editieren.
+  if (!data.zusatzBlock || typeof data.zusatzBlock !== 'object') data.zusatzBlock = { enabled:false, titel:'', zeilen:[] };
+  if (!Array.isArray(data.zusatzBlock.zeilen)) data.zusatzBlock.zeilen = [];
+  if (!data.zusatzBlock.zeilen.length) data.zusatzBlock.zeilen = [{ label:'', preis:0, einheit:'€' }];
   const old = document.getElementById('kunden-pl-modal'); if (old) old.remove();
   const modal = document.createElement('div');
   modal.id = 'kunden-pl-modal';
@@ -44950,6 +44958,16 @@ function _showKundenpreislisteEditor(data, hkRef) {
       '<td style="color:var(--txt3);font-size:11px">'+ (hkRef ? Number(hkRef.sonstiges[i]?.preis||0).toLocaleString('de-DE',{ minimumFractionDigits:2 })+' €' : '—') +'</td>'+
       '<td><input type="number" min="0" step="0.01" value="'+(+s.preis||0).toFixed(2)+'" data-kk="sonstiges.'+i+'.preis" style="width:90px"> €</td>'+
       '<td><input type="text" value="'+escapeHtml(s.einheit||'€')+'" data-kk="sonstiges.'+i+'.einheit" style="width:80px"></td>'+
+    '</tr>'
+  ).join('');
+  // v9.05: Zeilen des modularen Zusatz-Blocks (Bezeichnung / Preis / Einheit + Löschen)
+  const zb = data.zusatzBlock;
+  const zusatzRows = (zb.zeilen||[]).map((z,i) =>
+    '<tr>'+
+      '<td><input type="text" value="'+escapeHtml(z.label||'')+'" data-kk="zusatzBlock.zeilen.'+i+'.label" placeholder="Bezeichnung" style="width:100%;min-width:180px"></td>'+
+      '<td><input type="number" min="0" step="0.01" value="'+((+z.preis)?(+z.preis).toFixed(2):'')+'" data-kk="zusatzBlock.zeilen.'+i+'.preis" placeholder="—" style="width:90px"> €</td>'+
+      '<td><input type="text" value="'+escapeHtml(z.einheit||'€')+'" data-kk="zusatzBlock.zeilen.'+i+'.einheit" style="width:80px"></td>'+
+      '<td style="text-align:center"><button type="button" onclick="_kplZusatzDelRow('+i+')" title="Zeile entfernen" style="background:none;border:none;color:var(--err);cursor:pointer;font-size:15px">🗑</button></td>'+
     '</tr>'
   ).join('');
   modal.innerHTML =
@@ -45037,6 +45055,24 @@ function _showKundenpreislisteEditor(data, hkRef) {
         '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Aufschlag</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">%</th></tr></thead><tbody>'+aufRows+'</tbody></table>'+
         '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Sonstiges</h4>'+
         '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Bezeichnung</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">HK</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Kunde</th><th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Einheit</th></tr></thead><tbody>'+sonstRows+'</tbody></table>'+
+        // v9.05: modularer Zusatz-Block (optional) — direkt unter „Sonstiges"/Notruf, frei editierbar, per Häkchen weglassbar
+        '<div style="border:1px dashed #A5B4FC;background:#F8FAFF;border-radius:8px;padding:12px 14px;margin:16px 0 6px">'+
+          '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;color:var(--navy);font-size:13px">'+
+            '<input type="checkbox" data-kk="zusatzBlock.enabled" id="kpl-zusatz-enabled" '+(zb.enabled?'checked':'')+' onchange="_kplZusatzToggle(this)" style="width:16px;height:16px;cursor:pointer">'+
+            '➕ Zusatz-Block (optional)</label>'+
+          '<div style="font-size:11px;color:var(--txt3);margin:3px 0 0 24px;line-height:1.5">Frei editierbarer Abschnitt direkt unter „Sonstiges". Häkchen raus = wird <strong>nicht</strong> ins PDF gedruckt. Leere Zeilen werden automatisch weggelassen.</div>'+
+          '<div id="kpl-zusatz-fields" style="margin-top:10px;opacity:'+(zb.enabled?'1':'0.5')+'">'+
+            '<div style="margin-bottom:8px"><strong style="font-size:12px">Überschrift</strong><br>'+
+              '<input type="text" data-kk="zusatzBlock.titel" value="'+escapeHtml(zb.titel||'')+'" placeholder="z. B. Zusätzliche Leistungen / Sondervereinbarungen" style="width:100%;padding:5px 8px;box-sizing:border-box"></div>'+
+            '<table style="width:100%;border-collapse:collapse;font-size:12px"><thead><tr>'+
+              '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Bezeichnung</th>'+
+              '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Preis</th>'+
+              '<th style="text-align:left;border-bottom:1px solid var(--bdr);padding:4px">Einheit</th>'+
+              '<th style="border-bottom:1px solid var(--bdr);width:34px"></th>'+
+            '</tr></thead><tbody>'+zusatzRows+'</tbody></table>'+
+            '<button type="button" class="btn" onclick="_kplZusatzAddRow()" style="margin-top:8px;font-size:12px;background:#EEF2FF;border-color:#A5B4FC;color:#3730A3">➕ Zeile hinzufügen</button>'+
+          '</div>'+
+        '</div>'+
         '<h4 style="margin:14px 0 6px;font-size:13px;color:var(--navy)">Fußnote</h4>'+
         '<textarea data-kk="fussnote" style="width:100%;min-height:50px;font-size:12px;padding:8px;border:1px solid var(--bdr);border-radius:4px;font-family:inherit">'+escapeHtml(data.fussnote||'')+'</textarea>'+
       '</div>'+
@@ -45058,6 +45094,34 @@ function _showKundenpreislisteEditor(data, hkRef) {
   if (data.kontakt) modal._selectedKontakt = { id:data.kontakt.id, name:data.kontakt.name, email:data.kontakt.email, telefon:data.kontakt.telefon };
   _plStdPopulateSelect();  // v7.18: benannte Preis-Standards ins Dropdown laden
   if (data.briefEnabled) _kplBriefAutoText();  // v7.81: KI-Anschreiben automatisch, wenn Brief aktiv
+}
+
+/* ── v9.05: Helfer für den modularen Zusatz-Block im Kundenpreislisten-Editor ── */
+function _kplZusatzToggle(cb) {
+  // Nur visuelles Feedback (ausgegraut = kommt nicht ins PDF); editierbar bleibt es trotzdem.
+  const box = document.getElementById('kpl-zusatz-fields');
+  if (box) box.style.opacity = cb.checked ? '1' : '0.5';
+}
+function _kplZusatzAddRow() {
+  const modal = document.getElementById('kunden-pl-modal'); if (!modal) return;
+  const cur = _readKundenpreislisteEditor(); if (!cur) return;
+  if (!cur.zusatzBlock || typeof cur.zusatzBlock !== 'object') cur.zusatzBlock = { enabled:true, titel:'', zeilen:[] };
+  if (!Array.isArray(cur.zusatzBlock.zeilen)) cur.zusatzBlock.zeilen = [];
+  cur.zusatzBlock.zeilen.push({ label:'', preis:0, einheit:'€' });
+  cur.zusatzBlock.enabled = true;  // Zeile hinzufügen ⇒ Block aktiv
+  _showKundenpreislisteEditor(cur, modal._hkRef);
+  // Fokus auf die neu angelegte Bezeichnungs-Zelle
+  setTimeout(() => {
+    const rows = document.querySelectorAll('#kunden-pl-modal [data-kk^="zusatzBlock.zeilen."][data-kk$=".label"]');
+    const last = rows[rows.length-1]; if (last) last.focus();
+  }, 30);
+}
+function _kplZusatzDelRow(i) {
+  const modal = document.getElementById('kunden-pl-modal'); if (!modal) return;
+  const cur = _readKundenpreislisteEditor(); if (!cur || !cur.zusatzBlock || !Array.isArray(cur.zusatzBlock.zeilen)) return;
+  cur.zusatzBlock.zeilen.splice(i, 1);
+  if (!cur.zusatzBlock.zeilen.length) cur.zusatzBlock.zeilen = [{ label:'', preis:0, einheit:'€' }];
+  _showKundenpreislisteEditor(cur, modal._hkRef);
 }
 
 /* ── v7.18: Benannte Preis-Standards für die Kundenpreisliste (Airtable, firma-weit geteilt) ── */
@@ -45119,6 +45183,8 @@ async function _plStdLoadSelected() {
     sonstiges:   Array.isArray(std.sonstiges) ? std.sonstiges : current.sonstiges,
     fussnote:    std.fussnote != null ? std.fussnote : current.fussnote,
     markupPct:   std.markupPct != null ? +std.markupPct : current.markupPct,
+    // v9.05: Zusatz-Block aus dem Standard übernehmen, sonst aktuellen behalten
+    zusatzBlock: (std.zusatzBlock && typeof std.zusatzBlock === 'object') ? std.zusatzBlock : current.zusatzBlock,
   };
   _showKundenpreislisteEditor(newData, modal._hkRef);
   toast('📥 Standard „'+(rec.fields?.name||'')+'" geladen','ok');
@@ -45137,6 +45203,7 @@ async function _plStdSaveCurrent() {
     sonstiges:   data.sonstiges,
     fussnote:    data.fussnote,
     markupPct:   data.markupPct,
+    zusatzBlock: data.zusatzBlock,   // v9.05: Zusatz-Block im Standard mitspeichern
   };
   try {
     await _plStdEnsureTable();
@@ -45232,6 +45299,8 @@ function _recalcKundenpreisliste() {
     // v7.82: Kunde + Ansprechpartner ebenfalls erhalten
     kunde: current.kunde, kontakt: current.kontakt,
     _existingRecId: current._existingRecId,
+    // v9.05: modularer Zusatz-Block bleibt beim Neu-Berechnen unverändert (kein HK/Markup-Bezug)
+    zusatzBlock: current.zusatzBlock,
   };
   _showKundenpreislisteEditor(newData, hk);
 }
@@ -45450,6 +45519,22 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
     tableRow([s.label, preisTxt], [120,62]);
   });
   y += 4;
+  // v9.05: modularer Zusatz-Block (optional) — nur drucken wenn aktiv UND mind. eine befüllte Zeile.
+  const _zb = data.zusatzBlock;
+  if (_zb && _zb.enabled) {
+    const _zRows = (Array.isArray(_zb.zeilen) ? _zb.zeilen : []).filter(z => z && String(z.label||'').trim());
+    if (_zRows.length) {
+      drawSectionTitle(String(_zb.titel||'').trim() || 'Zusätzliche Leistungen');
+      tableReset();
+      _zRows.forEach(z => {
+        // Preis nur zeigen, wenn ein Betrag > 0 ODER eine von „€" abweichende Einheit gesetzt ist → sonst reine Text-Zeile.
+        const hasPreis = (+z.preis || 0) > 0 || (z.einheit && String(z.einheit).trim() && String(z.einheit).trim() !== '€');
+        const preisTxt = hasPreis ? (eur(z.preis) + (z.einheit && z.einheit !== '€' ? (' / '+String(z.einheit).replace('€/','').replace('€','').trim()) : '')) : '';
+        tableRow([z.label, preisTxt], [120,62]);
+      });
+      y += 4;
+    }
+  }
   if ((data.fussnote||'').trim()) {
     if (y > H - 30) { doc.addPage(); y = 14; }
     doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(100,100,100);
