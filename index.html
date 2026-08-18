@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.98';
+const APP_VERSION = 'v8.99';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36242,7 +36242,7 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   const auftraggeber = String(fAng.kunde_name||'').trim() || ('Kunde '+(fAng.kunde_nummer||''));
   // v8.90: echte Mail-Daten statt '-' — die von Maxise bei der Auftrag-Anlage ausgelöste Backoffice-Mail (an service@…, mit AB-PDF) war sonst LEER
   const _mailTitel  = 'Auftragsbestätigung' + (fAng.kunde_name ? ' — '+fAng.kunde_name : '') + ((fAng.erp_angebot_nummer||fAng.erp_angebot_id) ? ' (Angebot '+(fAng.erp_angebot_nummer||fAng.erp_angebot_id)+')' : '');
-  const _mailInhalt = String(leistungText || fAng.leistungsumfang || '-').slice(0,2000) || '-';
+  const _mailInhalt = 'Über die Servicebox angelegt — Details in der Servicebox / im Auftrag.';   // v8.99: KEIN Leistungs-/Preistext in die Maxise-Backoffice-Mail (User: „nicht mit dem Text")
   const common = { kundeMail:false, titelemail:_mailTitel, inhaltemail:_mailInhalt, status:'Auftrag bestätigt', auftraggeber, datumAuftragserteilung:heuteISO, ausfuehrungstermin:heuteDate };
   // ── Nach Aufwand → v8.08: jetzt ÜBER ein Aufwand-Angebot (→ AngebotsID für Order Display), dann mitangebot.
   //    (ohneangebot entfällt: der Auftrag hatte dann keine AngebotsID und Order Display konnte ihn nicht abrufen.) ──
@@ -37899,7 +37899,7 @@ async function _angCreateErpAnfrage(rec) {
     kundeMail:              false,
     // v8.88: echte Daten statt '-' — falls Maxise trotz kundeMail:false eine Backoffice-Mail schickt, ist sie NICHT leer
     titelemail:             bezeichnung || '-',
-    inhaltemail:            beschreibung || '-',
+    inhaltemail:            'Über die Servicebox angelegt — Details in der Servicebox.',   // v8.99: kein externer Text-Dump in die Backoffice-Mail
   };
   console.log('[ERP-Anfrage] Payload:', JSON.stringify(payload, null, 2));
   // Verschiedene Endpoint-Kandidaten probieren
@@ -38147,7 +38147,7 @@ async function _angPushToErp(recId, btn) {
       kundeMail:              false,
       // v8.88: echte Daten statt '-' (leere Backoffice-Mail vermeiden)
       titelemail:             bezeichnung || '-',
-      inhaltemail:            erlaeuterungText || '-',
+      inhaltemail:            'Über die Servicebox angelegt — Details in der Servicebox.',   // v8.99: kein Text-Dump in die Backoffice-Mail (serviceDescription/offerExplanation tragen den echten Inhalt)
       kundeemail:             '-',          // NOT NULL DB-Spalte
       kundeEmail:             '-',
       status:                 'In Bearbeitung',
@@ -38197,7 +38197,7 @@ async function _angPushToErp(recId, btn) {
       deliveryTime:            deliveryTimeText,
       // Texte
       offerExplanation:        erlaeuterungText,
-      serviceDescription:      kurzTitel,
+      serviceDescription:      leistungVoll,   // v8.99: VOLLER Leistungstext — DIESES Top-Level-Feld (AngebotPauschalSETDTO) füllt „Leistungsumfang" im Angebot UND (via mitangebot) im Auftrag. War kurzTitel = nur 1. Position → leer/dünn.
       einsatzpauschale:        0,
       plannedInstallationDate: inDaysInstant(14),
       offerNumber:             'EXT-ANG-'+angNum,
