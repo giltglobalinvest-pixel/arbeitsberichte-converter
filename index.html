@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.88';
+const APP_VERSION = 'v8.89';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36399,6 +36399,7 @@ function _abOpenFromData(v, firmaSlug) {
   document.body.appendChild(m);
   m._firmaSlug = firmaSlug;
   m._recId = (v && v._recId) || null;
+  m._maxiseFAng = (v && v._maxiseFAng) || null;   // v8.89: synthetisches fAng aus Maxise-Angebot → Auftrag-Anlage bei fehlendem lokalen Record
   m._preis  = (v && v._preis) || null;                                   // v7.84: Preisdaten fürs PDF/Speichern
   m._src    = { kundeNummer:(v&&v._kundeNummer)||'', kontaktId:(v&&v._kontaktId)||'', kontaktEmail:(v&&v._kontaktEmail)||'' };
   m.onclick = (e) => { if (e.target === m) m.remove(); };
@@ -36434,7 +36435,8 @@ async function _abGenerateAndSave(btn, send) {
     const src = m._src || {};
     // v7.93: Direkt bei AB-Erstellung den Maxise-Auftrag anlegen + verknüpfen.
     //   Erfolgreich → Maxise-Auftragsnummer wird zur AB-Nummer; sonst Servicebox-Nummernkreis.
-    const fAng = (function(){ try { const r=(_angeboteCache.items||[]).find(x=>x.id===(m._recId||'')); return (r&&r.fields)||null; } catch(_){ return null; } })();
+    let fAng = (function(){ try { const r=(_angeboteCache.items||[]).find(x=>x.id===(m._recId||'')); return (r&&r.fields)||null; } catch(_){ return null; } })();
+    if (!fAng && m._maxiseFAng) fAng = m._maxiseFAng;   // v8.89: Maxise-Quell-Angebot (kein lokaler Record) → Auftrag trotzdem anlegen + AB bekommt die Maxise-Nummer
     // v7.95: Duplikat-Prüfung — existiert für dieses Angebot schon eine AB (+ Auftrag)? Dann NICHT blind neu anlegen.
     if (btn) btn.textContent = '⏳ prüfe…';
     const existingAb = await _abFindExistingForAngebot(firmaSlug, m._recId||'', d.angebotNum||'');
@@ -37204,7 +37206,8 @@ function _abBuildPdfBlob(d, firmaSlug) {
 /* v7.52: Typ-Adapter — wandelt ein Maxise-Angebot (Wartung/Notruf, Pauschal, Modernisierung,
    Aufwand) in das Werte-Objekt der Auftragsbestätigung. Gemeinsame Felder aus angebot.anlage/
    .empfaenger, Leistungsumfang typ-spezifisch. „ALT ALT" (ERP-Platzhalter) wird ausgelassen. */
-function _angMaxiseToAb(data) {
+function _angMaxiseToAb(data, firmaSlug) {
+  firmaSlug = firmaSlug || (typeof getCurrentFirmaSlug === 'function' ? getCurrentFirmaSlug() : '');
   const a = (data && data.angebot) || {};
   const anlage = a.anlage || (a.anfrage && a.anfrage.anlage) || {};
   const kunde = anlage.kunde || (a.empfaenger && a.empfaenger.kunde) || {};
@@ -37249,7 +37252,7 @@ function _angMaxiseToAb(data) {
     lu = parts.join('\n');
     zeitrahmen = data.plannedInstallationDate || '';
   }
-  return {
+  const out = {
     auftragNum:          '',
     angebotNum:          String((data && data.id) || a.id || ''),
     ticketNum:           '',
@@ -37263,6 +37266,19 @@ function _angMaxiseToAb(data) {
     zeitrahmen:          zeitrahmen,
     leistungsumfang:     lu,
   };
+  // v8.89: Synthetisches Angebots-fAng anhängen → _abGenerateAndSave legt daraus den Maxise-Auftrag (mitangebot) an,
+  //   damit der Auftrag in „Aufträge" + Maxise erscheint UND die AB die fortlaufende Maxise-Auftragsnummer bekommt
+  //   (statt der internen Servicebox-Nummer). Nur wenn eine Maxise-Angebot-ID vorhanden ist (sonst kein mitangebot möglich).
+  try {
+    const fAng = _angMaxiseListItemToFields(data, firmaSlug);
+    fAng.kontakt_id      = (emp && emp.id != null) ? String(emp.id) : '';
+    fAng.kontakt_name    = besteller || '';
+    fAng.angebot_typ     = fAng.erp_typ || typ || '';
+    fAng.leistungsumfang = lu || '';
+    fAng.standort        = fAng.anlage_adresse || out.standort || '';
+    if (fAng.erp_angebot_id) out._maxiseFAng = fAng;
+  } catch(e) { console.warn('[AB-Maxise-fAng]', e && e.message); }
+  return out;
 }
 
 /* v7.51: READ-ONLY — ein Maxise-Angebot per ID abrufen und das echte JSON zeigen.
@@ -37475,7 +37491,7 @@ async function _angMaxiseShow(id, firmaSlug) {
       '<textarea id="mx-json" readonly style="flex:1;width:100%;border:none;padding:12px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;line-height:1.5;background:#0b1020;color:#d6e2ff;white-space:pre;overflow:auto"></textarea>'+
       '<div style="padding:10px 14px;background:#f3f4f6;border-top:1px solid #e5e7eb;display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap">'+
         '<button onclick="_angMaxisePdf()" style="padding:8px 14px;border:none;border-radius:6px;background:#059669;color:#fff;font-weight:600;cursor:pointer" title="Original-Angebot-PDF direkt aus Maxise laden">📄 Original-PDF</button>'+
-        '<button onclick="(function(){var m=document.getElementById(\'mx-json-modal\');if(m&&m._data){_abOpenFromData(_angMaxiseToAb(m._data), m._firmaSlug||getCurrentFirmaSlug());m.remove();}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#4F46E5;color:#fff;font-weight:600;cursor:pointer" title="Aus diesem Maxise-Angebot eine Auftragsbestätigung erstellen">➡️ Auftragsbestätigung erstellen</button>'+
+        '<button onclick="(function(){var m=document.getElementById(\'mx-json-modal\');if(m&&m._data){_abOpenFromData(_angMaxiseToAb(m._data, m._firmaSlug||getCurrentFirmaSlug()), m._firmaSlug||getCurrentFirmaSlug());m.remove();}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#4F46E5;color:#fff;font-weight:600;cursor:pointer" title="Aus diesem Maxise-Angebot eine Auftragsbestätigung erstellen">➡️ Auftragsbestätigung erstellen</button>'+
         '<button onclick="(async()=>{try{await navigator.clipboard.writeText(document.getElementById(\'mx-json\').value);(typeof toast===\'function\')&&toast(\'📋 JSON kopiert\',\'ok\');}catch(e){var t=document.getElementById(\'mx-json\');t.focus();t.select();try{document.execCommand(\'copy\');}catch(_){}}})()" style="padding:8px 14px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer">📋 JSON kopieren</button>'+
         '<button onclick="document.getElementById(\'mx-json-modal\').remove()" style="padding:8px 14px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Schließen</button>'+
       '</div>'+
