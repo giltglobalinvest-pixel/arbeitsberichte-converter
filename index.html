@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.09';
+const APP_VERSION = 'v9.10';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -45493,16 +45493,12 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
   let _rowIdx = 0;
   const tableReset = () => { _rowIdx = 0; };
   const tableRow = (cols, widths, bold) => {
-    doc.setFont('helvetica', bold?'bold':'normal');
-    // v9.09: Bezeichnung (Spalte 0) automatisch anpassen — erst verkleinern (bis 8pt), damit sie möglichst
-    //   einzeilig bleibt; passt sie dann immer noch nicht, wird umgebrochen. So läuft NIE etwas in den Preis
-    //   und lange Texte bleiben kompakt (statt fett zweizeilig).
-    const maxW = widths[0] - 3;
-    let lfs = 10;
-    doc.setFontSize(lfs);
-    let labelLines = doc.splitTextToSize(String(cols[0]), maxW);
-    while (labelLines.length > 1 && lfs > 8) { lfs -= 0.5; doc.setFontSize(lfs); labelLines = doc.splitTextToSize(String(cols[0]), maxW); }
-    const lineH = Math.max(3.9, lfs * 0.46);
+    // v9.10: EINHEITLICH 10pt (harmonisch — kein zeilenweises Verkleinern mehr). Die Bezeichnungs-Spalte ist
+    //   breit genug (siehe Aufrufe: [150,32]), dass reale Zeilen bei 10pt einzeilig bleiben; nur bei echter
+    //   Überlänge wird sauber umgebrochen (statt in den Preis zu laufen). Alle Zeilen bleiben gleich groß.
+    doc.setFont('helvetica', bold?'bold':'normal'); doc.setFontSize(10);
+    const labelLines = doc.splitTextToSize(String(cols[0]), widths[0] - 3);
+    const lineH = 4.6;
     const rowH  = Math.max(6.5, labelLines.length * lineH + 1.9);
     if (y - 4.5 + rowH > H - 16) { doc.addPage(); y = 14; _rowIdx = 0; }
     if (!bold && _rowIdx % 2 === 1) {
@@ -45510,12 +45506,10 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
       doc.rect(ml-1, y-4.5, (mr-ml)+2, rowH, 'F');
     }
     doc.setTextColor(40,40,40);
-    doc.setFontSize(lfs);
-    for (let li = 0; li < labelLines.length; li++) doc.text(labelLines[li], ml, y + li*lineH);   // Label (evtl. verkleinert)
-    doc.setFontSize(10);
+    for (let li = 0; li < labelLines.length; li++) doc.text(labelLines[li], ml, y + li*lineH);
     let x = ml + widths[0];
     for (let i = 1; i < cols.length; i++) {
-      doc.text(String(cols[i]), x + widths[i] - 1, y, { align:'right' });   // Preise: Standardgröße, rechtsbündig, erste Zeile
+      doc.text(String(cols[i]), x + widths[i] - 1, y, { align:'right' });
       x += widths[i];
     }
     y += rowH;
@@ -45534,20 +45528,20 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
   y += 4;
   drawSectionTitle('Stundenverrechnung bei Störungseinsätzen');
   tableReset();
-  tableRow(['Stundensatz pro Monteur', eur(data.stundensatz)], [120,62], true);
-  data.aufschlaege.forEach(a => tableRow(['Aufschlag '+a.label, '+'+a.pct+' %'], [120,62]));
+  tableRow(['Stundensatz pro Monteur', eur(data.stundensatz)], [150,32], true);
+  data.aufschlaege.forEach(a => tableRow(['Aufschlag '+a.label, '+'+a.pct+' %'], [150,32]));
   y += 4;
   drawSectionTitle('Sonstiges');
   tableReset();
   data.sonstiges.forEach(s => {
     const preisTxt = eur(s.preis) + (s.einheit && s.einheit !== '€' ? (' / '+String(s.einheit).replace('€/','').replace('€','').trim()) : '');
-    tableRow([s.label, preisTxt], [120,62]);
+    tableRow([s.label, preisTxt], [150,32]);
   });
   // v9.07: modularer Zusatz-Block — Zeilen direkt an „Sonstiges" anhängen (keine eigene Überschrift, KEIN tableReset → nahtlose Fortsetzung).
   const _zb = data.zusatzBlock;
   if (_zb && _zb.enabled) {
     (Array.isArray(_zb.zeilen) ? _zb.zeilen : []).filter(z => z && String(z.label||'').trim()).forEach(z => {
-      tableRow([z.label, _zusatzPreisAnzeige(z.preis)], [120,62]);   // v9.08: Zahl (auch 0) → „X,XX €", Freitext bleibt, leer → reine Textzeile
+      tableRow([z.label, _zusatzPreisAnzeige(z.preis)], [150,32]);   // v9.08: Zahl (auch 0) → „X,XX €", Freitext bleibt, leer → reine Textzeile
     });
   }
   y += 4;
