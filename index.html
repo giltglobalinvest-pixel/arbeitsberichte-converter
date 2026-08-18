@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.94';
+const APP_VERSION = 'v8.95';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -10128,9 +10128,39 @@ async function _odTrySetLeistung(firmaSlug, orderId, val){
   val = String(val||'').trim(); orderId = String(orderId||'').trim();
   if (!orderId || !val) return;
   try {
-    await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'updateOrderFields', arguments:{ orderId, description: val } } });
-    console.log('[OD-Leistung] via updateOrderFields(description) gesetzt:', val.slice(0,80));
+    await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'updateOrderFields', arguments:{ orderId, type: val } } });   // v8.95: OD-Leistungsumfang = Feld „Type"
+    console.log('[OD-Leistung] via updateOrderFields(type) gesetzt:', val.slice(0,80));
   } catch(e){ console.warn('[OD-Leistung] description-Update fehlgeschlagen (Feld evtl. built-in mit anderem Key):', e && e.message); }
+}
+/* v8.95: Nach dem Anlegen automatisch „Sync to Freshdesk" auslösen (statt manuell die ☁-Wolke im OD zu klicken).
+   Der Tool-Name variiert je LiteLead-Version → per __tools_list__ entdecken (Treffer /freshdesk/), dann mit
+   mehreren plausiblen Arg-Namen versuchen. Best-effort: schlägt alles fehl, nur loggen (kein Abbruch). */
+async function _odSyncToFreshdesk(firmaSlug, orderId){
+  orderId = String(orderId||'').trim();
+  if (!orderId) return;
+  try {
+    let toolName = '';
+    try {
+      const tl = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'__tools_list__', arguments:{} } });
+      const raw = (tl && (tl.result!=null?tl.result:tl.raw)) || tl;
+      const tools = Array.isArray(raw) ? raw : (raw && (raw.tools||raw.items||raw.data||raw.result)) || [];
+      const names = (Array.isArray(tools)?tools:[]).map(t => _odStr(t && (t.name||t.id||t))).filter(Boolean);
+      console.log('[OD-Tools]', names.join(' | '));
+      toolName = names.find(n => /fresh\s*desk/i.test(n) && /(sync|push|send|create|to)/i.test(n))
+              || names.find(n => /fresh\s*desk/i.test(n))
+              || names.find(n => /sync/i.test(n) && /(ticket|desk|support)/i.test(n)) || '';
+    } catch(e){ console.warn('[OD-Sync] tools/list fehlgeschlagen:', e && e.message); }
+    if (!toolName) { console.warn('[OD-Sync] kein Freshdesk-Sync-Tool erkannt — bitte die [OD-Tools]-Zeile aus der Konsole schicken.'); return; }
+    const argVariants = [ { orderId }, { id: orderId }, { orderId, sync:true }, { orderId, freshdesk:true } ];
+    for (const a of argVariants) {
+      try {
+        const r = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name: toolName, arguments: a } });
+        console.log('[OD-Sync] '+toolName+' OK:', JSON.stringify((r&&(r.result!=null?r.result:r.raw))||r).slice(0,200));
+        return true;
+      } catch(e){ /* nächste Arg-Variante */ }
+    }
+    console.warn('[OD-Sync] '+toolName+' — keine Arg-Variante akzeptiert. Bitte einmal die Konsole schicken.');
+  } catch(e){ console.warn('[OD-Sync]', e && e.message); }
 }
 async function _odSubmitOrder(recId) {
   const m = document.getElementById('od-create-modal'); if (!m) return;
@@ -10172,7 +10202,7 @@ async function _odSubmitOrder(recId) {
         await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'updateOrderCustomFields', arguments:{ orderId: odOrderId, values: details } } });
       }
       await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'updateOrderFields', arguments:{ orderId: odOrderId, deadline } } });
-      if (m._odLeistBuiltin) { const _lv = String(document.getElementById('od-f-leistung')?.value||'').trim(); if (_lv) { try { await _odTrySetLeistung(firmaSlug, odOrderId, _lv); } catch(_){} } }   // v8.91
+      { const _lv = String(document.getElementById('od-f-leistung')?.value||'').trim(); if (_lv) { try { await _odTrySetLeistung(firmaSlug, odOrderId, _lv); } catch(_){} } }   // v8.95: Leistungsumfang → OD-Feld „Type"
       m.remove();
       toast('✅ Order-Display-Auftrag aktualisiert (#'+escapeHtml(String(f.od_order_number||odOrderId))+').','ok');
     } catch(e) { _err(e, '💾 Speichern'); }
@@ -10181,6 +10211,9 @@ async function _odSubmitOrder(recId) {
   // ── NEU ANLEGEN ──
   const args = { title, orderNumber, ticketNumber, stage: -1, deadline };
   if (Object.keys(details).length) args.details = details;
+  // v8.95: Leistungsumfang → OD-Feld „Type" (built-in; vom User per Screenshot bestätigt).
+  const _odLeist1 = String(document.getElementById('od-f-leistung')?.value||'').trim();
+  if (_odLeist1) args.type = _odLeist1;
   // v8.92: Besteller-E-Mail als OD-Benutzer + BCC (immer, je Firma) — createOrder unterstützt users[{name,email}] + bcc.
   const _odEmail = String(document.getElementById('od-f-email')?.value||'').trim();
   const _odEName = String(document.getElementById('od-f-ename')?.value||'').trim();
@@ -10200,8 +10233,8 @@ async function _odSubmitOrder(recId) {
       res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'createOrder', arguments: args } });
     } catch(e1) {
       // v8.92: Falls das createOrder-Schema users/bcc ablehnt → einmal OHNE erneut versuchen (Auftrag trotzdem anlegen)
-      if ((args.users || args.bcc) && /invalid|unexpected|unknown|not allowed|users|bcc|-32602/i.test(String((e1&&e1.message)||''))) {
-        delete args.users; delete args.bcc;
+      if ((args.users || args.bcc || args.type) && /invalid|unexpected|unknown|not allowed|users|bcc|type|-32602/i.test(String((e1&&e1.message)||''))) {
+        delete args.users; delete args.bcc; delete args.type;   // v8.95: type ebenfalls; wird danach per updateOrderFields(type) nachgetragen
         res = await erpFetch('/orderdisplay/'+encodeURIComponent(firmaSlug)+'/tool', { method:'POST', body:{ name:'createOrder', arguments: args } });
         toast('⚠ E-Mail/BCC konnten im Order Display nicht automatisch gesetzt werden — Auftrag ist angelegt, bitte dort prüfen.','warn');
       } else { throw e1; }
@@ -10220,7 +10253,8 @@ async function _odSubmitOrder(recId) {
       await atUpdate('Auftraege', recId, patch);
       rec.fields = Object.assign(rec.fields||{}, patch);
     } catch(e){ console.warn('[OD-Create] persist:', e && e.message); }
-    if (m._odLeistBuiltin) { const _lv = String(document.getElementById('od-f-leistung')?.value||'').trim(); if (_lv && odId) { try { await _odTrySetLeistung(firmaSlug, odId, _lv); } catch(_){} } }   // v8.91: built-in Leistungsumfang nachtragen
+    { const _lv = String(document.getElementById('od-f-leistung')?.value||'').trim(); if (_lv && odId) { try { await _odTrySetLeistung(firmaSlug, odId, _lv); } catch(_){} } }   // v8.95: Leistungsumfang → OD-Feld „Type" absichern (auch falls args.type nicht durchkam)
+    if (odId) { if (btn) btn.textContent = '⏳ Freshdesk-Sync…'; try { await _odSyncToFreshdesk(firmaSlug, odId); } catch(_){} }   // v8.95: automatisch „Sync to Freshdesk" (statt manuell die Wolke klicken)
     m.remove();
     toast('✅ Order-Display-Auftrag angelegt'+(odNum?(' (#'+odNum+')'):'')+' — Stage „Neu".','ok');
     try { closeAuftragDetail(); openAuftragDetail(recId); } catch(_){}
