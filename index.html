@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v8.97';
+const APP_VERSION = 'v8.98';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36569,18 +36569,11 @@ async function _abGenerateAndSave(btn, send) {
     const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
     let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
     if (fAng) {
-      // v8.03: KI bestimmt den Auftragstyp VOR der Anlage. v8.97: ABER bei Maxise-Angeboten NICHT raten —
-      //   der Typ steht im Maxise-Angebot fest (erp_typ/abrechnung_modus). Die KI lag hier falsch (Modernisierung statt Pauschal).
+      // v8.98: KEINE KI mehr für den Auftragstyp — sie lag wiederholt falsch (Modernisierung statt Pauschal).
+      //   Typ deterministisch aus dem Angebot (abrechnung_modus/angebot_typ = erp_typ), Maxise wie Servicebox.
       if (btn) btn.textContent = '⏳ Auftragstyp…';
-      let kiTyp = null, typ;
-      if (fAng.herkunft === 'maxise') {
-        typ = _abAuftragTyp(fAng);   // deterministisch aus dem Maxise-Angebot
-        kiTyp = { typ, begruendung:'Typ direkt aus dem Maxise-Angebot übernommen (ohne KI).', quelle:'maxise' };
-      } else {
-        if (btn) btn.textContent = '⏳ KI: Auftragstyp…';
-        try { kiTyp = await _abKiAuftragTyp(fAng); } catch(_){}
-        typ = (kiTyp && kiTyp.typ) || _abAuftragTyp(fAng);
-      }
+      const typ = _abAuftragTyp(fAng);
+      const kiTyp = { typ, begruendung:'Typ direkt aus dem Angebot übernommen (ohne KI-Raten).', quelle:(fAng.herkunft==='maxise'?'maxise':'servicebox') };
       const typLbl = { pauschal:'Pauschal', wartung:'Wartung', modernisierung:'Modernisierung', aufwand:'Nach Aufwand' }[typ] || typ;
       // v8.08: JEDER Auftrag läuft jetzt über ein Maxise-Angebot (auch Nach Aufwand → Aufwand-Angebot) → AngebotsID für Order Display.
       const bestellLbl = 'Mit Angebot';
@@ -38039,6 +38032,10 @@ async function _angPushToErp(recId, btn) {
     let positionen = [];
     try { positionen = JSON.parse(f.positionen_json||'[]'); } catch(_){}
     const kurzTitel = positionen[0]?.titel || 'Reparatur / externes Angebot';
+    // v8.98: VOLLER Leistungstext für Maxise (nicht nur der erste Positionstitel) — sonst bleibt der Leistungsumfang im Angebot/Auftrag leer.
+    const leistungVoll = String(f.leistungsumfang||'').trim()
+      || positionen.map(p => { if(!p) return ''; const t=String(p.titel||'').trim(); const d=String(p.beschreibung||p.text||p.details||'').trim(); return d?(t+'\n'+d):t; }).filter(Boolean).join('\n\n')
+      || kurzTitel;
     const bezeichnung = '['+(f.angebot_typ||'sonstiges').toUpperCase()+'] '+kurzTitel.slice(0,80);
     // Erläuterung — der entscheidende Hinweis für ERP-User
     const erlaeuterung = [
@@ -38137,8 +38134,10 @@ async function _angPushToErp(recId, btn) {
       gueltigkeitsdatum:      inDaysInstant(30),
       bezeichnung:            bezeichnung,
       titel:                  bezeichnung,
-      leistungsumfang:        kurzTitel,
-      leistungsbeschreibung:  kurzTitel,
+      leistungsumfang:        leistungVoll,
+      leistungsbeschreibung:  leistungVoll,
+      serviceDescription:     leistungVoll,
+      beschreibung:           leistungVoll,
       erlaeuterungen:         erlaeuterungText,
       erlaeuterung:           erlaeuterungText,
       bestellform:            'PAUSCHAL',
