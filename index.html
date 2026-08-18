@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.08';
+const APP_VERSION = 'v9.09';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3871,17 +3871,24 @@ function closeMobileMenu() {
   document.getElementById('mobile-nav-backdrop')?.classList.remove('show');
 }
 
-function forceUpdate() {
+async function forceUpdate() {
   if (!confirm('App neu laden und auf neueste Version prüfen?\n\n⚠ Nicht gespeicherte Eingaben gehen verloren.')) return;
-  // Service Worker abmelden (falls vorhanden)
-  if ('serviceWorker' in navigator) {
-    try { navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())); } catch(e) {}
-  }
-  // Cache-API leeren (falls vorhanden)
-  if (typeof caches !== 'undefined') {
-    try { caches.keys().then(keys => keys.forEach(k => caches.delete(k))); } catch(e) {}
-  }
-  // Mit Cache-Buster neu laden (HTTP-Cache umgehen)
+  // v9.09 FIX: Abmelden + Cache-Leeren ABWARTEN, BEVOR neu geladen wird.
+  //   Vorher lief location.replace() sofort los, während unregister()/caches.delete() noch als Promise offen waren
+  //   → der alte Service Worker fing den Reload ab und lieferte weiter die gecachte ALTE Version.
+  try {
+    if ('serviceWorker' in navigator) {
+      const rs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(rs.map(r => r.unregister().catch(()=>{})));
+    }
+  } catch(e) {}
+  try {
+    if (typeof caches !== 'undefined') {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k).catch(()=>{})));
+    }
+  } catch(e) {}
+  // Erst JETZT (SW weg + Cache leer) mit Cache-Buster neu laden
   const base = location.href.split('?')[0].split('#')[0];
   location.replace(base + '?v=' + Date.now());
 }
@@ -45486,10 +45493,16 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
   let _rowIdx = 0;
   const tableReset = () => { _rowIdx = 0; };
   const tableRow = (cols, widths, bold) => {
-    doc.setFont('helvetica', bold?'bold':'normal'); doc.setFontSize(10);
-    // v9.08: Bezeichnung (Spalte 0) umbrechen, damit lange Texte NICHT in den Preis laufen (Überlappungs-Fix).
-    const labelLines = doc.splitTextToSize(String(cols[0]), widths[0] - 3);
-    const lineH = 4.6;
+    doc.setFont('helvetica', bold?'bold':'normal');
+    // v9.09: Bezeichnung (Spalte 0) automatisch anpassen — erst verkleinern (bis 8pt), damit sie möglichst
+    //   einzeilig bleibt; passt sie dann immer noch nicht, wird umgebrochen. So läuft NIE etwas in den Preis
+    //   und lange Texte bleiben kompakt (statt fett zweizeilig).
+    const maxW = widths[0] - 3;
+    let lfs = 10;
+    doc.setFontSize(lfs);
+    let labelLines = doc.splitTextToSize(String(cols[0]), maxW);
+    while (labelLines.length > 1 && lfs > 8) { lfs -= 0.5; doc.setFontSize(lfs); labelLines = doc.splitTextToSize(String(cols[0]), maxW); }
+    const lineH = Math.max(3.9, lfs * 0.46);
     const rowH  = Math.max(6.5, labelLines.length * lineH + 1.9);
     if (y - 4.5 + rowH > H - 16) { doc.addPage(); y = 14; _rowIdx = 0; }
     if (!bold && _rowIdx % 2 === 1) {
@@ -45497,10 +45510,12 @@ function _renderKundenpreislisteIntoDoc(doc, data) {
       doc.rect(ml-1, y-4.5, (mr-ml)+2, rowH, 'F');
     }
     doc.setTextColor(40,40,40);
-    for (let li = 0; li < labelLines.length; li++) doc.text(labelLines[li], ml, y + li*lineH);
+    doc.setFontSize(lfs);
+    for (let li = 0; li < labelLines.length; li++) doc.text(labelLines[li], ml, y + li*lineH);   // Label (evtl. verkleinert)
+    doc.setFontSize(10);
     let x = ml + widths[0];
     for (let i = 1; i < cols.length; i++) {
-      doc.text(String(cols[i]), x + widths[i] - 1, y, { align:'right' });   // restliche Spalten rechtsbündig, auf erster Zeile
+      doc.text(String(cols[i]), x + widths[i] - 1, y, { align:'right' });   // Preise: Standardgröße, rechtsbündig, erste Zeile
       x += widths[i];
     }
     y += rowH;
