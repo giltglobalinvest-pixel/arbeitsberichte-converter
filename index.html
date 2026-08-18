@@ -2800,7 +2800,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.00';
+const APP_VERSION = 'v9.01';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7696,6 +7696,8 @@ async function loadAuftraegeAndRender(opts) {
     if (!allMode) _aufScheduleAutoMarkAbgerechnet(firmaSlug);
     // v8.01: Auto-Reopen für abgerechnete Aufträge mit Bericht NACH der Rechnung (throttled)
     if (!allMode) _aufScheduleAutoReopenNachBericht(firmaSlug);
+    // v9.01: unnötige Maxise-Benachrichtigungs-Tickets im Freshdesk automatisch schließen (nur unser Marker; AB-Kundenmails bleiben)
+    if (!allMode) _fdAutoCloseNotifs(firmaSlug);
   } catch(e) {
     list.innerHTML = '<div class="auf-empty" style="color:var(--err)">Fehler: '+e.message+'</div>';
   }
@@ -36987,6 +36989,39 @@ function _abSendToggleMode() {
 }
 /* v8.77: Festes BCC ans Freshdesk je Firma. Bevorzugt Firmen-Feld 'freshdesk_bcc', sonst Default.
    So landet jede an den Kunden gesendete AB immer auch als Kopie im Freshdesk-Posteingang. */
+/* v9.01: Maxise verschickt bei JEDER Vorgang-Anlage (Anfrage/Angebot/Auftrag) eine Backoffice-Mail an service@…
+   — NICHT abstellbar (komplette OpenAPI geprüft: kein Mail-Flag, kein Query-Param). Diese landen als „Noreply"-Tickets
+   im Freshdesk. Da wir sie nicht verhindern können, schließen wir sie automatisch — NUR die mit unserem exakten
+   Marker „Über die Servicebox angelegt" (ab v8.99). Die echte AB-Kundenmail (Template „im Anhang bestätigen wir…")
+   hat diesen Marker NICHT → bleibt unangetastet. So gehen am Ende nur die AB-Mails „raus" (User-Wunsch). */
+let _fdAutoCloseAt = 0;
+async function _fdAutoCloseNotifs(firma){
+  try {
+    if (!APP_KEYS.valtownProxyUrl || !freshdeskIsConfigured(firma)) return;
+    if (!(isAdmin() || hasPermission('auftraege_edit'))) return;
+    const now = Date.now();
+    if (now - _fdAutoCloseAt < 3*60*1000) return;   // 3-Min-Drossel
+    _fdAutoCloseAt = now;
+    await erpEnsureSession();
+    const base = APP_KEYS.valtownProxyUrl+'/freshdesk/'+encodeURIComponent(firma)+'/api/v2';
+    const hdr  = { 'Authorization':'Bearer '+erpGetSessionToken() };
+    const r = await fetch(base+'/tickets?per_page=30&order_by=created_at&order_type=desc', { headers: hdr });
+    if (!r.ok) return;
+    const list = await r.json();
+    if (!Array.isArray(list)) return;
+    let closed = 0;
+    for (const t of list) {
+      if (!t || t.status !== 2) continue;   // nur offen/neu (2)
+      const subj = String(t.subject||'');
+      if (!/^Auftragsbestätigung — |^\[[A-ZÄÖÜa-zäöü ]+\] /.test(subj)) continue;   // Vorfilter: unsere Vorgangs-Betreffe
+      let desc = '';
+      try { const dr = await fetch(base+'/tickets/'+t.id, { headers: hdr }); if (dr.ok){ const dd = await dr.json(); desc = String(dd.description_text || dd.description || ''); } } catch(_){}
+      if (!/Über die Servicebox angelegt/.test(desc)) continue;   // NUR unser exakter Marker → garantiert Maxise-Benachrichtigung, NICHT die AB-Kundenmail
+      try { const cr = await fetch(base+'/tickets/'+t.id, { method:'PUT', headers:{ ...hdr, 'Content-Type':'application/json' }, body: JSON.stringify({ status:5 }) }); if (cr.ok) closed++; } catch(_){}
+    }
+    if (closed) console.log('[FD-AutoClose] '+closed+' Maxise-Benachrichtigungs-Ticket(s) automatisch geschlossen.');
+  } catch(e){ console.warn('[FD-AutoClose]', e && e.message); }
+}
 function _abFreshdeskBcc(firma){
   try {
     const rec = (_firmenCache||[]).find(fr => fr.fields && fr.fields.slug === firma);
