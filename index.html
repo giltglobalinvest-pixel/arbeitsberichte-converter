@@ -503,6 +503,9 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .auf-view.show{display:flex}
 .auf-hdr{background:var(--surf);border-bottom:1px solid var(--bdr);padding:12px 22px;display:flex;align-items:center;gap:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);flex-wrap:wrap}
 .auf-hdr h2{font-size:15px;font-weight:600;color:var(--navy);margin:0;flex:1;min-width:140px}
+/* v9.11: Auftrags-Toolbar — am PC unverändert (Buttons fließen wie gehabt via display:contents), am Handy einklappbar */
+.auf-hdr-actions{display:contents}
+.auf-hdr .auf-hdr-toggle{display:none}
 .auf-tabs{display:flex;background:var(--surf);border-bottom:1px solid var(--bdr);padding:0 14px;overflow-x:auto;flex-shrink:0}
 .auf-tab{background:none;border:none;padding:10px 14px;font-size:13px;font-weight:500;color:var(--txt2);cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;white-space:nowrap;position:relative}
 .auf-tab.active{color:var(--navy);border-bottom-color:var(--amber)}
@@ -907,6 +910,14 @@ body.has-modal .topbar{pointer-events:auto}
   /* Aufträge mobile */
   .auf-hdr{padding:10px 14px;gap:8px}
   .auf-hdr h2{font-size:14px}
+  /* v9.11: Toolbar-Buttons einklappbar (Reiter) — standardmäßig zu, per „⚙ Aktionen" auf */
+  .auf-hdr .auf-hdr-toggle{display:inline-flex}
+  .auf-hdr-actions{display:none;flex-basis:100%;flex-wrap:wrap;gap:8px}
+  .auf-hdr-actions.open{display:flex}
+  /* v9.11: Suchfeld volle Breite auf eigener Zeile, Filter brechen darunter um */
+  .auf-search-bar{flex-wrap:wrap;gap:8px;padding:10px 14px}
+  .auf-search-wrap{flex-basis:100%}
+  .auf-search-inp{padding:11px 12px 11px 34px}
   .auf-body{padding:12px}
   .auf-card{padding:14px;gap:10px;flex-direction:column;align-items:stretch}
   .auf-card-side{flex-direction:row;align-self:stretch;justify-content:space-between;align-items:center;min-width:0}
@@ -2431,6 +2442,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   <div class="auf-hdr">
     <h2>🛠 Aufträge</h2>
     <button class="btn" onclick="loadAuftraegeAndRender()">↻ Neu laden</button>
+    <button class="btn auf-hdr-toggle" id="auf-hdr-toggle" onclick="_aufToggleHdr()" aria-expanded="false" title="Aktionen ein-/ausklappen (nur am Handy)">⚙ Aktionen ▾</button>
+    <div class="auf-hdr-actions" id="auf-hdr-actions">
     <button class="btn" id="auf-erp-sync-btn" onclick="runErpSync()" style="display:none" title="Aufträge aus dem ERP synchronisieren (im Browser, App muss offen bleiben)">🔄 ERP-Sync</button>
     <button class="btn" id="auf-bg-sync-btn" onclick="startBackgroundSync()" style="display:none;color:#5b21b6;border-color:rgba(124,58,237,.4)" title="Hintergrund-Sync über Val.town – läuft serverseitig, App kann zu sein">🚀 Hintergrund-Sync</button>
     <button class="btn" id="auf-rechn-check-btn" onclick="bulkCheckInvoices()" style="display:none" title="Alle Aufträge auf vorhandene Rechnungen prüfen — Treffer werden NUR lokal ausgeblendet, ERP bleibt unverändert">🙈 Rechnungen prüfen + ausblenden</button>
@@ -2441,6 +2454,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="btn" id="auf-erp-check-btn" onclick="_erpCheckAuftrag()" style="display:none;color:#3730A3;border-color:#A5B4FC" title="Eine konkrete Auftragsnummer direkt im ERP nachschlagen (Status + ob er synchronisiert wird)">🔎 Auftrag prüfen</button>
     <button class="btn" id="auf-tv-check-btn" onclick="_erpCheckTeilvorgangSync(this)" style="display:none;color:#6D28D9;border-color:#C4B5FD" title="Prüft, ob die Teilvorgänge eines Mehr-Aufzug-Splits über den Sync zurückkommen (Klartext-Ergebnis)">🛗 Teilvorgang-Check</button>
     <button class="btn" id="auf-dedup-btn" onclick="openAuftragDedupModal()" style="display:none;color:#9a3412;border-color:rgba(180,83,9,.4)" title="Doppelte Aufträge finden und bereinigen">🧹 Duplikate</button>
+    </div>
     <!-- v6.35: Auto-„abgerechnet"-Indikator — sichtbar während die Hintergrund-Prüfung läuft -->
     <div id="auf-auto-check-pill" style="display:none;align-items:center;gap:8px;padding:6px 14px;background:#EFF6FF;border:1px solid #93C5FD;border-radius:99px;font-size:12px;color:#1E40AF;font-weight:600">
       <span style="display:inline-block;width:14px;height:14px;border:2px solid #93C5FD;border-top-color:#2152A9;border-radius:50%;animation:auf-spin 0.8s linear infinite"></span>
@@ -2800,7 +2814,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.10';
+const APP_VERSION = 'v9.11';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3869,6 +3883,16 @@ function toggleMobileMenu() {
 function closeMobileMenu() {
   document.getElementById('topbar-nav')?.classList.remove('mobile-show');
   document.getElementById('mobile-nav-backdrop')?.classList.remove('show');
+}
+
+/* v9.11: Auftrags-Toolbar am Handy ein-/ausklappen. Der Toggle ist nur mobil sichtbar;
+   am PC ist der Container display:contents → der 'open'-Zustand ist dort wirkungslos. */
+function _aufToggleHdr() {
+  const box = document.getElementById('auf-hdr-actions');
+  const btn = document.getElementById('auf-hdr-toggle');
+  if (!box) return;
+  const open = box.classList.toggle('open');
+  if (btn) { btn.setAttribute('aria-expanded', open ? 'true' : 'false'); btn.innerHTML = open ? '⚙ Aktionen ▴' : '⚙ Aktionen ▾'; }
 }
 
 async function forceUpdate() {
