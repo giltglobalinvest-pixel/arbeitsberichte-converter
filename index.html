@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.14';
+const APP_VERSION = 'v9.15';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36300,11 +36300,10 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
       if (info && info.id) { angId = String(info.id); quelle = 'neu angelegt (Aufwand-Angebot Nr. '+(info.nummer||info.id)+')'; }
     }
     if (!angId) throw new Error('Nach-Aufwand-Auftrag braucht jetzt ein Aufwand-Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kontakt am Angebot prüfen).');
-    const _leistTxtA = leistungText || (fAng.leistungsumfang||'-');
-    // v9.14 FIX (OpenAPI-verifiziert): AuftragMitAngebotGETDTO hat KEIN leistungsbeschreibung-Feld — das einzige
-    //   beschreibbare Auftrag-Textfeld ist `notizen`. Die bis v9.13 gesendeten leistungsbeschreibung/leistung/
-    //   leistungsumfang wurden von Maxise verworfen → Auftrag-Leistung LEER (Problem 2040/2041). Leistung in notizen.
-    const payload = { angebotid:+angId, notizen:_leistTxtA, ...common };
+    // v9.15: notizen LEER — die Maxise-Spalte `notizen` ist KURZ; v9.14 (langer Leistungstext) gab HTTP 500
+    //   „Data too long for column 'notizen'". Die Leistung gehört ins ANGEBOT (serviceDescription), von dort
+    //   erbt/zeigt der mitangebot-Auftrag sie (das Auftrag-SET-DTO kann leistungsbeschreibung ohnehin nicht setzen).
+    const payload = { angebotid:+angId, notizen:'', ...common };
     const _existA = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
     if (_existA) return { created:_existA, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
     const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
@@ -36336,9 +36335,8 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   if (!angId) throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag braucht ein Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kunde am Angebot prüfen).');
   // v8.94: Leistung MITSENDEN (Festpreis-Zweig sendete sie bisher NICHT) — sonst blieb „Leistungsumfang" im Maxise-Auftrag LEER → Problem bei der Rechnung.
   //   Mehrere plausible Feldnamen (Maxise/Spring ignoriert unbekannte Felder, wie bei anderen Payloads auch) → trifft das angezeigte Feld sicher.
-  const _leistTxt = leistungText || (fAng.leistungsumfang||'');
-  // v9.14 FIX: Leistung ins `notizen`-Feld (AuftragMitAngebotGETDTO hat kein leistungsbeschreibung — siehe Aufwand-Zweig).
-  const payload = { angebotid:+angId, notizen:_leistTxt, ...common };
+  // v9.15: notizen LEER (Maxise-Spalte kurz → v9.14 gab HTTP 500 „Data too long"). Leistung steht im Angebot (serviceDescription).
+  const payload = { angebotid:+angId, notizen:'', ...common };
   const _existP = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
   if (_existP) return { created:_existP, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
   const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
@@ -38128,7 +38126,7 @@ async function _angPushToErp(recId, btn) {
       const t = String(p.titel||'').trim();
       const subs = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung.map(x=>String(x||'').trim()).filter(Boolean) : [];
       return subs.length ? (t+'\n'+subs.map(s=>'• '+s).join('\n')) : t;
-    }).filter(Boolean).join('\n\n') || kurzTitel;
+    }).filter(Boolean).join('\n\n') || String(f.leistungsumfang||'').trim() || kurzTitel;   // v9.15: nie leer — Fallback Leistungsumfang-Feld, dann Kurztitel
     const bezeichnung = '['+(f.angebot_typ||'sonstiges').toUpperCase()+'] '+kurzTitel.slice(0,80);
     // Erläuterung — der entscheidende Hinweis für ERP-User
     const erlaeuterung = [
@@ -38207,6 +38205,15 @@ async function _angPushToErp(recId, btn) {
     if (!Number.isFinite(kontaktIdNum) || kontaktIdNum <= 0) {
       throw new Error('Kein Kontakt im App-Angebot hinterlegt. Bitte das Angebot bearbeiten und einen Kontakt auswählen.');
     }
+    // v9.15 (User-Spec 21.08.2026 — korrekte Maxise-Angebotsfelder):
+    const _fabrik = String(f.seriennummer || f.fabriknummer || f.equipmentnummer || '').trim();
+    // Einsatzpauschale = immer 0, AUSSER im Angebot wurde eine angeboten (Stundensätze-Zeile „Einsatz/Anfahrt/Zustell").
+    let _einsatzP = 0;
+    try { const _sj = JSON.parse(f.stundensaetze_json||'[]')||[]; const _ep = _sj.find(x => /einsatz|anfahrt|zustell/i.test(String((x&&x.name)||''))); if (_ep && +_ep.satz > 0) _einsatzP = +_ep.satz; } catch(_){}
+    // Lohnanteil (workPrice) bei PAUSCHAL immer abfragen (relevant für Rechnung/§35a). Leer/Abbruch → 0.
+    let _lohn = +f.lohnanteil_netto || 0;
+    const _lohnAns = window.prompt('Lohnanteil (netto, in €) für dieses PAUSCHAL-Angebot?\n\nPauschalpreis netto: '+sumNetto.toFixed(2).replace('.',',')+' €\n(= reiner Arbeits-/Lohnanteil ohne Material — für die Rechnung/§35a. Leer oder Abbrechen = 0.)', _lohn > 0 ? String(_lohn) : '');
+    if (_lohnAns !== null) _lohn = Math.max(0, parseFloat(String(_lohnAns).replace(/\./g,'').replace(',','.')) || 0);
     const innerAngebot = {
       anlageid:               +f.anlage_id,
       // DB-Spalte 'datum' ist NOT NULL und erwartet java.time.Instant (ISO mit Zeit)
@@ -38243,7 +38250,7 @@ async function _angPushToErp(recId, btn) {
       inhaltemail:            'Über die Servicebox angelegt — Details in der Servicebox.',   // v8.99: kein Text-Dump in die Backoffice-Mail (serviceDescription/offerExplanation tragen den echten Inhalt)
       kundeemail:             '-',          // NOT NULL DB-Spalte
       kundeEmail:             '-',
-      status:                 'In Bearbeitung',
+      status:                 'Angenommen',   // v9.15 (User-Spec): Angebot-Status auf „Angenommen" (vorher „In Bearbeitung")
       // 'typ' ist die VORGANGSART, NICHT die Bestellform!
       // Pauschal-Endpoint im ERP ist generell für Reparatur-Angebote.
       // Frontend-AngebotEnum wollte UPPERCASE (REPARATUR), aber FreshSales-Sync
@@ -38272,11 +38279,11 @@ async function _angPushToErp(recId, btn) {
     // wie offerExplanation, plannedInstallationDate. Wir füllen alle plausiblen
     // englischen Varianten, damit kein NotNull/NotEmpty mehr greift.
     const angNum = String(f.app_angebot_num || '?');
-    const deliveryTimeText = '4-12 Wochen nach schriftlicher Auftragserteilung';
+    const deliveryTimeText = '---';   // v9.15 (User-Spec): Lieferdatum Material / geplante Umsetzung = „---"
     const payload = {
       // Preise: Pauschal-Aufteilung. workPrice trägt alles, da's ein externes Angebot ist
       // bei dem wir keine echte Komponententrennung haben. Plus netPrice = Summe als Pflicht-Feld.
-      workPrice:               sumNetto,
+      workPrice:               _lohn,   // v9.15 (User-Spec): Lohnanteil (abgefragt) — NICHT der volle Nettopreis
       materialPrice:           0,
       workshopPrice:           0,
       travelPrice:             0,
@@ -38289,10 +38296,10 @@ async function _angPushToErp(recId, btn) {
       travelDeliveryTime:      deliveryTimeText,
       deliveryTime:            deliveryTimeText,
       // Texte
-      offerExplanation:        erlaeuterungText,
-      serviceDescription:      leistungVoll,   // v8.99: VOLLER Leistungstext — DIESES Top-Level-Feld (AngebotPauschalSETDTO) füllt „Leistungsumfang" im Angebot UND (via mitangebot) im Auftrag. War kurzTitel = nur 1. Position → leer/dünn.
-      einsatzpauschale:        0,
-      plannedInstallationDate: inDaysInstant(14),
+      offerExplanation:        'Fabriknummer: ' + (_fabrik || '—'),   // v9.15 (User-Spec): Erläuterung zum Angebot = Fabriknummer
+      serviceDescription:      leistungVoll,   // v8.99/v9.00: angebotener Leistungsumfang (nur nicht-versteckte Positionen) — füllt „Servicebeschreibung"
+      einsatzpauschale:        _einsatzP,      // v9.15 (User-Spec): 0, außer im Angebot wurde eine Einsatzpauschale angeboten
+      plannedInstallationDate: '---',          // v9.15 (User-Spec): geplante Umsetzung = „---"
       offerNumber:             'EXT-ANG-'+angNum,
       offerDate:               todayInstant,
       offerValidUntil:         inDaysInstant(30),
@@ -38478,6 +38485,7 @@ async function _angPushAufwandToErp(recId, btn) {
   }).filter(Boolean).join('\n\n');
   const kurzTitel = (_techPos[0] && _techPos[0].titel) || (positionen[0] && positionen[0].titel) || 'Leistung nach Aufwand';
   const bezeichnung = '[NACH AUFWAND] ' + String(kurzTitel).slice(0,80);
+  const _fabrikA = String(f.seriennummer || f.fabriknummer || f.equipmentnummer || '').trim();   // v9.15: Fabriknummer für „Erläuterung"
   const angNum = String(f.app_angebot_num || '?');
   const eur = (n)=>Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
   const serviceText = String(_workDesc || 'Leistung nach tatsächlichem Aufwand (Regie).').slice(0,2000);
@@ -38524,7 +38532,7 @@ async function _angPushAufwandToErp(recId, btn) {
     inhaltemail:            'Über die Servicebox angelegt — Details in der Servicebox.',   // v9.03: kein Text-Dump + Marker für Auto-Close (v9.01)
     kundeemail:             '-',
     kundeEmail:             '-',
-    status:                 'In Bearbeitung',
+    status:                 'Angenommen',   // v9.15 (User-Spec): Angebot-Status „Angenommen"
     typ:                    'Reparatur',
     type:                   'Reparatur',
     angebotsTyp:            'REPARATUR',
@@ -38549,8 +38557,8 @@ async function _angPushAufwandToErp(recId, btn) {
     materialPrice:           0,
     netPrice:                0,
     serviceDescription:      serviceText,
-    offerExplanation:        erlaeuterungText,
-    plannedInstallationDate: inDaysInstant(14),
+    offerExplanation:        'Fabriknummer: ' + (_fabrikA || '—'),   // v9.15 (User-Spec): Erläuterung = Fabriknummer (Stundensatz/Einsatzpauschale stehen in eigenen Feldern)
+    plannedInstallationDate: '---',                                   // v9.15 (User-Spec): geplante Umsetzung = „---"
     offerNumber:             offerNumber,
     offerDate:               todayInstant,
     offerValidUntil:         inDaysInstant(30),
