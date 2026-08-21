@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.15';
+const APP_VERSION = 'v9.16';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9777,6 +9777,8 @@ function openAuftragDetail(recId) {
     // Rechnungs-Check: nur wenn ERP-Auftrag + Proxy eingerichtet + nicht bereits abgerechnet
     if (f.ext_id && APP_KEYS.valtownProxyUrl && !f.hidden_invoiced) {
       html += '<button class="btn" style="color:#4338ca;border-color:rgba(99,102,241,.4)" onclick="checkAuftragInvoice(\''+rec.id+'\')" title="Im ERP prüfen, ob Rechnung existiert — Treffer wird nur lokal ausgeblendet">💶 Rechnung prüfen</button>';
+      // v9.16: Rechnung in Maxise anlegen (Posten + Lohnanteil aus dem Servicebox-Angebot) — Pauschal
+      html += '<button class="btn" style="color:#fff;border-color:#0F766E;background:#0F766E" onclick="_aufCreateErpRechnung(\''+rec.id+'\', this)" title="Rechnung in Maxise anlegen — baut die Posten + den Lohnanteil aus dem Servicebox-Angebot (Pauschal). Vorschau vor dem Absenden.">🧾 Rechnung anlegen</button>';
     }
     // Hinweis: Status-Änderungen jetzt direkt über Dropdown im Body (siehe _renderAuftragStatusPicker)
     // v8.03: dedizierter Storno-Button (schreibt Status AUCH ins ERP via PUT) — vorher nur im Dropdown versteckt
@@ -13724,6 +13726,236 @@ async function checkAuftragInvoice(recId) {
   } catch(e) {
     console.error('checkAuftragInvoice:', e);
     toast('❌ '+e.message, 'err');
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+ * v9.16: Rechnung in Maxise anlegen — aus einem Auftrag heraus.
+ *
+ * WARUM: Maxise zieht bei Servicebox-PAUSCHAL-Angeboten KEINE Posten in die
+ *   Rechnung (Pauschal-Angebot = nur serviceDescription (Text) + netPrice (Summe),
+ *   KEINE strukturierten Positionen — verifiziert an der OpenAPI: nur RechnungSETDTO
+ *   trägt rechnungPosten). Der ✨-Button in Maxise findet nichts zu laden → Posten leer.
+ * LÖSUNG: rechnungPosten hier aus den Angebots-Positionen bauen und eine fertige
+ *   Rechnung an /api/rechnungen POSTen (RechnungSETDTO).
+ *
+ * Join: Auftrag → AB (ab_recid) → App_Angebote (angebot_rec_id).
+ * Verifiziert an 3 echten Maxise-Rechnungen (Samples):
+ *   - rechnungsEmpfaenger = mehrzeiliger Adress-String (WEG/„c/o Hausverwaltung"),
+ *     genau das, was AB.rechnungsempfaenger bereits enthält.
+ *   - rechnungPosten = Array(1) bei Pauschal/Modernisierung (eine Sammelposition).
+ *   - anmerkungen = "Standort: …\nLeistungsbeschreibung: …" (Leistung auf der Rechnung).
+ *   - lohnanteilNetto gefüllt; typ NICHT im SET-DTO (Maxise leitet aus auftragid ab).
+ * RechnungSETDTO: required kontaktId, rechnungPosten, rechnungsEmpfaenger.
+ * RechnungPostenSETDTO: { title, anzahl, kosten }.
+ * ═══════════════════════════════════════════════════════════════════ */
+let _pendingRechnung = null;
+
+/* Einzel-Record aus Airtable holen (Cache-Hit bevorzugt, sonst direkter Fetch — wie _aufLoadAbSection). */
+async function _aufFetchAirtableRec(table, recId) {
+  if (!recId) return null;
+  try {
+    let hit = null;
+    if (table === 'Auftragsbestaetigungen' && typeof _abListCache !== 'undefined')
+      hit = (_abListCache || []).find(r => r.id === recId);
+    else if (table === 'App_Angebote' && _angeboteCache && Array.isArray(_angeboteCache.items))
+      hit = (_angeboteCache.items || []).find(r => r.id === recId);
+    if (hit) return hit;
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const key    = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/'+encodeURIComponent(table)+'/'+encodeURIComponent(recId), { headers:{ 'Authorization':'Bearer '+key }});
+    if (r.ok) return await r.json();
+  } catch(_){}
+  return null;
+}
+
+async function _aufCreateErpRechnung(recId, btn) {
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
+  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  const rec = (_auftragCache || []).find(r => r.id === recId);
+  if (!rec) return toast('Auftrag nicht gefunden.', 'err');
+  const f = rec.fields;
+  if (!f.ext_id) return toast('Dieser Auftrag stammt nicht aus Maxise (keine ext_id) — keine Rechnung möglich.', 'err');
+  const firmaSlug = f.firma || getCurrentFirmaSlug();
+  const orig = btn ? btn.textContent : '';
+  const setBusy = (on, txt) => { if (btn){ btn.disabled = on; btn.textContent = txt || orig; } };
+  setBusy(true, '⏳ lade Angebot…');
+  try {
+    // 0) Schon abgerechnet? (gleiche Prüfung wie checkAuftragInvoice)
+    try {
+      const list = await _fetchErpRechnungen(firmaSlug);
+      const existing = _indexRechnungenByAuftrag(list).get(String(f.ext_id));
+      if (existing) {
+        setBusy(false);
+        if (!confirm('⚠ Für Auftrag #'+(f.auftrag_num||f.ext_id)+' existiert in Maxise bereits eine Rechnung (Nr. '+(existing.id||'?')+').\n\nTrotzdem eine WEITERE Rechnung anlegen?')) return;
+        setBusy(true, '⏳ lade Angebot…');
+      }
+    } catch(_){ /* Rechnungs-Check optional */ }
+
+    // 1) AB + App_Angebote laden (Join-Kette)
+    const ab  = await _aufFetchAirtableRec('Auftragsbestaetigungen', f.ab_recid);
+    const abf = (ab && ab.fields) || {};
+    let angRec = abf.angebot_rec_id ? await _aufFetchAirtableRec('App_Angebote', abf.angebot_rec_id) : null;
+    if (!angRec && f.angebot_id && _angeboteCache && Array.isArray(_angeboteCache.items)) {
+      angRec = (_angeboteCache.items || []).find(r => String((r.fields||{}).erp_angebot_id) === String(f.angebot_id)) || null;
+    }
+    const af = (angRec && angRec.fields) || {};
+    if (!af.positionen_json && !abf.preis_json) {
+      setBusy(false);
+      return toast('❌ Kein Angebots-Datensatz mit Positionen gefunden (AB→Angebot & erp_angebot_id-Match leer). Bitte in der Servicebox die Angebote/AB laden und erneut versuchen.', 'err');
+    }
+
+    // 2) Kern-IDs + Abrechnungsart
+    const kontaktId = parseInt(af.kontakt_id || abf.kontakt_id || '', 10) || 0;
+    const anlageId  = parseInt(f.anlage_id || af.anlage_id || '', 10) || 0;
+    const ust       = +af.ust_prozent || +abf.ust_prozent || 19;
+    const modus     = String(af.abrechnung_modus || abf.abrechnung_modus || 'pauschal').toLowerCase();
+    if (!kontaktId) { setBusy(false); return toast('❌ Keine kontakt_id am Angebot — Rechnungsempfänger (kontaktId) fehlt.', 'err'); }
+
+    // 3) AUFWAND vorerst blocken (braucht die tatsächlich geleisteten Stunden)
+    if (modus === 'aufwand') {
+      setBusy(false);
+      return toast('ℹ Aufwand-Rechnungen brauchen die tatsächlich geleisteten Stunden — bitte noch direkt in Maxise anlegen. (Pauschal läuft über die Servicebox; Aufwand kommt als nächster Schritt.)', 'warn');
+    }
+
+    // 4) PAUSCHAL-Positionen bauen (Maxise nutzt bei gesamt 1 Sammelposition, s. Samples)
+    let positionen = [];
+    try { positionen = (JSON.parse(af.positionen_json||'[]')||[]).filter(p => p && !p.hidden && !p.preis_aufwand); } catch(_){}
+    const isGesamt    = (af.preisanzeige_modus === 'gesamt');
+    const anzAuf      = 1 + (()=>{ try { return (JSON.parse(af.aufzuege_json||'[]')||[]).filter(a=>a&&(a.fabriknummer||a.adresse)).length; } catch(_){ return 0; } })();
+    const jeAufzug    = +af.pauschalpreis_netto || +af.summe_netto_vp || +abf.summe_netto || 0;
+    const nettoGesamt = isGesamt ? (jeAufzug * anzAuf) : (+af.summe_netto_vp || +abf.summe_netto || 0);
+    const sumEinzel   = positionen.reduce((s,p)=> s + (+p.vp||0)*(+p.menge||1), 0);
+    // Leistungsumfang (voll, für anmerkungen) + Kurztitel (für die Position)
+    const leistungVoll = (f.leistungsumfang || abf.leistungsumfang || f.leistungsbeschreibung ||
+                          positionen.map(p => (p.titel||'') + (Array.isArray(p.leistungsbeschreibung)&&p.leistungsbeschreibung.length ? '\n  - '+p.leistungsbeschreibung.join('\n  - ') : '')).filter(Boolean).join('\n\n')
+                          ).toString().trim();
+    const kurzTitel    = (leistungVoll.split('\n')[0] || (positionen[0]&&positionen[0].titel) || 'Leistung').slice(0,120);
+    const standort     = (f.standort || abf.standort || af.anlage_adresse || '').toString().trim();
+
+    let posten;
+    if (isGesamt || sumEinzel <= 0) {
+      posten = [{ title: kurzTitel, anzahl: 1, kosten: Math.round(nettoGesamt*100)/100 }];
+    } else {
+      posten = positionen.map(p => ({ title: (p.titel||'Position').toString().slice(0,200), anzahl: +p.menge||1, kosten: Math.round((+p.vp||0)*100)/100 }));
+    }
+    const postenNetto = posten.reduce((s,p)=> s + (+p.kosten||0)*(+p.anzahl||1), 0);
+
+    // 5) Lohnanteil abfragen (nicht persistiert → prompt, wie beim Angebot-Push; §35a)
+    setBusy(false);
+    const lohnAns = window.prompt('Lohnanteil (netto, in €) für DIESE Rechnung?\n\nWichtig für die §35a-Ausweisung. 0 = kein separater Lohnanteil.', String(Math.round(postenNetto)));
+    if (lohnAns === null) return; // abgebrochen
+    const lohnanteilNetto = Math.max(0, +String(lohnAns).replace(/\./g,'').replace(',','.').replace(/[^\d.]/g,'') || 0);
+
+    // 6) rechnungsEmpfaenger (mehrzeiliger Adress-String — s. Samples), Fallback Kunde
+    const rechnungsEmpf = (abf.rechnungsempfaenger ||
+                           [af.kunde_name, af.kunde_adresse].filter(Boolean).join('\n') ||
+                           f.kunde_firmenname || '').toString().trim();
+
+    // 7) anmerkungen (Standort + Leistungsbeschreibung — genau wie Maxise-Samples)
+    const anmerkungen = [
+      standort ? 'Standort: '+standort : '',
+      anlageId ? 'Anlage: '+anlageId : '',
+      leistungVoll ? 'Leistungsbeschreibung: '+leistungVoll : '',
+    ].filter(Boolean).join('\n');
+
+    // 8) Payload (RechnungSETDTO — nur verifizierte Felder)
+    const payload = {
+      kontaktId:              kontaktId,
+      rechnungsEmpfaenger:    rechnungsEmpf,
+      rechnungPosten:         posten,
+      auftragid:              +f.ext_id,
+      anlageId:               anlageId || undefined,
+      lohnanteilNetto:        lohnanteilNetto,
+      anmerkungen:            anmerkungen,
+      anzahlEinsatzpauschale: 0,
+      onlyNetto:              false,
+    };
+    _pendingRechnung = {
+      firmaSlug, recId, payload,
+      display: {
+        auftragNum: f.auftrag_num || f.ext_id, extId: f.ext_id,
+        empf: rechnungsEmpf, kontaktId, anlageId, fabrik: f.fabriknummer || af.seriennummer || '',
+        posten, postenNetto, lohnanteilNetto, ust,
+        bruttoGesamt: Math.round(postenNetto*(1+ust/100)*100)/100,
+      }
+    };
+    console.log('[ERP-Rechnung] Vorschau-Payload:', JSON.parse(JSON.stringify(payload)));
+    _aufShowRechnungConfirm();
+  } catch(e) {
+    console.error('[ERP-Rechnung] Fehler:', e);
+    setBusy(false);
+    toast('❌ Rechnung vorbereiten: '+(e.message||'Fehler').slice(0,200), 'err');
+  }
+}
+
+/* Vorschau-Dialog vor dem Absenden */
+function _aufShowRechnungConfirm() {
+  const pr = _pendingRechnung; if (!pr) return;
+  const d = pr.display;
+  const fmt = v => Number(v||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2});
+  document.getElementById('rch-create-modal')?.remove();
+  const m = document.createElement('div');
+  m.id = 'rch-create-modal';
+  m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:11000;display:flex;align-items:center;justify-content:center;padding:16px';
+  const rows = d.posten.map(p =>
+    '<tr><td style="padding:5px 8px;border-bottom:1px solid var(--bdr)">'+escapeHtml(p.title)+'</td>'+
+    '<td style="padding:5px 8px;border-bottom:1px solid var(--bdr);text-align:right">'+fmt(p.anzahl)+'</td>'+
+    '<td style="padding:5px 8px;border-bottom:1px solid var(--bdr);text-align:right">'+fmt(p.kosten)+' €</td>'+
+    '<td style="padding:5px 8px;border-bottom:1px solid var(--bdr);text-align:right">'+fmt((+p.kosten||0)*(+p.anzahl||1))+' €</td></tr>').join('');
+  m.innerHTML = '<div style="background:var(--surf,#fff);max-width:640px;width:100%;max-height:88vh;border-radius:14px;overflow:auto;box-shadow:0 8px 40px rgba(0,0,0,.4)">'+
+    '<div style="padding:14px 18px;background:var(--navy,#234A75);color:#fff;font-weight:700;display:flex;justify-content:space-between;align-items:center">'+
+      '<span>🧾 Rechnung in Maxise anlegen · Auftrag #'+escapeHtml(String(d.auftragNum))+'</span>'+
+      '<button onclick="document.getElementById(\'rch-create-modal\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:30px;height:30px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
+    '</div>'+
+    '<div style="padding:16px 18px">'+
+      '<div style="font-size:12px;color:var(--txt2);margin-bottom:12px;line-height:1.7">'+
+        '<b>Rechnungsempfänger:</b><br><span style="white-space:pre-line;color:var(--txt)">'+escapeHtml(d.empf||'—')+'</span><br>'+
+        '<div style="margin-top:6px"><b>Maxise-Auftrag:</b> '+escapeHtml(String(d.extId))+' &nbsp;·&nbsp; <b>Kontakt-ID:</b> '+escapeHtml(String(d.kontaktId))+(d.anlageId?' &nbsp;·&nbsp; <b>Anlage:</b> '+escapeHtml(String(d.anlageId)):'')+(d.fabrik?' &nbsp;·&nbsp; <b>Fabrik-Nr.:</b> '+escapeHtml(String(d.fabrik)):'')+'</div>'+
+      '</div>'+
+      '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px">'+
+        '<thead><tr style="background:var(--bg,#f1f5f9)"><th style="padding:6px 8px;text-align:left">Bezeichnung</th><th style="padding:6px 8px;text-align:right">Anzahl</th><th style="padding:6px 8px;text-align:right">Preis</th><th style="padding:6px 8px;text-align:right">Gesamt</th></tr></thead>'+
+        '<tbody>'+rows+'</tbody>'+
+      '</table>'+
+      '<div style="text-align:right;font-size:13px;line-height:1.7">'+
+        '<div>Netto: <b>'+fmt(d.postenNetto)+' €</b></div>'+
+        '<div style="color:var(--txt3);font-size:11px">zzgl. '+fmt(d.ust)+' % USt → Brutto '+fmt(d.bruttoGesamt)+' €</div>'+
+        '<div style="color:var(--txt3);font-size:11px">davon Lohnanteil (§35a): '+fmt(d.lohnanteilNetto)+' €</div>'+
+      '</div>'+
+      '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:8px 11px;font-size:11px;color:#78350F;margin-top:12px">Es wird eine <b>echte Rechnung in Maxise</b> angelegt (verknüpft mit Auftrag '+escapeHtml(String(d.extId))+'). Bitte oben prüfen.</div>'+
+    '</div>'+
+    '<div style="padding:12px 18px;background:var(--bg,#f8fafc);border-top:1px solid var(--bdr);display:flex;gap:8px;justify-content:flex-end">'+
+      '<button class="btn" onclick="document.getElementById(\'rch-create-modal\').remove()">Abbrechen</button>'+
+      '<button class="btn prim" id="rch-create-go" onclick="_aufConfirmRechnung(this)">🧾 Jetzt in Maxise anlegen</button>'+
+    '</div>'+
+  '</div>';
+  document.body.appendChild(m);
+  m.onclick = e => { if (e.target === m) m.remove(); };
+}
+
+async function _aufConfirmRechnung(btn) {
+  const pr = _pendingRechnung; if (!pr) return;
+  if (btn){ btn.disabled = true; btn.textContent = '⏳ lege an…'; }
+  try {
+    console.log('[ERP-Rechnung] POST /api/rechnungen — Payload:', JSON.parse(JSON.stringify(pr.payload)));
+    const created = await erpFetch('/aufzug/'+pr.firmaSlug+'/api/rechnungen', { method:'POST', body: pr.payload });
+    console.log('[ERP-Rechnung] OK →', created);
+    const invId = (created && (created.id || created.rechnungsId)) || '';
+    try {
+      await ensureField('Auftraege','invoice_id','singleLineText');
+      await ensureField('Auftraege','invoice_num','singleLineText');
+      await ensureField('Auftraege','invoice_date','singleLineText');
+      await _patchAuftragFields(pr.recId, { invoice_id:String(invId||''), invoice_num:String(invId||''), invoice_date:new Date().toISOString().slice(0,10) });
+    } catch(_){}
+    document.getElementById('rch-create-modal')?.remove();
+    toast('✅ Rechnung in Maxise angelegt'+(invId?(' (Nr. '+invId+')'):'')+'. Posten + Lohnanteil sind gefüllt.', 'ok');
+    _pendingRechnung = null;
+  } catch(e) {
+    console.error('[ERP-Rechnung] POST-Fehler:', e);
+    if (btn){ btn.disabled = false; btn.textContent = '🧾 Jetzt in Maxise anlegen'; }
+    const trace = (e.body && (e.body.upstream_body_excerpt||e.body.trace)) ? String(e.body.upstream_body_excerpt||e.body.trace) : '';
+    toast('❌ Rechnung anlegen: '+(e.message||'Fehler').slice(0,240), 'err');
+    if (trace && typeof _showErpErrorDetails === 'function') { try { _showErpErrorDetails(e); } catch(_){} }
   }
 }
 
