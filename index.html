@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.16';
+const APP_VERSION = 'v9.17';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -38272,6 +38272,21 @@ function _angMapTypForErp(appTyp) {
 }
 
 /**
+ * v9.17: Maxise-Angebotstyp — die EINZIGEN gültigen Werte (User-Vorgabe 21.08.2026):
+ *   „Pauschal" · „Nach Aufwand" · „Wartung und Notruf" · „Modernisierung".
+ *   „Reparatur" existiert in Maxise NICHT und darf NIE gesendet werden.
+ * Liefert deutschen Anzeige-String (.de → DTO-Feld `typ`) + Uppercase-Enum (.en).
+ */
+function _mxAngebotTyp(f, fallbackDe) {
+  const modus = String((f && f.abrechnung_modus) || '').toLowerCase();
+  const at    = String((f && (f.angebot_typ || f.erp_typ)) || '').toLowerCase();
+  if (modus === 'aufwand' || /aufwand/.test(at))  return { de:'Nach Aufwand',        en:'AUFWAND' };
+  if (/modern/.test(at))                          return { de:'Modernisierung',      en:'MODERNISIERUNG' };
+  if (/wartung|notruf/.test(at))                  return { de:'Wartung und Notruf',   en:'WARTUNGNOTRUF' };
+  return { de: fallbackDe || 'Pauschal', en:'PAUSCHAL' };
+}
+
+/**
  * Recovery-Lookup: nach 500 mit FreshSales-NPE prüfen ob das Angebot
  * trotzdem angelegt wurde (DB-Insert läuft VOR der Sync). Wir suchen über
  * die eindeutige offerNumber EXT-ANG-X die wir gesendet haben.
@@ -38483,17 +38498,15 @@ async function _angPushToErp(recId, btn) {
       kundeemail:             '-',          // NOT NULL DB-Spalte
       kundeEmail:             '-',
       status:                 'Angenommen',   // v9.15 (User-Spec): Angebot-Status auf „Angenommen" (vorher „In Bearbeitung")
-      // 'typ' ist die VORGANGSART, NICHT die Bestellform!
-      // Pauschal-Endpoint im ERP ist generell für Reparatur-Angebote.
-      // Frontend-AngebotEnum wollte UPPERCASE (REPARATUR), aber FreshSales-Sync
-      // sucht den DealType per Title-Case-Lookup ('Reparatur'). Wir senden beides
-      // in verschiedenen Feldern, damit jeder Konsument seinen Wert findet.
-      typ:                    'Reparatur',     // FreshSales-Sync Lookup
-      type:                   'Reparatur',
-      angebotsTyp:            'REPARATUR',      // Frontend-Enum
-      angebotstyp:            'REPARATUR',
-      angebotTyp:             'REPARATUR',
-      vorgangsart:            'REPARATUR',
+      // v9.17: Maxise-Angebotstyp — NUR Pauschal/Nach Aufwand/Wartung und Notruf/Modernisierung
+      //   (User 21.08.2026: „Reparatur gibt es nicht — Pauschal eintragen"). Der Festpreis-Push
+      //   trägt i.d.R. „Pauschal", aber Modernisierung/Wartung fließen auch hier durch → dynamisch.
+      typ:                    _mxAngebotTyp(f,'Pauschal').de,
+      type:                   _mxAngebotTyp(f,'Pauschal').de,
+      angebotsTyp:            _mxAngebotTyp(f,'Pauschal').en,
+      angebotstyp:            _mxAngebotTyp(f,'Pauschal').en,
+      angebotTyp:             _mxAngebotTyp(f,'Pauschal').en,
+      vorgangsart:            _mxAngebotTyp(f,'Pauschal').en,
       // FreshSales-Sync explizit deaktivieren, falls Backend das unterstützt
       syncFreshsales:         false,
       syncFreshSales:         false,
@@ -38765,12 +38778,12 @@ async function _angPushAufwandToErp(recId, btn) {
     kundeemail:             '-',
     kundeEmail:             '-',
     status:                 'Angenommen',   // v9.15 (User-Spec): Angebot-Status „Angenommen"
-    typ:                    'Reparatur',
-    type:                   'Reparatur',
-    angebotsTyp:            'REPARATUR',
-    angebotstyp:            'REPARATUR',
-    angebotTyp:             'REPARATUR',
-    vorgangsart:            'REPARATUR',
+    typ:                    'Nach Aufwand',   // v9.17: Aufwand-Endpoint → Maxise-Typ „Nach Aufwand" (NICHT „Reparatur")
+    type:                   'Nach Aufwand',
+    angebotsTyp:            'AUFWAND',
+    angebotstyp:            'AUFWAND',
+    angebotTyp:             'AUFWAND',
+    vorgangsart:            'AUFWAND',
     syncFreshsales:         false,
     syncFreshSales:         false,
     skipFreshsalesSync:     true,
