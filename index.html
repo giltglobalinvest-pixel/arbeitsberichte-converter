@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.17';
+const APP_VERSION = 'v9.18';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -38140,7 +38140,7 @@ async function _angCreateErpAnfrage(rec) {
     firstTitle = (pos[0] && pos[0].titel) || '';
     leistungTxt = pos.map(p => { const t=String(p.titel||'').trim(); const subs=Array.isArray(p.leistungsbeschreibung)?p.leistungsbeschreibung.map(x=>String(x||'').trim()).filter(Boolean):[]; return subs.length?(t+'\n'+subs.map(s=>'  - '+s).join('\n')):t; }).filter(Boolean).join('\n\n');
   } catch(_){}
-  const typLabel = (f.angebot_typ||'sonstiges').toUpperCase();
+  const typLabel = _mxAngebotTyp(f,'Pauschal').de;   // v9.18: gültiger Maxise-Typ (Pauschal/Nach Aufwand/Wartung und Notruf/Modernisierung) — NIE „Reparatur"
   const bezeichnung = '['+typLabel+'] '+String(firstTitle || 'Angebot laut Servicebox').slice(0,80);
   // v9.14: Anfrage-`details` (Pflichtfeld, = Beschreibung in Maxise) trägt jetzt die ECHTE Leistung (nicht-versteckte
   //   Positionen) statt des immer-gleichen „Externes Angebot"-Textes — für native Servicebox-Angebote war das falsch.
@@ -38368,13 +38368,13 @@ async function _angPushToErp(recId, btn) {
     //   Sub-Punkte liegen in p.leistungsbeschreibung[]. NICHT f.leistungsumfang nehmen — das enthält auch die
     //   Kostenpositionen (Fracht/Entsorgung/Monteur-/Fahrzeug-/Einsatzpauschale/Energiekostenbeitrag), die NICHT in den Leistungsumfang gehören.
     const _techPos = positionen.filter(p => p && !p.hidden);
-    const kurzTitel = _techPos[0]?.titel || positionen[0]?.titel || 'Reparatur / externes Angebot';
+    const kurzTitel = _techPos[0]?.titel || positionen[0]?.titel || 'Leistung laut Servicebox';
     const leistungVoll = _techPos.map(p => {
       const t = String(p.titel||'').trim();
       const subs = Array.isArray(p.leistungsbeschreibung) ? p.leistungsbeschreibung.map(x=>String(x||'').trim()).filter(Boolean) : [];
       return subs.length ? (t+'\n'+subs.map(s=>'• '+s).join('\n')) : t;
     }).filter(Boolean).join('\n\n') || String(f.leistungsumfang||'').trim() || kurzTitel;   // v9.15: nie leer — Fallback Leistungsumfang-Feld, dann Kurztitel
-    const bezeichnung = '['+(f.angebot_typ||'sonstiges').toUpperCase()+'] '+kurzTitel.slice(0,80);
+    const bezeichnung = '['+_mxAngebotTyp(f,'Pauschal').de+'] '+kurzTitel.slice(0,80);   // v9.18: korrekter Maxise-Typ im Titel (kein „[REPARATUR]" mehr)
     // Erläuterung — der entscheidende Hinweis für ERP-User
     const erlaeuterung = [
       '═══════════════════════════════════════════',
@@ -38729,7 +38729,7 @@ async function _angPushAufwandToErp(recId, btn) {
     return subs.length ? (t+'\n'+subs.map(s=>'• '+s).join('\n')) : t;
   }).filter(Boolean).join('\n\n');
   const kurzTitel = (_techPos[0] && _techPos[0].titel) || (positionen[0] && positionen[0].titel) || 'Leistung nach Aufwand';
-  const bezeichnung = '[NACH AUFWAND] ' + String(kurzTitel).slice(0,80);
+  const bezeichnung = '['+_mxAngebotTyp(f,'Nach Aufwand').de+'] ' + String(kurzTitel).slice(0,80);   // v9.18: „[Nach Aufwand]" konsistent
   const _fabrikA = String(f.seriennummer || f.fabriknummer || f.equipmentnummer || '').trim();   // v9.15: Fabriknummer für „Erläuterung"
   const angNum = String(f.app_angebot_num || '?');
   const eur = (n)=>Number(n||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €';
