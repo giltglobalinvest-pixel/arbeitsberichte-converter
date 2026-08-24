@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.22';
+const APP_VERSION = 'v9.23';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35538,19 +35538,25 @@ async function _buildAngebotPdf(rec) {
       const ls = doc.splitTextToSize(_sanPdf('• '+l), colTitel-4);
       for (const x of ls) leistungLines.push(x);
     }
-    const rowH = Math.max(8, titelLines.length*5 + leistungLines.length*4 + 4);
-    if (y + rowH > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
-    if (idx%2 === 0) { doc.setFillColor(248,250,252); doc.rect(ml, y, cw, rowH, 'F'); }
+    const titelH = titelLines.length*5;
+    const fullRowH = Math.max(8, titelH + leistungLines.length*4 + 4);
+    // v9.23: Positionen FLIESSEN lassen statt einen seitenhohen Block am Stück auf die nächste
+    //   Seite zu schieben (sonst blieb die Vorseite riesig leer — „kacke"). Nur wenn nicht mal
+    //   Titel + 3 Bullets auf die Restseite passen, brechen wir VOR der Position um.
+    const minStart = titelH + Math.min(leistungLines.length,3)*4 + 8;
+    if (y + minStart > 270) { doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; }
+    const rowStartY = y;
+    const fitsWhole = (y + fullRowH <= 270);
+    if (idx%2 === 0 && fitsWhole) { doc.setFillColor(248,250,252); doc.rect(ml, y, cw, fullRowH, 'F'); }
+    // NR + Titel (bleiben zusammen)
     doc.setTextColor(...GREY); doc.setFont('helvetica','normal'); doc.setFontSize(10);
     doc.text(String(p.nr||(idx+1)), ml+2, y+5);
     doc.setFont('helvetica','bold');
     titelLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+li*5));
-    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
-    leistungLines.forEach((l, li) => doc.text(l, ml+colNr+2, y+5+titelLines.length*5+li*4));
+    // Preisspalten (nur 'einzel') — auf Höhe der Titelzeile
     if (!isGesamt) {
       doc.setFontSize(10); doc.setTextColor(...GREY);
       if (isAufwand) {
-        // v6.08: kein Einzelpreis — stattdessen "nach Aufwand*" in den Preis-Spalten
         doc.text(String(p.menge||1), ml+colNr+colTitel+colMenge-3, y+5, { align:'right' });
         doc.setFont('helvetica','italic'); doc.setTextColor(...GREY_L); doc.setFontSize(9);
         doc.text('nach Aufwand*', ml+colNr+colTitel+colMenge+colEP-2, y+5, { align:'right' });
@@ -35566,7 +35572,19 @@ async function _buildAngebotPdf(rec) {
         doc.setFont('helvetica','normal'); doc.setTextColor(...GREY);
       }
     }
-    y += rowH;
+    // Bullets — einzeln, fließend mit Seitenumbruch
+    let ly = y + 5 + titelH;
+    let brokePage = false;
+    doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+    for (const bl of leistungLines) {
+      if (ly > 270) {
+        doc.addPage(); y = 22; _angPdfHeader(doc, ml, mr, BR, GREY_L, GREY_X); y = 30; ly = y; brokePage = true;
+        doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(...GREY_L);
+      }
+      doc.text(bl, ml+colNr+2, ly);
+      ly += 4;
+    }
+    y = brokePage ? (ly + 2) : (Math.max(ly, rowStartY + 8) + 2);
     doc.setDrawColor(...GREY_X); doc.line(ml, y, mr, y);
   });
   // v6.08: Fußnote bei Aufwand-Positionen
@@ -35593,7 +35611,7 @@ async function _buildAngebotPdf(rec) {
     const gesamtNetto = jeAufzug * _pAnz;
     const ustBetrag = gesamtNetto * ust/100;
     const brutto = gesamtNetto + ustBetrag;
-    const sumX = ml + cw - 80;
+    const sumX = ml + cw - 92;   // v9.23: breiter (war 80) — sonst überlappt „Pauschalpreis brutto" + 6-stelliger Betrag
     doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.setTextColor(...GREY_L);
     doc.text(_sanPdf('Alle oben genannten Leistungen sind im folgenden Pauschalpreis enthalten'+(multiA?' (Preis je Aufzug, '+_pAnz+' Aufzugsanlagen)':'')+':'), ml, y+4);
     y += 8;
@@ -35629,9 +35647,14 @@ async function _buildAngebotPdf(rec) {
     y += 6;
     doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
     y += 5;
-    doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(...NAVY);
-    doc.text(multiA ? 'Gesamtpreis brutto' : 'Pauschalpreis brutto', sumX, y);
-    doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
+    // v9.23: überlappungssicher — Label-Font verkleinern bis Label + Betrag nebeneinander passen
+    { const _bl = multiA ? 'Gesamtpreis brutto' : 'Pauschalpreis brutto';
+      const _ba = fmtEUR(brutto)+' EUR';
+      doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+      let _bfs = 13; doc.setFontSize(_bfs);
+      while (_bfs > 9.5 && (doc.getTextWidth(_bl) + doc.getTextWidth(_ba) + 4) > (mr-2 - sumX)) { _bfs -= 0.5; doc.setFontSize(_bfs); }
+      doc.text(_bl, sumX, y);
+      doc.text(_ba, mr-2, y, { align:'right' }); }
     doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
     y += 10;
   } else {
@@ -35639,7 +35662,7 @@ async function _buildAngebotPdf(rec) {
     //   (rec.gesamtpreis_ausblenden) abgefangen → hier NIE „nach Aufwand".
     const ustBetrag = sumNetto * ust/100;
     const brutto = sumNetto + ustBetrag;
-    const sumX = ml + cw - 80;
+    const sumX = ml + cw - 92;   // v9.23: breiter (war 80) gegen Label/Betrag-Überlappung
     doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...GREY);
     doc.text('Gesamtnettopreis', sumX, y+4);
     doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
@@ -35651,9 +35674,12 @@ async function _buildAngebotPdf(rec) {
     y += 6;
     doc.setDrawColor(...NAVY); doc.setLineWidth(0.6); doc.line(sumX, y, mr, y);
     y += 5;
-    doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.setTextColor(...NAVY);
-    doc.text('Gesamtbruttopreis', sumX, y);
-    doc.text(fmtEUR(brutto)+' EUR', mr-2, y, { align:'right' });
+    { const _bl = 'Gesamtbruttopreis'; const _ba = fmtEUR(brutto)+' EUR';   // v9.23: überlappungssicher
+      doc.setFont('helvetica','bold'); doc.setTextColor(...NAVY);
+      let _bfs = 12; doc.setFontSize(_bfs);
+      while (_bfs > 9.5 && (doc.getTextWidth(_bl) + doc.getTextWidth(_ba) + 4) > (mr-2 - sumX)) { _bfs -= 0.5; doc.setFontSize(_bfs); }
+      doc.text(_bl, sumX, y);
+      doc.text(_ba, mr-2, y, { align:'right' }); }
     doc.setDrawColor(...NAVY); doc.setLineWidth(0.3); doc.line(sumX, y+2, mr, y+2);
     y += 10;
   }
