@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.19';
+const APP_VERSION = 'v9.20';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -51944,6 +51944,9 @@ async function _bbBuildPdf(rec, firmaSlug) {
   // Bilder-Seiten — 2 pro Seite mit Bildunterschrift
   let bilder = [];
   try { bilder = JSON.parse(f.bilder_json || '[]'); } catch(_){}
+  const _nB64 = bilder.filter(b=>b&&b.dataUrl&&/^data:/.test(b.dataUrl)).length;
+  const _nUrl = bilder.filter(b=>b&&!(b.dataUrl&&/^data:/.test(b.dataUrl))&&/^https?:/.test(b.url||'')).length;
+  console.log('[BB-PDF] Bilder='+bilder.length+' · Base64='+_nB64+' · nur-URL='+_nUrl);
   if (Array.isArray(bilder) && bilder.length) {
     for (let i = 0; i < bilder.length; i += 2) {
       doc.addPage();
@@ -51964,9 +51967,9 @@ async function _bbBuildPdf(rec, firmaSlug) {
           try {
             const bl = await (await fetch(img.url||img.dataUrl)).blob();
             src = await new Promise(res => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(bl); });
-          } catch(e){ console.warn('[BB] Bild-Fetch fürs PDF fehlgeschlagen:', e.message); }
+          } catch(e){ console.warn('[BB-PDF] URL-Fetch fehlgeschlagen (evtl. CORS/abgelaufen):', e.message, '· URL:', String(img.url||'').slice(0,90)); }
         }
-        if (!src) continue;   // kein Bild verfügbar → Slot überspringen
+        if (!src) { console.warn('[BB-PDF] Bild '+(i+slot+1)+' hat KEINE Quelle (kein Base64, URL-Fetch fehlgeschlagen) → fehlt im PDF'); continue; }
         // Echte Bild-Dimensionen lesen
         let imgW = imgMaxW, imgH = imgMaxH;
         try {
@@ -51984,7 +51987,8 @@ async function _bbBuildPdf(rec, firmaSlug) {
           }
         } catch(_){}
         const x = ml + (cw - imgW) / 2;
-        try { doc.addImage(src, 'JPEG', x, slotY, imgW, imgH); } catch(e) { console.warn('[BB] addImage:', e.message); }
+        try { doc.addImage(src, 'JPEG', x, slotY, imgW, imgH); console.log('[BB-PDF] Bild '+(i+slot+1)+' eingefügt ('+((/^data:/.test(img.dataUrl||''))?'Base64':'URL-gefetcht')+')'); }
+        catch(e) { console.warn('[BB-PDF] addImage Bild '+(i+slot+1)+' FEHLER:', e.message, '· Quelle:', String(src).slice(0,40)); }
         // Caption unter dem Bild
         const captionY = slotY + imgH + 4;
         doc.setFontSize(9); doc.setTextColor(...GREY_L); doc.setFont('helvetica','italic');
