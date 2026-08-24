@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.18';
+const APP_VERSION = 'v9.19';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -51332,7 +51332,8 @@ const BB_TABLE_FIELDS = [
   // Inhalt
   { name:'bericht_text',       type:'multilineText'  },
   { name:'signatur_name',      type:'singleLineText' },
-  { name:'bilder_json',        type:'multilineText'  },  // [{name, dataUrl, caption}]
+  { name:'bilder_json',        type:'multilineText'  },  // v9.19: [{name, caption, url}] — Bilder liegen als Attachments in bilder_pool; dataUrl nur transient im Editor/PDF
+  { name:'bilder_pool',        type:'multipleAttachments' },  // v9.19: die echten Bild-Dateien (Base64 sprengt die JSON-Zelle)
   // Output
   { name:'app_pdf',            type:'multipleAttachments' },
   { name:'notizen',            type:'multilineText'  },
@@ -51600,7 +51601,7 @@ window._bbEditorRender = function() {
             s.bilder.map((img, i) =>
               '<div style="background:#fff;border:1px solid #FDE68A;border-radius:8px;overflow:hidden">'+
                 '<div style="position:relative">'+
-                  '<img src="'+escapeHtml(img.dataUrl)+'" style="width:100%;height:100px;object-fit:cover;display:block">'+
+                  '<img src="'+escapeHtml(img.dataUrl || img.url || '')+'" style="width:100%;height:100px;object-fit:cover;display:block">'+
                   '<button onclick="_bbRemoveImage('+i+')" title="Entfernen" style="position:absolute;top:4px;right:4px;background:rgba(220,38,38,.9);color:#fff;border:none;width:24px;height:24px;border-radius:50%;font-size:14px;cursor:pointer">×</button>'+
                 '</div>'+
                 '<input value="'+escapeHtml(img.caption||'')+'" oninput="_bbSetImageCaption('+i+',this.value)" placeholder="Bildunterschrift…" style="width:100%;padding:5px 8px;border:none;border-top:1px solid #FDE68A;font-size:11px;font-family:inherit">'+
@@ -51731,6 +51732,10 @@ window._bbSave = async function(finalisieren) {
   if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Speichere…'; }
   try {
     await _ensureBbTable();
+    // v9.19: Bilder NICHT als Base64 in bilder_json (Airtable-Zelle cappt bei 100.000 Zeichen —
+    //   schon 1 Foto sprengt das). Stattdessen als Attachment ins Feld bilder_pool hochladen und in
+    //   bilder_json nur { name, caption, url } ablegen. Das Base64 (dataUrl) bleibt im Speicher fürs PDF.
+    const _bbMeta = () => (s.bilder||[]).map(b => ({ name:b.name||'', caption:b.caption||'', url:(typeof b.url==='string'&&/^https?:/.test(b.url))?b.url:'' }));
     const fields = {
       firma:           firmaSlug,
       titel:           s.titel,
@@ -51742,7 +51747,7 @@ window._bbSave = async function(finalisieren) {
       kunde_anschrift: s.kunde_anschrift,
       bericht_text:    s.bericht_text,
       signatur_name:   s.signatur_name,
-      bilder_json:     JSON.stringify(s.bilder || []),
+      bilder_json:     JSON.stringify(_bbMeta()),
       status:          finalisieren ? 'finalisiert' : 'entwurf',
     };
     let recId = s.recId;
@@ -51771,10 +51776,42 @@ window._bbSave = async function(finalisieren) {
       s.recId = recId;
       m._state.recId = recId;
     }
-    // PDF generieren + anhängen wenn finalisiert
+    // v9.19: neue Base64-Bilder als Attachments (bilder_pool) hochladen → URL zurück in s.bilder,
+    //   dann bilder_json mit den URLs nachziehen. (Muster wie Datenaufnahmen-Save.)
+    const _toUp = (s.bilder||[]).map((b,i)=>({b,i})).filter(x => x.b.dataUrl && /^data:/.test(x.b.dataUrl) && !/^https?:/.test(x.b.url||''));
+    if (_toUp.length) {
+      if (saveBtn) saveBtn.textContent = '⏳ Lade Bilder hoch (0/'+_toUp.length+')…';
+      try { await ensureField('App_Briefberichte','bilder_pool','multipleAttachments'); } catch(_){}
+      let _done = 0, _fail = 0; const CONC = 3;
+      for (let i=0;i<_toUp.length;i+=CONC){
+        const batch = _toUp.slice(i,i+CONC);
+        const res = await Promise.allSettled(batch.map(async (x,k) => {
+          const blob = await (await fetch(x.b.dataUrl)).blob();
+          const filename = 'bb'+(x.i+1)+'-'+Date.now()+'-'+i+'-'+k+'.jpg';
+          const att = await atBlobUpload(recId,'bilder_pool',blob,filename,blob.type||'image/jpeg');
+          let url='';
+          if (att && att.fields) for (const fn of Object.keys(att.fields)){ const v=att.fields[fn]; if(Array.isArray(v)){ const mm=v.find(a=>a&&a.filename===filename&&a.url); if(mm){url=mm.url;break;} } }
+          if (!url && att && att.fields && Array.isArray(att.fields.bilder_pool) && att.fields.bilder_pool.length) url = att.fields.bilder_pool[att.fields.bilder_pool.length-1].url||'';
+          if (!url) throw new Error('Upload OK, aber URL nicht gefunden');
+          return { idx:x.i, url };
+        }));
+        for (const rr of res){ if (rr.status==='fulfilled'){ s.bilder[rr.value.idx].url = rr.value.url; } else { _fail++; console.warn('[BB] Bild-Upload fehlgeschlagen:', (rr.reason&&rr.reason.message)||rr.reason); } _done++; }
+        if (saveBtn) saveBtn.textContent = '⏳ Lade Bilder hoch ('+_done+'/'+_toUp.length+')…';
+      }
+      const r2 = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Briefberichte/'+recId, {
+        method:'PATCH',
+        headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+        body: JSON.stringify({ fields: { bilder_json: JSON.stringify(_bbMeta()) } }),
+      });
+      const d2 = await r2.json();
+      if (d2.error) throw new Error(d2.error.message||'Fehler beim Speichern der Bild-URLs');
+      if (_fail) toast('⚠ '+_fail+' Bild(er) konnten nicht hochgeladen werden — bitte erneut speichern.','err');
+    }
+    // PDF generieren + anhängen wenn finalisiert — Bilder aus dem Base64 im Speicher (URL nur Fallback)
     if (finalisieren) {
       if (saveBtn) saveBtn.textContent = '⏳ Erstelle PDF…';
-      const recForPdf = { id: recId, fields: { ...fields, app_bb_num: fields.app_bb_num || (s.recId ? (await _bbLoadAll(firmaSlug, true)).find(r => r.id === recId)?.fields?.app_bb_num : 1) }};
+      const _bilderPdf = (s.bilder||[]).map(b => ({ name:b.name||'', caption:b.caption||'', dataUrl:(b.dataUrl && /^data:/.test(b.dataUrl))?b.dataUrl:'', url:b.url||'' }));
+      const recForPdf = { id: recId, fields: { ...fields, bilder_json: JSON.stringify(_bilderPdf), app_bb_num: fields.app_bb_num || (s.recId ? (await _bbLoadAll(firmaSlug, true)).find(r => r.id === recId)?.fields?.app_bb_num : 1) }};
       const pdfBlob = await _bbBuildPdf(recForPdf, firmaSlug);
       // Upload zu Airtable
       try {
@@ -51921,6 +51958,15 @@ async function _bbBuildPdf(rec, firmaSlug) {
         const slotY = 44 + slot * 120; // 110 Bild + 10 Caption/Spacing
         const imgMaxH = 100;
         const imgMaxW = cw;
+        // v9.19: Base64 bevorzugt; liegt nur eine URL vor (aus bilder_pool), holen wir sie als DataURL.
+        let src = (img.dataUrl && /^data:/.test(img.dataUrl)) ? img.dataUrl : '';
+        if (!src && /^https?:/.test(img.url||img.dataUrl||'')) {
+          try {
+            const bl = await (await fetch(img.url||img.dataUrl)).blob();
+            src = await new Promise(res => { const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.readAsDataURL(bl); });
+          } catch(e){ console.warn('[BB] Bild-Fetch fürs PDF fehlgeschlagen:', e.message); }
+        }
+        if (!src) continue;   // kein Bild verfügbar → Slot überspringen
         // Echte Bild-Dimensionen lesen
         let imgW = imgMaxW, imgH = imgMaxH;
         try {
@@ -51928,7 +51974,7 @@ async function _bbBuildPdf(rec, firmaSlug) {
             const im = new Image();
             im.onload = () => resolve(im);
             im.onerror = reject;
-            im.src = img.dataUrl;
+            im.src = src;
           });
           const ratio = tmp.width / tmp.height;
           if (ratio > imgMaxW / imgMaxH) {
@@ -51938,7 +51984,7 @@ async function _bbBuildPdf(rec, firmaSlug) {
           }
         } catch(_){}
         const x = ml + (cw - imgW) / 2;
-        try { doc.addImage(img.dataUrl, 'JPEG', x, slotY, imgW, imgH); } catch(e) { console.warn('[BB] addImage:', e.message); }
+        try { doc.addImage(src, 'JPEG', x, slotY, imgW, imgH); } catch(e) { console.warn('[BB] addImage:', e.message); }
         // Caption unter dem Bild
         const captionY = slotY + imgH + 4;
         doc.setFontSize(9); doc.setTextColor(...GREY_L); doc.setFont('helvetica','italic');
