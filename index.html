@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.20';
+const APP_VERSION = 'v9.21';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -40865,9 +40865,11 @@ function _sanPdf(s) {
     .replace(/–/g, '-').replace(/—/g, '-')   // en/em dash
     .replace(/…/g, '...').replace(/·/g, '-')
     .replace(/•/g, '*')
-    // Quotes
-    .replace(/„|"|"|«|»/g, '"')
-    .replace(/'|'|‚|‹|›/g, "'")
+    // Quotes — v9.21: robuste Unicode-Escapes. Vorher standen hier versehentlich ASCII-Quotes
+    //   (0x22/0x27), sodass die Mac-Smart-Quotes U+2018/U+2019/U+201C/U+201D durchrutschten und
+    //   jsPDF sie als „?" rendert (kein Glyph in WinAnsi). Jetzt eindeutig per \uXXXX.
+    .replace(/[“”„‟«»″ʺ❝❞]/g, '"')
+    .replace(/[‘’‚‛‹›´`ʹʼ′❛❜]/g, "'")
     // Sonstige Sonderzeichen
     .replace(/✓|✔/g, '[OK]').replace(/✗|✘/g, '[X]')
     .replace(/⚠|⚠️/g, '[!]').replace(/⭐|★/g, '*')
@@ -51517,6 +51519,22 @@ window.openBriefberichtEditor = async function(opts) {
           bilder: (() => { try { return JSON.parse(f.bilder_json||'[]'); } catch(_) { return []; } })(),
           status: f.status || 'entwurf',
         };
+        // v9.21: Base64 aus den bilder_pool-Attachments rehydrieren. bilder_json hält seit v9.19
+        //   nur URLs; ohne Base64 kann das PDF die Bilder nicht einbetten (URL-Nachladen scheitert
+        //   oft an CORS/Ablauf). Die Attachment-URLs sind FRISCH (gerade per GET geholt) → kein Ablauf.
+        try {
+          const pool = Array.isArray(f.bilder_pool) ? f.bilder_pool : [];
+          await Promise.allSettled((state.bilder||[]).map(async (b, idx) => {
+            if (b && b.dataUrl && /^data:/.test(b.dataUrl)) return;
+            const src = (pool[idx] && pool[idx].url) || (b && b.url) || '';
+            if (!/^https?:/.test(src)) return;
+            const bl = await (await fetch(src)).blob();
+            b.dataUrl = await new Promise(r => { const fr=new FileReader(); fr.onload=()=>r(fr.result); fr.readAsDataURL(bl); });
+            if (!b.url && pool[idx] && pool[idx].url) b.url = pool[idx].url;
+          }));
+          const _ok = (state.bilder||[]).filter(b=>b&&b.dataUrl&&/^data:/.test(b.dataUrl)).length;
+          console.log('[BB] Rehydrate: '+_ok+'/'+(state.bilder||[]).length+' Bild(er) als Base64 geladen');
+        } catch(e){ console.warn('[BB] Rehydrate fehlgeschlagen:', e.message); }
       }
     } catch(e) { console.warn('[BB] Load für Edit fehlgeschlagen:', e.message); }
   }
@@ -51813,6 +51831,12 @@ window._bbSave = async function(finalisieren) {
       const _bilderPdf = (s.bilder||[]).map(b => ({ name:b.name||'', caption:b.caption||'', dataUrl:(b.dataUrl && /^data:/.test(b.dataUrl))?b.dataUrl:'', url:b.url||'' }));
       const recForPdf = { id: recId, fields: { ...fields, bilder_json: JSON.stringify(_bilderPdf), app_bb_num: fields.app_bb_num || (s.recId ? (await _bbLoadAll(firmaSlug, true)).find(r => r.id === recId)?.fields?.app_bb_num : 1) }};
       const pdfBlob = await _bbBuildPdf(recForPdf, firmaSlug);
+      // v9.21: sichtbare Rückmeldung, wie viele Bilder es INS PDF geschafft haben
+      try {
+        const st = window._bbImgStats || { total:(s.bilder||[]).length, ok:0 };
+        if (st.total > 0 && st.ok < st.total) toast('⚠ Nur '+st.ok+' von '+st.total+' Bild(ern) im PDF — die übrigen konnten nicht geladen werden (bitte Bilder neu hinzufügen und erneut finalisieren).','err');
+        else if (st.total > 0) toast('🖼 '+st.ok+' Bild(er) ins PDF eingebettet.','ok');
+      } catch(_){}
       // Upload zu Airtable
       try {
         const filename = 'Bericht-BB-'+(fields.app_bb_num||recId)+'.pdf';
@@ -51947,6 +51971,7 @@ async function _bbBuildPdf(rec, firmaSlug) {
   const _nB64 = bilder.filter(b=>b&&b.dataUrl&&/^data:/.test(b.dataUrl)).length;
   const _nUrl = bilder.filter(b=>b&&!(b.dataUrl&&/^data:/.test(b.dataUrl))&&/^https?:/.test(b.url||'')).length;
   console.log('[BB-PDF] Bilder='+bilder.length+' · Base64='+_nB64+' · nur-URL='+_nUrl);
+  let _bbEmbedOk = 0;
   if (Array.isArray(bilder) && bilder.length) {
     for (let i = 0; i < bilder.length; i += 2) {
       doc.addPage();
@@ -51987,7 +52012,7 @@ async function _bbBuildPdf(rec, firmaSlug) {
           }
         } catch(_){}
         const x = ml + (cw - imgW) / 2;
-        try { doc.addImage(src, 'JPEG', x, slotY, imgW, imgH); console.log('[BB-PDF] Bild '+(i+slot+1)+' eingefügt ('+((/^data:/.test(img.dataUrl||''))?'Base64':'URL-gefetcht')+')'); }
+        try { doc.addImage(src, 'JPEG', x, slotY, imgW, imgH); _bbEmbedOk++; console.log('[BB-PDF] Bild '+(i+slot+1)+' eingefügt ('+((/^data:/.test(img.dataUrl||''))?'Base64':'URL-gefetcht')+')'); }
         catch(e) { console.warn('[BB-PDF] addImage Bild '+(i+slot+1)+' FEHLER:', e.message, '· Quelle:', String(src).slice(0,40)); }
         // Caption unter dem Bild
         const captionY = slotY + imgH + 4;
@@ -52003,6 +52028,7 @@ async function _bbBuildPdf(rec, firmaSlug) {
       _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, p, newCount, f);
     }
   }
+  try { window._bbImgStats = { total: bilder.length, ok: _bbEmbedOk }; } catch(_){}
 
   return doc.output('blob');
 }
