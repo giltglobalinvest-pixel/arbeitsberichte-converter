@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.24';
+const APP_VERSION = 'v9.25';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -30765,7 +30765,11 @@ function _renderAngeboteList() {
      kein app_angebot_num — ohne diesen Zweig landeten sie alle bei 0 und damit
      gesammelt am Listenende. */
   const _angSortKey = r => (+((r.fields && r.fields.app_angebot_num)) || +((r.fields && r.fields.fdh_angebot_num)) || +((r.fields && r.fields.erp_angebot_id)) || 0);
-  filtered.sort((a,b) => _angSortKey(b) - _angSortKey(a));
+  // v9.25: NEUESTE zuerst nach DATUM (Servicebox erstellt_am / Maxise erp_datum …), Nummer nur als Tiebreak.
+  //   Reine Nummern-Sortierung hielt Maxise (MX-29xx) oben, obwohl die Servicebox-Angebote (ANG-27xx)
+  //   neuer sind — dadurch waren sie unauffindbar. Datum bringt die aktuellen Angebote nach oben.
+  const _angDateKey = r => String((r.fields && (r.fields.erstellt_am || r.fields.erp_datum || r.fields.created || r.fields.datum || r.fields.erp_synced_at)) || '').slice(0,10);
+  filtered.sort((a,b) => { const d = _angDateKey(b).localeCompare(_angDateKey(a)); return d !== 0 ? d : (_angSortKey(b) - _angSortKey(a)); });
   // v6.62: Restore-Focus-Helper — nach jedem innerHTML-Rebuild den vorher fokussierten
   //   Eintrag (Suchfeld, Filter-Selects) wieder fokussieren + Cursor-Position wiederherstellen.
   const restoreFocus = () => {
