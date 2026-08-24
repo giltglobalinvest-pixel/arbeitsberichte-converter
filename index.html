@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.21';
+const APP_VERSION = 'v9.22';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -51840,8 +51840,18 @@ window._bbSave = async function(finalisieren) {
       // Upload zu Airtable
       try {
         const filename = 'Bericht-BB-'+(fields.app_bb_num||recId)+'.pdf';
+        // v9.22: KERNFIX — altes app_pdf ZUERST leeren. atBlobUpload HÄNGT sonst nur an
+        //   (app_pdf = [alt, neu]), und der Download-Button zeigt app_pdf[0] = das ALTE PDF
+        //   (mit ?-Bug + ohne Bilder). Genau wie der Angebot-PDF-Code (Z.~38917) es macht.
+        try {
+          await fetch('https://api.airtable.com/v0/'+baseId+'/App_Briefberichte/'+recId, {
+            method:'PATCH',
+            headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+            body: JSON.stringify({ fields:{ app_pdf: [] } }),
+          });
+        } catch(e){ console.warn('[BB] app_pdf-Clear fehlgeschlagen:', e.message); }
         const att = await atBlobUpload(recId, 'app_pdf', pdfBlob, filename, 'application/pdf');
-        console.log('[BB] PDF angehängt:', att?.url || '(ok)');
+        console.log('[BB] PDF (neu) angehängt:', att?.url || '(ok)');
       } catch(e) {
         console.warn('[BB] PDF-Upload fehlgeschlagen:', e.message);
         toast('⚠ PDF erstellt, aber Upload fehlgeschlagen: '+e.message,'err');
