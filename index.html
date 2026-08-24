@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.23';
+const APP_VERSION = 'v9.24';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9592,6 +9592,9 @@ function _aufRenderMaxiseAbSection(rec) {
 async function _aufLoadAbSection(abRecId, auftragRecId) {
   const host = document.getElementById('auf-ab-section');
   if (!host || !abRecId) return;
+  // v9.24: AB-Bereich (AB-PDFs Servicebox/Maxise, „An Kunde senden", Ticket, „AB löschen")
+  //   ist NUR für Admins zugänglich (User-Vorgabe). Für alle anderen bleibt er leer/unsichtbar.
+  if (typeof isAdmin === 'function' && !isAdmin()) { host.innerHTML = ''; return; }
   let rec = null;
   try {
     rec = (typeof _abListCache!=='undefined' && _abListCache || []).find(r => r.id === abRecId) || null;
@@ -9740,7 +9743,7 @@ function openAuftragDetail(recId) {
     </div>
     <div class="auf-section">
       <h3>Leistungsumfang</h3>
-      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(f.leistungsumfang || f.leistungsbeschreibung || '(kein Leistungsumfang hinterlegt)').replace(/</g,'&lt;')}</div>
+      <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${String(f.leistungsumfang || f.leistungsbeschreibung || '(kein Leistungsumfang hinterlegt)').replace(/\n*\s*Gesamtpreis:[^\n]*brutto[^\n]*/gi,'').trim().replace(/</g,'&lt;')}</div>
     </div>
     ${f.erlaeuterungen && canSeePrices() ? `
     <div class="auf-section">
@@ -36874,7 +36877,9 @@ async function _abGenerateAndSave(btn, send) {
       }
     }
     if (btn) btn.textContent = '⏳ erzeuge…';
-    const leistungText = (d.leistungsumfang||'') + ((d.preis && !d.preiseAusblenden && +d.preis.bruttoGesamt) ? ('\n\nGesamtpreis: '+Number(d.preis.bruttoGesamt).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' € brutto (inkl. '+(d.preis.ust||19)+'% USt)') : '');
+    // v9.24: KEIN Preis mehr im Leistungstext — die Leistungsbeschreibung darf NIE einen Preis
+    //   enthalten (User-Vorgabe). Der Preis lebt in den Preisfeldern/im Angebot, nicht im Leistungsumfang.
+    const leistungText = (d.leistungsumfang||'');
     let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
     if (fAng) {
       // v8.98: KEINE KI mehr für den Auftragstyp — sie lag wiederholt falsch (Modernisierung statt Pauschal).
