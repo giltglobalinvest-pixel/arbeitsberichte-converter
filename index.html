@@ -2825,7 +2825,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.27';
+const APP_VERSION = 'v9.28';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -30319,14 +30319,31 @@ async function renderAngeboteView(opts) {
   const firmaSlug = getCurrentFirmaSlug();
   const fresh = !opts.force && _angeboteCache.firma === firmaSlug && _angeboteCache.items && (Date.now() - _angeboteCache.loadedAt) < 60_000;
   if (!fresh) {
-    list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Angebote…</div>';
+    // v9.28: stale-while-revalidate — SOFORT aus vorhandenem Cache rendern (veralteter In-Memory-
+    //   Cache, sonst localStorage), dann im Hintergrund frisch nachladen. Kein Warten mehr auf 22 Seiten.
+    let shown = false;
+    if (_angeboteCache.firma === firmaSlug && _angeboteCache.items && _angeboteCache.items.length) {
+      _renderAngeboteList(); shown = true;
+    } else if (!opts.force) {
+      try {
+        const cached = _erpCacheGet('angebote', firmaSlug);
+        if (cached && Array.isArray(cached.items) && cached.items.length) {
+          _angeboteCache = { firma:firmaSlug, items:cached.items, loadedAt:0, loading:false, _slim:true };
+          _renderAngeboteList(); shown = true;
+        }
+      } catch(_){}
+    }
+    if (!shown) list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Angebote…</div>';
     try {
       await _loadAngebote(firmaSlug);
     } catch(e) {
-      list.innerHTML = '<div style="padding:30px;text-align:center"><div style="color:var(--err);font-size:14px;font-weight:600;margin-bottom:8px">⚠ '+escapeHtml(e.message||'')+'</div>'+
-        (isAdmin() ? '<button class="btn" onclick="(async()=>{try{await _ensureAngeboteTable();renderAngeboteView({force:true});toast(\'✅ Tabelle angelegt\',\'ok\')}catch(e){toast(\'❌ \'+e.message,\'err\')}})()">🛠 Tabelle anlegen</button>' : '')+
-      '</div>';
-      return;
+      if (!shown) {
+        list.innerHTML = '<div style="padding:30px;text-align:center"><div style="color:var(--err);font-size:14px;font-weight:600;margin-bottom:8px">⚠ '+escapeHtml(e.message||'')+'</div>'+
+          (isAdmin() ? '<button class="btn" onclick="(async()=>{try{await _ensureAngeboteTable();renderAngeboteView({force:true});toast(\'✅ Tabelle angelegt\',\'ok\')}catch(e){toast(\'❌ \'+e.message,\'err\')}})()">🛠 Tabelle anlegen</button>' : '')+
+        '</div>';
+        return;
+      }
+      console.warn('[Angebote] Aktualisierung fehlgeschlagen, Cache bleibt sichtbar:', e.message||e);
     }
   }
   _renderAngeboteList();   // v8.87: SOFORT mit den (gecachten) Angeboten rendern
@@ -30367,6 +30384,18 @@ async function _loadAngebote(firmaSlug) {
       offset = d.offset || null;
     } while (offset && ++guard < 200);   // Sicherheits-Cap: max. 20.000 Angebote
     _angeboteCache = { firma:firmaSlug, items:all, loadedAt:Date.now(), loading:false };
+    // v9.28: SCHLANKE Kopie in localStorage (ohne das große positionen_json + lange Texte/Anhänge),
+    //   damit die Liste beim nächsten Öffnen SOFORT erscheint (stale-while-revalidate). Passt so auch
+    //   bei tausenden Angeboten unter das 4-MB-Limit. Das Detail lädt den vollen Record bei Bedarf nach.
+    try {
+      const slim = all.map(r => {
+        const f = Object.assign({}, r.fields || {});
+        delete f.positionen_json; delete f.anschreiben; delete f.erlaeuterung; delete f.erlaeuterungen;
+        delete f.kone_pdf; delete f.da_anhang_pdf; delete f.anhang_vorlage_ids;
+        return { id: r.id, fields: f };
+      });
+      _erpCacheSet('angebote', firmaSlug, slim);
+    } catch(_){}
   } finally {
     _angeboteCache.loading = false;
   }
@@ -35771,9 +35800,19 @@ function _angToggleInfo() {
   const collapsed = b.classList.toggle('collapsed');
   if (a) a.textContent = collapsed ? '▸' : '▾';
 }
-function openAngebotDetail(recId) {
-  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+async function openAngebotDetail(recId) {
+  let rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
+  // v9.28: Bei schlankem Cache (positionen_json aus Performance-Gründen nicht mitgeladen) den
+  //   vollständigen Record frisch holen, damit Positionen/Texte im Detail vorhanden sind.
+  if (_angeboteCache._slim && rec.fields && rec.fields.positionen_json === undefined) {
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+      const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+      const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+encodeURIComponent(recId), { headers:{ 'Authorization':'Bearer '+key }});
+      if (r.ok) { const full = await r.json(); if (full && full.fields) { rec = full; const idx=(_angeboteCache.items||[]).findIndex(x=>x.id===recId); if (idx>=0) _angeboteCache.items[idx] = full; } }
+    } catch(_){}
+  }
   const f = rec.fields || {};
   const fmt = n => new Intl.NumberFormat('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }).format(+n||0);
   const typ = ANGEBOT_TYP_OPTIONS.find(t => t.value === f.angebot_typ) || ANGEBOT_TYP_OPTIONS[3];
