@@ -2820,7 +2820,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.25';
+const APP_VERSION = 'v9.26';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -39305,7 +39305,15 @@ async function _angOpenSendModal(recId) {
   // Empfänger-Vorbelegung aus verfügbaren Feldern
   const defaultEmail = String(f.kontakt_email || f.kunde_email || '').trim();
   const angNum = f.app_angebot_num || '?';
-  const standort = String(f.anlage_adresse || '').split(/[,\n]/)[0] || '';
+  // v9.26: KOMPLETTER Standort inkl. PLZ + Ort (vorher nur die Straße via split[0]) — für Betreff UND Mailtext.
+  //   Zeilenumbrüche → Komma, „Deutschland" am Ende weg (redundant), doppelte Kommas/Leerzeichen bereinigen.
+  const standort = String(f.anlage_adresse || '')
+    .replace(/\s*[\r\n]+\s*/g, ', ')
+    .replace(/,?\s*Deutschland\.?\s*$/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/(,\s*){2,}/g, ', ')
+    .replace(/,\s*$/, '')
+    .trim();
   const defaultSubject = 'Angebot ANG-'+angNum+(standort ? ' · '+standort : '');
   // v6.90: Echte Briefanrede aus ERP-Kontakt holen (gleiche Logik wie v6.73 für Angebots-PDF).
   //   ERP-Kontakte haben anrede als komplette Brief-Anrede ("Sehr geehrter Herr Müller").
