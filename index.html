@@ -506,6 +506,7 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 /* v9.11: Auftrags-Toolbar — am PC unverändert (Buttons fließen wie gehabt via display:contents), am Handy einklappbar */
 .auf-hdr-actions{display:contents}
 .auf-hdr .auf-hdr-toggle{display:none}
+.ang-info-toggle{display:none}   /* v9.27: Angebot-Detail Info-Toggle nur am Handy (unten im 768px-Block eingeblendet) */
 .auf-tabs{display:flex;background:var(--surf);border-bottom:1px solid var(--bdr);padding:0 14px;overflow-x:auto;flex-shrink:0}
 .auf-tab{background:none;border:none;padding:10px 14px;font-size:13px;font-weight:500;color:var(--txt2);cursor:pointer;font-family:inherit;border-bottom:2px solid transparent;white-space:nowrap;position:relative}
 .auf-tab.active{color:var(--navy);border-bottom-color:var(--amber)}
@@ -909,6 +910,10 @@ body.has-modal .topbar{pointer-events:auto}
 
   /* v9.13: Schwebender Diagnose-Button (🩺 „Diagnose"/„Problem!") am Handy ausblenden — nur am PC sichtbar (User-Wunsch). !important überschreibt das Inline-Style des per JS erzeugten Buttons. */
   #diag-fab{display:none !important}
+  /* v9.27: Angebot-Detail — Info-/Verlauf-Block am Handy einklappbar (Default zu), damit die Buttons erreichbar bleiben */
+  .ang-info-toggle{display:flex;align-items:center;gap:8px;width:100%;padding:12px 20px;background:#EFF6FF;border:none;border-bottom:1px solid var(--bdr);font-size:13px;font-weight:700;color:#2152A9;cursor:pointer;text-align:left}
+  .ang-info-toggle #ang-info-arrow{font-size:11px}
+  #ang-detail .ang-info-body.collapsed{display:none}
 
   /* Aufträge mobile */
   .auf-hdr{padding:10px 14px;gap:8px}
@@ -2820,7 +2825,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.26';
+const APP_VERSION = 'v9.27';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35758,6 +35763,14 @@ async function _angTicketVerknuepfen(recId) {
   } catch (e) { toast('Speichern fehlgeschlagen: '+e.message, 'error'); }
 }
 
+/* v9.27: Info-/Verlauf-Block im Angebot-Detail auf-/zuklappen (nur am Handy sichtbar/relevant). */
+function _angToggleInfo() {
+  const b = document.getElementById('ang-info-body');
+  const a = document.getElementById('ang-info-arrow');
+  if (!b) return;
+  const collapsed = b.classList.toggle('collapsed');
+  if (a) a.textContent = collapsed ? '▸' : '▾';
+}
 function openAngebotDetail(recId) {
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
@@ -35778,7 +35791,10 @@ function openAngebotDetail(recId) {
         '<span>📄 '+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')))+'</span>'+
         '<button onclick="document.getElementById(\'ang-detail\').remove()" style="background:rgba(255,255,255,.2);border:none;color:#fff;width:32px;height:32px;border-radius:50%;font-size:18px;cursor:pointer">×</button>'+
       '</div>'+
-      '<div style="padding:14px 20px;background:#EFF6FF;border-bottom:1px solid var(--bdr);font-size:12px">'+
+      // v9.27: NUR am Handy — Info-/Verlauf-Block standardmäßig eingeklappt (Tap zum Aufklappen),
+      //   damit man an die Buttons unten kommt. Am PC (CSS-Media-Query) immer offen, Toggle unsichtbar.
+      '<button type="button" id="ang-info-toggle" class="ang-info-toggle" onclick="_angToggleInfo()"><span id="ang-info-arrow">▸</span> Angebot-Details &amp; Verlauf anzeigen</button>'+
+      '<div id="ang-info-body" class="ang-info-body collapsed" style="padding:14px 20px;background:#EFF6FF;border-bottom:1px solid var(--bdr);font-size:12px">'+
         '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:6px">'+
           '<span style="background:'+typ.color+'22;color:'+typ.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+typ.label+'</span>'+
           '<span style="background:'+stat.color+'22;color:'+stat.color+';padding:3px 9px;border-radius:99px;font-size:11px;font-weight:600">'+escapeHtml(stat.label)+'</span>'+
