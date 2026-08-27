@@ -2825,7 +2825,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.34';
+const APP_VERSION = 'v9.35';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35358,12 +35358,19 @@ async function _angEditorSave() {
         await atBlobUpload(recId, 'kone_pdf', E.koneFile, E.koneFile.name || ('kone-'+(E.extracted.kone_angebot_num||'angebot')+'.pdf'), 'application/pdf');
       } catch(upErr) { console.warn('[Angebote] KONE-PDF Upload:', upErr.message); }
     }
-    // Angebots-PDF generieren + hochladen
+    // Angebots-PDF generieren + hochladen — beim Speichern ist es damit sofort aktuell (kein „Neu generieren" nötig).
     if (btn) btn.textContent = '⏳ Erzeuge Angebots-PDF…';
+    let _freshAppPdf = null;
     try {
       const appBlob = await _buildAngebotPdf(Object.assign({}, fields, { id: recId, erstellt_am: fields.erstellt_am }));
       const fname = 'Angebot-ANG'+angebotNum+'.pdf';
-      await atBlobUpload(recId, 'app_pdf', appBlob, fname, 'application/pdf');
+      // v9.35: beim EDIT das alte app_pdf ZUERST leeren — sonst hängt atBlobUpload nur an (app_pdf=[alt,neu])
+      //   und Download/Detail zeigen weiter app_pdf[0]=das ALTE PDF (deshalb musste man „Neu generieren" drücken).
+      if (E.editMode && E.recId) {
+        try { await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, { method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' }, body: JSON.stringify({ fields:{ app_pdf: [] } }) }); } catch(_){}
+      }
+      const att = await atBlobUpload(recId, 'app_pdf', appBlob, fname, 'application/pdf');
+      try { if (att && att.fields && Array.isArray(att.fields.app_pdf) && att.fields.app_pdf.length) _freshAppPdf = att.fields.app_pdf; } catch(_){}
     } catch(pdfErr) {
       console.warn('[Angebote] App-PDF:', pdfErr);
       toast('⚠ Angebot gespeichert, App-PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
@@ -35420,11 +35427,23 @@ async function _angEditorSave() {
       }
     }
     m.remove();
-    _angeboteCache.firma = null; _angeboteCache.items = null;
-    await renderAngeboteView({force:true});
-    // Bestehendes Detail-Modal schließen, dann frisch öffnen
+    // v9.35: KEIN voller Reload aller Angebote mehr (vorher: Cache leeren + renderAngeboteView({force}) →
+    //   alle 2178 Angebote neu laden = lange Wartezeit + Liste verschwand kurz). Nur den EINEN Datensatz
+    //   optimistisch im Cache aktualisieren, Liste + Detail SOFORT. Server-Abgleich still im Hintergrund.
+    try {
+      const _mf = Object.assign({}, fields);
+      if (_freshAppPdf) _mf.app_pdf = _freshAppPdf;
+      const items = _angeboteCache.items || (_angeboteCache.items = []);
+      const idx = items.findIndex(r => r.id === recId);
+      if (idx >= 0) items[idx] = { id: recId, fields: Object.assign({}, items[idx].fields || {}, _mf) };
+      else items.unshift({ id: recId, fields: _mf });
+      _angeboteCache.firma = getCurrentFirmaSlug();
+      if (typeof _renderAngeboteList === 'function') _renderAngeboteList();
+    } catch(_){}
     document.getElementById('ang-detail')?.remove();
     openAngebotDetail(recId);
+    // still im Hintergrund mit Airtable + IndexedDB abgleichen (kein Spinner, blockiert nichts)
+    try { _loadAngebote(getCurrentFirmaSlug()).then(() => { if (document.getElementById('angebote-list')) _renderAngeboteList(); }).catch(()=>{}); } catch(_){}
   } catch(e) {
     console.error('[Angebote] Save:', e);
     toast('❌ '+(e.message||e).slice(0,200),'err');
