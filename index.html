@@ -343,8 +343,6 @@ html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",He
 .usr-tbl td.usr-col-rolle{min-width:170px}
 .usr-tbl td.usr-col-status{min-width:104px}
 .usr-tbl td.usr-col-status select.usr-inp{min-width:92px}
-.usr-btn-del{padding:5px 10px;font-size:12px;background:#FEF2F2;color:#B91C1C;border:1px solid #FECACA;border-radius:4px;cursor:pointer;font-weight:500;margin-top:3px}
-.usr-btn-del:hover{background:#FEE2E2;border-color:#FCA5A5}
 
 /* ── Dashboard ── */
 .dash-view{display:none;position:fixed;inset:var(--tb-safe) 0 0 0;background:var(--bg);z-index:50;flex-direction:column;overflow:auto}
@@ -2838,7 +2836,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.38';
+const APP_VERSION = 'v9.40';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -6612,9 +6610,7 @@ function userRowHtml(u, featCols) {
       <td class="usr-action" style="text-align:right;white-space:nowrap">
         <button class="btn prim" style="padding:5px 10px;font-size:12px" onclick="saveUserRow('${u.id}')">💾</button>
         <button class="usr-btn-wa" onclick="openWhatsAppInvite('${u.id}')" title="${hasPhone?'WhatsApp-Einladung an '+esc(f.phone):'WhatsApp-Einladung (ohne hinterlegte Nummer)'}">💬 WhatsApp</button>
-        ${isMe
-          ? '<div style="font-size:10px;color:var(--txt3);margin-top:3px;text-align:right">eigener Account</div>'
-          : `<button class="usr-btn-del" onclick="deleteUser('${u.id}')" title="User &bdquo;${esc(f.name)}&ldquo; unwiderruflich löschen">🗑 Löschen</button>`}
+        ${isMe ? '<div style="font-size:10px;color:var(--txt3);margin-top:3px;text-align:right">eigener Account</div>' : ''}
       </td>
     </tr>
   `;
@@ -6658,33 +6654,6 @@ async function saveUserRow(recId) {
     toast('✅ "'+name+'" gespeichert.', 'ok');
   } catch(e) {
     toast('❌ '+e.message, 'err');
-  }
-}
-
-async function deleteUser(recId) {
-  if (!isAdmin()) return toast('Nur Admins dürfen User löschen.','err');
-  const u = _usersCache.find(x => x.id === recId);
-  const f = (u && u.fields) || {};
-  // Sich selbst NIE löschen (sonst sperrt man sich sofort aus)
-  if (f.api_key && f.api_key === APP_KEYS.user?.api_key) {
-    return toast('Du kannst deinen eigenen Account nicht löschen.','err');
-  }
-  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token','err');
-  const nm = f.name || 'dieser User';
-  if (!confirm('User „'+nm+'" wirklich unwiderruflich löschen?\n\nDer Login-Code '+(f.api_key||'')+' wird sofort ungültig – der User kann sich nicht mehr einloggen.\n\nDies kann NICHT rückgängig gemacht werden.')) return;
-  const row = document.querySelector('tr[data-rec="'+recId+'"]');
-  const delBtn = row ? row.querySelector('.usr-btn-del') : null;
-  if (delBtn) { delBtn.disabled = true; delBtn.textContent = '⏳ Lösche…'; }
-  try {
-    const res = await atDelete('User', recId);
-    if (res && res.error) throw new Error(res.error.message || 'Airtable-Fehler');
-    if (res && res.deleted === false) throw new Error('Airtable hat den Datensatz nicht gelöscht');
-    _usersCache = _usersCache.filter(x => x.id !== recId);
-    if (row) row.remove();
-    toast('🗑 „'+nm+'" gelöscht.','ok');
-  } catch(e) {
-    if (delBtn) { delBtn.disabled = false; delBtn.textContent = '🗑 Löschen'; }
-    toast('❌ Löschen fehlgeschlagen: '+((e&&e.message)||e),'err');
   }
 }
 
