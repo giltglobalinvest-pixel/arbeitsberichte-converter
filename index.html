@@ -2838,7 +2838,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.38';
+const APP_VERSION = 'v9.39';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -4200,6 +4200,14 @@ async function showApp() {
   if (tnavProjekte) tnavProjekte.style.display            = isAdmin() ? '' : 'none';
   const tnavVerantw = document.getElementById('tnav-verantw');
   if (tnavVerantw)  tnavVerantw.style.display             = isAdmin() ? '' : 'none';
+  // v9.39: Admin-Bereich (⚙ Admin-Gruppe: User/Rollen/Firmen) nach Permission "admin_area" —
+  //   DB-Admins sehen ihn immer, andere nur mit der Berechtigung; ohne → komplett unsichtbar.
+  const _canAdm = canAdminArea();
+  const grpAdmin = document.getElementById('tnav-grp-admin');
+  if (grpAdmin) grpAdmin.style.display = _canAdm ? '' : 'none';
+  ['tnav-users','tnav-rollen','tnav-firmen'].forEach(id => {
+    const el = document.getElementById(id); if (el) el.style.display = _canAdm ? '' : 'none';
+  });
 
   // Login-Event tracken (nicht await – darf den App-Start nicht blockieren)
   trackEvent('app', 'login');
@@ -4909,8 +4917,8 @@ function switchView(view) {
     return toast('🔒 Diese Ansicht ist im Techniker-Modus nicht verfügbar.', 'err');
   }
   // Permission-Gates
-  if (view==='users' && !isAdmin()) return;
-  if (view==='firmen' && !isAdmin()) return;
+  if (view==='users' && !canAdminArea()) return;   // v9.39: Admin-Bereich per Permission
+  if (view==='firmen' && !canAdminArea()) return;
   if (view==='preislisten' && !isAdmin()) return;
   if (view==='vorlagen' && !isAdmin()) return;
   if (view==='kunden' && !isAdmin()) return;
@@ -4919,7 +4927,7 @@ function switchView(view) {
   if (view==='rechnungen' && !isAdmin()) return;
   if (view==='liftaro' && !isAdmin()) return;
   if (view==='gbu' && !isAdmin()) return;
-  if (view==='rollen' && !isAdmin()) return;
+  if (view==='rollen' && !canAdminArea()) return;   // v9.39: Admin-Bereich per Permission
   if (view==='intg' && !isAdmin()) return;
   if (view==='conv' && !hasPermission('tool_arbeitsberichte')) return toast('🔒 Keine Berechtigung','err');
   if (view==='overview' && !hasPermission('tool_overview')) return toast('🔒 Keine Berechtigung','err');
@@ -6061,6 +6069,13 @@ function isAdmin() {
   return APP_KEYS.user && APP_KEYS.user.role === 'admin';
 }
 
+/* v9.39: Zugriff auf den Admin-Bereich (👥 User-Verwaltung · 🎭 Rollen · 🏢 Firmen-Verwaltung).
+   DB-Rolle „admin" hat ihn immer (hasPermission gibt für Admins true zurück); alle anderen
+   nur, wenn die Permission „admin_area" per Rolle oder User-Override gesetzt ist. */
+function canAdminArea() {
+  return hasPermission('admin_area');
+}
+
 /* Subunternehmer: externer Techniker mit eigenen Vergütungs-Konditionen.
    Sieht keine internen Preise, aber bekommt eine separate "Vergütung"-Notiz pro Auftrag angezeigt. */
 function isSubunternehmer() {
@@ -6193,6 +6208,12 @@ const FEATURES = {
     label: 'Berichte löschen',
     desc:  'Darf Berichte aus der Übersicht löschen (eigene und fremde).',
     default: true,
+  },
+  // ── Admin-Zugriff ──
+  admin_area: {
+    label: 'Admin-Bereich',
+    desc:  'Zugriff auf den ⚙ Admin-Bereich: 👥 User-Verwaltung · 🎭 Rollen · 🏢 Firmen-Verwaltung. Ohne diese Berechtigung ist der Admin-Bereich weder sichtbar noch aufrufbar. Die DB-Rolle „admin" hat immer Zugriff (unabhängig von diesem Haken).',
+    default: false,
   },
 };
 
@@ -6336,7 +6357,7 @@ async function bootstrapRollenDefaults() {
 }
 
 async function renderRollenView() {
-  if (!isAdmin()) return;
+  if (!canAdminArea()) return;   // v9.39: Admin-Bereich per Permission (DB-Admins immer)
   const list = document.getElementById('rollen-list');
   if (!list) return;
   list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Rollen…</div>';
@@ -6520,7 +6541,7 @@ async function loadUsers() {
 }
 
 async function renderUsers() {
-  if (!isAdmin()) return;
+  if (!canAdminArea()) return;   // v9.39: Admin-Bereich per Permission (DB-Admins immer)
   const list = document.getElementById('usr-list');
   list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade User…</div>';
   try {
@@ -7158,7 +7179,7 @@ document.addEventListener('keydown', function(e) {
    FIRMEN-VERWALTUNG (Admin)
    ────────────────────────────────────────────────────────────── */
 async function renderFirmaView() {
-  if (!isAdmin()) return;
+  if (!canAdminArea()) return;   // v9.39: Admin-Bereich per Permission (DB-Admins immer)
   const list = document.getElementById('firma-list');
   list.innerHTML = '<div style="padding:40px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Firmen…</div>';
   try {
@@ -16211,6 +16232,28 @@ function renderDashboard() {
         <div class="dash-tool-icon">🔌</div>
         <div class="dash-tool-label">Integrationen</div>
         <div class="dash-tool-desc">Val.town-Proxy, Mailchimp-Setup und ERP-Aufträge aus Aufzugshandwerk synchronisieren.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>`;
+  }
+  // v9.39: Admin-Bereich-Kacheln (User/Rollen/Firmen) auch für Nicht-DB-Admins mit „admin_area"-Permission
+  else if (canAdminArea() && !techMode) {
+    html += `
+      <button class="dash-tool" onclick="switchView('users')">
+        <div class="dash-tool-icon">🧑‍💼</div>
+        <div class="dash-tool-label">User-Verwaltung</div>
+        <div class="dash-tool-desc">User anlegen, Berechtigungen vergeben, Techniker markieren.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+      <button class="dash-tool" onclick="switchView('rollen')">
+        <div class="dash-tool-icon">🎭</div>
+        <div class="dash-tool-label">Rollen</div>
+        <div class="dash-tool-desc">Permission-Templates (Rollen) anlegen und Rechte pro Rolle festlegen.</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+      <button class="dash-tool" onclick="switchView('firmen')">
+        <div class="dash-tool-icon">🏢</div>
+        <div class="dash-tool-label">Firmen-Verwaltung</div>
+        <div class="dash-tool-desc">Firmen anlegen, Nummernkreise und Kalkulator-Typ konfigurieren.</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>`;
   }
