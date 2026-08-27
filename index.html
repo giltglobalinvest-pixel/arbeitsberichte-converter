@@ -2825,7 +2825,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.35';
+const APP_VERSION = 'v9.36';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -35369,8 +35369,16 @@ async function _angEditorSave() {
       if (E.editMode && E.recId) {
         try { await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, { method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' }, body: JSON.stringify({ fields:{ app_pdf: [] } }) }); } catch(_){}
       }
-      const att = await atBlobUpload(recId, 'app_pdf', appBlob, fname, 'application/pdf');
-      try { if (att && att.fields && Array.isArray(att.fields.app_pdf) && att.fields.app_pdf.length) _freshAppPdf = att.fields.app_pdf; } catch(_){}
+      await atBlobUpload(recId, 'app_pdf', appBlob, fname, 'application/pdf');
+      // v9.36: die uploadAttachment-Antwort ist nach FELD-ID gekeyt (nicht nach Feldname "app_pdf") →
+      //   `att.fields.app_pdf` war IMMER undefined, _freshAppPdf blieb null, das Detail behielt die ALTE URL
+      //   (deshalb zeigte „PDF öffnen" erst nach dem 2. Speichern das neue PDF). Stattdessen den Record
+      //   EINMAL frisch holen (read-after-write, genau wie der funktionierende _angRegeneratePdf) → echte neue URL.
+      try {
+        const _rk = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+        const _rr = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, { headers:{ 'Authorization':'Bearer '+_rk }});
+        if (_rr.ok) { const _full = await _rr.json(); if (_full && _full.fields && Array.isArray(_full.fields.app_pdf) && _full.fields.app_pdf.length) _freshAppPdf = _full.fields.app_pdf; }
+      } catch(_){}
     } catch(pdfErr) {
       console.warn('[Angebote] App-PDF:', pdfErr);
       toast('⚠ Angebot gespeichert, App-PDF fehlgeschlagen: '+(pdfErr.message||pdfErr).slice(0,160),'warn');
