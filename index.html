@@ -2825,7 +2825,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.31';
+const APP_VERSION = 'v9.32';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -29868,7 +29868,7 @@ async function _angLernLoad(force) {
   const firmaSlug = getCurrentFirmaSlug();
   const fresh = !force && _angLernCache.firma === firmaSlug && _angLernCache.items && (Date.now() - _angLernCache.loadedAt) < 60_000;
   if (fresh) return _angLernCache.items;
-  const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;   // v9.32-Fix: vorher falsche/undefined Keys → v0/undefined/ → 404
   const key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
   if (!baseId || !key) return [];
   const items = [];
@@ -29931,7 +29931,7 @@ window._angSavePosAsLernbeispiel = async function(posIdx) {
         'Bullets: '+(p.leistungsbeschreibung||[]).length)) return;
     if (!APP_KEYS.airtableWriteKey) { toast('🔒 Kein Write-Token — bitte als Admin einloggen','err'); return; }
     try { await _ensureAngLernTable(); } catch(e) { toast('❌ Tabelle: '+e.message,'err'); return; }
-    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;   // v9.32-Fix: vorher falsche/undefined Keys → v0/undefined/ → 404
     const fields = {
       firma:           getCurrentFirmaSlug(),
       angebot_typ:     typ,
@@ -29958,7 +29958,7 @@ window._angSavePosAsLernbeispiel = async function(posIdx) {
 window._angDeleteLernbeispiel = async function(recId) {
   if (!confirm('Lern-Beispiel löschen? Die KI sieht es danach nicht mehr.')) return;
   try {
-    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;   // v9.32-Fix: vorher falsche/undefined Keys → v0/undefined/ → 404
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele/'+recId, {
       method:'DELETE',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey },
@@ -29972,7 +29972,7 @@ window._angDeleteLernbeispiel = async function(recId) {
 
 window._angToggleLernAktiv = async function(recId, aktiv) {
   try {
-    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;   // v9.32-Fix: vorher falsche/undefined Keys → v0/undefined/ → 404
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele/'+recId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
@@ -30022,7 +30022,7 @@ window._angSaveLernbeispielEdit = async function(recId) {
     const titel  = (document.getElementById('angL-titel')||{}).value || '';
     const bullets= (document.getElementById('angL-bullets')||{}).value || '';
     const notiz  = (document.getElementById('angL-notiz')||{}).value || '';
-    const baseId = APP_KEYS.airtableBaseId || APP_KEYS.airtableBase;
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;   // v9.32-Fix: vorher falsche/undefined Keys → v0/undefined/ → 404
     const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebot_Lernbeispiele/'+recId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
