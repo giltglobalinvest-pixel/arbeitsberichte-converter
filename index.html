@@ -2825,7 +2825,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.36';
+const APP_VERSION = 'v9.37';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -37726,6 +37726,17 @@ async function _abDoSend() {
       const txt = await r.text(); let d; try { d = txt ? JSON.parse(txt) : null; } catch(_){ d = { _raw:txt }; }
       if (!r.ok) throw new Error(_rvFdErr(r.status, d, txt));
       ticketId = d && d.id; sentEmail = email;
+      // v9.37: KEINEN Bearbeiter zuweisen — die AB soll als OFFENES, unassigntes Ticket liegen bleiben
+      //   (User-Wunsch 27.08.2026). Freshdesk weist ausgehende Mails automatisch dem sendenden Agenten
+      //   (Token-Owner = Patrizio) zu → responder_id EXPLIZIT auf null setzen, um das aufzuheben.
+      if (ticketId) {
+        try {
+          await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/'+ticketId, {
+            method:'PUT', headers:{ 'Authorization':'Bearer '+erpGetSessionToken(), 'Content-Type':'application/json' },
+            body: JSON.stringify({ responder_id: null }),
+          });
+        } catch(e) { console.warn('[AB-Send] unassign:', e.message); }
+      }
     }
     const tUrl = (ticketId && APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma]) ? 'https://'+APP_KEYS.freshdeskDomains[firma]+'.freshdesk.com/a/tickets/'+ticketId : '';
     const patch = { status:'versendet', versendet_am: new Date().toLocaleString('de-DE'), fd_ticket_id: String(ticketId||''), fd_ticket_url: tUrl };
@@ -40101,18 +40112,21 @@ async function _angSendCustomerEmail(recId, btn) {
     }
     const ticketId = data?.id;
     const ticketUrl = APP_KEYS.freshdeskTicketUrls?.[firmaSlug]?.replace('{id}', String(ticketId||'')) || '';
-    // v5.48: responder_id nach erfolgreichem outbound_email per PUT zuweisen
-    if (ticketId && assignment.responder_id) {
-      setProgress(75, '👤 Weise Ticket dem Bearbeiter zu …');
+    // v9.37: KEINEN Bearbeiter zuweisen — das Angebot-Ticket soll als OFFENES, unassigntes Ticket
+    //   in der Gruppe liegen bleiben (User-Wunsch 27.08.2026: „Wenn diese geschrieben sind niemandem
+    //   zuweisen"). Freshdesk weist ausgehende Mails automatisch dem sendenden Agenten (Token-Owner)
+    //   zu → deshalb responder_id EXPLIZIT auf null setzen, damit auch diese Auto-Zuweisung entfernt wird.
+    if (ticketId) {
+      setProgress(75, '📭 Lasse Ticket offen (kein Bearbeiter) …');
       try {
         const putUrl = APP_KEYS.valtownProxyUrl+'/freshdesk/'+firmaSlug+'/api/v2/tickets/'+ticketId;
         const putRes = await fetch(putUrl, {
           method:'PUT',
           headers:{ 'Authorization':'Bearer '+erpGetSessionToken(), 'Content-Type':'application/json' },
-          body: JSON.stringify({ responder_id: assignment.responder_id }),
+          body: JSON.stringify({ responder_id: null }),
         });
-        if (!putRes.ok) console.warn('[Angebot-Send] PUT responder_id:', putRes.status, await putRes.text());
-      } catch(e) { console.warn('[Angebot-Send] responder-assign:', e.message); }
+        if (!putRes.ok) console.warn('[Angebot-Send] PUT responder_id:null:', putRes.status, await putRes.text());
+      } catch(e) { console.warn('[Angebot-Send] unassign:', e.message); }
     }
     setProgress(85, '💾 Speichere Ticket-Verknüpfung …');
     // 5) Persistieren am Angebot
