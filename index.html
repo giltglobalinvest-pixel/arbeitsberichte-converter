@@ -2836,7 +2836,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.45';
+const APP_VERSION = 'v9.46';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -37615,7 +37615,7 @@ function _abFreshdeskBcc(firma){
     const v = rec && rec.fields && rec.fields.freshdesk_bcc;
     if (v && String(v).trim()) return String(v).trim();
   } catch(_){}
-  const DEF = { aufzug:'service@aufzugshandwerk.de' };   // je Firma erweiterbar; für Aszendio hier eintragen
+  const DEF = { aufzug:'service@aufzugshandwerk.de', aszendio:'service@aszendio.com' };   // v9.46: Aszendio-BCC ergänzt; je Firma erweiterbar (bzw. Firmen-Feld freshdesk_bcc)
   return DEF[firma] || '';
 }
 /* v8.96: Feste AB-Mail-Signatur je Firma (User-Vorgabe 18.08.2026). aszendio noch offen → Fallback Freshdesk-Agent-Signatur. */
@@ -37743,7 +37743,11 @@ async function _abPreviewSelected(){
 async function _abDoSend() {
   const m = document.getElementById('ab-send-modal'); if (!m) return;
   const recId = m._recId;
-  const rec = (_abListCache||[]).find(r=>r.id===recId); if (!rec) return toast('Nicht gefunden','err');
+  // v9.46: AB robust holen — NICHT nur aus _abListCache (der ist z.B. leer/anderer Mandant, wenn der
+  //   Sende-Dialog direkt aus der Auftrags-Detailansicht geöffnet wurde) → sonst „Nicht gefunden"/kein Versand.
+  let rec = (_abListCache||[]).find(r=>r.id===recId);
+  if (!rec && typeof _abGetRec === 'function') { try { rec = await _abGetRec(recId); } catch(_){} }
+  if (!rec) return toast('Auftragsbestätigung nicht gefunden — bitte Seite neu laden.','err');
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
   const g = id => (document.getElementById(id)?.value || '').trim();
   const mode = (document.querySelector('input[name="ab-send-mode"]:checked')||{}).value || 'email';
