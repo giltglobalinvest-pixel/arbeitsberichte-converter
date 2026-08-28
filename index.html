@@ -2666,7 +2666,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
             <input type="text" class="auf-input" id="auf-f-fabriknummer" placeholder="z.B. KO-12345">
           </div>
           <div class="auf-field">
-            <label class="auf-label">Fällig bis (optional)</label>
+            <label class="auf-label">Ausführungstermin <span style="font-size:11px;font-weight:500;color:var(--txt3)">(leer = „So schnell wie möglich")</span></label>
             <input type="date" class="auf-input" id="auf-f-due">
           </div>
           <div class="auf-field" style="grid-column:1/-1">
@@ -2682,6 +2682,51 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
             <div style="font-size:11px;color:var(--txt3);margin-top:4px" id="auf-f-empfaenger-hint">Wird nach Anlage-Auswahl mit den Kunden-Kontakten befüllt.</div>
           </div>
         </div>
+      </div>
+      <!-- v9.47: ERP-Auftrag „ohne Angebot" (nach Aufwand) — Besteller, FD-Ticket, Datum, KI-Mailtexte. Nur beim Neu-Anlegen. -->
+      <div class="auf-section" id="auf-f-erp-section">
+        <h3>🧾 Besteller &amp; ERP-Mail <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px">(Bestellform „ohne Angebot" · nach Aufwand · kein Kundenmail-Versand)</span></h3>
+        <div class="auf-grid2">
+          <div class="auf-field" style="grid-column:1/-1">
+            <label class="auf-label">Freshdesk-Ticket-Nr. <span style="font-size:11px;font-weight:500;color:var(--txt3)">(optional — füllt Besteller &amp; Datum vor, editierbar)</span></label>
+            <div style="display:flex;gap:8px">
+              <input type="text" class="auf-input" id="auf-f-fdticket" placeholder="z.B. 3231" inputmode="numeric" style="flex:1">
+              <button type="button" class="btn" onclick="_aufLoadFdTicket()" style="white-space:nowrap">🔍 Daten laden</button>
+            </div>
+          </div>
+          <div class="auf-field">
+            <label class="auf-label">Besteller — Name <span style="font-size:11px;font-weight:500;color:var(--txt3)">(wer bei uns bestellt hat)</span></label>
+            <input type="text" class="auf-input" id="auf-f-besteller" placeholder="Vorname Nachname">
+          </div>
+          <div class="auf-field">
+            <label class="auf-label">Besteller — E-Mail</label>
+            <input type="email" class="auf-input" id="auf-f-bestellermail" placeholder="besteller@…">
+          </div>
+          <div class="auf-field">
+            <label class="auf-label">Datum Auftragserteilung</label>
+            <input type="date" class="auf-input" id="auf-f-erteilung">
+          </div>
+          <div class="auf-field"></div>
+          <div class="auf-field">
+            <label class="auf-label">Einsatzpauschale <span style="font-size:11px;font-weight:500;color:var(--txt3)">(€, netto)</span></label>
+            <input type="number" class="auf-input" id="auf-f-einsatzpauschale" step="0.5" min="0" placeholder="z.B. 50">
+          </div>
+          <div class="auf-field">
+            <label class="auf-label">Stundensatz <span style="font-size:11px;font-weight:500;color:var(--txt3)">(€/Std., netto)</span></label>
+            <input type="number" class="auf-input" id="auf-f-stundensatz" step="0.5" min="0" placeholder="z.B. 70">
+          </div>
+          <div class="auf-field" style="grid-column:1/-1">
+            <label class="auf-label" style="display:flex;align-items:center;gap:8px">Titel E-Mail (ERP-Backoffice)
+              <button type="button" onclick="_aufMagicMail('titel', this)" title="Mit KI ausfüllen" style="background:#EEF2FF;border:1px solid #C7D2FE;color:#4338CA;border-radius:6px;padding:2px 7px;font-size:12px;cursor:pointer;font-family:inherit">✨</button></label>
+            <input type="text" class="auf-input" id="auf-f-mailtitel" placeholder="Auftragsbestätigung … zu Standort …">
+          </div>
+          <div class="auf-field" style="grid-column:1/-1">
+            <label class="auf-label" style="display:flex;align-items:center;gap:8px">Inhalt E-Mail (ERP-Backoffice)
+              <button type="button" onclick="_aufMagicMail('inhalt', this)" title="Mit KI ausfüllen" style="background:#EEF2FF;border:1px solid #C7D2FE;color:#4338CA;border-radius:6px;padding:2px 7px;font-size:12px;cursor:pointer;font-family:inherit">✨</button></label>
+            <textarea class="auf-textarea" id="auf-f-mailinhalt" rows="3" placeholder="Kurzer Text für die ERP-Backoffice-Benachrichtigung"></textarea>
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--txt3);margin-top:6px">ℹ Es wird KEINE Mail an den Kunden gesendet. Titel &amp; Inhalt gehen nur an die interne ERP-Backoffice-Benachrichtigung.</div>
       </div>
       <div class="auf-section">
         <h3>Ansprechperson vor Ort</h3>
@@ -2836,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.46';
+const APP_VERSION = 'v9.47';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -10899,6 +10944,11 @@ async function selectAnlage(idx) {
   const a = _anlagenMatches[idx];
   if (!a) return;
   _currentSelectedAnlage = a;  // merken für ERP-POST beim Speichern
+  // v9.47: Sätze aus der Anlage vorbefüllen (nach Aufwand) — editierbar, nur wenn Feld noch leer
+  const _fRs = document.getElementById('auf-f-stundensatz');
+  const _fEp = document.getElementById('auf-f-einsatzpauschale');
+  if (_fRs && !String(_fRs.value||'').trim() && a.stundensatz != null && a.stundensatz !== '') _fRs.value = a.stundensatz;
+  if (_fEp && !String(_fEp.value||'').trim() && a.einsatzPauschale != null && a.einsatzPauschale !== '') _fEp.value = a.einsatzPauschale;
   // Form-Felder befüllen
   const fStandort  = document.getElementById('auf-f-standort');
   const fFabrik    = document.getElementById('auf-f-fabriknummer');
@@ -12866,6 +12916,24 @@ async function openAuftragForm(recId) {
   }
   document.getElementById('auf-f-kontakt').value = kontakt;
 
+  // v9.47: ERP-Auftrag „ohne Angebot"-Sektion (Besteller/FD-Ticket/Datum/KI-Mailtexte) — nur beim Neu-Anlegen
+  const _erpSec = document.getElementById('auf-f-erp-section');
+  if (_erpSec) _erpSec.style.display = isEdit ? 'none' : '';
+  if (!isEdit) {
+    const _sv = (id,v)=>{ const el=document.getElementById(id); if(el) el.value=v; };
+    _sv('auf-f-fdticket','');
+    _sv('auf-f-besteller','');
+    _sv('auf-f-bestellermail','');
+    _sv('auf-f-erteilung', new Date().toISOString().slice(0,10));   // Default: heute (per FD-Ticket überschreibbar)
+    _sv('auf-f-einsatzpauschale','');   // wird beim Anlage-Wählen aus der Anlage vorbefüllt (editierbar)
+    _sv('auf-f-stundensatz','');
+    _sv('auf-f-mailtitel','');
+    _sv('auf-f-mailinhalt','');
+    // Leistungs-Default „Fehlersuche und Diagnose" (editierbar) — User-Vorgabe
+    const _lst = document.getElementById('auf-f-leistung');
+    if (_lst && !_lst.value.trim()) _lst.value = 'Fehlersuche und Diagnose';
+  }
+
   // Techniker-Liste – nur User mit techniker=true
   let assigned = [];
   try { assigned = JSON.parse(f.techniker_keys || '[]'); } catch(e) {}
@@ -12895,6 +12963,65 @@ function closeAuftragForm() {
   if (!document.getElementById('auf-detail-modal').classList.contains('show')) {
     document.body.classList.remove('has-modal');
   }
+}
+
+/* v9.47: Daten aus einem Freshdesk-Ticket in das Auftrag-Formular übernehmen (nur LEERE Felder → editierbar). */
+async function _aufLoadFdTicket() {
+  const tid = (document.getElementById('auf-f-fdticket')?.value || '').trim();
+  if (!/^\d+$/.test(tid)) return toast('Bitte eine gültige Freshdesk-Ticket-Nr. eingeben.','err');
+  const firma = getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  try {
+    await erpEnsureSession();
+    const r = await fetch(APP_KEYS.valtownProxyUrl+'/freshdesk/'+firma+'/api/v2/tickets/'+tid+'?include=requester', { headers:{ 'Authorization':'Bearer '+erpGetSessionToken() }});
+    const txt = await r.text(); let t; try { t = txt ? JSON.parse(txt) : null; } catch(_){ t = null; }
+    if (!r.ok || !t) throw new Error('Ticket #'+tid+' nicht abrufbar (HTTP '+r.status+')');
+    const req = t.requester || {};
+    const _set = (id,v)=>{ const el=document.getElementById(id); if (el && v && !String(el.value||'').trim()) el.value = v; };   // nur leere Felder füllen
+    _set('auf-f-besteller',     req.name || '');
+    _set('auf-f-bestellermail', req.email || t.email || '');
+    if (t.created_at) _set('auf-f-erteilung', String(t.created_at).slice(0,10));
+    // Betreff als Leistungs-Vorschlag, wenn Leistung noch leer oder nur der Default drinsteht
+    const _lst = document.getElementById('auf-f-leistung');
+    if (_lst && t.subject && (!String(_lst.value||'').trim() || String(_lst.value||'').trim() === 'Fehlersuche und Diagnose')) _lst.value = String(t.subject).trim();
+    toast('✅ Daten aus Ticket #'+tid+' übernommen (alles editierbar).','ok');
+  } catch(e) { toast('❌ '+String((e && e.message) || e).slice(0,160),'err'); }
+}
+
+/* v9.47: KI-Vorschlag für Titel/Inhalt der ERP-Backoffice-Mail (kein Kundenmail-Versand) aus den Formulardaten. */
+async function _aufMagicMail(which, btn) {
+  if (!APP_KEYS.anthropicKey) return toast('Kein KI-Key konfiguriert (Admin).','err');
+  const g = id => (document.getElementById(id)?.value || '').trim();
+  const anlage = _currentSelectedAnlage || {};
+  const kunde = anlage.kunde || {};
+  const ctx = {
+    Auftraggeber: kunde.firmenname || '',
+    Standort: g('auf-f-standort') || anlage.adresse || anlage.strasse || '',
+    Fabriknummer: g('auf-f-fabriknummer') || anlage.seriennummer || '',
+    Leistungsbeschreibung: g('auf-f-leistung'),
+    Besteller: g('auf-f-besteller'),
+  };
+  const targetId = which === 'titel' ? 'auf-f-mailtitel' : 'auf-f-mailinhalt';
+  const target = document.getElementById(targetId);
+  const prompt = (which === 'titel')
+    ? 'Du bist Büro-Assistenz eines Aufzugsservice. Erzeuge einen KURZEN, sachlichen Betreff (Titel) für eine INTERNE ERP-Backoffice-Benachrichtigung zu einem neuen Auftrag „nach Aufwand". Muster: „Auftragsbestätigung – {Auftraggeber} – {Kurzleistung} ({Standort})". Gib NUR den Betreff zurück, ohne Anführungszeichen, ohne Vorrede.\n\nDATEN (JSON):\n'+JSON.stringify(ctx,null,2)
+    : 'Du bist Büro-Assistenz eines Aufzugsservice. Erzeuge einen KURZEN, sachlichen Inhaltstext (2-3 Sätze) für eine INTERNE ERP-Backoffice-Benachrichtigung zu einem neuen Auftrag „nach Aufwand" (Abrechnung nach tatsächlichem Aufwand). Nenne Auftraggeber, Standort/Fabriknummer und die Leistung. KEINE Preise/Beträge. KEINE Anrede/keinen Gruß an den Kunden (interne Notiz). Gib NUR den Text zurück.\n\nDATEN (JSON):\n'+JSON.stringify(ctx,null,2);
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; }
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'x-api-key':APP_KEYS.anthropicKey, 'anthropic-version':'2023-06-01', 'anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: which==='titel'?200:500, messages:[{ role:'user', content: prompt }] }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data?.error?.message || ('API '+r.status));
+    const val = String(data?.content?.[0]?.text || '').trim().replace(/^["„»]+/,'').replace(/["“«]+$/,'').trim();
+    if (!val) return toast('KI konnte nichts ableiten — bitte Leistung/Standort ausfüllen.','warn');
+    if (target) { target.value = val; toast('✨ '+(which==='titel'?'Titel':'Inhalt')+' per KI gefüllt.','ok'); }
+  } catch(e) { toast('❌ KI: '+String((e && e.message) || e).slice(0,160),'err'); }
+  finally { if (btn) { btn.disabled = false; btn.textContent = orig || '✨'; } }
 }
 
 /* Auftragsnummer aus ERP-Antwort.
@@ -13415,33 +13542,51 @@ async function saveAuftrag() {
       const leistung = document.getElementById('auf-f-leistung').value.trim();
       if (!leistung) throw new Error('Bitte eine Leistungsbeschreibung eintragen – wird ans ERP übermittelt.');
 
-      // Datum-Felder: datumAuftragserteilung = date-time (full ISO), ausfuehrungstermin = beliebiger String (YYYY-MM-DD OK)
-      const heuteDate    = new Date().toISOString().slice(0,10);          // YYYY-MM-DD für Ausführung
-      const heuteISO     = new Date().toISOString();                       // full ISO für Auftragserteilung
-      const dueDate      = document.getElementById('auf-f-due').value || heuteDate;
+      // Datum-Felder: datumAuftragserteilung = date-time (full ISO), ausfuehrungstermin = beliebiger String
+      const heuteDate    = new Date().toISOString().slice(0,10);          // YYYY-MM-DD
+      const heuteISO     = new Date().toISOString();                       // full ISO
+      // v9.47: Ausführungstermin — leer ⇒ „So schnell wie möglich" (User-Vorgabe)
+      const _dueVal      = (document.getElementById('auf-f-due')?.value || '').trim();
+      const ausfuehrung  = _dueVal || 'So schnell wie möglich';
+      // v9.47: Datum Auftragserteilung aus Feld (FD-Ticket/manuell) → full ISO; sonst heute
+      const _erteilVal   = (document.getElementById('auf-f-erteilung')?.value || '').trim();
+      const datumErteilung = /^\d{4}-\d{2}-\d{2}$/.test(_erteilVal) ? new Date(_erteilVal+'T08:00:00').toISOString() : heuteISO;
+      // v9.47: Besteller (wer bei uns bestellt hat) + ERP-Backoffice-Mailtexte (KI-fähig). KEINE Kundenmail.
+      const _besteller     = (document.getElementById('auf-f-besteller')?.value || '').trim();
+      const _bestellerMail = (document.getElementById('auf-f-bestellermail')?.value || '').trim();
+      const _mailTitel     = (document.getElementById('auf-f-mailtitel')?.value || '').trim();
+      const _mailInhalt    = (document.getElementById('auf-f-mailinhalt')?.value || '').trim();
+      // v9.47: Sätze (nach Aufwand) — Formularwert hat Vorrang, sonst Anlagen-Default
+      const _fStd  = (document.getElementById('auf-f-stundensatz')?.value || '').trim();
+      const _fEins = (document.getElementById('auf-f-einsatzpauschale')?.value || '').trim();
+      const _stundensatz   = _fStd  !== '' ? (+_fStd)  : (+_currentSelectedAnlage.stundensatz || null);
+      const _einsatzpausch = _fEins !== '' ? (+_fEins) : (+_currentSelectedAnlage.einsatzPauschale || null);
       const kunde        = _currentSelectedAnlage.kunde || {};
       const auftraggeberName = (kunde.firmenname || ('Kunde '+(kunde.kundennummer||''))).trim() || 'Unbekannt';
 
       btn.textContent = '⏳ erstelle im ERP…';
       // Schema (AuftragOhneAngebotSETDTO):
       //   datumAuftragserteilung: date-time  → muss full ISO 8601 sein (Spring/Jackson kann YYYY-MM-DD sonst nicht parsen)
-      //   titelemail/inhaltemail: required, minLength 1 → "-" als Platzhalter wenn kundeMail=false
+      //   titelemail/inhaltemail: required, minLength 1 → KI-Text oder "-" (kundeMail=false → KEINE Kundenmail)
       //   leistungsbeschreibung/status/auftraggeber: required, minLength 1
       const payload = {
         anlageid:              +_currentSelectedAnlage.id,
         empfaengerid:          +empfaengerId,
         notizen:               '',
-        datumAuftragserteilung: heuteISO,
-        ausfuehrungstermin:    dueDate,
+        datumAuftragserteilung: datumErteilung,
+        ausfuehrungstermin:    ausfuehrung,
         // v7.27: ERP hat kein eigenes Gewährleistungs-Feld → Marker in den Leistungstext,
         //   damit der Auftrag auch im ERP/Auftrags-PDF eindeutig als Gewährleistungsprüfung erkennbar ist.
         leistungsbeschreibung: (isGewaehr ? 'GEWÄHRLEISTUNGSPRÜFUNG – ' : '') + leistung,
         kundeMail:             false,
-        titelemail:            '-',
-        inhaltemail:           '-',
+        titelemail:            _mailTitel || '-',
+        inhaltemail:           _mailInhalt || '-',
         status:                'Auftrag bestätigt',
         auftraggeber:          auftraggeberName,
       };
+      // v9.47: Sätze mitsenden (nach Aufwand) — mehrere Schreibweisen; Maxise/Spring ignoriert unbekannte Felder
+      if (_stundensatz   != null) { payload.stundensatz = _stundensatz; payload.stundenSatz = _stundensatz; }
+      if (_einsatzpausch != null) { payload.einsatzpauschale = _einsatzpausch; payload.einsatzPauschale = _einsatzpausch; }
       console.log('[ERP-Create] Payload:', JSON.stringify(payload, null, 2));
       const createStartedAt = Date.now();
       // Pfad-Kandidaten: erst /api-prefix (Standard), dann ohne (Fallback)
@@ -13552,9 +13697,18 @@ async function saveAuftrag() {
       const anlage = _currentSelectedAnlage;
       fields.objekttyp           = anlage.objektTyp || '';
       fields.kunde_firmenname    = (anlage.kunde && anlage.kunde.firmenname) || '';
-      fields.stundensatz         = anlage.stundensatz || null;
-      fields.einsatzpauschale    = anlage.einsatzPauschale || null;
+      fields.stundensatz         = (_stundensatz   != null) ? _stundensatz   : (anlage.stundensatz || null);      // v9.47: Formular-Satz hat Vorrang
+      fields.einsatzpauschale    = (_einsatzpausch != null) ? _einsatzpausch : (anlage.einsatzPauschale || null);
       fields.leistungsumfang     = leistung;
+      // v9.47: Besteller (wer bei uns bestellt hat) am lokalen Auftrag speichern → AB-/OD-Vorbefüllung + Detail.
+      //   Felder vorher sicherstellen (sonst „Unknown field name" beim Write).
+      if (_besteller || _bestellerMail) {
+        try { await ensureField('Auftraege','besteller','singleLineText'); } catch(_){}
+        try { await ensureField('Auftraege','kontakt_name','singleLineText'); } catch(_){}
+        try { await ensureField('Auftraege','kontakt_email','singleLineText'); } catch(_){}
+      }
+      if (_besteller)     { fields.besteller = _besteller; if (!fields.kontakt_name) fields.kontakt_name = _besteller; }
+      if (_bestellerMail) fields.kontakt_email = _bestellerMail;
 
       const writeResult = await atWrite('Auftraege', fields);
       console.log('[ERP-Create] Airtable Write OK, neue rec-id:', writeResult && writeResult.id);
