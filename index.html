@@ -2836,7 +2836,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.44';
+const APP_VERSION = 'v9.45';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -37647,6 +37647,16 @@ function _abSalutation(besteller){
 async function _abOpenSendModal(recId) {
   const rec = await _abGetRec(recId); if (!rec) return toast('Nicht gefunden','err');
   const f = rec.fields || {}; const firma = f.firma || getCurrentFirmaSlug();
+  // v9.45: Empfänger-Mail robust vorbefüllen. Fehlt kontakt_email an der AB (typisch bei Aszendio-Angeboten
+  //   ohne hinterlegte Kontakt-Mail), aus dem verknüpften Angebot die tatsächliche Versand-Adresse ziehen:
+  //   fd_send_email (an DIE das Angebot per Freshdesk verschickt wurde), sonst dessen kontakt_email.
+  let _preEmail = String(f.kontakt_email||'').trim();
+  if (!_preEmail && f.angebot_rec_id) { try {
+    const _bid = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const _rk  = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const _rr  = await fetch('https://api.airtable.com/v0/'+_bid+'/App_Angebote/'+encodeURIComponent(f.angebot_rec_id), { headers:{ Authorization:'Bearer '+_rk }});
+    if (_rr.ok) { const _ar = await _rr.json(); const _gf = (_ar && _ar.fields) || {}; _preEmail = String(_gf.fd_send_email || _gf.kontakt_email || '').trim(); if (_preEmail) console.log('[AB-Send] Empfänger-Mail aus Angebot vorbefüllt:', _preEmail); }
+  } catch(_){} }
   if (!APP_KEYS.valtownProxyUrl) return toast('Freshdesk/Proxy nicht eingerichtet (Admin → Integrationen).','err');
   const fdOk = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
   const subject = 'Auftragsbestätigung Nr. ' + _abDispNum(f) + (f.standort ? ' · '+String(f.standort).split(/[,\n]/)[0].trim() : '');
@@ -37676,7 +37686,7 @@ async function _abOpenSendModal(recId) {
             '<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="radio" name="ab-send-src" value="maxise"> 📄 Maxise-AB <span style="color:#6b7280;font-size:11px">(offiziell, Auftrag '+escapeHtml(String(f.erp_auftrag_num||f.erp_auftrag_id))+')</span></label>'+
           '</div></div>' : '')+
         '<div id="ab-send-email-box"><div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Empfänger-E-Mail</label>'+
-          '<input id="ab-send-email" type="email" value="'+escapeHtml(f.kontakt_email||'')+'" placeholder="kunde@example.de" style="'+inpStyle+'"></div></div>'+
+          '<input id="ab-send-email" type="email" value="'+escapeHtml(_preEmail)+'" placeholder="kunde@example.de" style="'+inpStyle+'"></div></div>'+
         '<div id="ab-send-ticket-box" style="display:none"><div style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Freshdesk-Ticket-Nr.</label>'+
           '<input id="ab-send-ticket" type="text" inputmode="numeric" value="'+escapeHtml(f.ticket_num||f.fd_ticket_id||'')+'" placeholder="z.B. 12345" style="'+inpStyle+'"></div></div>'+
         '<div id="ab-send-subject-box" style="margin-bottom:10px"><label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:3px">Betreff</label>'+
