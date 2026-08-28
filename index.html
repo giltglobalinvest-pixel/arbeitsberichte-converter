@@ -2836,7 +2836,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.43';
+const APP_VERSION = 'v9.44';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9827,7 +9827,33 @@ async function openAuftragDetail(recId) {
     ${status !== 'abgeschlossen' && status !== 'abgerechnet' && (_isAssignedToMe(rec) || hasPermission('auftraege_edit') || hasPermission('auftraege_view_all')) ? '<div class="auf-section"><div style="font-size:11px;color:var(--txt3);padding:8px 10px;background:var(--bg);border-radius:5px;border-left:3px solid var(--amber);line-height:1.5">💡 Bilder zum Bericht (z.B. Anlage vor Ort, Defekte) fügst du beim <strong>"Bericht erfassen"</strong> hinzu – sie werden automatisch ans Bericht-PDF angehängt.</div></div>' : ''}
   `;
   // v8.44: verknüpfte Auftragsbestätigung (PDF/Senden/Status/Löschen) direkt im Auftrag-Detail — ersetzt das separate AB-Menü.
-  try { if (f.ab_recid && typeof _aufLoadAbSection === 'function') _aufLoadAbSection(f.ab_recid, rec.id); } catch(_){}
+  // v9.44: Fehlt ab_recid (Aszendio-Kollisions-Altfall — ext_id war nicht firma-eindeutig), die AB FIRMA-GESCOPT über die
+  //   Maxise-Auftragsnummer auflösen → volle Servicebox-AB-Sektion (inkl. „An Kunde senden") statt nur Maxise-Fallback,
+  //   und ab_recid gleich dauerhaft am Auftrag nachtragen (self-heal → fixt danach auch OD + AB-Download).
+  (async () => {
+    try {
+      if (typeof isAdmin === 'function' && !isAdmin()) return;   // AB-Sektion ist ohnehin Admin-only
+      let _abRid = String(f.ab_recid || '').trim();
+      if (!_abRid) {
+        const _fsl = f.firma || getCurrentFirmaSlug();
+        const _cands = [String(f.ext_id||'').trim(), String(f.auftrag_num||'').trim()].filter(Boolean);
+        if (_cands.length) {
+          const _bid = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+          const _rk  = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+          const _ors = [];
+          for (const c of [...new Set(_cands)]) { const ce = c.replace(/'/g,"\\'"); _ors.push("{erp_auftrag_id}='"+ce+"'","{erp_auftrag_num}='"+ce+"'"); }
+          const _fml = "AND({firma}='"+String(_fsl).replace(/'/g,"\\'")+"',OR("+_ors.join(',')+"))";
+          const _rr = await fetch('https://api.airtable.com/v0/'+_bid+'/Auftragsbestaetigungen?maxRecords=1&filterByFormula='+encodeURIComponent(_fml), { headers:{ Authorization:'Bearer '+_rk }});
+          if (_rr.ok) { const _dd = await _rr.json(); if (_dd && _dd.records && _dd.records[0]) _abRid = _dd.records[0].id; }
+        }
+        if (_abRid) {
+          f.ab_recid = _abRid; if (rec.fields) rec.fields.ab_recid = _abRid;   // Cache aktualisieren
+          try { await _patchAuftragFields(rec.id, { ab_recid: _abRid }); console.log('[Auftrag-AB] ab_recid nachgetragen (kein Link → über Maxise-Auftragsnr gefunden):', _abRid); } catch(_){}
+        }
+      }
+      if (_abRid && typeof _aufLoadAbSection === 'function') _aufLoadAbSection(_abRid, rec.id);
+    } catch(_){}
+  })();
 
   // Footer-Buttons abhängig von Permissions + Status
   const foot = document.getElementById('auf-detail-foot');
