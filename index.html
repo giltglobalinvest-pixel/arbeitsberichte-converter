@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.47';
+const APP_VERSION = 'v9.48';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9676,9 +9676,90 @@ function _aufRenderMaxiseAbSection(rec) {
     '</div>' +
     '<div style="font-size:12px;color:var(--txt3);margin-top:6px">In Maxise erstellt — die Auftragsbestätigung liegt dort und kann hier geladen werden.</div>' +
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">' +
-      '<button class="btn" onclick="_aufMaxisePdf(\'' + escapeHtml(String(auftragId)) + '\',\'' + escapeHtml(String(firmaSlug)) + '\',\'' + escapeHtml(String(num)) + '\')">📄 Auftragsbestätigung (Maxise) laden</button>' +
+      '<button class="btn prim" onclick="_aufCreateServiceboxAb(\'' + escapeHtml(String(rec.id)) + '\', this)" title="Eigene Servicebox-Auftragsbestätigung (nach Aufwand) aus den Auftragsdaten erzeugen — unabhängig von Maxise, danach an den Kunden sendbar">📄 Servicebox-AB erstellen</button>' +
+      '<button class="btn" onclick="_aufMaxisePdf(\'' + escapeHtml(String(auftragId)) + '\',\'' + escapeHtml(String(firmaSlug)) + '\',\'' + escapeHtml(String(num)) + '\')">📄 Maxise-AB laden</button>' +
     '</div>' +
+    '<div style="font-size:11px;color:var(--txt3);margin-top:6px">💡 Für Aufträge „nach Aufwand / ohne Angebot" gibt es in Maxise oft keine ladbare AB (bzw. Maxise-PDF-Generator-Bug). Erzeuge hier die <strong>Servicebox-AB</strong> — die kannst du dann direkt an den Kunden senden.</div>' +
   '</div>';
+}
+
+/* v9.48: Servicebox-Auftragsbestätigung (nach Aufwand) für einen Auftrag OHNE verknüpfte AB erzeugen
+   (typisch: „ohne Angebot"-Aufträge, oder wenn Maxise-PDF nicht abrufbar ist). Baut die AB aus den
+   Auftragsdaten (Kunde/Standort/Leistung/Sätze), legt einen Auftragsbestaetigungen-Datensatz an,
+   verknüpft ab_recid und lädt die volle AB-Sektion (Servicebox-AB + Maxise + „An Kunde senden"). */
+async function _aufCreateServiceboxAb(auftragRecId, btn) {
+  if (typeof isAdmin === 'function' && !isAdmin()) return toast('Nur Admins dürfen das.','err');
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token (Admin → Integrationen).','err');
+  let rec = (typeof _auftragCache!=='undefined' && _auftragCache || []).find(r => r.id === auftragRecId);
+  if (!rec) { try {
+    const b=APP_KEYS.appBaseId||APP_CONFIG.APP_BASE_ID, k=APP_KEYS.airtableReadKey||APP_KEYS.airtableWriteKey;
+    const rr=await fetch('https://api.airtable.com/v0/'+b+'/Auftraege/'+encodeURIComponent(auftragRecId),{headers:{Authorization:'Bearer '+k}});
+    if(rr.ok){ const jd=await rr.json(); rec={id:jd.id,fields:jd.fields}; }
+  } catch(_){} }
+  if (!rec) return toast('Auftrag nicht gefunden.','err');
+  const f = rec.fields || {};
+  const firma = f.firma || getCurrentFirmaSlug();
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Erzeuge Servicebox-AB…'; }
+  try {
+    await _ensureAbTable();
+    const _bid = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const _rk  = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const abNummer = String(f.ext_id || f.auftrag_num || '');
+    // Bestehende AB zu diesem Auftrag (firma-gescopt) → löschen (regenerieren, kein Doppel-Datensatz)
+    try {
+      const cands = [String(f.ext_id||'').trim(), String(f.auftrag_num||'').trim()].filter(Boolean);
+      if (cands.length) {
+        const ors=[]; for (const c of [...new Set(cands)]){ const ce=c.replace(/'/g,"\\'"); ors.push("{erp_auftrag_id}='"+ce+"'","{erp_auftrag_num}='"+ce+"'"); }
+        const fml = "AND({firma}='"+String(firma).replace(/'/g,"\\'")+"',OR("+ors.join(',')+"))";
+        const rr = await fetch('https://api.airtable.com/v0/'+_bid+'/Auftragsbestaetigungen?maxRecords=5&filterByFormula='+encodeURIComponent(fml), { headers:{ Authorization:'Bearer '+_rk }});
+        if (rr.ok) { const dd = await rr.json(); for (const old of (dd.records||[])) { try { await atDelete('Auftragsbestaetigungen', old.id); _abListCache=(_abListCache||[]).filter(x=>x.id!==old.id); } catch(_){} } }
+      }
+    } catch(_){}
+    // Preis (nach Aufwand) aus den Auftrags-Sätzen
+    const stundensaetze = [];
+    if (f.stundensatz != null && String(f.stundensatz).trim() !== '') stundensaetze.push({ name:'Stundensatz (Monteur)', satz:+f.stundensatz, einheit:'/ Std.' });
+    if (f.einsatzpauschale != null && String(f.einsatzpauschale).trim() !== '') stundensaetze.push({ name:'Einsatzpauschale', satz:+f.einsatzpauschale, einheit:'' });
+    const preis = { modus:'aufwand', stundensaetze, ust:19 };
+    const d = {
+      kunde:          f.kunde_firmenname || f.kunde_name || '',
+      kundeAdresse:   f.kunde_adresse || '',
+      besteller:      f.besteller || f.kontakt_name || '',
+      abNummer:       abNummer,
+      auftragNum:     '',
+      standort:       f.standort || f.anlage_adresse || '',
+      fabriknummer:   f.fabriknummer || '',
+      ticketNum:      f.ticket_num || f.od_ticket_num || '',
+      zugang:         '',
+      leistungsumfang:f.leistungsbeschreibung || f.leistungsumfang || '',
+      zeitrahmen:     '',
+      preis:          preis,
+    };
+    const blob = _abBuildPdfBlob(d, firma);
+    const serviceboxNum = await _abNextNummer(firma);
+    const abFields = {
+      ab_nummer: serviceboxNum, firma: firma, datum: new Date().toISOString().slice(0,10),
+      kunde_name: d.kunde, kunde_nummer: String(f.kunde_nummer||''), kunde_adresse: d.kundeAdresse,
+      besteller: d.besteller, standort: d.standort, fabriknummer: d.fabriknummer,
+      kontakt_email: f.kontakt_email || '', ticket_num: d.ticketNum,
+      leistungsumfang: d.leistungsumfang, preis_json: JSON.stringify(preis),
+      summe_netto: 0, summe_brutto: 0, ust_prozent: 19, abrechnung_modus: 'aufwand',
+      erp_auftrag_num: abNummer, erp_auftrag_id: String(f.ext_id||''), erp_auftrag_bestellform: 'OHNEANGEBOT',
+      local_auftrag_recid: auftragRecId, nummer_quelle: 'maxise', status: 'entwurf',
+      created: new Date().toISOString(), created_by: (APP_KEYS.user && APP_KEYS.user.name) || '',
+    };
+    const abRec = await atWrite('Auftragsbestaetigungen', abFields);
+    try { await atBlobUpload(abRec.id, 'pdf', blob, 'Auftragsbestaetigung-'+(abNummer||serviceboxNum)+'.pdf', 'application/pdf'); } catch(e){ console.warn('[SB-AB] PDF-Upload:', e && e.message); }
+    try { await ensureField('Auftraege','ab_recid','singleLineText'); await _patchAuftragFields(auftragRecId, { ab_recid: abRec.id }); } catch(_){}
+    f.ab_recid = abRec.id; if (rec.fields) rec.fields.ab_recid = abRec.id;
+    // Hinweis: NICHT in _abListCache prependen (die Kopie hätte das gerade hochgeladene PDF noch nicht) —
+    //   _aufLoadAbSection lädt den Datensatz frisch aus Airtable (inkl. pdf-Attachment).
+    toast('✅ Servicebox-AB erstellt — jetzt an den Kunden sendbar.','ok');
+    if (typeof _aufLoadAbSection === 'function') _aufLoadAbSection(abRec.id, auftragRecId);
+  } catch(e) {
+    console.error('[SB-AB]', e);
+    toast('❌ Servicebox-AB: '+String((e && e.message) || e).slice(0,160),'err');
+    if (btn) { btn.disabled = false; btn.textContent = '📄 Servicebox-AB erstellen'; }
+  }
 }
 
 async function _aufLoadAbSection(abRecId, auftragRecId) {
