@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.48';
+const APP_VERSION = 'v9.49';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -14681,8 +14681,12 @@ async function setAuftragStatus(recId, newErpStatus) {
     ? '✓ #'+(f.auftrag_num||'?')+' → "'+newErpStatus+'" (lokal + ERP).'
     : '✓ #'+(f.auftrag_num||'?')+' lokal gesetzt · ⚠ ERP-Update fehlgeschlagen: '+erpMsg,
     erpOk ? 'ok' : 'warn');
+  // v9.49: optimistisch — Status im Cache setzen und NUR die Liste neu rendern (KEIN Voll-Reload aller
+  //   Aufträge; genau wie „↺ Wieder öffnen"). Der Datensatz ist bereits per _patchAuftragFields in Airtable
+  //   gespeichert; storniert/abgeschlossen wird beim Render ohnehin gefiltert. Behält den Cache wie beim Rest.
+  rec.fields.status = newErpStatus;
   closeAuftragDetail();
-  await loadAuftraegeAndRender();
+  renderAuftraegeList();
 }
 
 /* ── Bulk: alle Aufträge der aktuellen Firma auf Rechnungen prüfen ── */
