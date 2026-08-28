@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.49';
+const APP_VERSION = 'v9.50';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36369,6 +36369,7 @@ async function openAngebotDetail(recId) {
             : '')+
           (konePdf ? '<a href="'+escapeHtml(konePdf.url)+'" target="_blank" rel="noopener" class="btn" style="text-decoration:none">📎 Original-'+escapeHtml(f.anbieter||'Anbieter')+'-PDF</a>' : '')+
           '<button class="btn" onclick="_angRegeneratePdf(\''+recId+'\', this)" title="PDF neu generieren mit aktuellen Daten">🔄 Neu generieren</button>'+
+          '<button class="btn" onclick="_angExportJson(\''+recId+'\')" title="Angebotsdaten als .json-Datei herunterladen (selten gebraucht)" style="color:#4338CA;border-color:#C7D2FE;background:#EEF2FF">⬇ JSON</button>'+
         '</div>'+
         // Status-Wechsel
         '<div style="font-size:12px;margin-bottom:14px"><strong>Status:</strong> '+
@@ -39440,6 +39441,48 @@ async function _angSetStatus(recId, newStatus) {
     openAngebotDetail(recId);
     _renderAngeboteList();
   } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/* v9.50: Angebot als .json-Datei herunterladen (selten gebraucht — einzelner Button im Angebot-Detail).
+   Enthält eine saubere strukturierte Sicht + die kompletten Airtable-Rohdaten (JSON-Sub-Felder geparst). */
+function _angExportJson(recId) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  if (!rec) return toast('Angebot nicht gefunden.','err');
+  const f = rec.fields || {};
+  const _p = (s) => { try { return JSON.parse(s); } catch(_) { return undefined; } };
+  const out = {
+    exportiert_am: new Date().toISOString(),
+    quelle: 'Servicebox '+ (typeof APP_VERSION!=='undefined' ? APP_VERSION : ''),
+    angebot: {
+      id: rec.id,
+      nummer: f.app_angebot_num,
+      firma: f.firma,
+      status: f.status,
+      erstellt_am: f.erstellt_am,
+      abrechnung_modus: f.abrechnung_modus,
+      preisanzeige_modus: f.preisanzeige_modus,
+      kunde:  { name: f.kunde_name || '', nummer: f.kunde_nummer || '', adresse: f.kunde_adresse || '' },
+      anlage: { adresse: f.anlage_adresse || '', standort: f.standort || '', fabriknummer: f.fabriknummer || '', anlage_id: f.anlage_id || '' },
+      positionen:   _p(f.positionen_json) || [],
+      stundensaetze:_p(f.stundensaetze_json) || [],
+      aufzuege:     _p(f.aufzuege_json) || [],
+      pauschalpreis_netto: f.pauschalpreis_netto,
+      anschreiben: f.anschreiben || '',
+      erlaeuterung: f.erlaeuterung || f.erlaeuterungen || '',
+      interne_notiz: f.interne_notiz || '',
+      erp_angebot_id: f.erp_angebot_id || '',
+    },
+    rohdaten: f,   // alle Airtable-Felder 1:1 (inkl. der *_json-Strings)
+  };
+  try {
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type:'application/json' });
+    const nm = 'Angebot-' + (f.app_angebot_num ? ('ANG'+f.app_angebot_num) : rec.id) + '.json';
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = nm;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => { try { URL.revokeObjectURL(url); } catch(_){} }, 2000);
+    toast('⬇ JSON heruntergeladen: '+nm, 'ok');
+  } catch(e) { toast('❌ JSON-Export: '+((e&&e.message)||e), 'err'); }
 }
 
 async function _angRegeneratePdf(recId, btn) {
