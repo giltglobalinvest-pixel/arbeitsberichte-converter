@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.52';
+const APP_VERSION = 'v9.53';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9762,6 +9762,40 @@ async function _aufCreateServiceboxAb(auftragRecId, btn) {
   }
 }
 
+/* v9.53: Interne Notiz + Dateien des verknüpften Angebots AUCH im Auftrag-Detail anzeigen (admin-only).
+   Weg: Auftrag → AB (abRecId) → angebot_rec_id → App_Angebote. Editieren wirkt auf das Angebot (eine Notiz). */
+async function _aufLoadInterneNotiz(abRecId, auftragRecId) {
+  if (!(typeof isAdmin === 'function' && isAdmin())) return;   // interne Notiz ist admin-only
+  const host = document.getElementById('auf-interne-notiz-section');
+  if (!host || !abRecId) return;
+  try {
+    const bid = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const rk  = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const abR = await fetch('https://api.airtable.com/v0/'+bid+'/Auftragsbestaetigungen/'+encodeURIComponent(abRecId), { headers:{ Authorization:'Bearer '+rk }});
+    if (!abR.ok) return;
+    const ab = await abR.json();
+    const angRid = ab && ab.fields && ab.fields.angebot_rec_id;
+    if (!angRid) return;   // kein verknüpftes Servicebox-Angebot → keine Notiz
+    const angR = await fetch('https://api.airtable.com/v0/'+bid+'/App_Angebote/'+encodeURIComponent(angRid), { headers:{ Authorization:'Bearer '+rk }});
+    if (!angR.ok) return;
+    const ang = await angR.json();
+    if (!ang || !ang.fields) return;
+    // In den Angebote-Cache legen, damit Save/Upload/Delete den Record über _angeboteCache + recId finden
+    try {
+      if (typeof _angeboteCache !== 'undefined') {
+        _angeboteCache.items = _angeboteCache.items || [];
+        const idx = _angeboteCache.items.findIndex(x => x.id === ang.id);
+        const angRec = { id: ang.id, fields: ang.fields };
+        if (idx >= 0) _angeboteCache.items[idx] = angRec; else _angeboteCache.items.push(angRec);
+      }
+    } catch(_){}
+    const angNum = ang.fields.app_angebot_num ? ('ANG-'+ang.fields.app_angebot_num) : 'Angebot';
+    host.innerHTML =
+      '<div style="font-size:11px;color:var(--txt3);margin:0 0 4px">🔗 aus dem verknüpften '+escapeHtml(angNum)+':</div>'+
+      _angInterneNotizBoxHtml(ang.id, ang.fields);
+  } catch(_){}
+}
+
 async function _aufLoadAbSection(abRecId, auftragRecId) {
   const host = document.getElementById('auf-ab-section');
   if (!host || !abRecId) return;
@@ -9920,6 +9954,7 @@ async function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${_renderTmplPicker(rec)}</span></div>
     </div>
     <div id="auf-ab-section">${(!f.ab_recid && typeof _aufRenderMaxiseAbSection === 'function') ? _aufRenderMaxiseAbSection(rec) : ''}</div>
+    <div id="auf-interne-notiz-section"></div>
     <div class="auf-section">
       <h3>Ansprechperson vor Ort</h3>
       <div style="font-size:13px;line-height:1.5;white-space:pre-wrap;background:var(--bg);padding:10px 12px;border-radius:5px;border:1px solid var(--bdr)">${(kontakt||'(keine Kontaktdaten hinterlegt)').replace(/</g,'&lt;')}</div>
@@ -9978,6 +10013,8 @@ async function openAuftragDetail(recId) {
         }
       }
       if (_abRid && typeof _aufLoadAbSection === 'function') _aufLoadAbSection(_abRid, rec.id);
+      // v9.53: Interne Notiz + Dateien aus dem verknüpften Angebot AUCH im Auftrag zeigen (admin-only)
+      if (_abRid && typeof _aufLoadInterneNotiz === 'function') _aufLoadInterneNotiz(_abRid, rec.id);
     } catch(_){}
   })();
 
@@ -36236,6 +36273,25 @@ async function _angSaveInterneNotiz(recId, value) {
   } catch(e) { if (st) { st.textContent = '❌ '+String((e&&e.message)||'Fehler').slice(0,60); st.style.color = '#B91C1C'; } }
 }
 
+/* v9.53: Interne-Notiz-Box (Textarea + PDF/JPG-Upload) als wiederverwendbare Funktion — NUR Admin.
+   Wird im Angebot-Detail UND (über das verknüpfte Angebot) im Auftrag-Detail gerendert. recId = Angebot-recId. */
+function _angInterneNotizBoxHtml(recId, f) {
+  if (!(typeof isAdmin === 'function' && isAdmin())) return '';
+  f = f || {};
+  return '<div style="background:#FEFCE8;border:1.5px solid #FACC15;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
+    '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">'+
+      '<span style="font-weight:700;font-size:12px;color:#854D0E">🔒 Interne Notiz <span style="font-weight:400;color:#A16207">— nur für Admins, erscheint NICHT beim Kunden</span></span>'+
+      '<span id="ang-notiz-status" style="font-size:11px;color:#A16207"></span>'+
+    '</div>'+
+    '<textarea id="ang-interne-notiz" rows="3" oninput="_angNotizDirty()" onblur="_angSaveInterneNotiz(\''+recId+'\', this.value)" placeholder="Notizen fürs Team (Preisverhandlung, Rückrufe, Besonderheiten…) — wird automatisch gespeichert, aber nie im PDF oder an den Kunden." style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #FACC15;border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;background:#fff;color:var(--txt)">'+escapeHtml(f.interne_notiz||'')+'</textarea>'+
+    '<div id="ang-interne-dateien-wrap" style="margin-top:8px">'+_angInterneDateienHtml(recId, f)+'</div>'+
+    '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-top:8px">'+
+      '<span style="background:#FEF9C3;border:1px dashed #CA8A04;border-radius:6px;padding:5px 10px;font-size:12px;color:#854D0E">📎 PDF/JPG anhängen <span style="font-weight:400;color:#A16207">(intern, nur Admin)</span></span>'+
+      '<input type="file" accept=".pdf,.jpg,.jpeg,image/jpeg,application/pdf" multiple style="display:none" onchange="_angUploadInterneDatei(\''+recId+'\', this)">'+
+    '</label>'+
+  '</div>';
+}
+
 /* v9.52: Interne Dateien (PDF/JPG) am Angebot — NUR intern/Admin (Feld interne_dateien = Attachments).
    Erscheinen NIE im Kunden-PDF/-Push/an den Kunden — nur in diesem Admin-Notiz-Block. */
 function _angInterneDateienHtml(recId, f) {
@@ -36401,21 +36457,8 @@ async function openAngebotDetail(recId) {
           : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
-        // v9.31/v9.52: INTERNE Team-Notiz + interne Dateien (PDF/JPG) — NUR für Admins sichtbar (User-Vorgabe: Techniker dürfen sie nicht sehen). Erscheint NIE im Kunden-PDF/-Push/an den Kunden.
-        (isAdmin() ?
-        '<div style="background:#FEFCE8;border:1.5px solid #FACC15;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
-          '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">'+
-            '<span style="font-weight:700;font-size:12px;color:#854D0E">🔒 Interne Notiz <span style="font-weight:400;color:#A16207">— nur für Admins, erscheint NICHT im Kundenangebot</span></span>'+
-            '<span id="ang-notiz-status" style="font-size:11px;color:#A16207"></span>'+
-          '</div>'+
-          '<textarea id="ang-interne-notiz" rows="3" oninput="_angNotizDirty()" onblur="_angSaveInterneNotiz(\''+recId+'\', this.value)" placeholder="Notizen fürs Team (Preisverhandlung, Rückrufe, Besonderheiten…) — wird automatisch gespeichert, aber nie im PDF oder an den Kunden." style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #FACC15;border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;background:#fff;color:var(--txt)">'+escapeHtml(f.interne_notiz||'')+'</textarea>'+
-          '<div id="ang-interne-dateien-wrap" style="margin-top:8px">'+_angInterneDateienHtml(recId, f)+'</div>'+
-          '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-top:8px">'+
-            '<span style="background:#FEF9C3;border:1px dashed #CA8A04;border-radius:6px;padding:5px 10px;font-size:12px;color:#854D0E">📎 PDF/JPG anhängen <span style="font-weight:400;color:#A16207">(intern, nur Admin)</span></span>'+
-            '<input type="file" accept=".pdf,.jpg,.jpeg,image/jpeg,application/pdf" multiple style="display:none" onchange="_angUploadInterneDatei(\''+recId+'\', this)">'+
-          '</label>'+
-        '</div>'
-        : '')+
+        // v9.31/v9.52/v9.53: INTERNE Team-Notiz + interne Dateien (PDF/JPG) — NUR Admin, NIE an den Kunden. Box ausgelagert (auch im Auftrag genutzt).
+        _angInterneNotizBoxHtml(recId, f)+
         // v5.50: Bei Aufwand-Modus statt Summen-Block einen lila Hinweis
         (f.abrechnung_modus === 'aufwand'
           ? '<div style="background:#F3E8FF;border:2px solid #9333EA;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#5B21B6"><span style="font-size:22px">⏱</span><div><div style="font-weight:700">Abrechnung nach tatsächlichem Aufwand</div><div style="font-size:11px;color:#7C3AED">Kein Endpreis — Verrechnung nach Stundennachweis. Siehe Stundensätze unten.</div></div></div>'
