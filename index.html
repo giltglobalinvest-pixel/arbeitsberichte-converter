@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.51';
+const APP_VERSION = 'v9.52';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -30066,6 +30066,7 @@ const ANGEBOTE_TABLE_FIELDS = [
   { name:'pauschalpreis_netto',     type:'number',       options:{ precision:2 } },
   { name:'positionen_json',         type:'multilineText'  },  // [{nr, titel, leistung[], ep_kone, vp, menge}]
   { name:'interne_notiz',           type:'multilineText'  },  // v9.31: INTERNE Team-Notiz — NIE im Kunden-PDF/an den Kunden
+  { name:'interne_dateien',         type:'multipleAttachments' },  // v9.52: interne PDF/JPG-Anhänge — NUR Admin, NIE an den Kunden
   { name:'stundensaetze_json',      type:'multilineText'  },  // [{nr, name, satz, einheit, hinweis}]
   { name:'ust_prozent',             type:'number',       options:{ precision:0 } },
   { name:'summe_netto_kone',        type:'number',       options:{ precision:2 } },
@@ -30777,7 +30778,7 @@ async function _loadAngebote(firmaSlug) {
       const slim = all.map(r => {
         const f = Object.assign({}, r.fields || {});
         delete f.positionen_json; delete f.anschreiben; delete f.erlaeuterung; delete f.erlaeuterungen;
-        delete f.kone_pdf; delete f.da_anhang_pdf; delete f.anhang_vorlage_ids;
+        delete f.kone_pdf; delete f.da_anhang_pdf; delete f.anhang_vorlage_ids; delete f.interne_dateien;   // v9.52: interne Attachments nicht in den Slim-Cache
         return { id: r.id, fields: f };
       });
       _bigCacheSet('angebote', firmaSlug, slim);   // v9.33: IndexedDB (überlebt Reload/Update, kein localStorage-Limit)
@@ -31224,7 +31225,7 @@ function _renderAngeboteList() {
     const isSelected = _angSelectedIds.has(rec.id);
     const openFn = isMaxise ? "_angOpenMaxiseRec('"+rec.id+"')" : "openAngebotDetail('"+rec.id+"')";
     // v9.31: 📝 wenn eine interne Notiz hinterlegt ist (nur intern)
-    const _notizBadge = (f.interne_notiz && String(f.interne_notiz).trim()) ? ' <span title="Interne Notiz hinterlegt (nur intern)" style="cursor:default">📝</span>' : '';
+    const _notizBadge = (typeof isAdmin==='function' && isAdmin() && f.interne_notiz && String(f.interne_notiz).trim()) ? ' <span title="Interne Notiz hinterlegt (nur intern · Admin)" style="cursor:default">📝</span>' : '';
     const idLabel = (isMaxise
       ? '<span title="Aus Maxise (ERP) importiert" style="background:#0EA5E9;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">🔗 MAXISE</span>MX-'+escapeHtml(String(f.erp_angebot_nummer||f.erp_angebot_id||'?'))
       : (f.abrechnung_modus==='aufwand'?'<span title="Nach Aufwand abgerechnet" style="background:#9333EA;color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;margin-right:6px;font-weight:700">⏱ AUFWAND</span>':'')+escapeHtml(f.angebot_nr || ('ANG-'+(f.app_angebot_num||f.fdh_angebot_num||'?')))) + _notizBadge;
@@ -36235,6 +36236,69 @@ async function _angSaveInterneNotiz(recId, value) {
   } catch(e) { if (st) { st.textContent = '❌ '+String((e&&e.message)||'Fehler').slice(0,60); st.style.color = '#B91C1C'; } }
 }
 
+/* v9.52: Interne Dateien (PDF/JPG) am Angebot — NUR intern/Admin (Feld interne_dateien = Attachments).
+   Erscheinen NIE im Kunden-PDF/-Push/an den Kunden — nur in diesem Admin-Notiz-Block. */
+function _angInterneDateienHtml(recId, f) {
+  f = f || {};
+  const files = Array.isArray(f.interne_dateien) ? f.interne_dateien : [];
+  if (!files.length) return '';
+  return files.map(a => {
+    const isImg = /image\//.test(a.type||'') || /\.(jpe?g|png|gif|webp)$/i.test(a.filename||'');
+    const icon = isImg ? '🖼' : '📄';
+    return '<span style="display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid #FDE68A;border-radius:6px;padding:3px 8px;font-size:11px;margin:0 6px 6px 0">'+
+      icon+' <a href="'+escapeHtml(a.url||'')+'" target="_blank" rel="noopener" title="'+escapeHtml(a.filename||'Datei')+'" style="color:#854D0E;text-decoration:none;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:bottom">'+escapeHtml(a.filename||'Datei')+'</a>'+
+      '<button onclick="_angDeleteInterneDatei(\''+recId+'\', \''+escapeHtml(a.id||'')+'\')" title="Entfernen" style="background:none;border:none;color:#B91C1C;cursor:pointer;font-size:14px;line-height:1;padding:0">×</button>'+
+    '</span>';
+  }).join('');
+}
+async function _angUploadInterneDatei(recId, inputEl) {
+  if (!isAdmin()) return toast('Nur Admins dürfen interne Dateien anhängen.','err');
+  const all = Array.from((inputEl && inputEl.files) || []);
+  if (inputEl) inputEl.value = '';
+  if (!all.length) return;
+  const files = all.filter(fl => /pdf|jpe?g/i.test(fl.type||'') || /\.(pdf|jpe?g)$/i.test(fl.name||''));
+  if (!files.length) return toast('Nur PDF oder JPG/JPEG erlaubt.','err');
+  if (!APP_KEYS.airtableWriteKey) return toast('Kein Write-Token.','err');
+  toast('⏳ Lade '+files.length+' Datei(en) intern hoch…','');
+  try {
+    try { await ensureField('App_Angebote','interne_dateien','multipleAttachments'); } catch(_){}
+    for (const file of files) {
+      const mime = file.type || (/\.pdf$/i.test(file.name||'') ? 'application/pdf' : 'image/jpeg');
+      await atBlobUpload(recId, 'interne_dateien', file, file.name || ('datei_'+Date.now()+(/\.pdf$/i.test(file.name||'')?'.pdf':'.jpg')), mime);   // APPEND — mehrere Dateien gewünscht
+    }
+    await _angRefreshInterneDateien(recId);
+    toast('✅ '+files.length+' Datei(en) intern angehängt.','ok');
+  } catch(e){ toast('❌ Upload: '+String((e&&e.message)||e).slice(0,160),'err'); }
+}
+async function _angDeleteInterneDatei(recId, attId) {
+  if (!isAdmin()) return toast('Nur Admins.','err');
+  if (!confirm('Diese interne Datei entfernen?')) return;
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  const cur = (rec && Array.isArray(rec.fields.interne_dateien)) ? rec.fields.interne_dateien : [];
+  const keep = cur.filter(a => a.id !== attId).map(a => ({ id: a.id }));
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+encodeURIComponent(recId), {
+      method:'PATCH', headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields:{ interne_dateien: keep } }),
+    });
+    const d = await r.json(); if (d.error) throw new Error(d.error.message||'Fehler');
+    if (rec) rec.fields.interne_dateien = (d.fields && d.fields.interne_dateien) || [];
+    const wrap = document.getElementById('ang-interne-dateien-wrap'); if (wrap) wrap.innerHTML = _angInterneDateienHtml(recId, (rec&&rec.fields)||{});
+    toast('🗑 Datei entfernt.','ok');
+  } catch(e){ toast('❌ '+String((e&&e.message)||e).slice(0,160),'err'); }
+}
+async function _angRefreshInterneDateien(recId) {
+  try {
+    const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+    const rk = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+    const rr = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+encodeURIComponent(recId), { headers:{ Authorization:'Bearer '+rk }});
+    if (rr.ok) { const full = await rr.json(); const rec=(_angeboteCache.items||[]).find(r=>r.id===recId); if (rec) rec.fields.interne_dateien = (full.fields && full.fields.interne_dateien) || [];
+      const wrap=document.getElementById('ang-interne-dateien-wrap'); if (wrap) wrap.innerHTML=_angInterneDateienHtml(recId, (rec&&rec.fields)||{});
+    }
+  } catch(_){}
+}
+
 /* v9.27: Info-/Verlauf-Block im Angebot-Detail auf-/zuklappen (nur am Handy sichtbar/relevant). */
 function _angToggleInfo() {
   const b = document.getElementById('ang-info-body');
@@ -36337,14 +36401,21 @@ async function openAngebotDetail(recId) {
           : '')+
       '</div>'+
       '<div style="padding:14px 20px;flex:1;overflow-y:auto">'+
-        // v9.31: INTERNE Team-Notiz — nur intern, erscheint NIE im Kunden-PDF/an den Kunden. Auto-Speichern.
+        // v9.31/v9.52: INTERNE Team-Notiz + interne Dateien (PDF/JPG) — NUR für Admins sichtbar (User-Vorgabe: Techniker dürfen sie nicht sehen). Erscheint NIE im Kunden-PDF/-Push/an den Kunden.
+        (isAdmin() ?
         '<div style="background:#FEFCE8;border:1.5px solid #FACC15;border-radius:10px;padding:12px 14px;margin-bottom:14px">'+
           '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;flex-wrap:wrap">'+
-            '<span style="font-weight:700;font-size:12px;color:#854D0E">🔒 Interne Notiz <span style="font-weight:400;color:#A16207">— nur für uns, erscheint NICHT im Kundenangebot</span></span>'+
+            '<span style="font-weight:700;font-size:12px;color:#854D0E">🔒 Interne Notiz <span style="font-weight:400;color:#A16207">— nur für Admins, erscheint NICHT im Kundenangebot</span></span>'+
             '<span id="ang-notiz-status" style="font-size:11px;color:#A16207"></span>'+
           '</div>'+
           '<textarea id="ang-interne-notiz" rows="3" oninput="_angNotizDirty()" onblur="_angSaveInterneNotiz(\''+recId+'\', this.value)" placeholder="Notizen fürs Team (Preisverhandlung, Rückrufe, Besonderheiten…) — wird automatisch gespeichert, aber nie im PDF oder an den Kunden." style="width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #FACC15;border-radius:6px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;background:#fff;color:var(--txt)">'+escapeHtml(f.interne_notiz||'')+'</textarea>'+
-        '</div>'+
+          '<div id="ang-interne-dateien-wrap" style="margin-top:8px">'+_angInterneDateienHtml(recId, f)+'</div>'+
+          '<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;margin-top:8px">'+
+            '<span style="background:#FEF9C3;border:1px dashed #CA8A04;border-radius:6px;padding:5px 10px;font-size:12px;color:#854D0E">📎 PDF/JPG anhängen <span style="font-weight:400;color:#A16207">(intern, nur Admin)</span></span>'+
+            '<input type="file" accept=".pdf,.jpg,.jpeg,image/jpeg,application/pdf" multiple style="display:none" onchange="_angUploadInterneDatei(\''+recId+'\', this)">'+
+          '</label>'+
+        '</div>'
+        : '')+
         // v5.50: Bei Aufwand-Modus statt Summen-Block einen lila Hinweis
         (f.abrechnung_modus === 'aufwand'
           ? '<div style="background:#F3E8FF;border:2px solid #9333EA;border-radius:10px;padding:12px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;font-size:13px;color:#5B21B6"><span style="font-size:22px">⏱</span><div><div style="font-weight:700">Abrechnung nach tatsächlichem Aufwand</div><div style="font-size:11px;color:#7C3AED">Kein Endpreis — Verrechnung nach Stundennachweis. Siehe Stundensätze unten.</div></div></div>'
