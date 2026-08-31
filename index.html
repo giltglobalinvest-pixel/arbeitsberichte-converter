@@ -2803,8 +2803,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <button class="bf-cam-icon" id="bf-vid-flip" onclick="bfVideoFlip()" title="Kamera wechseln">↻</button>
   </div>
   <div class="bf-cam-stage" id="bf-vid-stage">
-    <div class="bf-cam-frame" id="bf-vid-frame" style="aspect-ratio:auto;width:100%;max-width:640px;background:#000">
-      <video id="bf-vid-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:contain"></video>
+    <div class="bf-cam-frame" id="bf-vid-frame" style="aspect-ratio:auto;width:100%;max-width:640px;max-height:72vh;background:#000;display:flex;align-items:center;justify-content:center;box-shadow:none">
+      <video id="bf-vid-video" autoplay playsinline muted style="position:relative;inset:auto;width:100%;height:auto;max-height:72vh;object-fit:contain;display:block;background:#000"></video>
     </div>
   </div>
   <div class="bf-cam-hint"><span id="bf-vid-timer" style="font-weight:700;font-variant-numeric:tabular-nums">00:00</span> · max. 30 Sek. · wird klein aufgenommen · <span id="bf-vid-rechint">Tap zum Starten</span></div>
@@ -2901,7 +2901,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.58';
+const APP_VERSION = 'v9.59';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15434,7 +15434,7 @@ async function openBerichtForm(auftragId, berichtId, opts) {
       <div class="auf-img-grid" id="bf-img-grid"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
         <label class="btn" style="cursor:pointer;display:inline-flex;align-items:center;gap:6px;font-weight:600">🖼 Aus Galerie / Datei
-          <input type="file" accept="image/*" multiple style="display:none" onchange="_bfPickFromGallery(event)"></label>
+          <input type="file" accept="image/*" multiple style="display:none" onchange="_bfAddImagesDirect(event)"></label>
         <button type="button" class="btn" onclick="openBfCamera()" style="display:inline-flex;align-items:center;gap:6px">📷 Kamera</button>
       </div>
       <div style="font-size:11px;color:var(--txt3);margin-top:6px">Bild aus der Galerie/Datei wählen oder mit der Kamera aufnehmen (mehrere möglich). Tap auf ein Bild zum Entfernen.</div>
@@ -15606,6 +15606,49 @@ function _bfRemoveExisting(idx) {
   _bfRenderImageGrid();
 }
 
+/* v9.59: Bild direkt aus Galerie/Datei hinzufügen — OHNE Cropper (der 1:1-Cropper war
+   auf manchen Geräten der Grund, warum kein Bild ankam). Nur runterskalieren + hinzufügen. */
+async function _bfAddImagesDirect(ev) {
+  const files = Array.from(ev.target.files || []).filter(f => (f.type||'').startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|gif|bmp)$/i.test(f.name||''));
+  ev.target.value = '';
+  if (!files.length) return;
+  let added = 0, failed = 0;
+  for (const f of files) {
+    try {
+      const dataUrl = await _bfDownscaleImageFile(f, 1600, 0.85);
+      const blob = await (await fetch(dataUrl)).blob();
+      const file = new File([blob], (f.name||'bild').replace(/\.[^.]+$/, '') + '.jpg', { type:'image/jpeg' });
+      _bfImages.push({ dataUrl, file, name: file.name });
+      added++;
+    } catch(e) { failed++; console.warn('[Bericht-Bild] Direkt-Add:', e && e.message || e); }
+  }
+  _bfRenderImageGrid();
+  if (added)  toast('✅ '+added+' Bild(er) hinzugefügt.', 'ok');
+  if (failed && !added) toast('⚠ Bild konnte nicht geladen werden ('+failed+'). Bitte anderes Format (JPG/PNG) versuchen.', 'err');
+}
+function _bfDownscaleImageFile(file, maxEdge, quality) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+        if (!w || !h) throw new Error('Bild ohne Maße');
+        const scale = Math.min(1, maxEdge / Math.max(w, h));
+        const cw = Math.max(1, Math.round(w*scale)), ch = Math.max(1, Math.round(h*scale));
+        const cv = document.createElement('canvas'); cv.width = cw; cv.height = ch;
+        const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, cw, ch);
+        const out = cv.toDataURL('image/jpeg', quality || 0.85);
+        try { URL.revokeObjectURL(url); } catch(_){}
+        resolve(out);
+      } catch(e) { try { URL.revokeObjectURL(url); } catch(_){} reject(e); }
+    };
+    img.onerror = () => { try { URL.revokeObjectURL(url); } catch(_){} reject(new Error('Bild nicht lesbar')); };
+    img.src = url;
+  });
+}
+
 /* v9.57: Interne Videos im Bericht-Form.
    Airtable-uploadAttachment akzeptiert max. 5 MB/Datei → größere Videos werden im Browser
    automatisch runterskaliert (Canvas + MediaRecorder, ~480p, Bitrate nach Länge) bis sie passen.
@@ -15696,8 +15739,16 @@ function _bfRemoveExistingVideo(idx) {
 
 /* v9.58: In-App-Videoaufnahme (getUserMedia + MediaRecorder), niedrige Auflösung + Bitrate + max 30 Sek.
    ⇒ Datei ist von Anfang an klein (<5 MB) ⇒ KEIN Verkleinern/Warten nötig. */
-const _bfVidRec = { stream:null, rec:null, chunks:[], timer:0, seconds:0, facing:'environment', recording:false, mime:'', saveOnStop:false };
+const _bfVidRec = { stream:null, rec:null, chunks:[], timer:0, seconds:0, facing:'environment', recording:false, mime:'', saveOnStop:false, hasAudio:true };
 const BF_VIDREC_MAX_SEC = 30;
+
+/* getUserMedia mit Audio, aber Fallback OHNE Audio — sonst killt eine blockierte
+   Mikrofon-Freigabe die ganze Aufnahme (auch das Bild). */
+async function _bfGetCamStream(facing) {
+  const vid = { facingMode: { ideal: facing }, width: { ideal: 640 }, height: { ideal: 480 } };
+  try { _bfVidRec.hasAudio = true;  return await navigator.mediaDevices.getUserMedia({ video: vid, audio: true }); }
+  catch(e) { _bfVidRec.hasAudio = false; return await navigator.mediaDevices.getUserMedia({ video: vid, audio: false }); }
+}
 
 async function openBfVideoRec() {
   const view = document.getElementById('bf-vid-view');
@@ -15711,13 +15762,12 @@ async function openBfVideoRec() {
     closeBfVideoRec(); return;
   }
   try {
-    _bfVidRec.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: _bfVidRec.facing }, width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: true,
-    });
+    _bfVidRec.stream = await _bfGetCamStream(_bfVidRec.facing);
     const v = document.getElementById('bf-vid-video');
     v.srcObject = _bfVidRec.stream; v.muted = true; v.setAttribute('playsinline','true');
+    v.onloadedmetadata = () => { v.play().catch(()=>{}); };
     await v.play().catch(()=>{});
+    if (!_bfVidRec.hasAudio) { const rh = document.getElementById('bf-vid-rechint'); if (rh) rh.textContent = 'Tap zum Starten (ohne Ton)'; }
   } catch(e) {
     toast('🚫 Kamera-Zugriff nicht möglich: '+String(e && e.message || e).slice(0,70)+' — bitte „📁 Datei wählen".', 'err');
     closeBfVideoRec();
@@ -15782,7 +15832,7 @@ async function bfVideoFlip() {
   _bfVidRec.facing = _bfVidRec.facing === 'environment' ? 'user' : 'environment';
   try {
     if (_bfVidRec.stream) _bfVidRec.stream.getTracks().forEach(t=>{try{t.stop()}catch(_){}});
-    _bfVidRec.stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ ideal:_bfVidRec.facing }, width:{ideal:640}, height:{ideal:480} }, audio:true });
+    _bfVidRec.stream = await _bfGetCamStream(_bfVidRec.facing);
     const v = document.getElementById('bf-vid-video'); v.srcObject = _bfVidRec.stream; await v.play().catch(()=>{});
   } catch(e) { toast('❌ Kamera-Wechsel: '+String(e && e.message || e).slice(0,60), 'err'); }
 }
