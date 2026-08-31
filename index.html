@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.56';
+const APP_VERSION = 'v9.57';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -6985,6 +6985,8 @@ async function ensureLegacyFirmaFields() {
   await ensureField('Berichte',     'auftrag_id',  'singleLineText');
   await ensureField('Berichte',     'auftrag_num', 'number');
   await ensureField('Berichte',     'bilder',      'multipleAttachments');
+  await ensureField('Berichte',     'interne_video',    'multipleAttachments');  // v9.57: internes Video (NICHT auf Kunden-PDF)
+  await ensureField('Berichte',     'interne_material', 'multilineText');         // v9.57: verbautes Material, intern
   // Freshdesk-Ticket-Verknüpfung
   await ensureField('Berichte',     'fd_ticket_id',  'number');
   await ensureField('Berichte',     'fd_ticket_url', 'singleLineText');
@@ -15303,6 +15305,7 @@ let _bfExistingSigTech = null;       // dataURL aus data_json
 let _bfExistingSigKunde = null;
 let _bfExistingKundeAbwesend = false;
 let _bfKeepBilder = [];              // [{id, url, filename, thumbnails}] – existing attachments to keep
+let _bfKeepVideos = [];             // v9.57: [{id,url,filename}] – bestehende interne Videos (Edit-Mode)
 
 /* v8.85: Nacharbeit-Bericht — nachträglicher Arbeitsbericht zu einem bereits ABGERECHNETEN Auftrag,
    OHNE den Hauptauftrag zu reaktivieren. Setzt am Bericht das Feld `nacharbeit` → wird von der
@@ -15337,6 +15340,8 @@ async function openBerichtForm(auftragId, berichtId, opts) {
   _bfExistingKundeAbwesend = false;
   _bfKeepBilder = [];
   _bfImages = [];
+  _bfKeepVideos = [];   // v9.57
+  _bfVideos = [];       // v9.57
 
   // Schema + Vorausfüllung aus Auftrag
   const today = new Date().toISOString().slice(0,10);
@@ -15377,6 +15382,9 @@ async function openBerichtForm(auftragId, berichtId, opts) {
       _bfKeepBilder = (Array.isArray(ef.bilder) ? ef.bilder : []).map(b => ({
         id: b.id, url: b.url, filename: b.filename || '', thumbnails: b.thumbnails || null
       }));
+      _bfKeepVideos = (Array.isArray(ef.interne_video) ? ef.interne_video : []).map(v => ({   // v9.57
+        id: v.id, url: v.url, filename: v.filename || ''
+      }));
     } catch(e) {
       toast('❌ Bericht konnte nicht geladen werden: '+e.message, 'err');
       return;
@@ -15405,6 +15413,23 @@ async function openBerichtForm(auftragId, berichtId, opts) {
       <div class="card-title">📸 Bilder zum Bericht <span style="font-weight:400;color:var(--txt3);font-size:11px;text-transform:none;letter-spacing:0;margin-left:6px">optional, werden ans PDF angehängt</span></div>
       <div class="auf-img-grid" id="bf-img-grid"></div>
       <div style="font-size:11px;color:var(--txt3);margin-top:6px">Tap auf "+" zum Hinzufügen (mehrere möglich). Tap auf ein Bild zum Entfernen.</div>
+    </div>
+  `;
+
+  // v9.57: Interne Notiz (verbautes Material + Video) — NIE auf dem Kunden-PDF.
+  const _bfMatVal = String(data.interne_material||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const internCard = `
+    <div class="card" style="background:#FFFBEB;border-color:#FCD34D">
+      <div class="card-title" style="color:#92400E">🔒 Interne Notiz <span style="font-weight:400;color:#B45309;font-size:11px;text-transform:none;letter-spacing:0;margin-left:6px">nur intern — landet NICHT auf dem Kunden-PDF</span></div>
+      <div class="field">
+        <div class="field-lbl" style="color:#92400E">Verbautes Material</div>
+        <textarea class="fi" data-f="interne_material" data-no-improve="1" rows="3" placeholder="z. B. 2× Türkontakt, 1× Steuerplatine, 3 m Steuerleitung …">${_bfMatVal}</textarea>
+      </div>
+      <div class="field" style="margin-top:12px">
+        <div class="field-lbl" style="color:#92400E">Video (intern) — zeigt, was gemacht wurde &amp; dass es funktioniert</div>
+        <div class="auf-img-grid" id="bf-video-grid"></div>
+        <div style="font-size:11px;color:#B45309;margin-top:6px">Große Videos werden automatisch verkleinert (auf ~5 MB, ~480p). Kurze Clips (10–30 Sek.) gehen am schnellsten. Mehrere möglich. Tap auf ein Video zum Entfernen.</div>
+      </div>
     </div>
   `;
 
@@ -15480,8 +15505,9 @@ async function openBerichtForm(auftragId, berichtId, opts) {
       <button type="button" class="btn" onclick="_bfImproveAllFields(this)" style="background:#7C3AED;color:#fff;border-color:#7C3AED;font-weight:600">✨ Alle Texte verbessern</button>
     </div>
   `;
-  document.getElementById('bf-body').innerHTML = infoCard + improveCard + translateCard + formHtml + imageCard + signCards;
+  document.getElementById('bf-body').innerHTML = infoCard + improveCard + translateCard + formHtml + imageCard + internCard + signCards;
   _bfRenderImageGrid();
+  _bfRenderVideoGrid();   // v9.57
   // Save-Button-Text passend
   const saveBtn = document.getElementById('bf-save-btn');
   if (saveBtn) saveBtn.textContent = _bfMode==='edit' ? '💾 Bericht aktualisieren' : '💾 Abschließen & PDF';
@@ -15547,6 +15573,190 @@ function _bfRemoveExisting(idx) {
   if (idx < 0 || idx >= _bfKeepBilder.length) return;
   _bfKeepBilder.splice(idx, 1);
   _bfRenderImageGrid();
+}
+
+/* v9.57: Interne Videos im Bericht-Form.
+   Airtable-uploadAttachment akzeptiert max. 5 MB/Datei → größere Videos werden im Browser
+   automatisch runterskaliert (Canvas + MediaRecorder, ~480p, Bitrate nach Länge) bis sie passen.
+   Klappt das Gerät das nicht (alter Browser) → klare Meldung + Datei wird verworfen. */
+let _bfVideos = [];   // [{ file, name, size, compressing?, progress?, pass?, passN? }]
+const BF_VIDEO_MAX_BYTES  = 5 * 1024 * 1024;      // hartes Airtable-Limit
+const BF_VIDEO_SAFE_BYTES = 4.6 * 1024 * 1024;    // Ziel mit Sicherheitsabstand
+const BF_VIDEO_MAX_SECONDS = 300;                 // >5 Min: Realtime-Re-Encode zu lang → ablehnen
+
+function _bfRenderVideoGrid() {
+  const el = document.getElementById('bf-video-grid');
+  if (!el) return;
+  const fmtMB = b => (b/1048576).toFixed(1).replace('.',',')+' MB';
+  const clean = s => String(s||'').replace(/[<>&"]/g,'');
+  const existing = (_bfKeepVideos||[]).map((v,i) =>
+    '<div class="auf-img-thumb" title="Tap zum Entfernen" onclick="_bfRemoveExistingVideo('+i+')" style="display:flex;align-items:center;justify-content:center;background:#1F2937;color:#fff;font-size:10px;line-height:1.3;text-align:center;padding:6px">'+
+      '<span>🎬<br>'+(clean(v.filename).slice(0,16)||'Video')+'</span>'+
+      '<button class="auf-img-del" style="display:flex" onclick="event.stopPropagation();_bfRemoveExistingVideo('+i+')">✕</button>'+
+    '</div>'
+  ).join('');
+  const neu = _bfVideos.map((it,i) => {
+    if (it.compressing) {
+      const pct = Math.round((it.progress||0)*100);
+      const passTxt = (it.passN && it.passN>1) ? ('Durchg. '+it.pass+'/'+it.passN+' · ') : '';
+      return '<div class="auf-img-thumb" title="Wird verkleinert…" style="display:flex;align-items:center;justify-content:center;background:#B45309;color:#fff;font-size:10px;line-height:1.3;text-align:center;padding:6px">'+
+        '<span>⏳<br>verkleinere<br>'+passTxt+pct+'%</span>'+
+      '</div>';
+    }
+    return '<div class="auf-img-thumb" title="Tap zum Entfernen" onclick="_bfRemoveVideo('+i+')" style="display:flex;align-items:center;justify-content:center;background:#065F46;color:#fff;font-size:10px;line-height:1.3;text-align:center;padding:6px">'+
+      '<span>🎬<br>'+fmtMB(it.size)+(it.compressed?'<br><span style="opacity:.75">verkleinert</span>':'')+'</span>'+
+      '<button class="auf-img-del" style="display:flex" onclick="event.stopPropagation();_bfRemoveVideo('+i+')">✕</button>'+
+    '</div>';
+  }).join('');
+  el.innerHTML = existing + neu +
+    '<label class="auf-img-add" style="cursor:pointer;display:flex;align-items:center;justify-content:center" title="Video hochladen (große Clips werden automatisch verkleinert)">+'+
+      '<input type="file" accept="video/*" style="display:none" onchange="_bfPickVideo(event)">'+
+    '</label>';
+}
+
+async function _bfPickVideo(ev) {
+  const files = Array.from(ev.target.files || []).filter(f => (f.type||'').startsWith('video/') || /\.(mp4|mov|m4v|webm|3gp|avi|mkv)$/i.test(f.name||''));
+  ev.target.value = '';
+  if (!files.length) return;
+  for (const f of files) {
+    if (f.size <= BF_VIDEO_MAX_BYTES) {
+      _bfVideos.push({ file: f, name: f.name, size: f.size });
+      _bfRenderVideoGrid();
+      continue;
+    }
+    // Zu groß → automatisch verkleinern (Platzhalter mit Fortschritt anzeigen)
+    const ph = { file: null, name: f.name, size: f.size, compressing: true, progress: 0, pass: 1, passN: 1, _lastPct: -1 };
+    _bfVideos.push(ph);
+    _bfRenderVideoGrid();
+    try {
+      const out = await _bfFitVideoToLimit(f, (pi, pn, fr) => {
+        const p = Math.round(fr*100);
+        if (p !== ph._lastPct || pi+1 !== ph.pass) { ph._lastPct = p; ph.progress = fr; ph.pass = pi+1; ph.passN = pn; _bfRenderVideoGrid(); }
+      });
+      ph.file = out; ph.name = out.name; ph.size = out.size; ph.compressing = false; ph.compressed = true;
+      _bfRenderVideoGrid();
+      toast('✅ Video auf '+(out.size/1048576).toFixed(1).replace('.',',')+' MB verkleinert.', 'ok');
+    } catch(e) {
+      const idx = _bfVideos.indexOf(ph); if (idx >= 0) _bfVideos.splice(idx, 1);
+      _bfRenderVideoGrid();
+      const msg = String(e && e.message || e);
+      if (msg === 'unsupported')      toast('⚠ Dieses Gerät/Browser kann Videos nicht automatisch verkleinern. Bitte einen kürzeren Clip (unter 5 MB) aufnehmen.', 'err');
+      else if (msg === 'toolong')     toast('⚠ Video zu lang für die automatische Verkleinerung (max. ~5 Min). Bitte einen kürzeren Clip aufnehmen.', 'err');
+      else if (msg === 'toobig')      toast('⚠ Video ließ sich nicht unter 5 MB bringen. Bitte einen kürzeren Clip aufnehmen.', 'err');
+      else                            toast('⚠ Video-Verkleinerung fehlgeschlagen: '+msg.slice(0,90), 'err');
+      console.warn('[Bericht-Video] Kompression:', e);
+    }
+  }
+}
+function _bfRemoveVideo(idx) {
+  if (idx < 0 || idx >= _bfVideos.length) return;
+  if (_bfVideos[idx].compressing) return;   // während der Kompression nicht entfernbar
+  _bfVideos.splice(idx, 1);
+  _bfRenderVideoGrid();
+}
+function _bfRemoveExistingVideo(idx) {
+  if (idx < 0 || idx >= _bfKeepVideos.length) return;
+  _bfKeepVideos.splice(idx, 1);
+  _bfRenderVideoGrid();
+}
+
+/* Wählt einen von MediaRecorder unterstützten Container/Codec (iOS→mp4, Chrome→webm). */
+function _bfPickRecorderMime() {
+  if (!('MediaRecorder' in window)) return '';
+  const cands = ['video/mp4;codecs=h264', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  for (const m of cands) { try { if (MediaRecorder.isTypeSupported(m)) return m; } catch(_){} }
+  return '';
+}
+
+/* Mehrere Durchgänge mit sinkender Auflösung/Bitrate, bis das Video unter das Limit passt. */
+async function _bfFitVideoToLimit(file, onProgress) {
+  if (!('MediaRecorder' in window) || !HTMLCanvasElement.prototype.captureStream) throw new Error('unsupported');
+  const passes = [
+    { maxEdge: 720, target: 4.3*1024*1024 },
+    { maxEdge: 540, target: 3.9*1024*1024 },
+    { maxEdge: 420, target: 3.4*1024*1024 },
+  ];
+  let last = null;
+  for (let i = 0; i < passes.length; i++) {
+    const p = passes[i];
+    const out = await _bfEncodeVideo(file, { maxEdge: p.maxEdge, targetBytes: p.target, fps: 24 }, (fr) => onProgress && onProgress(i, passes.length, fr));
+    last = out;
+    if (out.size <= BF_VIDEO_SAFE_BYTES) return out;
+  }
+  if (last && last.size <= BF_VIDEO_MAX_BYTES) return last;
+  throw new Error('toobig');
+}
+
+/* Ein Re-Encode-Durchgang: Video abspielen, skaliert auf Canvas zeichnen, Canvas-Stream aufnehmen.
+   Läuft in Echtzeit (Clip-Dauer = Encode-Dauer). Ton wird weggelassen (Robustheit; es zählt das Bild). */
+function _bfEncodeVideo(file, opts, onProgress) {
+  return new Promise((resolve, reject) => {
+    const mime = _bfPickRecorderMime();
+    if (!mime) return reject(new Error('unsupported'));
+    const holder = document.createElement('div');
+    holder.style.cssText = 'position:fixed;left:-10000px;top:0;width:2px;height:2px;overflow:hidden;opacity:0;pointer-events:none';
+    const video = document.createElement('video');
+    video.muted = true; video.defaultMuted = true; video.playsInline = true;
+    video.setAttribute('playsinline','true'); video.setAttribute('muted','true');
+    video.preload = 'auto';
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    holder.appendChild(video); document.body.appendChild(holder);
+    let rec = null, raf = 0, settled = false;
+    const cleanup = () => {
+      try { cancelAnimationFrame(raf); } catch(_){}
+      try { if (rec && rec.state !== 'inactive') rec.stop(); } catch(_){}
+      try { video.pause(); } catch(_){}
+      try { URL.revokeObjectURL(url); } catch(_){}
+      try { holder.remove(); } catch(_){}
+    };
+    const fail = (e) => { if (settled) return; settled = true; cleanup(); reject(e instanceof Error ? e : new Error(String(e||'Fehler'))); };
+    video.onerror = () => fail(new Error('Video nicht lesbar'));
+    video.onloadedmetadata = () => {
+      let dur = video.duration;
+      if (!isFinite(dur) || dur <= 0) return fail(new Error('Videolänge unbekannt'));
+      if (dur > BF_VIDEO_MAX_SECONDS) return fail(new Error('toolong'));
+      const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+      const scale = Math.min(1, opts.maxEdge / Math.max(vw, vh));
+      const cw = Math.max(2, Math.round(vw*scale/2)*2), ch = Math.max(2, Math.round(vh*scale/2)*2);
+      const canvas = document.createElement('canvas'); canvas.width = cw; canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      let vbps = Math.floor(opts.targetBytes*8/dur);
+      vbps = Math.max(250000, Math.min(vbps, 8000000));
+      let stream;
+      try { stream = canvas.captureStream(opts.fps || 24); } catch(_) { return fail(new Error('unsupported')); }
+      try { rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: vbps }); }
+      catch(_) { try { rec = new MediaRecorder(stream); } catch(e2) { return fail(new Error('unsupported')); } }
+      const chunks = [];
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = () => {
+        if (settled) return; settled = true;
+        cleanup();
+        const type = (mime.split(';')[0]) || 'video/webm';
+        const ext = type.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+        const base = (file.name || 'video').replace(/\.[^.]+$/, '') || 'video';
+        const blob = new Blob(chunks, { type });
+        resolve(new File([blob], base + '_klein.' + ext, { type }));
+      };
+      const draw = () => {
+        if (settled) return;
+        try { ctx.drawImage(video, 0, 0, cw, ch); } catch(_){}
+        if (onProgress) onProgress(Math.min(1, video.currentTime / dur));
+        raf = requestAnimationFrame(draw);
+      };
+      video.onended = () => {
+        try { ctx.drawImage(video, 0, 0, cw, ch); } catch(_){}
+        if (onProgress) onProgress(1);
+        try { cancelAnimationFrame(raf); } catch(_){}
+        setTimeout(() => { try { if (rec && rec.state !== 'inactive') rec.stop(); } catch(_){} }, 120);
+      };
+      try { rec.start(1000); } catch(_) { return fail(new Error('unsupported')); }
+      video.currentTime = 0;
+      const pp = video.play();
+      if (pp && pp.catch) pp.then(() => draw()).catch(() => fail(new Error('unsupported')));
+      else draw();
+    };
+  });
 }
 
 /* ──────────────────────────────────────────────────────────────
@@ -16133,6 +16343,7 @@ async function _bfImproveAllFields(btn) {
   const { flow, cap } = _bfFieldCapacities(_bfCurrentTmpl);
   const els = [...root.querySelectorAll('textarea[data-f], input[data-f]')]
     .filter(el => {
+      if (el.hasAttribute('data-no-improve')) return false;   // v9.57: interne Notiz (Material) nicht anfassen
       if (el.tagName === 'INPUT') {
         const t = (el.type || '').toLowerCase();
         if (t === 'number' || t === 'date' || t === 'hidden' || t === 'checkbox' || t === 'radio') return false;
@@ -16244,6 +16455,18 @@ async function saveBerichtFromForm() {
     if (_bfMode !== 'edit' && (!_sigKundePad || _sigKundePad.isEmpty())) {
       return toast('Bitte Kunden-Unterschrift leisten (oder "Niemand anwesend" anhaken).', 'err');
     }
+  }
+
+  // v9.57: Ein noch laufendes Video-Verkleinern muss erst fertig sein.
+  if (_bfVideos.some(v => v.compressing)) {
+    return toast('Ein Video wird noch verkleinert — bitte kurz warten und dann erneut speichern.', 'err');
+  }
+  // v9.57: Zum ABSCHLIESSEN (Neuanlage) muss mindestens ein Bild ODER ein internes Video vorhanden sein.
+  // (Beim nachträglichen Bearbeiten alter Berichte wird das NICHT erzwungen, um Alt-Berichte ohne Medien
+  //  weiter editierbar zu halten.)
+  const _bfMedienCount = _bfImages.length + (_bfKeepBilder?.length||0) + _bfVideos.filter(v=>v.file).length + (_bfKeepVideos?.length||0);
+  if (_bfMode !== 'edit' && _bfMedienCount === 0) {
+    return toast('Bitte mindestens ein Bild oder ein internes Video hochladen — der Bericht kann sonst nicht abgeschlossen werden.', 'err');
   }
 
   // durchgefuehrt_von angleichen, falls leer
@@ -16365,7 +16588,9 @@ async function saveBerichtFromForm() {
           techniker:    techName,
           fname:        fname,
           data_json:    dataJsonStr,
+          interne_material: data.interne_material || '',                  // v9.57 (intern)
           bilder:       _bfKeepBilder.map(b => ({ id: b.id })),
+          interne_video: _bfKeepVideos.map(v => ({ id: v.id })),          // v9.57: behaltene Videos
           out_pdf:      [],
         }}),
       }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message||'PATCH-Fehler'); });
@@ -16379,6 +16604,15 @@ async function saveBerichtFromForm() {
         for (const it of _bfImages) {
           try { await atUploadFile(recId, 'bilder', it.file); }
           catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e.message); }
+        }
+      }
+      { const _vids = _bfVideos.filter(v=>v.file);   // v9.57: neue interne Videos hochladen
+        if (_vids.length > 0) {
+          btn.textContent = '☁ Lade '+_vids.length+' Video'+(_vids.length!==1?'s':'')+' hoch…';
+          for (const it of _vids) {
+            try { await atUploadFile(recId, 'interne_video', it.file); }
+            catch(e) { console.warn('Video-Upload fehlgeschlagen:', e.message); toast('⚠ Ein Video konnte nicht hochgeladen werden: '+String(e.message||e).slice(0,80), 'err'); }
+          }
         }
       }
 
@@ -16400,6 +16634,7 @@ async function saveBerichtFromForm() {
         fname:        fname,
         subfolder:    SUBFOLDERS[af.tmpl] || 'Sonstige',
         data_json:    dataJsonStr,
+        interne_material: data.interne_material || '',   // v9.57 (intern, nicht auf Kunden-PDF)
         auftrag_id:   _currentBerichtAuftragId,
         // v5.60: korrekte Nummer aus ext_id, falls auftrag_num veraltet ist
         auftrag_num:  +_dispAuftragNum(af) || af.auftrag_num || null,
@@ -16418,6 +16653,15 @@ async function saveBerichtFromForm() {
         for (const it of _bfImages) {
           try { await atUploadFile(recId, 'bilder', it.file); }
           catch(e) { console.warn('Bild-Upload fehlgeschlagen:', e.message); }
+        }
+      }
+      { const _vids = _bfVideos.filter(v=>v.file);   // v9.57: interne Videos hochladen
+        if (_vids.length > 0) {
+          btn.textContent = '☁ Lade '+_vids.length+' Video'+(_vids.length!==1?'s':'')+' hoch…';
+          for (const it of _vids) {
+            try { await atUploadFile(recId, 'interne_video', it.file); }
+            catch(e) { console.warn('Video-Upload fehlgeschlagen:', e.message); toast('⚠ Ein Video konnte nicht hochgeladen werden: '+String(e.message||e).slice(0,80), 'err'); }
+          }
         }
       }
 
