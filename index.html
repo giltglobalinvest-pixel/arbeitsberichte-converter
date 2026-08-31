@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.55';
+const APP_VERSION = 'v9.56';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -4567,7 +4567,7 @@ function _pdfArbeitModernBody(doc, d, num, sigs, header, theme) {
   doc.text('AUFTRAGSNUMMER', mr, y, {align:'right'});
   y += 4.5;
   p.ft(11,true,NAVY);
-  doc.text(_sanPdf(d.datum||'—'), ml, y);
+  doc.text(_sanPdf(_bfDatumDE(d.datum)||'—'), ml, y);
   doc.text(_sanPdf(d.auftragsnummer||'—'), mr, y, {align:'right'});
   y += 6;
   doc.setDrawColor(...GREY_X); doc.setLineWidth(0.3); doc.line(ml,y,mr,y); y += 6;
@@ -4649,6 +4649,18 @@ function _pdfArbeitModernBody(doc, d, num, sigs, header, theme) {
   return doc;
 }
 
+/* v9.56: Berichts-Datum im PDF als tt-mm-jjjj (DD-MM-YYYY, Bindestriche) — User-Wunsch.
+   Akzeptiert ISO (YYYY-MM-DD) sowie dd.mm.yyyy / dd-mm-yyyy / dd/mm/yyyy; sonst unverändert. */
+function _bfDatumDE(s) {
+  s = String(s == null ? '' : s).trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);              // ISO YYYY-MM-DD
+  if (m) return String(m[3]).padStart(2,'0')+'-'+String(m[2]).padStart(2,'0')+'-'+m[1];
+  m = s.match(/^(\d{1,2})[.\-\/](\d{1,2})[.\-\/](\d{4})/);       // dd.mm.yyyy / dd-mm-yyyy / dd/mm/yyyy
+  if (m) return String(m[1]).padStart(2,'0')+'-'+String(m[2]).padStart(2,'0')+'-'+m[3];
+  return s;
+}
+
 /* v7.13: Text-Box für Classic-/Wartungs-Layouts, die mit dem Inhalt wächst und bei
    Überlauf auf eine Folgeseite umbricht — statt langen Text abzuschneiden. Gibt neues y zurück. */
 function _bfBoxGrow(doc, p, ml, cw, y, value, minH) {
@@ -4703,7 +4715,7 @@ function pdfArbeitClassic(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   y=pdfHeader(doc,'Installationsbericht','Aufzug',LOGO_B64,48,9.3,ml,mr);
-  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(d.datum||'',ml+27,y);doc.text('Auftragsnummer:',105,y);doc.text(d.auftragsnummer||'',133,y);y+=8;
+  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(_bfDatumDE(d.datum),ml+27,y);doc.text('Auftragsnummer:',105,y);doc.text(d.auftragsnummer||'',133,y);y+=8;
   y=addStandortHeader(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustand Aufzug bei Ankunft');y=addZustandAnkunft(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Anlagendaten');y=addAnlagendatenArbeit(doc,d,y,ml,cw,p);
@@ -4722,7 +4734,7 @@ function pdfWartung(d,num,sigs) {
   const{jsPDF}=window.jspdf;const doc=new jsPDF({unit:'mm',format:'a4'});
   const ml=14,mr=196,cw=182,H=297;const p=pH(doc);let y=14;
   y=pdfHeader(doc,'Wartungsbericht','Aufzug',LOGO_B64,48,9.3,ml,mr);
-  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(d.datum||'',ml+27,y);doc.text('|  Auftragsnummer:',ml+65,y);doc.text(d.auftragsnummer||'',ml+93,y);doc.text('|  Vertragsnummer:',ml+128,y);doc.text(d.vertragsnummer||'',ml+155,y);y+=8;
+  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(_bfDatumDE(d.datum),ml+27,y);doc.text('|  Auftragsnummer:',ml+65,y);doc.text(d.auftragsnummer||'',ml+93,y);doc.text('|  Vertragsnummer:',ml+128,y);doc.text(d.vertragsnummer||'',ml+155,y);y+=8;
   y=addStandortHeader(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustand Aufzug bei Ankunft');y=addZustandAnkunft(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Anlagendaten');const fw=38,fv=cw-fw;p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,fw,7,'FD');doc.setFillColor(255,255,255);doc.rect(ml+fw,y,fv,7,'FD');p.bd();doc.rect(ml,y,cw,7,'D');p.ft(8.5,true,p.DK);doc.text('Fabriknummer:',ml+2,y+5);p.ft(9,false,p.DK);doc.text(d.fabriknummer||'',ml+fw+2,y+5);y+=12;
@@ -4757,7 +4769,7 @@ function pdfAufzugAClassic(d,num,sigs) {
   p.ft(22,true,[40,40,40]);doc.text('Installationsbericht',ml,y);y+=7;p.ft(12,true,[40,40,40]);doc.text('Aufzug',ml,y);
   try{doc.addImage('data:image/png;base64,'+AUFZUG_LOGO_B64,'PNG',148,9,48,9.8);}catch(e){}
   y+=5;doc.setDrawColor(160,160,160);doc.setLineWidth(0.3);doc.line(ml,y,mr,y);y+=6;
-  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(d.datum||'',ml+27,y);doc.text('Auftragsnummer:',105,y);doc.text(d.auftragsnummer||'',133,y);y+=8;
+  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(_bfDatumDE(d.datum),ml+27,y);doc.text('Auftragsnummer:',105,y);doc.text(d.auftragsnummer||'',133,y);y+=8;
   y=addStandortHeader(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustand Aufzug bei Ankunft');y=addZustandAnkunft(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Anlagendaten');y=addAnlagendatenArbeit(doc,d,y,ml,cw,p);
@@ -4778,7 +4790,7 @@ function pdfAufzugW(d,num,sigs) {
   p.ft(22,true,[40,40,40]);doc.text('Wartungsbericht',ml,y);y+=7;p.ft(12,true,[40,40,40]);doc.text('Aufzug',ml,y);
   try{doc.addImage('data:image/png;base64,'+AUFZUG_LOGO_B64,'PNG',148,9,48,9.8);}catch(e){}
   y+=5;doc.setDrawColor(160,160,160);doc.setLineWidth(0.3);doc.line(ml,y,mr,y);y+=6;
-  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(d.datum||'',ml+27,y);doc.text('|  Auftragsnummer:',ml+65,y);doc.text(d.auftragsnummer||'',ml+93,y);doc.text('|  Vertragsnummer:',ml+128,y);doc.text(d.vertragsnummer||'',ml+155,y);y+=8;
+  p.ft(9,false,p.DK);doc.text('Bericht vom:',ml,y);doc.text(_bfDatumDE(d.datum),ml+27,y);doc.text('|  Auftragsnummer:',ml+65,y);doc.text(d.auftragsnummer||'',ml+93,y);doc.text('|  Vertragsnummer:',ml+128,y);doc.text(d.vertragsnummer||'',ml+155,y);y+=8;
   y=addStandortHeader(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Zustand Aufzug bei Ankunft');y=addZustandAnkunft(doc,d,y,ml,cw,p);
   y=p.sh(ml,y,cw,'Anlagendaten');const fw2=38,fv2=cw-fw2;p.bd();doc.setFillColor(...p.GH);doc.rect(ml,y,fw2,7,'FD');doc.setFillColor(255,255,255);doc.rect(ml+fw2,y,fv2,7,'FD');p.bd();doc.rect(ml,y,cw,7,'D');p.ft(8.5,true,p.DK);doc.text('Fabriknummer:',ml+2,y+5);p.ft(9,false,p.DK);doc.text(d.fabriknummer||'',ml+fw2+2,y+5);y+=12;
