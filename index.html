@@ -2901,7 +2901,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.59';
+const APP_VERSION = 'v9.60';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -3527,15 +3527,19 @@ let editMode = { active: false, recId: null, num: null };
   };
 })();
 
-async function atRead(table, filter) {
+async function atRead(table, filter, fields) {
   // Paginiert über offset → liefert ALLE Records (nicht nur erste 100)
+  // fields (optional): nur diese Felder holen → viel kleinere Payload = schneller.
   const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
   const baseUrl = 'https://api.airtable.com/v0/' + baseId + '/' + encodeURIComponent(table);
+  const fieldsQuery = (Array.isArray(fields) && fields.length)
+    ? fields.map(f => '&fields%5B%5D=' + encodeURIComponent(f)).join('')
+    : '';
   let records = [];
   let offset = null;
   let safety = 0;
   do {
-    let url = baseUrl + '?pageSize=100';
+    let url = baseUrl + '?pageSize=100' + fieldsQuery;
     if (filter) url += '&filterByFormula=' + encodeURIComponent(filter);
     if (offset) url += '&offset=' + encodeURIComponent(offset);
     const r = await fetch(url, { headers: { 'Authorization': 'Bearer ' + APP_CONFIG.AIRTABLE_READ_KEY } });
@@ -5456,7 +5460,7 @@ async function doSaveAs(data, num, incrementCounter) {
   try {
     btn.textContent='☁ Prüfe Berichtsnummer…';
     try {
-      const allRecs = await atRead('Berichte', null);
+      const allRecs = await atRead('Berichte', null, ['firma','tmpl','bericht_num']);   // v9.60: nur Nummer nötig → schnell
       const curFirma = getCurrentFirmaSlug();
       const firmaRecs = allRecs.filter(r => _firmaOfRec(r) === curFirma);
       if (firmaRecs.length > 0) {
@@ -8147,7 +8151,9 @@ async function _aufLoadBerichteForList(firmaSlug) {
   if (_aufBerichteByAuftrag.map && _aufBerichteByAuftrag.firma === firmaSlug && (Date.now() - _aufBerichteByAuftrag.loadedAt) < 5*60_000) return;
   _aufBerichteByAuftrag.loading = true;
   try {
-    const all = await atRead('Berichte', null);
+    // v9.60: NUR die kleinen Felder holen (kein data_json/out_pdf/interne_video/bilder)
+    //   → Payload ~50 KB statt ~3 MB → Liste erscheint in <1 s statt ~3 s.
+    const all = await atRead('Berichte', null, ['firma','tmpl','auftrag_id','bericht_num','fd_ticket_id','fd_ticket_url','datum','nacharbeit']);
     const map = Object.create(null);
     for (const rec of all) {
       const f = rec.fields || {};
@@ -16712,7 +16718,7 @@ async function saveBerichtFromForm() {
       const d0 = await r0.json();
       berichtNum = d0.fields?.bericht_num || af.bericht_num || 0;
     } else {
-      const allBerichte = await atRead('Berichte', null);
+      const allBerichte = await atRead('Berichte', null, ['firma','tmpl','bericht_num']);   // v9.60: nur Nummer nötig → schnell
       const fbRecs = allBerichte.filter(r => _firmaOfRec(r) === firmaSlug);
       const startNum = +((getCurrentFirma()?.start_num) || 1);
       const fbMax = fbRecs.length > 0 ? Math.max(...fbRecs.map(r => r.fields.bericht_num || 0)) : 0;
