@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.53';
+const APP_VERSION = 'v9.54';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15458,7 +15458,15 @@ async function openBerichtForm(auftragId, berichtId, opts) {
       </div>
     </div>
   `;
-  document.getElementById('bf-body').innerHTML = infoCard + translateCard + formHtml + imageCard + signCards;
+  // v9.54: KI-Politur — verbessert alle Textfelder sprachlich+fachlich, OHNE die PDF-Feldgröße zu sprengen.
+  const improveCard = `
+    <div class="card" data-no-translate="true" style="background:#F5F3FF;border-color:#C4B5FD">
+      <div class="card-title" style="color:#5B21B6">✨ Text per KI verbessern</div>
+      <div style="font-size:12px;color:#5B21B6;line-height:1.5;margin-bottom:10px">Bessert alle ausgefüllten Textfelder sprachlich &amp; fachlich auf (saubere Fachsprache, korrekte Rechtschreibung) — <strong>ohne die Feldgröße im PDF zu sprengen</strong>. Inhalte werden nicht erfunden. Bitte danach kurz prüfen.</div>
+      <button type="button" class="btn" onclick="_bfImproveAllFields(this)" style="background:#7C3AED;color:#fff;border-color:#7C3AED;font-weight:600">✨ Alle Texte verbessern</button>
+    </div>
+  `;
+  document.getElementById('bf-body').innerHTML = infoCard + improveCard + translateCard + formHtml + imageCard + signCards;
   _bfRenderImageGrid();
   // Save-Button-Text passend
   const saveBtn = document.getElementById('bf-save-btn');
@@ -16071,6 +16079,90 @@ async function _bfTranslateAllFields(btn) {
   } catch(e) {
     toast('❌ Übersetzung: '+(e.message||e).slice(0,180),'err');
     console.error('[Bericht-Translate]', e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+/* v9.54: „Text per KI verbessern" — bessert alle Textfelder sprachlich + fachlich auf (sauberes Fachdeutsch,
+   Rechtschreibung/Grammatik), OHNE Fakten zu erfinden. HARTE Regel: jeder verbesserte Text ≤ Original-Zeichenanzahl,
+   damit die PDF-Feldbox (field(...maxLines) clippt) NICHT überschritten wird. Zu lang → am Wortende kürzen bzw. Original behalten. */
+async function _bfImproveAllFields(btn) {
+  if (!APP_KEYS.anthropicKey) return toast('Anthropic-API-Key fehlt (Admin).','err');
+  const root = document.getElementById('bf-body');
+  if (!root) return;
+  const els = [...root.querySelectorAll('textarea[data-f], input[data-f]')]
+    .filter(el => {
+      if (el.tagName === 'INPUT') {
+        const t = (el.type || '').toLowerCase();
+        if (t === 'number' || t === 'date' || t === 'hidden' || t === 'checkbox' || t === 'radio') return false;
+      }
+      return true;
+    });
+  const items = [];
+  for (const el of els) {
+    const v = (el.value || '').trim();
+    if (!v || v.length < 3) continue;
+    if (/^[\d\s.,:;_\-+=\/\\#@%§]+$/.test(v)) continue;   // reine Zahlen/Symbole überspringen
+    items.push({ el, original: v, max: v.length });        // max = Original-Zeichenanzahl → passt garantiert in die PDF-Box
+  }
+  if (!items.length) return toast('Keine Texte zum Verbessern vorhanden','');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Verbessere '+items.length+' Feld(er) …';
+  try {
+    const tool = {
+      name: 'submit_improved_texts',
+      description: 'Liefert die sprachlich + fachlich verbesserten deutschen Berichtstexte in derselben Reihenfolge.',
+      input_schema: {
+        type: 'object', required: ['improved'],
+        properties: {
+          improved: { type: 'array', description: 'Verbesserte Texte, gleiche Reihenfolge wie die Eingabe.', items: { type: 'string' } },
+        },
+      },
+    };
+    const numbered = items.map((it, i) => '['+(i+1)+'] (max '+it.max+' Zeichen)\n'+it.original).join('\n\n---\n\n');
+    const prompt =
+      'Du bekommst Feld-Texte eines deutschen Aufzugstechniker-Arbeitsberichts. Verbessere JEDEN Text, damit der Bericht sauber, professionell und fachlich korrekt wirkt.\n\n'+
+      'Regeln:\n'+
+      '• Rechtschreibung, Grammatik und Zeichensetzung korrigieren; umgangssprachliche/abgekürzte Formulierungen in sachliches Fachdeutsch bringen.\n'+
+      '• Fachbegriffe der Aufzugstechnik korrekt verwenden (Schacht, Antrieb, Steuerung, Frequenzumrichter, Türantrieb, Bremse, Kabine, Schachttür, Tableau, Notrufsystem, Fangvorrichtung, …).\n'+
+      '• INHALT/FAKTEN NICHT verändern oder erfinden — nur die Formulierung. Zahlen, Maße, Namen, Produktnamen (KONE, Schindler, OTIS, TK, Aszendio) unverändert lassen.\n'+
+      '• GANZ WICHTIG: Jeder verbesserte Text darf die angegebene Zeichen-Obergrenze NICHT überschreiten (gleich viele Zeichen oder weniger). Lieber prägnant kürzen als überschreiten — sonst wird er im PDF abgeschnitten.\n'+
+      '• Ist ein Text bereits gut, gib ihn (höchstens leicht geglättet) zurück. Keine Vorrede, keine Anführungszeichen — nur der reine Feldtext.\n\n'+
+      'TEXTE:\n\n'+numbered+'\n\n'+
+      'Rufe submit_improved_texts mit den verbesserten Texten in derselben Reihenfolge auf.';
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: 6000, tools:[tool], tool_choice:{ type:'tool', name:'submit_improved_texts' }, messages:[{ role:'user', content: prompt }] }),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data?.error?.message || ('API '+r.status));
+    const block = (data?.content||[]).find(b => b.type === 'tool_use');
+    const improved = block?.input?.improved;
+    if (!Array.isArray(improved)) throw new Error('Keine Verbesserungen vom Tool erhalten');
+    let n = 0, skipped = 0;
+    for (let i = 0; i < items.length; i++) {
+      let t = improved[i];
+      if (!(t && typeof t === 'string' && t.trim())) continue;
+      t = t.trim();
+      // Sicherheitsnetz: NIE länger als das Original (sonst PDF-Clipping). Zu lang → am Wortende kürzen, sonst Original behalten.
+      if (t.length > items[i].max) {
+        const cut = t.slice(0, items[i].max);
+        const atWord = cut.replace(/\s+\S*$/, '').trim();
+        t = (atWord.length >= Math.floor(items[i].max * 0.6)) ? atWord : items[i].original;
+        if (t === items[i].original) { skipped++; continue; }
+      }
+      items[i].el.dataset.origImprove = items[i].original;   // Original zur Sicherheit merken
+      items[i].el.value = t;
+      n++;
+    }
+    toast('✨ '+n+'/'+items.length+' Feld(er) verbessert'+(skipped?(' · '+skipped+' übersprungen (zu lang für die PDF-Box)'):'')+' — bitte kurz prüfen & speichern','ok');
+  } catch(e) {
+    toast('❌ Verbessern: '+String((e.message||e)).slice(0,180),'err');
+    console.error('[Bericht-Improve]', e);
   } finally {
     btn.disabled = false;
     btn.textContent = orig;
