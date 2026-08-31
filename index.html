@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.50';
+const APP_VERSION = 'v9.51';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -36324,6 +36324,8 @@ async function openAngebotDetail(recId) {
         (f.erp_angebot_id ? '<div style="margin-top:6px;padding:6px 10px;background:#ECFDF5;border-left:3px solid #10b981;border-radius:4px"><strong style="color:#065F46">📤 ERP-Angebot:</strong> '+(f.erp_angebot_url ? '<a href="'+escapeHtml(f.erp_angebot_url)+'" target="_blank" rel="noopener" style="color:#2152A9;font-weight:600">Angebot '+escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id)+' öffnen ↗</a>' : escapeHtml(f.erp_angebot_nummer||f.erp_angebot_id))+'</div>' : '')+
         // v7.79: ERP-Aufträge (Split über Teilvorgänge) — Hinweis wenn bereits angelegt
         (f.erp_auftrag_id ? '<div style="margin-top:6px;padding:6px 10px;background:#EEF2FF;border-left:3px solid #3730A3;border-radius:4px;font-size:12px"><strong style="color:#3730A3">🛗 ERP-Aufträge:</strong> Hauptauftrag <strong>'+escapeHtml(f.erp_auftrag_nummer||f.erp_auftrag_id)+'</strong>'+((function(){ try{ const a=JSON.parse(f.erp_auftrag_split_json||'[]')||[]; const t=a.filter(x=>x&&x.art==='teil').length; return t? ' + '+t+' Teilvorgang'+(t===1?'':'e'):''; }catch(_){ return ''; } })())+(f.erp_auftrag_pushed_at?' · '+escapeHtml(String(f.erp_auftrag_pushed_at).slice(0,16).replace('T',' ')):'')+'</div>' : '')+
+        // v9.51: „Angebot beauftragt"-Badge (lokaler AB-Link / erp_auftrag / in Maxise geprüft & persistiert)
+        (typeof _angBeauftragtBoxHtml==='function' ? _angBeauftragtBoxHtml(recId, f) : '')+
         // v6.28: Send-Status-Banner — zeigt ob/wann/an wen gesendet wurde
         ((f.fd_send_ticket_id||f.fd_send_email)
           ? '<div style="margin-top:6px;padding:8px 12px;background:#ECFDF5;border:2px solid #10b981;border-radius:6px;font-size:12px;color:#065F46">'+
@@ -37625,14 +37627,16 @@ async function _angGoToAuftrag(localAuftragRecId, abRecId) {
 // v8.25: Set der Angebots-IDs, die IN MAXISE einen Auftrag haben (per angebotid). So gilt „beauftragt" auch für
 //   Aufträge, die direkt in Maxise (ohne Servicebox-AB) entstanden sind — nicht nur die Servicebox-ABs.
 let _angBeauftragtSet = new Set();
+let _angBeauftragtNumByAng = new Map();      // v9.51: angebotid → Maxise-Auftrag-Nummer (a.id) — für die Detail-Badge
 let _angStorniertAuftragNums = new Set();   // v8.51: Maxise-Auftragsnummern (a.id) mit Status storniert
 let _angBeauftragtFirma = '';
 async function _angLoadBeauftragtSet(firmaSlug) {
   try {
-    if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) { _angBeauftragtSet = new Set(); _angStorniertAuftragNums = new Set(); return; }
+    if (!APP_KEYS.valtownProxyUrl || isFirmaAll()) { _angBeauftragtSet = new Set(); _angBeauftragtNumByAng = new Map(); _angStorniertAuftragNums = new Set(); return; }
     const res = await erpFetch('/aufzug/'+firmaSlug+'/api/auftraege');
     const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
     const set = new Set();
+    const numByAng = new Map();
     const storno = new Set();
     for (const a of list) {
       const isStorno = /storn/i.test(String((a && a.status) || ''));
@@ -37640,9 +37644,9 @@ async function _angLoadBeauftragtSet(firmaSlug) {
       if (isStorno && num) storno.add(num);
       const aid = a && (a.angebotid ?? a.angebotId ?? (a.angebot && a.angebot.id));
       // v8.51: stornierte Aufträge zählen NICHT als „beauftragt"
-      if (aid != null && aid !== '' && !isStorno) set.add(String(aid));
+      if (aid != null && aid !== '' && !isStorno) { set.add(String(aid)); if (num) numByAng.set(String(aid), num); }
     }
-    _angBeauftragtSet = set; _angStorniertAuftragNums = storno; _angBeauftragtFirma = firmaSlug;
+    _angBeauftragtSet = set; _angBeauftragtNumByAng = numByAng; _angStorniertAuftragNums = storno; _angBeauftragtFirma = firmaSlug;
   } catch(e) { console.warn('[Angebote] Beauftragt-Set (Maxise-Aufträge):', e && e.message); }
 }
 /* v7.93: Anzeige-Nummer = echte Maxise-Auftragsnummer, sonst interne Servicebox-Nummer. */
@@ -39441,6 +39445,61 @@ async function _angSetStatus(recId, newStatus) {
     openAngebotDetail(recId);
     _renderAngeboteList();
   } catch(e) { toast('❌ '+e.message,'err'); }
+}
+
+/* v9.51: Badge „Angebot beauftragt" im Angebot-Detail — nutzt die BESTEHENDE Erkennung
+   (_angIstBeauftragt: Status ODER Servicebox-AB ODER Maxise-Auftrag via _angBeauftragtSet).
+   Auftrags-NUMMER kommt aus dem lokalen AB-Link, erp_auftrag am Angebot, oder der Maxise-Nummern-Map. */
+function _angBeauftragtBoxHtml(recId, f) {
+  f = f || {};
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId) || { id:recId, fields:f };
+  const isBe = (typeof _angIstBeauftragt === 'function') ? _angIstBeauftragt(rec, f) : false;
+  const ab = (typeof _angFindAb === 'function') ? _angFindAb(recId, f) : null;
+  const eid = String(f.erp_angebot_id||'');
+  const num = (ab && ab.erp_auftrag_num) || f.erp_auftrag_nummer || f.erp_auftrag_id
+    || ((eid && typeof _angBeauftragtNumByAng !== 'undefined') ? (_angBeauftragtNumByAng.get(eid) || '') : '') || '';
+  const localRid = (ab && ab.local_auftrag_recid) || '';
+  const refreshBtn = eid ? '<button class="btn" style="font-size:11px;padding:2px 8px" onclick="_angCheckBeauftragt(\''+recId+'\', this)" title="Aus Maxise aktualisieren">↻ Maxise</button>' : '';
+  if (isBe || num) {
+    return '<div id="ang-beauftragt-box" style="margin-top:6px;padding:8px 11px;background:#ECFDF5;border-left:3px solid #059669;border-radius:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
+      '<strong style="color:#065F46">✅ Angebot beauftragt</strong>'+
+      (num ? '<span style="color:#065F46">— Auftrag #'+escapeHtml(String(num))+'</span>' : '')+
+      '<span style="margin-left:auto;display:flex;gap:6px">'+
+        (localRid ? '<button class="btn" style="font-size:11px;padding:3px 9px" onclick="_angGoToAuftrag(\''+localRid+'\')" title="Zum verknüpften Auftrag springen">→ zum Auftrag</button>' : '')+
+        refreshBtn+
+      '</span>'+
+    '</div>';
+  }
+  return '<div id="ang-beauftragt-box" style="margin-top:6px;padding:8px 11px;background:var(--bg);border-left:3px solid var(--bdr);border-radius:4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px;color:var(--txt3)">'+
+    '<span>ℹ Noch nicht als beauftragt erkannt.</span>'+
+    (eid
+      ? '<button class="btn" style="font-size:11px;padding:3px 9px;margin-left:auto" onclick="_angCheckBeauftragt(\''+recId+'\', this)" title="In Maxise prüfen, ob aus diesem Angebot ein Auftrag wurde (aktualisiert alle Angebote dieser Firma)">🔍 In Maxise prüfen</button>'
+      : '<span style="margin-left:auto">(kein ERP-Angebot verknüpft — in Maxise nicht prüfbar)</span>')+
+  '</div>';
+}
+
+/* v9.51: „Beauftragt"-Status frisch aus Maxise ziehen (nutzt den bestehenden Loader _angLoadBeauftragtSet,
+   der ALLE Maxise-Aufträge der Firma holt → Set + Nummern-Map). Danach Badge + Liste aktualisieren. */
+async function _angCheckBeauftragt(recId, btn) {
+  const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
+  const f = (rec && rec.fields) || {};
+  const firma = f.firma || getCurrentFirmaSlug();
+  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
+  if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).','err');
+  const orig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Maxise…'; }
+  try {
+    await erpEnsureSession();
+    await _angLoadBeauftragtSet(firma);   // frisch: Set (beauftragt) + Nummern-Map, alle Angebote der Firma
+    try { const el = document.getElementById('ang-beauftragt-box'); if (el) { const rr=(_angeboteCache.items||[]).find(x=>x.id===recId); el.outerHTML = _angBeauftragtBoxHtml(recId, (rr&&rr.fields)||f); } } catch(_){}
+    try { if (typeof _renderAngeboteList === 'function') _renderAngeboteList(); } catch(_){}
+    const eid = String(f.erp_angebot_id||'');
+    const isBe = eid && _angBeauftragtSet.has(eid);
+    toast(isBe ? '✅ Angebot ist beauftragt (Maxise-Auftrag vorhanden).' : 'Kein aktiver Maxise-Auftrag zu diesem Angebot gefunden.', isBe ? 'ok' : '');
+  } catch(e) {
+    console.error('[Ang-Beauftragt]', e);
+    toast('❌ Beauftragt-Prüfung: '+String((e && e.message) || e).slice(0,160),'err');
+  } finally { if (btn) { btn.disabled = false; btn.textContent = orig || '🔍 In Maxise prüfen'; } }
 }
 
 /* v9.50: Angebot als .json-Datei herunterladen (selten gebraucht — einzelner Button im Angebot-Detail).
