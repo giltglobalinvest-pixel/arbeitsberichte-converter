@@ -2901,7 +2901,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.61';
+const APP_VERSION = 'v9.62';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -16669,6 +16669,18 @@ async function saveBerichtFromForm() {
   const isWartung = (af.tmpl||'').includes('wartung');
   if (!isWartung && !data.beschreibung) return toast('Bitte Beschreibung der Arbeiten eintragen.', 'err');
   if (isWartung && !data.pruef_ergebnis) return toast('Bitte Prüfergebnis eintragen.', 'err');
+  // v9.62: Jede Ja/Nein-Zustandsfrage MUSS beantwortet sein (Ja ODER Nein) — sonst kein Abschluss.
+  for (const tw of document.querySelectorAll('#bf-body .toggle-yn')) {
+    const fieldEl = tw.closest('.field');
+    const hidden = fieldEl ? fieldEl.querySelector('input[type="hidden"][data-f]') : null;
+    if (!hidden || !String(hidden.value||'').trim()) {
+      const lbl = (fieldEl && fieldEl.querySelector('.field-lbl'))
+        ? fieldEl.querySelector('.field-lbl').textContent.replace(/\s*KI\s*$/,'').trim()
+        : 'Zustand';
+      if (fieldEl && fieldEl.scrollIntoView) { try { fieldEl.scrollIntoView({ behavior:'smooth', block:'center' }); } catch(_){} }
+      return toast('Bitte bei „'+lbl+'" Ja oder Nein auswählen.', 'err');
+    }
+  }
   if (!techName) return toast('Bitte Techniker-Namen eintragen.', 'err');
   // Techniker-Unterschrift OPTIONAL
   if (!kundeAbwesend) {
