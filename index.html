@@ -2881,7 +2881,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.54';
+const APP_VERSION = 'v9.55';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15300,6 +15300,7 @@ async function openNacharbeitBericht(auftragId) {
   return openBerichtForm(auftragId, null, { nacharbeit:true });
 }
 
+let _bfCurrentTmpl = null;   // v9.55: aktuelle Bericht-Vorlage — für die KI-Verbesserung (Feld-Kapazitäten aus tmpl.pdf)
 async function openBerichtForm(auftragId, berichtId, opts) {
   const rec = _auftragCache.find(r => r.id === auftragId);
   if (!rec) return toast('Auftrag nicht gefunden.', 'err');
@@ -15313,6 +15314,7 @@ async function openBerichtForm(auftragId, berichtId, opts) {
   const f = rec.fields;
   const tmpl = T[f.tmpl];
   if (!tmpl) return toast('Vorlage unbekannt: '+(f.tmpl||'(leer)'), 'err');
+  _bfCurrentTmpl = tmpl;   // v9.55: für die KI-Verbesserung merken
   const tmplLabel = tmpl.label || f.tmpl;
 
   // Edit-Mode-State zurücksetzen
@@ -16085,13 +16087,38 @@ async function _bfTranslateAllFields(btn) {
   }
 }
 
-/* v9.54: „Text per KI verbessern" — bessert alle Textfelder sprachlich + fachlich auf (sauberes Fachdeutsch,
-   Rechtschreibung/Grammatik), OHNE Fakten zu erfinden. HARTE Regel: jeder verbesserte Text ≤ Original-Zeichenanzahl,
-   damit die PDF-Feldbox (field(...maxLines) clippt) NICHT überschritten wird. Zu lang → am Wortende kürzen bzw. Original behalten. */
+/* v9.55: Feld-Kapazitäten aus der Bericht-Vorlage (tmpl.pdf-Quelltext) ableiten:
+   - FLIESS-Felder (flowBoxM/_bfBoxGrow, z.B. Beschreibung/Sonstiges) wachsen über Seiten → KEIN Limit.
+   - Geclippte field(x, WIDTH, label, d.KEY, maxLines)-Felder → echte max. Zeichenzahl (Zeilen × Breite). */
+function _bfFieldCapacities(tmpl) {
+  const flow = new Set(); const cap = new Map();
+  try {
+    const src = (tmpl && typeof tmpl.pdf === 'function') ? tmpl.pdf.toString() : '';
+    if (!src) return { flow, cap };
+    let m;
+    const reFlow = /(?:flowBoxM|_bfBoxGrow)\s*\([^)]*?\bd\.([A-Za-z0-9_]+)/g;
+    while ((m = reFlow.exec(src))) flow.add(m[1]);
+    const reField = /\bfield\s*\(\s*[^,]+,\s*([A-Za-z0-9_]+)\s*,\s*(?:'[^']*'|"[^"]*"|`[^`]*`)\s*,\s*d\.([A-Za-z0-9_]+)\s*(?:,\s*(\d+))?\s*\)/g;
+    const widthMm = { cw: 166, cwHalf: 80 };   // A4-Layout der Vorlagen
+    while ((m = reField.exec(src))) {
+      const wVar = m[1], key = m[2], maxLines = m[3] ? +m[3] : 1;
+      if (flow.has(key)) continue;
+      const w = widthMm[wVar] || 110;
+      const perLine = Math.max(8, Math.floor(w * 0.55));   // ~0.55 Zeichen/mm bei 10pt Helvetica
+      cap.set(key, Math.max(14, Math.floor(maxLines * perLine * 0.9)));   // 10% Sicherheitsmarge
+    }
+  } catch(_){}
+  return { flow, cap };
+}
+
+/* v9.54/v9.55: „Text per KI verbessern" — formuliert alle Feld-Texte sauber + fachlich aus (Fachdeutsch,
+   Rechtschreibung/Grammatik), OHNE Fakten zu erfinden. Fliess-Felder (Beschreibung/Sonstiges) dürfen voll
+   ausformuliert werden; geclippte Felder werden auf ihre echte PDF-Kapazität begrenzt (kein Abschneiden). */
 async function _bfImproveAllFields(btn) {
   if (!APP_KEYS.anthropicKey) return toast('Anthropic-API-Key fehlt (Admin).','err');
   const root = document.getElementById('bf-body');
   if (!root) return;
+  const { flow, cap } = _bfFieldCapacities(_bfCurrentTmpl);
   const els = [...root.querySelectorAll('textarea[data-f], input[data-f]')]
     .filter(el => {
       if (el.tagName === 'INPUT') {
@@ -16105,7 +16132,12 @@ async function _bfImproveAllFields(btn) {
     const v = (el.value || '').trim();
     if (!v || v.length < 3) continue;
     if (/^[\d\s.,:;_\-+=\/\\#@%§]+$/.test(v)) continue;   // reine Zahlen/Symbole überspringen
-    items.push({ el, original: v, max: v.length });        // max = Original-Zeichenanzahl → passt garantiert in die PDF-Box
+    const key = el.getAttribute('data-f') || '';
+    let budget;
+    if (flow.has(key)) budget = 0;                                   // 0 = kein Limit (fließt im PDF)
+    else if (cap.has(key)) budget = cap.get(key);                    // echte PDF-Kapazität
+    else budget = (el.tagName === 'TEXTAREA') ? Math.max(v.length, 200) : Math.max(v.length + 20, 45);   // Fallback
+    items.push({ el, original: v, budget });
   }
   if (!items.length) return toast('Keine Texte zum Verbessern vorhanden','');
   const orig = btn.textContent;
@@ -16114,52 +16146,49 @@ async function _bfImproveAllFields(btn) {
   try {
     const tool = {
       name: 'submit_improved_texts',
-      description: 'Liefert die sprachlich + fachlich verbesserten deutschen Berichtstexte in derselben Reihenfolge.',
+      description: 'Liefert die sauber ausformulierten deutschen Berichtstexte in derselben Reihenfolge.',
       input_schema: {
         type: 'object', required: ['improved'],
-        properties: {
-          improved: { type: 'array', description: 'Verbesserte Texte, gleiche Reihenfolge wie die Eingabe.', items: { type: 'string' } },
-        },
+        properties: { improved: { type: 'array', description: 'Ausformulierte Texte, gleiche Reihenfolge.', items: { type: 'string' } } },
       },
     };
-    const numbered = items.map((it, i) => '['+(i+1)+'] (max '+it.max+' Zeichen)\n'+it.original).join('\n\n---\n\n');
+    const numbered = items.map((it, i) => '['+(i+1)+'] '+(it.budget ? ('(max '+it.budget+' Zeichen)') : '(Länge frei — Fließtext)')+'\n'+it.original).join('\n\n---\n\n');
     const prompt =
-      'Du bekommst Feld-Texte eines deutschen Aufzugstechniker-Arbeitsberichts. Verbessere JEDEN Text, damit der Bericht sauber, professionell und fachlich korrekt wirkt.\n\n'+
+      'Du bist ein erfahrener deutscher Aufzugstechniker und schreibst einen sauberen, professionellen Arbeitsbericht. Formuliere JEDEN der folgenden Feld-Texte fachlich und sprachlich einwandfrei aus.\n\n'+
+      'Ziel: aus knappen, umgangssprachlichen oder fehlerhaften Stichworten VOLLSTÄNDIGE, korrekte, sachliche Sätze machen — so, wie es ein Meister im Bericht schreiben würde. Bei kurzen Struktur-Feldern eine saubere, knappe Angabe.\n\n'+
       'Regeln:\n'+
-      '• Rechtschreibung, Grammatik und Zeichensetzung korrigieren; umgangssprachliche/abgekürzte Formulierungen in sachliches Fachdeutsch bringen.\n'+
-      '• Fachbegriffe der Aufzugstechnik korrekt verwenden (Schacht, Antrieb, Steuerung, Frequenzumrichter, Türantrieb, Bremse, Kabine, Schachttür, Tableau, Notrufsystem, Fangvorrichtung, …).\n'+
-      '• INHALT/FAKTEN NICHT verändern oder erfinden — nur die Formulierung. Zahlen, Maße, Namen, Produktnamen (KONE, Schindler, OTIS, TK, Aszendio) unverändert lassen.\n'+
-      '• GANZ WICHTIG: Jeder verbesserte Text darf die angegebene Zeichen-Obergrenze NICHT überschreiten (gleich viele Zeichen oder weniger). Lieber prägnant kürzen als überschreiten — sonst wird er im PDF abgeschnitten.\n'+
-      '• Ist ein Text bereits gut, gib ihn (höchstens leicht geglättet) zurück. Keine Vorrede, keine Anführungszeichen — nur der reine Feldtext.\n\n'+
-      'TEXTE:\n\n'+numbered+'\n\n'+
-      'Rufe submit_improved_texts mit den verbesserten Texten in derselben Reihenfolge auf.';
+      '• Rechtschreibung, Grammatik, Zeichensetzung perfekt. Fachsprache der Aufzugstechnik korrekt und präzise (Schacht, Antrieb, Steuerung, Frequenzumrichter, Türantrieb, Fangvorrichtung, Bremse, Kabine, Schachttür, Tableau, Notrufsystem, Geschwindigkeitsbegrenzer, Puffer, Seilrolle …).\n'+
+      '• Inhalt NICHT verändern oder erfinden — nur das, was dasteht, sauber ausformulieren. Zahlen, Maße, Fabriknummern, Namen/Produktnamen (KONE, Schindler, OTIS, TK, Aszendio) exakt übernehmen.\n'+
+      '• Felder mit Zeichen-Obergrenze diese NICHT überschreiten (sonst wird im PDF abgeschnitten) — dort knapp und präzise. Bei „Länge frei" ruhig vollständig ausformulieren (2–5 klare Sätze, so lang wie nötig, aber ohne Geschwafel/Wiederholungen).\n'+
+      '• Ja/Nein-artige Antworten klar und knapp. Keine Vorrede, keine Anführungszeichen, keine Aufzählungszeichen wenn im Original keine waren — nur der reine Feldtext.\n\n'+
+      'FELDER:\n\n'+numbered+'\n\n'+
+      'Rufe submit_improved_texts mit den ausformulierten Texten in derselben Reihenfolge auf.';
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method:'POST',
       headers:{ 'Content-Type':'application/json','x-api-key':APP_KEYS.anthropicKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true' },
-      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: 6000, tools:[tool], tool_choice:{ type:'tool', name:'submit_improved_texts' }, messages:[{ role:'user', content: prompt }] }),
+      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens: 8000, tools:[tool], tool_choice:{ type:'tool', name:'submit_improved_texts' }, messages:[{ role:'user', content: prompt }] }),
     });
     const data = await r.json();
     if (!r.ok) throw new Error(data?.error?.message || ('API '+r.status));
     const block = (data?.content||[]).find(b => b.type === 'tool_use');
     const improved = block?.input?.improved;
     if (!Array.isArray(improved)) throw new Error('Keine Verbesserungen vom Tool erhalten');
-    let n = 0, skipped = 0;
+    let n = 0, shortened = 0;
     for (let i = 0; i < items.length; i++) {
       let t = improved[i];
       if (!(t && typeof t === 'string' && t.trim())) continue;
       t = t.trim();
-      // Sicherheitsnetz: NIE länger als das Original (sonst PDF-Clipping). Zu lang → am Wortende kürzen, sonst Original behalten.
-      if (t.length > items[i].max) {
-        const cut = t.slice(0, items[i].max);
-        const atWord = cut.replace(/\s+\S*$/, '').trim();
-        t = (atWord.length >= Math.floor(items[i].max * 0.6)) ? atWord : items[i].original;
-        if (t === items[i].original) { skipped++; continue; }
+      const bud = items[i].budget;
+      if (bud && t.length > bud) {   // NUR geclippte Felder deckeln — Fliess-Felder (budget=0) bleiben voll
+        const cut = t.slice(0, bud).replace(/\s+\S*$/, '').trim();
+        t = (cut.length >= Math.floor(bud * 0.5)) ? cut : items[i].original;
+        if (t !== items[i].original) shortened++;
       }
       items[i].el.dataset.origImprove = items[i].original;   // Original zur Sicherheit merken
       items[i].el.value = t;
       n++;
     }
-    toast('✨ '+n+'/'+items.length+' Feld(er) verbessert'+(skipped?(' · '+skipped+' übersprungen (zu lang für die PDF-Box)'):'')+' — bitte kurz prüfen & speichern','ok');
+    toast('✨ '+n+'/'+items.length+' Feld(er) verbessert'+(shortened?(' · '+shortened+' auf Feldgröße gekürzt'):'')+' — bitte kurz prüfen & speichern','ok');
   } catch(e) {
     toast('❌ Verbessern: '+String((e.message||e)).slice(0,180),'err');
     console.error('[Bericht-Improve]', e);
