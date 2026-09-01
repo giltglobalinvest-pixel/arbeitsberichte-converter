@@ -2901,7 +2901,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.68';
+const APP_VERSION = 'v9.69';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -13733,8 +13733,6 @@ async function _aufCreateViaAufwandAngebot(btn) {
     kunde_adresse: '',
     kontakt_id: String(empfaengerId),
     kontakt_name: kontaktName || '',
-    kontakt_email: bestMail || '',
-    freshdesk_ticket_id: (document.getElementById('auf-f-fdticket')?.value || '').trim(),
     abrechnung_modus: 'aufwand',
     preisanzeige_modus: 'einzel',
     pauschalpreis_netto: 0,
@@ -13744,13 +13742,29 @@ async function _aufCreateViaAufwandAngebot(btn) {
     summe_netto_kone: 0, summe_netto_vp: 0, summe_brutto_vp: 0,
     aufzuege_json: '[]',
   };
-  const r = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
-    method:'POST',
-    headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
-    body: JSON.stringify({ fields }),
-  });
-  const jd = await r.json();
-  if (jd.error) throw new Error('Angebot speichern: '+(jd.error.message||'Airtable-Fehler'));
+  // v9.69: Besteller-Mail + FD-Ticket referenzieren (Felder in App_Angebote ggf. anlegen — best effort;
+  //   falls die Tabelle sie nicht kennt, werden sie beim POST automatisch weggelassen → kein 422).
+  const _fdTicketVal = (document.getElementById('auf-f-fdticket')?.value || '').trim();
+  try { await ensureField('App_Angebote','kontakt_email','singleLineText'); } catch(_){}
+  try { await ensureField('App_Angebote','freshdesk_ticket_id','singleLineText'); } catch(_){}
+  if (bestMail)     fields.kontakt_email      = bestMail;
+  if (_fdTicketVal) fields.freshdesk_ticket_id = _fdTicketVal;
+  const _postAngebot = async (f) => {
+    const rr = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote', {
+      method:'POST',
+      headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
+      body: JSON.stringify({ fields: f }),
+    });
+    return rr.json();
+  };
+  let jd = await _postAngebot(fields);
+  if (jd && jd.error && /unknown field/i.test(jd.error.message||'')) {
+    // Optionale Felder entfernen, die die Tabelle (noch) nicht hat, und erneut versuchen
+    const clean = Object.assign({}, fields);
+    delete clean.kontakt_email; delete clean.freshdesk_ticket_id;
+    jd = await _postAngebot(clean);
+  }
+  if (jd && jd.error) throw new Error('Angebot speichern: '+(jd.error.message||'Airtable-Fehler'));
   const angRecId = jd.id;
 
   // Angebots-PDF erzeugen + anhängen (nicht blockierend)
