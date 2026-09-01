@@ -2904,7 +2904,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.73';
+const APP_VERSION = 'v9.74';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -13838,6 +13838,7 @@ async function saveAuftrag() {
         headers: { 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
         body: JSON.stringify({ fields }),
       }).then(r => r.json()).then(d => { if (d.error) throw new Error(d.error.message); });
+      try { _invalidateDashStats(); } catch(_){}   // v9.74
       toast('✅ Auftrag aktualisiert.', 'ok');
     } else {
       // v9.66: Nach-Aufwand-Auftrag läuft jetzt über Angebot → Maxise → AB (ersetzt den positionslosen
@@ -17345,6 +17346,45 @@ function _dashRenderPeriodToggle(){
   el.innerHTML = pill('monat','Monat') + pill('jahr','Jahr');
 }
 
+/* v9.74: auf/ang-Daten für die Dashboard-Kacheln cachen — die langsamen Vollabrufe laufen nur
+   alle 5 Min (bzw. bei neuem Angebot/Auftrag via _invalidateDashStats), dazwischen aus dem Cache. */
+let _dashStatsData = { firma:null, auf:null, ang:null, at:0 };
+const _DASH_STATS_TTL = 5*60*1000;
+function _dashStatsFresh(firmaSlug){ return _dashStatsData.firma===firmaSlug && Array.isArray(_dashStatsData.auf) && (Date.now()-_dashStatsData.at < _DASH_STATS_TTL); }
+function _invalidateDashStats(){ _dashStatsData.at = 0; }   // → beim nächsten Dashboard-Load frisch holen
+async function _dashFetchStatsData(firmaSlug){
+  let auf = (typeof _auftragCache!=='undefined' && _auftragCache && _auftragCache.length) ? _auftragCache : null;
+  if (!auf) { try { auf = await atRead('Auftraege', null, ['firma','status','created','completed_at','ext_last_modified']); } catch(_){ auf = []; } }
+  let ang = [];
+  try { ang = await atRead('App_Angebote', null, ['firma','erstellt_am','erp_datum','fd_send_ticket_id','fd_send_email','fd_send_at']); } catch(_){ ang = []; }
+  _dashStatsData = { firma:firmaSlug, auf, ang, at:Date.now() };
+  return _dashStatsData;
+}
+function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, liftaroCards, sd){
+  if (!c) return;
+  const _pLbl = _dashPeriodLabel();
+  const berichtePeriod = (reports||[]).filter(r => _dashInPeriod(r.fields.created)).length;
+  const aufF = allMode ? ((sd&&sd.auf)||[]) : ((sd&&sd.auf)||[]).filter(r => (r.fields.firma||'') === firmaSlug);
+  let aufPeriod=0, stornoPeriod=0, _durSum=0, _durN=0;
+  aufF.forEach(r => {
+    const f=r.fields, st=_normAuftragStatus(f.status);
+    if (st==='storniert'){ if(_dashInPeriod(f.ext_last_modified||f.created)) stornoPeriod++; return; }
+    if (_dashInPeriod(f.created)) aufPeriod++;
+    if (f.created && f.completed_at && _dashInPeriod(f.completed_at)){ const a=Date.parse(f.created), b=Date.parse(f.completed_at); if(a&&b&&b>=a){ _durSum+=(b-a); _durN++; } }
+  });
+  const avgDays = _durN ? Math.round(_durSum/_durN/86400000) : null;
+  let angPeriod=0, angSent=0;
+  ((sd&&sd.ang)||[]).forEach(r => { const f=r.fields||{}; if(!allMode && (f.firma||'')!==firmaSlug) return; if(!_dashInPeriod(f.erstellt_am||f.erp_datum)) return; angPeriod++; if(f.fd_send_ticket_id||f.fd_send_email||f.fd_send_at) angSent++; });
+  c.innerHTML =
+    statCard('🛠', aufPeriod, 'Aufträge', _pLbl, "switchView('auftraege')") +
+    statCard('📄', angPeriod, 'Angebote', angSent+' versendet · '+_pLbl, "switchView('angebote')") +
+    statCard('⚫', stornoPeriod, 'Storniert', _pLbl) +
+    statCard('📋', berichtePeriod, 'Berichte', _pLbl) +
+    statCard('⏱', (avgDays!=null ? avgDays : '–'), 'Ø Durchlaufzeit (Tage)', (avgDays!=null ? 'Kalendertage (keine Werktage) · '+_pLbl : 'keine abgeschlossenen ('+_pLbl+')')) +
+    statCard('👥', activeUsers, 'Aktive User', 'in 30 Tagen') +
+    (liftaroCards||'');
+}
+
 function statCard(icon, num, lbl, sub, onClickJs) {
   const clickable = onClickJs ? ` onclick="${onClickJs}" style="cursor:pointer;transition:transform .12s, box-shadow .12s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 16px rgba(0,0,0,.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''"` : '';
   return `<div class="dash-stat-card"${clickable}>
@@ -17460,25 +17500,7 @@ async function loadDashboardStats() {
     });
     const topTool = Object.entries(toolCounts).sort((a,b) => b[1]-a[1])[0];
 
-    // v9.73: Zeitraum-abhängige Kennzahlen — der Monat/Jahr-Umschalter gilt für alle diese Kacheln.
-    const _pLbl = _dashPeriodLabel();
-    const berichtePeriod = reports.filter(r => _dashInPeriod(r.fields.created)).length;
-    let _aufList = (_auftragCache && _auftragCache.length) ? _auftragCache : null;
-    if (!_aufList) { try { _aufList = await atRead('Auftraege', null, ['firma','status','created','completed_at','ext_last_modified']); } catch(_){ _aufList = []; } }
-    const _aufF = allMode ? (_aufList||[]) : (_aufList||[]).filter(r => (r.fields.firma||'') === firmaSlug);
-    let aufPeriod=0, stornoPeriod=0, _durSum=0, _durN=0;
-    _aufF.forEach(r => {
-      const f=r.fields, st=_normAuftragStatus(f.status);
-      if (st==='storniert'){ if(_dashInPeriod(f.ext_last_modified||f.created)) stornoPeriod++; return; }
-      if (_dashInPeriod(f.created)) aufPeriod++;
-      if (f.created && f.completed_at && _dashInPeriod(f.completed_at)){ const a=Date.parse(f.created), b=Date.parse(f.completed_at); if(a&&b&&b>=a){ _durSum+=(b-a); _durN++; } }
-    });
-    const avgDays = _durN ? Math.round(_durSum/_durN/86400000) : null;
-    let angPeriod=0, angSent=0;
-    try {
-      const _angs = await atRead('App_Angebote', null, ['firma','erstellt_am','erp_datum','fd_send_ticket_id','fd_send_email','fd_send_at']);
-      for (const r of (_angs||[])){ const f=r.fields||{}; if(!allMode && (f.firma||'')!==firmaSlug) continue; if(!_dashInPeriod(f.erstellt_am||f.erp_datum)) continue; angPeriod++; if(f.fd_send_ticket_id||f.fd_send_email||f.fd_send_at) angSent++; }
-    } catch(e){ console.warn('[Dashboard] Angebote-Zeitraum:', e && e.message); }
+    // v9.74: Kennzahlen werden aus dem gecachten auf/ang-Datensatz gerendert (siehe unten, stale-while-revalidate).
 
     // Liftaro-Statistik (nur für Admin)
     let liftaroCards = '';
@@ -17514,15 +17536,18 @@ async function loadDashboardStats() {
         statCard('📋', lifOpen, 'Offene Liftaro-Anfragen', '→ klicken zum Öffnen', "switchView('liftaro')");
     }
 
-    // v9.73: Zeitraum-Kacheln (folgen dem Monat/Jahr-Umschalter) links, feste Kennzahlen rechts.
-    c.innerHTML =
-      statCard('🛠', aufPeriod, 'Aufträge', _pLbl, "switchView('auftraege')") +
-      statCard('📄', angPeriod, 'Angebote', angSent+' versendet · '+_pLbl, "switchView('angebote')") +
-      statCard('⚫', stornoPeriod, 'Storniert', _pLbl) +
-      statCard('📋', berichtePeriod, 'Berichte', _pLbl) +
-      statCard('⏱', (avgDays!=null ? avgDays : '–'), 'Ø Durchlaufzeit (Tage)', (avgDays!=null ? 'Auftrag → abgeschlossen · '+_pLbl : 'keine abgeschlossenen ('+_pLbl+')')) +
-      statCard('👥', activeUsers, 'Aktive User', 'in 30 Tagen') +
-      liftaroCards;
+    // v9.74: Kacheln aus gecachtem auf/ang-Datensatz (5-Min-TTL) rendern — stale-while-revalidate:
+    //   liegt ein (evtl. veralteter) Cache vor → SOFORT anzeigen, im Hintergrund neu laden + neu rendern.
+    //   Erst-Load ohne Cache → einmal laden, dann rendern. Umschalten Monat/Jahr rechnet nur neu (kein Netz).
+    const _reRender = (sd) => { const cc=document.getElementById('dash-stats'); if (cc && getCurrentFirmaSlug()===firmaSlug) _dashRenderStatCards(cc, firmaSlug, allMode, reports, activeUsers, liftaroCards, sd); };
+    const _sdHave  = _dashStatsData.firma===firmaSlug && Array.isArray(_dashStatsData.auf);
+    if (_sdHave) {
+      _reRender(_dashStatsData);
+      if (!_dashStatsFresh(firmaSlug)) _dashFetchStatsData(firmaSlug).then(_reRender).catch(()=>{});
+    } else {
+      const sd = await _dashFetchStatsData(firmaSlug);
+      _reRender(sd);
+    }
 
     // Per-Tool Statistik in den Tool-Cards eintragen
     Object.keys(TOOLS).forEach(key => {
@@ -36615,6 +36640,7 @@ async function _angEditorSave() {
     //   oder in einen Auftrag/AB gewandelt wird — _angPushToErp (Z.~37882) und _abCreateErpAuftrag
     //   legen sie bei Bedarf selbst an, dann mit echten Mail-Daten (s. _angCreateErpAnfrage titelemail/inhaltemail).
 
+    try { _invalidateDashStats(); } catch(_){}   // v9.74: Dashboard-Statistik nachladen
     toast(E.editMode ? '✅ ANG-'+angebotNum+' aktualisiert' : '✅ Angebot ANG-'+angebotNum+' angelegt','ok');
     if (anfrageInfo) toast('🔗 ERP-Anfrage angelegt: '+(anfrageInfo.nummer || anfrageInfo.id),'ok');
     if (anfrageErr) {
@@ -38153,6 +38179,7 @@ async function _abWriteLocalAuftrag(fAng, created, leistungText, typOverride) {
       ab_datum: heute,
     };
     const rec = await atWrite('Auftraege', fields);
+    try { _invalidateDashStats(); } catch(_){}   // v9.74: Dashboard-Statistik nachladen
     return rec && rec.id;
   } catch(e) { console.warn('[AB-LocalAuftrag]', e && e.message); return null; }
 }
