@@ -2901,7 +2901,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.67';
+const APP_VERSION = 'v9.68';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -15687,7 +15687,8 @@ async function openBerichtForm(auftragId, berichtId, opts) {
       <button type="button" class="btn" onclick="_bfImproveAllFields(this)" style="background:#7C3AED;color:#fff;border-color:#7C3AED;font-weight:600">✨ Alle Texte verbessern</button>
     </div>
   `;
-  document.getElementById('bf-body').innerHTML = infoCard + improveCard + translateCard + formHtml + imageCard + internCard + signCards;
+  // v9.68: „📸 Bilder zum Bericht" (Kunden-Fotos) nur für Admins. Techniker haben nur „🎥 Video aufnehmen" → Pflicht = Video.
+  document.getElementById('bf-body').innerHTML = infoCard + improveCard + translateCard + formHtml + (isAdmin() ? imageCard : '') + internCard + signCards;
   _bfRenderImageGrid();
   _bfRenderVideoGrid();   // v9.57
   // Save-Button-Text passend
@@ -16870,12 +16871,19 @@ async function saveBerichtFromForm() {
   if (_bfVideos.some(v => v.compressing)) {
     return toast('Ein Video wird noch verkleinert — bitte kurz warten und dann erneut speichern.', 'err');
   }
-  // v9.57: Zum ABSCHLIESSEN (Neuanlage) muss mindestens ein Bild ODER ein internes Video vorhanden sein.
-  // (Beim nachträglichen Bearbeiten alter Berichte wird das NICHT erzwungen, um Alt-Berichte ohne Medien
-  //  weiter editierbar zu halten.)
-  const _bfMedienCount = _bfImages.length + (_bfKeepBilder?.length||0) + _bfVideos.filter(v=>v.file).length + (_bfKeepVideos?.length||0);
-  if (_bfMode !== 'edit' && _bfMedienCount === 0) {
-    return toast('Bitte mindestens ein Bild oder ein internes Video hochladen — der Bericht kann sonst nicht abgeschlossen werden.', 'err');
+  // v9.57/v9.68: Zum ABSCHLIESSEN (Neuanlage) muss mindestens ein FOTO ODER ein VIDEO vorhanden sein.
+  //   Admins: Foto (Kunden-Bilder ODER internes Bild) oder Video. Techniker: nur „🎥 Video aufnehmen"
+  //   verfügbar (Bild-Karte ausgeblendet) → für sie ist damit faktisch ein Video Pflicht.
+  //   (Beim nachträglichen Bearbeiten alter Berichte wird das NICHT erzwungen.)
+  const _isImgFile = (t, n) => /^image\//i.test(String(t||'')) || /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(String(n||''));
+  const _bfFotoCount = _bfImages.length + (_bfKeepBilder?.length||0)
+    + _bfDateien.filter(d => _isImgFile(d.kind, d.name)).length
+    + (_bfKeepDateien||[]).filter(d => _isImgFile(d.type, d.filename)).length;
+  const _bfVideoCount = _bfVideos.filter(v=>v.file).length + (_bfKeepVideos?.length||0);
+  if (_bfMode !== 'edit' && (_bfFotoCount + _bfVideoCount) === 0) {
+    return toast(isAdmin()
+      ? 'Bitte mindestens ein Foto oder ein Video hinzufügen — der Bericht kann sonst nicht abgeschlossen werden.'
+      : 'Bitte ein Video aufnehmen — der Bericht kann sonst nicht abgeschlossen werden.', 'err');
   }
 
   // durchgefuehrt_von angleichen, falls leer
