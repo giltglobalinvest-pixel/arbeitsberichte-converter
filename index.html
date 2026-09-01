@@ -1746,7 +1746,10 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <p>Wähle ein Tool aus, um zu starten.</p>
   </div>
   <div class="dash-section">
-    <div class="dash-section-title">📊 Statistik</div>
+    <div class="dash-section-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <span>📊 Statistik</span>
+      <span id="dash-period-toggle" style="display:inline-flex;gap:3px;background:var(--bg);border:1px solid var(--bdr);border-radius:99px;padding:3px"></span>
+    </div>
     <div class="dash-stats" id="dash-stats">
       <div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>
     </div>
@@ -2901,7 +2904,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.72';
+const APP_VERSION = 'v9.73';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17330,6 +17333,18 @@ function renderDashboard() {
   loadDashboardStats();
 }
 
+/* v9.73: Dashboard-Zeitraum (Monat/Jahr) — gilt für alle zeitraumbasierten Kacheln. */
+let _dashPeriod = (function(){ try { return localStorage.getItem('dash_period') || 'monat'; } catch(_){ return 'monat'; } })();
+function _dashPeriodKey(){ const n=new Date(); return _dashPeriod==='jahr' ? String(n.getFullYear()) : n.toISOString().slice(0,7); }
+function _dashInPeriod(dateStr){ if(!dateStr) return false; const k=_dashPeriodKey(); return String(dateStr).slice(0,k.length)===k; }
+function _dashPeriodLabel(){ return _dashPeriod==='jahr' ? 'Aktuelles Jahr' : 'Aktueller Monat'; }
+function _dashSetPeriod(p){ if(p!=='monat'&&p!=='jahr')return; _dashPeriod=p; try{ localStorage.setItem('dash_period', p); }catch(_){} loadDashboardStats(); }
+function _dashRenderPeriodToggle(){
+  const el=document.getElementById('dash-period-toggle'); if(!el) return;
+  const pill=(p,label)=> '<button onclick="_dashSetPeriod(\''+p+'\')" style="border:0;border-radius:99px;padding:4px 13px;font-size:12px;font-weight:700;cursor:pointer;'+(_dashPeriod===p?'background:#334155;color:#fff':'background:transparent;color:var(--txt2)')+'">'+label+'</button>';
+  el.innerHTML = pill('monat','Monat') + pill('jahr','Jahr');
+}
+
 function statCard(icon, num, lbl, sub, onClickJs) {
   const clickable = onClickJs ? ` onclick="${onClickJs}" style="cursor:pointer;transition:transform .12s, box-shadow .12s" onmouseover="this.style.transform='translateY(-2px)';this.style.boxShadow='0 6px 16px rgba(0,0,0,.08)'" onmouseout="this.style.transform='';this.style.boxShadow=''"` : '';
   return `<div class="dash-stat-card"${clickable}>
@@ -17364,6 +17379,7 @@ async function _loadRecentStatEvents(){
 async function loadDashboardStats() {
   const c = document.getElementById('dash-stats');
   c.innerHTML = '<div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>';
+  try { _dashRenderPeriodToggle(); } catch(_){}   // v9.73
   if (!_dashBootReady) return;   // v7.90: verfrühten Start-Lauf (Firma noch nicht gesetzt) überspringen
   try {
     const todayISO = new Date().toISOString().slice(0,10);
@@ -17444,6 +17460,26 @@ async function loadDashboardStats() {
     });
     const topTool = Object.entries(toolCounts).sort((a,b) => b[1]-a[1])[0];
 
+    // v9.73: Zeitraum-abhängige Kennzahlen — der Monat/Jahr-Umschalter gilt für alle diese Kacheln.
+    const _pLbl = _dashPeriodLabel();
+    const berichtePeriod = reports.filter(r => _dashInPeriod(r.fields.created)).length;
+    let _aufList = (_auftragCache && _auftragCache.length) ? _auftragCache : null;
+    if (!_aufList) { try { _aufList = await atRead('Auftraege', null, ['firma','status','created','completed_at','ext_last_modified']); } catch(_){ _aufList = []; } }
+    const _aufF = allMode ? (_aufList||[]) : (_aufList||[]).filter(r => (r.fields.firma||'') === firmaSlug);
+    let aufPeriod=0, stornoPeriod=0, _durSum=0, _durN=0;
+    _aufF.forEach(r => {
+      const f=r.fields, st=_normAuftragStatus(f.status);
+      if (st==='storniert'){ if(_dashInPeriod(f.ext_last_modified||f.created)) stornoPeriod++; return; }
+      if (_dashInPeriod(f.created)) aufPeriod++;
+      if (f.created && f.completed_at && _dashInPeriod(f.completed_at)){ const a=Date.parse(f.created), b=Date.parse(f.completed_at); if(a&&b&&b>=a){ _durSum+=(b-a); _durN++; } }
+    });
+    const avgDays = _durN ? Math.round(_durSum/_durN/86400000) : null;
+    let angPeriod=0, angSent=0;
+    try {
+      const _angs = await atRead('App_Angebote', null, ['firma','erstellt_am','erp_datum','fd_send_ticket_id','fd_send_email','fd_send_at']);
+      for (const r of (_angs||[])){ const f=r.fields||{}; if(!allMode && (f.firma||'')!==firmaSlug) continue; if(!_dashInPeriod(f.erstellt_am||f.erp_datum)) continue; angPeriod++; if(f.fd_send_ticket_id||f.fd_send_email||f.fd_send_at) angSent++; }
+    } catch(e){ console.warn('[Dashboard] Angebote-Zeitraum:', e && e.message); }
+
     // Liftaro-Statistik (nur für Admin)
     let liftaroCards = '';
     if (isAdmin()) {
@@ -17475,17 +17511,18 @@ async function loadDashboardStats() {
       ).length;
       const monatLabel = new Date().toLocaleDateString('de-DE',{month:'long'});
       liftaroCards =
-        statCard('📋', lifOpen, 'Offene Liftaro-Anfragen', '→ klicken zum Öffnen', "switchView('liftaro')") +
-        statCard('✅', lifMonthOffers, 'Angebote '+monatLabel, lifMonthDeclines+' abgelehnt', "switchView('liftaro')");
+        statCard('📋', lifOpen, 'Offene Liftaro-Anfragen', '→ klicken zum Öffnen', "switchView('liftaro')");
     }
 
+    // v9.73: Zeitraum-Kacheln (folgen dem Monat/Jahr-Umschalter) links, feste Kennzahlen rechts.
     c.innerHTML =
-      statCard('📋', reports.length, 'Berichte gesamt', '') +
-      statCard('✏', todayReports, 'Heute erstellt', '') +
-      statCard('🚀', todayLaunches, 'Tool-Starts heute', '') +
+      statCard('🛠', aufPeriod, 'Aufträge', _pLbl, "switchView('auftraege')") +
+      statCard('📄', angPeriod, 'Angebote', angSent+' versendet · '+_pLbl, "switchView('angebote')") +
+      statCard('⚫', stornoPeriod, 'Storniert', _pLbl) +
+      statCard('📋', berichtePeriod, 'Berichte', _pLbl) +
+      statCard('⏱', (avgDays!=null ? avgDays : '–'), 'Ø Durchlaufzeit (Tage)', (avgDays!=null ? 'Auftrag → abgeschlossen · '+_pLbl : 'keine abgeschlossenen ('+_pLbl+')')) +
       statCard('👥', activeUsers, 'Aktive User', 'in 30 Tagen') +
-      liftaroCards +
-      (topTool ? statCard('⭐', topTool[1], 'Beliebt: ' + (TOOLS[topTool[0]]?.label || topTool[0]), 'Starts gesamt') : '');
+      liftaroCards;
 
     // Per-Tool Statistik in den Tool-Cards eintragen
     Object.keys(TOOLS).forEach(key => {
