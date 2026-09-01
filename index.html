@@ -1467,13 +1467,12 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     </div>
 
     <!-- GRUPPE: CRM (Admin-only Sichtbarkeit per JS) -->
-    <div class="tnav-group" id="tnav-grp-crm" data-group-views="kunden,kontakte,rechnungen,statistik" style="display:none">
+    <div class="tnav-group" id="tnav-grp-crm" data-group-views="kunden,kontakte,rechnungen" style="display:none">
       <button class="tnav tnav-trigger" onclick="_toggleTnavGroup('tnav-grp-crm', event)">👥 CRM</button>
       <div class="tnav-menu">
         <button class="tnav-menu-item" id="tnav-kunden" onclick="switchView('kunden')">👥 Kunden</button>
         <button class="tnav-menu-item" id="tnav-kontakte" onclick="switchView('kontakte')">👤 Kontakte</button>
         <button class="tnav-menu-item" id="tnav-rechnungen" onclick="switchView('rechnungen')">💶 Rechnungen</button>
-        <button class="tnav-menu-item" id="tnav-statistik" onclick="switchView('statistik')" style="display:none">📊 Finanz-Statistik</button>
       </div>
     </div>
 
@@ -1984,15 +1983,6 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 </div>
 
 <!-- RECHNUNGEN (Admin-only) -->
-<div class="firma-view" id="statistik-view">
-  <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:4px">
-    <h2 style="margin:0">📊 Finanz-Statistik</h2>
-    <span style="font-size:11px;font-weight:600;background:#FEF3C7;color:#92400E;border:1px solid #FCD34D;border-radius:99px;padding:2px 10px">🔒 gesonderte Berechtigung</span>
-  </div>
-  <div style="font-size:12px;color:var(--txt3);margin-bottom:14px">Angebote · Aufträge · Rechnungen — Netto, je Firma (Zahlen aus Servicebox + Maxise).</div>
-  <div id="statistik-body"></div>
-</div>
-
 <div class="firma-view" id="rch-view">
   <div class="firma-hdr">
     <h2>💶 Rechnungen <span style="font-size:11px;font-weight:500;color:var(--txt3);margin-left:6px" id="rch-count">0</span></h2>
@@ -2911,7 +2901,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.71';
+const APP_VERSION = 'v9.72';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -4245,9 +4235,6 @@ async function showApp() {
     document.getElementById('tnav-liftaro').style.display = 'none';
     document.getElementById('tnav-gbu').style.display = 'none';
   }
-  // v9.71: Finanz-Statistik-Nav nur für die Freigegebenen (FINANZ_STATISTIK_ALLOW) — unabhängig vom Admin-Status.
-  { const _stn=document.getElementById('tnav-statistik'); if(_stn) _stn.style.display=_canSeeFinanzStatistik()?'':'none';
-    if (_canSeeFinanzStatistik()){ const _g=document.getElementById('tnav-grp-crm'); if(_g) _g.style.display=''; } }
 
   // Firmen laden + initiale Firma setzen
   await loadFirmen().catch(e => console.warn('loadFirmen:', e));
@@ -5009,7 +4996,6 @@ function switchView(view) {
   if (view==='kontakte' && !isAdmin()) return;
   if (view==='vertraege' && !isAdmin()) return;
   if (view==='rechnungen' && !isAdmin()) return;
-  if (view==='statistik' && !_canSeeFinanzStatistik()) return toast('🔒 Keine Berechtigung für die Finanz-Statistik.','err');   // v9.71
   if (view==='liftaro' && !isAdmin()) return;
   if (view==='gbu' && !isAdmin()) return;
   if (view==='rollen' && !isAdmin()) return;
@@ -5050,7 +5036,7 @@ function switchView(view) {
   const dav = document.getElementById('dav-view');
   const appEl = document.getElementById('app');
   // .app bekommt eine view-XX-Klasse → CSS blendet Konverter-Inhalte aus, wenn nicht auf 'conv'
-  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','gwl','rahmen','ab','extract','angebote','briefberichte','lv','galerie','statistik'].forEach(v => {
+  ['dashboard','conv','overview','users','wartung','auftraege','firmen','intg','anlagen','preislisten','vorlagen','kunden','kontakte','vertraege','rechnungen','liftaro','gbu','info','rollen','da','dav','gwl','rahmen','ab','extract','angebote','briefberichte','lv','galerie'].forEach(v => {
     appEl.classList.toggle('view-'+v, view===v);
     const btn = document.getElementById('tnav-'+v);
     if (btn) btn.classList.toggle('active', view===v);
@@ -5064,7 +5050,6 @@ function switchView(view) {
   wk.classList.toggle('show',   view==='wartung');
   fmg.classList.toggle('show',  view==='firmen');
   auf.classList.toggle('show',  view==='auftraege');
-  { const _stv=document.getElementById('statistik-view'); if(_stv) _stv.classList.toggle('show', view==='statistik'); }   // v9.71
   if (intg) intg.classList.toggle('show', view==='intg');
   if (anl)  anl.classList.toggle('show',  view==='anlagen');
   if (pl)   pl.classList.toggle('show',   view==='preislisten');
@@ -5115,7 +5100,6 @@ function switchView(view) {
   if (view==='kontakte') renderKontakteView();
   if (view==='vertraege') renderWartungsvertraegeView();
   if (view==='rechnungen') renderRechnungenView();
-  if (view==='statistik') renderStatistikView();   // v9.71
   if (view==='liftaro') renderLiftaroView();
   if (view==='gbu') renderGbuView();
   if (view==='info') renderInfoView();
@@ -6628,10 +6612,6 @@ async function renderUsers() {
     const rows = _usersCache.map(u => userRowHtml(u, featCols)).join('');
 
     list.innerHTML = `
-      <div style="background:#FFFBEB;border:1px solid #FCD34D;border-left:3px solid #F59E0B;border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:#78350F">
-        <strong>📊 Finanz-Statistik (Umsatz-Auswertung):</strong> Diese besondere Berechtigung wird <strong>nicht hier</strong> vergeben, sondern individuell <strong>über den Claude Chat</strong> (Anfrage bei Patrizio Fontanarosa) — so kann sich kein Admin selbst freischalten.
-        Aktuell freigegeben: <strong>Patrizio Fontanarosa, Niklas Langer, Julia Kröner</strong>.
-      </div>
       <div class="usr-tbl-wrap">
         <table class="usr-tbl">
           <thead><tr>
@@ -17259,208 +17239,6 @@ async function trackEvent(tool, action, meta) {
 /* ──────────────────────────────────────────────────────────────
    DASHBOARD
    ────────────────────────────────────────────────────────────── */
-/* ══════════════════════════════════════════════════════════════════
-   v9.71: FINANZ-STATISTIK — gesonderte, individuell vergebene Berechtigung.
-   Zugang NUR wer in FINANZ_STATISTIK_ALLOW (per Name) steht. Diese Liste ist
-   bewusst NICHT in der normalen User-/Rollen-UI — sie wird ausschließlich über
-   den Deploy (Claude-Chat) gepflegt, damit sich kein Admin selbst freischalten kann.
-   ══════════════════════════════════════════════════════════════════ */
-const FINANZ_STATISTIK_ALLOW = [
-  'patrizio fontanarosa',
-  'niklas langer',
-  'julia kröner', 'julia kroener',
-];
-function _statNormName(s){ return String(s||'').trim().toLowerCase().replace(/\s+/g,' '); }
-function _canSeeFinanzStatistik(){
-  try { return FINANZ_STATISTIK_ALLOW.indexOf(_statNormName(APP_KEYS.user && APP_KEYS.user.name)) >= 0; }
-  catch(_){ return false; }
-}
-
-const _STAT_TYPES = [
-  { key:'wartung',        label:'Wartung & Notruf' },
-  { key:'modernisierung', label:'Modernisierung' },
-  { key:'pauschal',       label:'Pauschal' },
-  { key:'aufwand',        label:'Nach Aufwand' },
-  { key:'ohne_angebot',   label:'Ohne Angebot' },
-];
-const _STAT_MONATE = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
-const _statState = { nach:'auftraege', kennzahl:'umsatz', vonY:0, vonM:1, bisY:0, bisM:12, typ:'alle', _init:false, _lastRows:null };
-
-function _statEur(n){ return (Number(n)||0).toLocaleString('de-DE',{minimumFractionDigits:2,maximumFractionDigits:2})+' €'; }
-function _statYM(y,m){ return y+'-'+String(m).padStart(2,'0'); }
-function _statMonthLabel(ym){ const p=String(ym||'').split('-'); return (_STAT_MONATE[(+p[1])-1]||p[1]||'')+' '+(p[0]||''); }
-function _statMonthList(vY,vM,bY,bM){ const out=[]; let y=vY,m=vM; const end=bY*12+(bM-1); let cur=vY*12+(vM-1),g=0; while(cur<=end && g++<720){ out.push(_statYM(y,m)); m++; if(m>12){m=1;y++;} cur=y*12+(m-1);} return out; }
-function _statInRange(ym){ const S=_statState; return ym && ym>=_statYM(S.vonY,S.vonM) && ym<=_statYM(S.bisY,S.bisM); }
-function _statAuftragTyp(f){
-  const bf=String(f.bestellform||'').toUpperCase(); if(bf==='OHNEANGEBOT') return 'ohne_angebot';
-  const s=String(f.angebot_typ||'').toLowerCase(), t=String(f.tmpl||'').toLowerCase();
-  if(/wartung|notruf/.test(s)||/wartung/.test(t)) return 'wartung';
-  if(/modern/.test(s)) return 'modernisierung';
-  if(/aufwand/.test(s)) return 'aufwand';
-  if(/pauschal|reparatur|festpreis/.test(s)) return 'pauschal';
-  return bf==='MITANGEBOT' ? 'pauschal' : 'ohne_angebot';
-}
-
-async function renderStatistikView(){
-  if (!_canSeeFinanzStatistik()){ toast('🔒 Keine Berechtigung für die Finanz-Statistik.','err'); return switchView('dashboard'); }
-  const body = document.getElementById('statistik-body'); if (!body) return;
-  if (!_statState._init){ const now=new Date(); _statState.vonY=now.getFullYear(); _statState.vonM=1; _statState.bisY=now.getFullYear(); _statState.bisM=now.getMonth()+1; _statState._init=true; }
-  if (isFirmaAll()){
-    body.innerHTML = '<div class="card" style="padding:30px;text-align:center;color:var(--txt3)">Bitte oben rechts eine konkrete Firma wählen (Aszendio oder Aufzugshandwerk).<br>Die Finanz-Statistik läuft je Firma — vor allem Rechnungen kommen live aus dem jeweiligen Maxise-Mandanten.</div>';
-    return;
-  }
-  body.innerHTML = _statControlsHtml() + '<div id="stat-result"><div class="card" style="padding:30px;text-align:center;color:var(--txt3)"><div class="spinner" style="margin:0 auto 12px"></div>Lade Daten…</div></div>';
-  await _statRun();
-}
-
-function _statControlsHtml(){
-  const S=_statState;
-  const yrs=[]; { const ny=new Date().getFullYear(); for(let y=ny;y>=ny-6;y--) yrs.push(y); }
-  const pill=(active,onclick,label)=> '<button class="btn" onclick="'+onclick+'" style="'+(active?'background:#334155;color:#fff;border-color:#334155;':'')+'font-size:13px;padding:7px 14px;font-weight:600">'+label+'</button>';
-  const monSel=(id,val)=> '<select onchange="_statSet(\''+id+'\',this.value)" style="padding:6px 8px;border:1px solid var(--bdr);border-radius:6px;background:#fff">'+_STAT_MONATE.map((n,i)=>'<option value="'+(i+1)+'"'+((i+1)===val?' selected':'')+'>'+n+'</option>').join('')+'</select>';
-  const yrSel=(id,val)=> '<select onchange="_statSet(\''+id+'\',this.value)" style="padding:6px 8px;border:1px solid var(--bdr);border-radius:6px;background:#fff">'+yrs.map(y=>'<option value="'+y+'"'+(y===val?' selected':'')+'>'+y+'</option>').join('')+'</select>';
-  const typDisabled = (S.nach==='rechnungen');
-  const typBtns = '<button class="btn" onclick="_statSet(\'typ\',\'alle\')" style="'+(S.typ==='alle'?'background:#334155;color:#fff;border-color:#334155;':'')+'font-size:12px;padding:6px 11px">Alle Typen</button>'
-    + _STAT_TYPES.map(t=> '<button class="btn" onclick="_statSet(\'typ\',\''+t.key+'\')" style="'+(S.typ===t.key?'background:#334155;color:#fff;border-color:#334155;':'')+'font-size:12px;padding:6px 11px">'+t.label+'</button>').join('');
-  return '<div class="card" style="margin-bottom:14px">'
-    + '<div style="display:flex;gap:26px;flex-wrap:wrap;margin-bottom:14px">'
-      + '<div><div style="font-size:11px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Statistik nach</div><div style="display:flex;gap:6px;flex-wrap:wrap">'
-        + pill(S.nach==='angebote','_statSet(\'nach\',\'angebote\')','Angebote')
-        + pill(S.nach==='rechnungen','_statSet(\'nach\',\'rechnungen\')','Rechnungen')
-        + pill(S.nach==='auftraege','_statSet(\'nach\',\'auftraege\')','Aufträge')
-      + '</div></div>'
-      + '<div><div style="font-size:11px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Kennzahl</div><div style="display:flex;gap:6px">'
-        + pill(S.kennzahl==='anzahl','_statSet(\'kennzahl\',\'anzahl\')','Anzahl')
-        + pill(S.kennzahl==='umsatz','_statSet(\'kennzahl\',\'umsatz\')','Umsatz')
-      + '</div></div>'
-    + '</div>'
-    + '<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Zeitraum</div>'
-      + '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">von '+monSel('vonM',S.vonM)+yrSel('vonY',S.vonY)+' <span style="margin:0 4px;color:var(--txt3)">bis</span> '+monSel('bisM',S.bisM)+yrSel('bisY',S.bisY)+'</div></div>'
-    + '<div style="'+(typDisabled?'opacity:.4;pointer-events:none':'')+'"><div style="font-size:11px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Typ'+(typDisabled?' — bei Rechnungen nicht anwendbar':'')+'</div><div style="display:flex;gap:6px;flex-wrap:wrap">'+typBtns+'</div></div>'
-    + '<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="_statExportCsv()">⬇ CSV exportieren</button><button class="btn" onclick="_statExportXlsx()">⬇ Excel exportieren</button></div>'
-  + '</div>';
-}
-
-function _statSet(key,val){
-  if (key==='vonM'||key==='bisM'||key==='vonY'||key==='bisY') val=+val;
-  _statState[key]=val;
-  renderStatistikView();
-}
-
-async function _statRun(){
-  const res=document.getElementById('stat-result'); if(!res) return;
-  const S=_statState, firmaSlug=getCurrentFirmaSlug();
-  try {
-    let rows;
-    if (S.nach==='auftraege')       rows = await _statAuftraege(firmaSlug);
-    else if (S.nach==='angebote')   rows = await _statAngebote(firmaSlug);
-    else                            rows = await _statRechnungen(firmaSlug);
-    _statState._lastRows = rows;
-    res.innerHTML = _statResultHtml(rows);
-  } catch(e){
-    res.innerHTML = '<div class="card" style="padding:20px;color:var(--err)">❌ '+String((e&&e.message)||e).replace(/</g,'&lt;')+'</div>';
-    console.warn('[Statistik]', e);
-  }
-}
-
-async function _statAuftraege(firmaSlug){
-  let auf = (_auftragCache && _auftragCache.length) ? _auftragCache : null;
-  if (!auf){ try { auf = await atRead('Auftraege', null); } catch(_){ auf=[]; } }
-  try { await _aufLoadAngPreisMap(firmaSlug); } catch(_){}
-  const S=_statState, map={};
-  for (const r of (auf||[])){
-    const f=r.fields||{}; if((f.firma||'')!==firmaSlug) continue;
-    if (_normAuftragStatus(f.status)==='storniert') continue;
-    const ym=String(f.created||'').slice(0,7); if(!_statInRange(ym)) continue;
-    if (S.typ!=='alle' && _statAuftragTyp(f)!==S.typ) continue;
-    let netto = (f.auftragswert_netto!=null && f.auftragswert_netto!=='') ? (+f.auftragswert_netto||0) : 0;
-    if (!netto && f.angebot_id && typeof _aufAngPreisMap!=='undefined' && _aufAngPreisMap){ const pm=_aufAngPreisMap.get(String(f.angebot_id)); if(pm && pm.typ!=='aufwand') netto=+pm.netto||0; }
-    const e=map[ym]||(map[ym]={count:0,sum:0}); e.count++; e.sum+=netto;
-  }
-  return _statMonthList(S.vonY,S.vonM,S.bisY,S.bisM).map(ym=>({ ym, count:(map[ym]?map[ym].count:0), sum:(map[ym]?map[ym].sum:0) }));
-}
-
-async function _statAngebote(firmaSlug){
-  if (!(_angeboteCache.items && _angeboteCache.firma===firmaSlug)) { try { await _loadAngebote(firmaSlug); } catch(_){} }
-  try { await _angLoadBeauftragtSet(firmaSlug); } catch(_){}
-  const S=_statState, map={};
-  for (const r of (_angeboteCache.items||[])){
-    const f=r.fields||{}; if((f.firma||'')!==firmaSlug) continue; if(f.archived) continue;
-    const ym=String(f.erp_datum||f.erstellt_am||'').slice(0,7); if(!_statInRange(ym)) continue;
-    if (S.typ!=='alle' && _angEffTyp(f)!==S.typ) continue;
-    const netto=+f.summe_netto_vp||0;
-    let beauftragt=false; try { beauftragt=_angIstBeauftragt(r,f); } catch(_){}
-    const e=map[ym]||(map[ym]={count:0,sum:0,bCount:0,bSum:0}); e.count++; e.sum+=netto; if(beauftragt){ e.bCount++; e.bSum+=netto; }
-  }
-  return _statMonthList(S.vonY,S.vonM,S.bisY,S.bisM).map(ym=>({ ym, count:(map[ym]?map[ym].count:0), sum:(map[ym]?map[ym].sum:0), bCount:(map[ym]?map[ym].bCount:0), bSum:(map[ym]?map[ym].bSum:0) }));
-}
-
-async function _statRechnungen(firmaSlug){
-  if (!(_rechnungenCache && _rechnungenCache.items && _rechnungenCache.firma===firmaSlug)) {
-    try { await _loadRechnungenFromERP(); } catch(e){ throw new Error('Rechnungen aus Maxise nicht ladbar: '+((e&&e.message)||e)); }
-  }
-  const S=_statState, map={};
-  for (const it of ((_rechnungenCache&&_rechnungenCache.items)||[])){
-    if (it.status==='storniert') continue;
-    const ym=String(it.datum||'').slice(0,7); if(!_statInRange(ym)) continue;
-    const netto=+it.netto||0;
-    const e=map[ym]||(map[ym]={count:0,sum:0}); e.count++; e.sum+=netto;
-  }
-  return _statMonthList(S.vonY,S.vonM,S.bisY,S.bisM).map(ym=>({ ym, count:(map[ym]?map[ym].count:0), sum:(map[ym]?map[ym].sum:0) }));
-}
-
-function _statResultHtml(rows){
-  const S=_statState, isAng=(S.nach==='angebote'), eur=_statEur;
-  const totalCount=rows.reduce((s,r)=>s+r.count,0), totalSum=rows.reduce((s,r)=>s+r.sum,0);
-  const totalBCount=isAng?rows.reduce((s,r)=>s+(r.bCount||0),0):0, totalBSum=isAng?rows.reduce((s,r)=>s+(r.bSum||0),0):0;
-  const label={ auftraege:'Auftragswert', angebote:'Angebotswert', rechnungen:'Rechnungswert' }[S.nach];
-  const einheit={ auftraege:'Aufträge', angebote:'Angebote', rechnungen:'Rechnungen' }[S.nach];
-  const von=_statMonthLabel(_statYM(S.vonY,S.vonM)), bis=_statMonthLabel(_statYM(S.bisY,S.bisM));
-  const bigVal=(S.kennzahl==='anzahl')?(totalCount+' '+einheit):eur(totalSum);
-  const bigLbl=(S.kennzahl==='anzahl'?'Anzahl '+einheit:label)+' · '+von+' – '+bis;
-  let h='<div class="card" style="margin-bottom:14px"><div style="font-size:12px;color:var(--txt3)">'+escapeHtml(bigLbl)+'</div><div style="font-size:30px;font-weight:800;letter-spacing:-.5px;margin-top:2px">'+escapeHtml(bigVal)+'</div>';
-  if (isAng){ const q=totalSum>0?Math.round(totalBSum/totalSum*100):0; h+='<div style="margin-top:8px;font-size:13px;color:var(--txt2)">davon <strong style="color:#065F46">beauftragt</strong>: '+eur(totalBSum)+' ('+totalBCount+') · Quote '+q+' %</div>'; }
-  h+='</div>';
-  let t='<div class="card" style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;min-width:340px"><thead><tr style="text-align:left;color:var(--txt3);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em">'
-    + '<th style="padding:8px 4px">Monat</th>'
-    + (isAng ? '<th style="padding:8px 4px;text-align:right">Angebotswert</th><th style="padding:8px 4px;text-align:right">davon beauftragt</th>'
-             : '<th style="padding:8px 4px;text-align:right">'+(S.kennzahl==='anzahl'?'Anzahl':label)+'</th>')
-    + '</tr></thead><tbody>';
-  for (const r of rows){
-    t+='<tr style="border-top:1px solid var(--bdr)"><td style="padding:9px 4px;color:var(--navy)">'+escapeHtml(_statMonthLabel(r.ym))+'</td>';
-    if (isAng){ t+='<td style="padding:9px 4px;text-align:right">'+(S.kennzahl==='anzahl'?r.count:eur(r.sum))+'</td><td style="padding:9px 4px;text-align:right;color:#065F46">'+(S.kennzahl==='anzahl'?(r.bCount||0):eur(r.bSum||0))+'</td>'; }
-    else { t+='<td style="padding:9px 4px;text-align:right">'+(S.kennzahl==='anzahl'?r.count:eur(r.sum))+'</td>'; }
-    t+='</tr>';
-  }
-  t+='<tr style="border-top:2px solid var(--txt2);font-weight:800"><td style="padding:10px 4px">Gesamt</td>';
-  if (isAng){ t+='<td style="padding:10px 4px;text-align:right">'+(S.kennzahl==='anzahl'?totalCount:eur(totalSum))+'</td><td style="padding:10px 4px;text-align:right;color:#065F46">'+(S.kennzahl==='anzahl'?totalBCount:eur(totalBSum))+'</td>'; }
-  else { t+='<td style="padding:10px 4px;text-align:right">'+(S.kennzahl==='anzahl'?totalCount:eur(totalSum))+'</td>'; }
-  t+='</tr></tbody></table></div>';
-  return h+t;
-}
-
-function _statCsvNum(n){ return (Number(n)||0).toFixed(2).replace('.',','); }
-function _statExportCsv(){
-  const rows=_statState._lastRows||[], S=_statState, isAng=(S.nach==='angebote');
-  const valLbl={ auftraege:'Auftragswert netto', angebote:'Angebotswert netto', rechnungen:'Rechnungswert netto' }[S.nach];
-  const head = isAng ? ['Monat',valLbl,'Anzahl','davon beauftragt netto','beauftragt Anzahl'] : ['Monat',valLbl,'Anzahl'];
-  const data = rows.map(r=> isAng ? [_statMonthLabel(r.ym),_statCsvNum(r.sum),r.count,_statCsvNum(r.bSum||0),r.bCount||0] : [_statMonthLabel(r.ym),_statCsvNum(r.sum),r.count]);
-  const csv=[head,...data].map(r=>r.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(';')).join('\r\n');
-  const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
-  const url=URL.createObjectURL(blob), a=document.createElement('a'); a.href=url; a.download='statistik-'+S.nach+'-'+getCurrentFirmaSlug()+'.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),5000);
-  toast('⬇ CSV exportiert.','ok');
-}
-async function _statExportXlsx(){
-  try { if (typeof XLSX==='undefined' && typeof _loadSheetJS==='function') await _loadSheetJS(); } catch(_){}
-  if (typeof XLSX==='undefined') { toast('Excel-Bibliothek nicht verfügbar — nutze CSV.','warn'); return _statExportCsv(); }
-  const rows=_statState._lastRows||[], S=_statState, isAng=(S.nach==='angebote');
-  const valLbl={ auftraege:'Auftragswert netto', angebote:'Angebotswert netto', rechnungen:'Rechnungswert netto' }[S.nach];
-  const aoa=[ isAng ? ['Monat',valLbl,'Anzahl','davon beauftragt netto','beauftragt Anzahl'] : ['Monat',valLbl,'Anzahl'] ];
-  for (const r of rows) aoa.push( isAng ? [_statMonthLabel(r.ym),+(r.sum||0),r.count,+(r.bSum||0),r.bCount||0] : [_statMonthLabel(r.ym),+(r.sum||0),r.count] );
-  try { const ws=XLSX.utils.aoa_to_sheet(aoa), wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Statistik'); XLSX.writeFile(wb,'statistik-'+S.nach+'-'+getCurrentFirmaSlug()+'.xlsx'); toast('⬇ Excel exportiert.','ok'); }
-  catch(e){ toast('Excel-Export fehlgeschlagen — nutze CSV.','warn'); _statExportCsv(); }
-}
-
 function renderDashboard() {
   _diagOp('renderDashboard');   // v8.70: Freeze-Lokalisierung
   const f = getCurrentFirma();
@@ -17486,16 +17264,6 @@ function renderDashboard() {
         </button>
       `;
     }).join('');
-  // v9.71: Finanz-Statistik — nur für die freigegebenen Namen (FINANZ_STATISTIK_ALLOW), unabhängig von Admin.
-  if (_canSeeFinanzStatistik()) {
-    html += `
-      <button class="dash-tool" onclick="switchView('statistik')" style="border-color:#FCD34D">
-        <div class="dash-tool-icon">📊</div>
-        <div class="dash-tool-label">Finanz-Statistik</div>
-        <div class="dash-tool-desc">Angebote, Aufträge &amp; Rechnungen — Umsatz/Anzahl je Monat (netto), mit CSV/Excel-Export.</div>
-        <div class="dash-tool-stat">🔒 Finanz</div>
-      </button>`;
-  }
   // Admin-only Kacheln (Verwaltung) – bei Techniker-Only komplett ausgeblendet
   if (isAdmin() && !techMode) {
     html += `
