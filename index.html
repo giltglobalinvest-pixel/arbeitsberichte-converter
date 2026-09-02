@@ -2904,7 +2904,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.74';
+const APP_VERSION = 'v9.75';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -13694,11 +13694,14 @@ async function _aufCreateViaAufwandAngebot(btn) {
   if (!empfaengerId) throw new Error('Bitte einen Auftraggeber-Kontakt wählen.');
   const leistung = (document.getElementById('auf-f-leistung')?.value || '').trim();
   if (!leistung) throw new Error('Bitte eine Leistungsbeschreibung eintragen.');
+  // v9.75: Bei „Gewährleistungsprüfung" dürfen Einsatzpauschale + Stundensatz 0 € sein (leeres Feld = 0 €).
+  //   Sonst ist ein Stundensatz > 0 € Pflicht (Basis des Aufwand-Angebots).
+  const isGewaehr = !!document.getElementById('auf-f-gewaehrleistung')?.checked;
   const _fStd  = (document.getElementById('auf-f-stundensatz')?.value || '').trim();
   const _fEins = (document.getElementById('auf-f-einsatzpauschale')?.value || '').trim();
-  const stundensatz   = _fStd  !== '' ? (+_fStd)  : (+_currentSelectedAnlage.stundensatz || 0);
-  const einsatzpausch = _fEins !== '' ? (+_fEins) : (+_currentSelectedAnlage.einsatzPauschale || 0);
-  if (!(stundensatz > 0)) throw new Error('Bitte einen Stundensatz (> 0 €) eintragen — er ist die Basis des Aufwand-Angebots.');
+  const stundensatz   = _fStd  !== '' ? (+_fStd)  : (isGewaehr ? 0 : (+_currentSelectedAnlage.stundensatz || 0));
+  const einsatzpausch = _fEins !== '' ? (+_fEins) : (isGewaehr ? 0 : (+_currentSelectedAnlage.einsatzPauschale || 0));
+  if (!isGewaehr && !(stundensatz > 0)) throw new Error('Bitte einen Stundensatz (> 0 €) eintragen — nur bei „Gewährleistungsprüfung" darf er 0 € sein.');
 
   const anlage   = _currentSelectedAnlage;
   const kunde    = anlage.kunde || {};
