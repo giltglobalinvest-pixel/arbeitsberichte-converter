@@ -2494,7 +2494,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <div style="flex:1"></div>
     <button class="btn" onclick="auftragSelectAll()" title="Alle in der aktuellen Ansicht auswählen">☑ Alle</button>
     <button class="btn" onclick="auftragSelectNone()" title="Auswahl aufheben">☐ Keine</button>
-    <button class="btn" style="color:#3730A3;border-color:#A5B4FC" onclick="bulkHideAuftraege()" title="Ausgewählte Aufträge aus der Liste ausblenden (Datensatz bleibt, ERP unverändert)">🙈 Ausblenden</button>
+    <button class="btn" id="auf-bulk-hide-btn" style="color:#3730A3;border-color:#A5B4FC" onclick="bulkHideAuftraege()" title="Ausgewählte Aufträge aus der Liste ausblenden (Datensatz bleibt, ERP unverändert)">🙈 Ausblenden</button>
     <button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.4)" onclick="bulkDeleteAuftraege()">🗑 Löschen</button>
     <button class="btn" onclick="cancelAuftragSelectMode()">Abbrechen</button>
   </div>
@@ -2527,7 +2527,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, für die im ERP bereits eine Rechnung existiert, aus der Liste ausblenden (Standard: an)">
       <input type="checkbox" id="auf-hide-invoiced" checked onchange="_onHideInvoicedChange()"> 🧾 Mit Rechnung ausblenden
     </label>
-    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die manuell oder per Rechnungs-Check ausgeblendet wurden, wieder anzeigen">
+    <label id="auf-show-hidden-wrap" style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--txt2);white-space:nowrap;cursor:pointer" title="Aufträge, die manuell oder per Rechnungs-Check ausgeblendet wurden, wieder anzeigen">
       <input type="checkbox" id="auf-show-hidden" onchange="renderAuftraegeList()"><span id="auf-show-hidden-lbl">🙈 Ausgeblendete zeigen</span>
     </label>
   </div>
@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.78';
+const APP_VERSION = 'v9.79';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -7857,8 +7857,13 @@ async function loadAuftraegeAndRender(opts) {
     const abrBtn   = document.getElementById('auf-abrechnen-btn');
     if (erpBtn)   erpBtn.style.display   = canSync ? '' : 'none';
     if (bgBtn)    bgBtn.style.display    = (canSync && !isFirmaAll()) ? '' : 'none';
-    if (rechnBtn) rechnBtn.style.display = canSync ? '' : 'none';
+    // v9.79: „Ausblenden"-Funktionen NUR für Admins (Techniker dürfen keine Aufträge ausblenden)
+    if (rechnBtn) rechnBtn.style.display = (isAdmin() && !!APP_KEYS.valtownProxyUrl) ? '' : 'none';
     if (abrBtn)   abrBtn.style.display   = (canSync && !isFirmaAll()) ? '' : 'none';
+    const bulkHideBtn = document.getElementById('auf-bulk-hide-btn');
+    if (bulkHideBtn) bulkHideBtn.style.display = isAdmin() ? '' : 'none';
+    const showHiddenWrap = document.getElementById('auf-show-hidden-wrap');
+    if (showHiddenWrap) showHiddenWrap.style.display = isAdmin() ? '' : 'none';
     // Letzten Sync-Status laden + anzeigen (passiert async, non-blocking)
     if (canSync) loadLastSyncStatus().catch(()=>{});
     renderAuftraegeList();   // v8.87: SOFORT rendern — die Preis-Map (nur Admin-Preisspalte) danach nicht-blockierend nachladen
@@ -8366,7 +8371,7 @@ function _auftragCardHtml(r) {
         <span class="auf-status ${status}">${statusLabel}</span>
         ${prio !== 'normal' ? '<span class="auf-prio '+prio+'">'+prioLabel+'</span>' : ''}
         ${hiddenBadge}
-        ${(!inSelect && !isHidden && hasPermission('auftraege_edit')) ? '<button class="auf-card-hide-btn" onclick="event.stopPropagation();toggleHideAuftragManual(\''+r.id+'\',true)" title="Diesen Auftrag aus der Liste ausblenden" style="background:transparent;border:1px solid var(--bdr);color:var(--txt2);width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1">🙈</button>' : ''}
+        ${(!inSelect && !isHidden && isAdmin()) ? '<button class="auf-card-hide-btn" onclick="event.stopPropagation();toggleHideAuftragManual(\''+r.id+'\',true)" title="Diesen Auftrag aus der Liste ausblenden" style="background:transparent;border:1px solid var(--bdr);color:var(--txt2);width:30px;height:30px;border-radius:6px;cursor:pointer;font-size:14px;display:inline-flex;align-items:center;justify-content:center;padding:0;line-height:1">🙈</button>' : ''}
       </div>
     </div>
   `;
@@ -9552,7 +9557,7 @@ async function bulkDeleteAuftraege() {
 /* Mehrere Aufträge gleichzeitig manuell ausblenden (hidden_manual = true).
    Datensatz bleibt in Airtable + ERP — nur die Liste filtert sie raus. */
 async function bulkHideAuftraege() {
-  if (!hasPermission('auftraege_edit')) return toast('🔒 Keine Berechtigung','err');
+  if (!isAdmin()) return toast('🔒 Ausblenden ist nur für Admins.','err');   // v9.79
   const ids = Array.from(_auftragSelected);
   if (ids.length === 0) return toast('Keine Aufträge ausgewählt.', 'warn');
   if (!confirm(ids.length + ' Auftrag/Aufträge aus der Liste ausblenden?\n\n• Datensatz bleibt in Airtable\n• ERP bleibt komplett unverändert\n• Über "🙈 Ausgeblendete zeigen" wieder sichtbar')) return;
@@ -10007,14 +10012,14 @@ async function openAuftragDetail(recId) {
           <span style="font-weight:600">🙈 In der App ausgeblendet (Rechnung im ERP gefunden)</span>
           ${f.invoice_num  ? '<span>· Nr. '+String(f.invoice_num).replace(/</g,'&lt;')+'</span>' : ''}
           ${f.invoice_date ? '<span>· '+String(f.invoice_date).replace(/</g,'&lt;')+'</span>' : ''}
-          ${hasPermission('auftraege_edit') ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="unhideAuftragInvoice(\''+rec.id+'\')">↺ Wieder einblenden</button>' : ''}
+          ${isAdmin() ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="unhideAuftragInvoice(\''+rec.id+'\')">↺ Wieder einblenden</button>' : ''}
         </div>` : ''}
       ${f.hidden_manual ? `
         <div style="margin-top:10px;padding:10px 12px;background:#E0E7FF;border:1px solid #A5B4FC;border-radius:6px;font-size:12px;color:#3730A3;display:flex;flex-wrap:wrap;gap:8px;align-items:center">
           <span style="font-weight:600">🙈 Manuell ausgeblendet</span>
-          ${hasPermission('auftraege_edit') ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="toggleHideAuftragManual(\''+rec.id+'\',false)">↺ Wieder einblenden</button>' : ''}
+          ${isAdmin() ? '<button class="btn" style="margin-left:auto;padding:4px 10px;font-size:12px" onclick="toggleHideAuftragManual(\''+rec.id+'\',false)">↺ Wieder einblenden</button>' : ''}
         </div>
-      ` : (hasPermission('auftraege_edit') ? `
+      ` : (isAdmin() ? `
         <label style="margin-top:10px;display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--bdr);border-radius:6px;font-size:12px;color:var(--txt2);cursor:pointer" title="Aus der App-Liste ausblenden (im ERP bleibt der Auftrag erhalten)">
           <input type="checkbox" onchange="toggleHideAuftragManual('${rec.id}', this.checked)" style="width:16px;height:16px;cursor:pointer">
           <span>🙈 Diesen Auftrag aus der Liste ausblenden</span>
@@ -10121,10 +10126,13 @@ async function openAuftragDetail(recId) {
       html += '<button class="btn" style="color:#fff;border-color:#7C3AED;background:#7C3AED" onclick="_odCreateOrder(\''+rec.id+'\', this)" title="'+(odDone?'Den bestehenden Order-Display-Auftrag bearbeiten (Felder aktualisieren)':'Diesen Auftrag im Order Display anlegen (createOrder via MCP)')+'">'+(odDone ? '🛠 Order Display bearbeiten' : '🚀 In Order Display anlegen')+'</button>';
     }
     // v8.35: Archivieren/Wiederherstellen (hidden_manual) — Auftrag bleibt erhalten, verschwindet aber aus der aktiven Liste.
-    if (f.hidden_manual) {
-      html += '<button class="btn" style="color:#3730A3;border-color:#A5B4FC" onclick="toggleHideAuftragManual(\''+rec.id+'\', false)" title="Auftrag wieder in der aktiven Liste anzeigen">↺ Aus Archiv holen</button>';
-    } else {
-      html += '<button class="btn" style="color:#3730A3;border-color:#A5B4FC;background:#EEF2FF" onclick="toggleHideAuftragManual(\''+rec.id+'\', true)" title="Auftrag archivieren — bleibt in Airtable/ERP erhalten, verschwindet aber aus der aktiven Liste. Über „🙈 Ausgeblendete zeigen“ wieder auffindbar.">🗄 Archivieren</button>';
+    // v9.79: NUR für Admins — Techniker dürfen Aufträge nicht aus-/einblenden.
+    if (isAdmin()) {
+      if (f.hidden_manual) {
+        html += '<button class="btn" style="color:#3730A3;border-color:#A5B4FC" onclick="toggleHideAuftragManual(\''+rec.id+'\', false)" title="Auftrag wieder in der aktiven Liste anzeigen">↺ Aus Archiv holen</button>';
+      } else {
+        html += '<button class="btn" style="color:#3730A3;border-color:#A5B4FC;background:#EEF2FF" onclick="toggleHideAuftragManual(\''+rec.id+'\', true)" title="Auftrag archivieren — bleibt in Airtable/ERP erhalten, verschwindet aber aus der aktiven Liste. Über „🙈 Ausgeblendete zeigen“ wieder auffindbar.">🗄 Archivieren</button>';
+      }
     }
     html += '<button class="btn" style="color:var(--err);border-color:rgba(220,38,38,.3)" onclick="deleteAuftrag(\''+rec.id+'\','+(f.auftrag_num||0)+')" title="Nur den lokalen Servicebox-Datensatz löschen — ERP/Maxise bleibt unberührt (Auftrag wird beim nächsten Sync wieder importiert!)">🗑 Löschen</button>';
   }
@@ -14689,7 +14697,7 @@ function _updateAuftragCacheLocal(recId, fieldsPatch) {
 
 /* Setzt/Entfernt die manuelle Ausblende-Markierung eines Auftrags. */
 async function toggleHideAuftragManual(recId, hide) {
-  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  if (!isAdmin()) return toast('🔒 Ausblenden ist nur für Admins.','err');   // v9.79
   try { await ensureField('Auftraege', 'hidden_manual', 'checkbox'); } catch(_){}
   try {
     await _patchAuftragFields(recId, { hidden_manual: !!hide });
@@ -14702,7 +14710,7 @@ async function toggleHideAuftragManual(recId, hide) {
 
 /* Hebt die "hidden_invoiced"-Markierung wieder auf, sodass der Auftrag wieder in den Listen erscheint. */
 async function unhideAuftragInvoice(recId) {
-  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  if (!isAdmin()) return toast('🔒 Ein-/Ausblenden ist nur für Admins.','err');   // v9.79
   try {
     await _patchAuftragFields(recId, { hidden_invoiced: false });
     _updateAuftragCacheLocal(recId, { hidden_invoiced: false });
@@ -14931,7 +14939,7 @@ async function setAuftragStatus(recId, newErpStatus) {
 /* ── Bulk: alle Aufträge der aktuellen Firma auf Rechnungen prüfen ── */
 async function bulkCheckInvoices() {
   if (!APP_KEYS.valtownProxyUrl) return toast('Proxy nicht eingerichtet (Admin → Integrationen).', 'err');
-  if (!hasPermission('auftraege_edit') && !isAdmin()) return toast('🔒 Keine Berechtigung','err');
+  if (!isAdmin()) return toast('🔒 Ausblenden ist nur für Admins.','err');   // v9.79
   if (isFirmaAll()) return toast('Bulk-Check braucht eine konkrete Firma. Bitte oben rechts wählen.', 'err');
   const firmaSlug = getCurrentFirmaSlug();
 
