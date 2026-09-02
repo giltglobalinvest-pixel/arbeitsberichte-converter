@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.79';
+const APP_VERSION = 'v9.80';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17377,11 +17377,12 @@ function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, lifta
   const _pLbl = _dashPeriodLabel();
   const berichtePeriod = (reports||[]).filter(r => _dashInPeriod(r.fields.created)).length;
   const aufF = allMode ? ((sd&&sd.auf)||[]) : ((sd&&sd.auf)||[]).filter(r => (r.fields.firma||'') === firmaSlug);
-  let aufPeriod=0, stornoPeriod=0, _durSum=0, _durN=0;
+  let aufPeriod=0, aufCompleted=0, stornoPeriod=0, _durSum=0, _durN=0;
   aufF.forEach(r => {
     const f=r.fields, st=_normAuftragStatus(f.status);
     if (st==='storniert'){ if(_dashInPeriod(f.ext_last_modified||f.created)) stornoPeriod++; return; }
     if (_dashInPeriod(f.created)) aufPeriod++;
+    if (f.completed_at && _dashInPeriod(f.completed_at)) aufCompleted++;   // v9.80: im Zeitraum abgeschlossen
     if (f.created && f.completed_at && _dashInPeriod(f.completed_at)){ const a=Date.parse(f.created), b=Date.parse(f.completed_at); if(a&&b&&b>=a){ _durSum+=(b-a); _durN++; } }
   });
   const avgDays = _durN ? Math.round(_durSum/_durN/86400000) : null;
@@ -17393,7 +17394,7 @@ function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, lifta
   const angSub = angSent+' versendet · '+_pLbl +
     (angNotSent>0 ? '<div style="margin-top:3px;color:#B45309;font-weight:600">'+angNotSent+' nicht versendet · Auftrag ohne Angebot</div>' : '');
   c.innerHTML =
-    statCard('🛠', aufPeriod, 'Aufträge', _pLbl, "switchView('auftraege')") +
+    statCard('🛠', aufPeriod, 'Aufträge', 'angelegt · '+_pLbl+'<div style="margin-top:3px;color:#065F46;font-weight:600">'+aufCompleted+' abgeschlossen</div>', "switchView('auftraege')") +
     statCard('📄', angPeriod, 'Angebote', angSub, "switchView('angebote')") +
     statCard('⚫', stornoPeriod, 'Storniert', _pLbl) +
     statCard('📋', berichtePeriod, 'Berichte', _pLbl) +
