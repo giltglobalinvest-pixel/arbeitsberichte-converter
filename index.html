@@ -1749,6 +1749,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
     <div class="dash-section-title" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <span>📊 Statistik</span>
       <span id="dash-period-toggle" style="display:inline-flex;gap:3px;background:var(--bg);border:1px solid var(--bdr);border-radius:99px;padding:3px"></span>
+      <span id="dash-refreshing" style="display:none;align-items:center;gap:6px;font-size:11px;font-weight:500;color:var(--txt3);text-transform:none;letter-spacing:0"><span class="spinner" style="width:12px;height:12px;border-width:2px;margin:0"></span> aktualisiere…</span>
     </div>
     <div class="dash-stats" id="dash-stats">
       <div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>
@@ -2904,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.76';
+const APP_VERSION = 'v9.77';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17391,8 +17392,9 @@ function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, lifta
 
 /* v9.75: gerenderte Kacheln je Firma+Zeitraum in localStorage merken → nach Reload SOFORT anzeigen
    (nie mehr "Lade Statistik…"); im Hintergrund + alle 5 Min neu berechnen. */
-function _dashLoadSnapshot(firma, period){ try { return localStorage.getItem('dash_cards_'+firma+'_'+period) || null; } catch(_){ return null; } }
+function _dashLoadSnapshot(firma, period){ try { return localStorage.getItem('dash_cards_'+firma+'_'+period) || localStorage.getItem('dash_cards_'+firma+'_'+(period==='jahr'?'monat':'jahr')) || null; } catch(_){ return null; } }
 function _dashSaveSnapshot(firma, period, html){ try { if(firma && html) localStorage.setItem('dash_cards_'+firma+'_'+period, html); } catch(_){} }
+function _dashSetRefreshing(on){ try { const el=document.getElementById('dash-refreshing'); if(el) el.style.display = on ? 'inline-flex' : 'none'; } catch(_){} }
 let _dashRefreshTimer = null;
 function _dashStartRefreshTimer(){
   if (_dashRefreshTimer) return;
@@ -17444,6 +17446,7 @@ async function loadDashboardStats() {
   if (!_snapShown) c.innerHTML = '<div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>';
   try { _dashStartRefreshTimer(); } catch(_){}   // v9.75: 5-Min-Hintergrund-Aktualisierung
   if (!_dashBootReady) return;   // v7.90: verfrühten Start-Lauf (Firma noch nicht gesetzt) überspringen
+  _dashSetRefreshing(_snapShown);   // v9.76: bei sichtbarem Cache „aktualisiere…" zeigen, bis die frischen Zahlen da sind
   try {
     const todayISO = new Date().toISOString().slice(0,10);
     const since30 = Date.now() - 30*24*3600*1000;
@@ -17565,11 +17568,13 @@ async function loadDashboardStats() {
     const _reRender = (sd) => { const cc=document.getElementById('dash-stats'); if (cc && getCurrentFirmaSlug()===firmaSlug) _dashRenderStatCards(cc, firmaSlug, allMode, reports, activeUsers, liftaroCards, sd); };
     const _sdHave  = _dashStatsData.firma===firmaSlug && Array.isArray(_dashStatsData.auf);
     if (_sdHave) {
-      _reRender(_dashStatsData);
-      if (!_dashStatsFresh(firmaSlug)) _dashFetchStatsData(firmaSlug).then(_reRender).catch(()=>{});
+      _reRender(_dashStatsData);   // sofort aus dem Cache
+      if (_dashStatsFresh(firmaSlug)) { _dashSetRefreshing(false); }
+      else { _dashSetRefreshing(true); _dashFetchStatsData(firmaSlug).then(sd => { _reRender(sd); _dashSetRefreshing(false); }).catch(() => _dashSetRefreshing(false)); }
     } else {
+      _dashSetRefreshing(true);   // kein Cache im Speicher (z.B. nach Reload) → Snapshot steht, Zahlen kommen gleich
       const sd = await _dashFetchStatsData(firmaSlug);
-      _reRender(sd);
+      _reRender(sd); _dashSetRefreshing(false);
     }
 
     // Per-Tool Statistik in den Tool-Cards eintragen
