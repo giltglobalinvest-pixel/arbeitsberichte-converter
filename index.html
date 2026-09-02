@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.80';
+const APP_VERSION = 'v9.81';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17365,8 +17365,13 @@ const _DASH_STATS_TTL = 5*60*1000;
 function _dashStatsFresh(firmaSlug){ return _dashStatsData.firma===firmaSlug && Array.isArray(_dashStatsData.auf) && (Date.now()-_dashStatsData.at < _DASH_STATS_TTL); }
 function _invalidateDashStats(){ _dashStatsData.at = 0; }   // → beim nächsten Dashboard-Load frisch holen
 async function _dashFetchStatsData(firmaSlug){
-  let auf = (typeof _auftragCache!=='undefined' && _auftragCache && _auftragCache.length) ? _auftragCache : null;
-  if (!auf) { try { auf = await atRead('Auftraege', null, ['firma','status','created','completed_at','ext_last_modified']); } catch(_){ auf = []; } }
+  // v9.81: Dashboard-Zahlen IMMER frisch + vollständig lesen (alle Firmen, ALLE Status inkl. abgerechnet/
+  //   storniert/ausgeblendet). NICHT _auftragCache verwenden — der ist (a) firma-gescopt und (b) mit
+  //   _canSeeAuftrag visibility-gefiltert (ohne abgerechnete/ausgeblendete Aufträge) → sonst zählt ein
+  //   abgeschlossener+abgerechneter Auftrag NICHT mit („0 abgeschlossen" trotz Abschluss). Projizierter
+  //   Read = kleine Payload; das Ergebnis wird 5 Min in _dashStatsData gecacht.
+  let auf = [];
+  try { auf = await atRead('Auftraege', null, ['firma','status','created','completed_at','ext_last_modified']); } catch(_){ auf = []; }
   let ang = [];
   try { ang = await atRead('App_Angebote', null, ['firma','erstellt_am','erp_datum','fd_send_ticket_id','fd_send_email','fd_send_at']); } catch(_){ ang = []; }
   _dashStatsData = { firma:firmaSlug, auf, ang, at:Date.now() };
