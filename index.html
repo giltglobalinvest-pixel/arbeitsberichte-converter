@@ -2904,7 +2904,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.75';
+const APP_VERSION = 'v9.76';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17386,6 +17386,22 @@ function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, lifta
     statCard('⏱', (avgDays!=null ? avgDays : '–'), 'Ø Durchlaufzeit (Tage)', (avgDays!=null ? 'Kalendertage (keine Werktage) · '+_pLbl : 'keine abgeschlossenen ('+_pLbl+')')) +
     statCard('👥', activeUsers, 'Aktive User', 'in 30 Tagen') +
     (liftaroCards||'');
+  try { _dashSaveSnapshot(firmaSlug, _dashPeriod, c.innerHTML); } catch(_){}   // v9.75: für sofortige Anzeige nach Reload
+}
+
+/* v9.75: gerenderte Kacheln je Firma+Zeitraum in localStorage merken → nach Reload SOFORT anzeigen
+   (nie mehr "Lade Statistik…"); im Hintergrund + alle 5 Min neu berechnen. */
+function _dashLoadSnapshot(firma, period){ try { return localStorage.getItem('dash_cards_'+firma+'_'+period) || null; } catch(_){ return null; } }
+function _dashSaveSnapshot(firma, period, html){ try { if(firma && html) localStorage.setItem('dash_cards_'+firma+'_'+period, html); } catch(_){} }
+let _dashRefreshTimer = null;
+function _dashStartRefreshTimer(){
+  if (_dashRefreshTimer) return;
+  _dashRefreshTimer = setInterval(() => {
+    try {
+      const dv = document.getElementById('dash-view');
+      if (dv && dv.classList.contains('show') && _dashBootReady && !isTechnikerOnly()) { _invalidateDashStats(); loadDashboardStats(); }
+    } catch(_){}
+  }, _DASH_STATS_TTL);
 }
 
 function statCard(icon, num, lbl, sub, onClickJs) {
@@ -17421,8 +17437,12 @@ async function _loadRecentStatEvents(){
 
 async function loadDashboardStats() {
   const c = document.getElementById('dash-stats');
-  c.innerHTML = '<div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>';
   try { _dashRenderPeriodToggle(); } catch(_){}   // v9.73
+  // v9.75: gemerkte Kacheln SOFORT anzeigen (nach Reload nie mehr "Lade Statistik…" — Zahlen bleiben stehen)
+  let _snapShown = false;
+  if (!isTechnikerOnly()) { try { const _snap=_dashLoadSnapshot(getCurrentFirmaSlug(), _dashPeriod); if(_snap){ c.innerHTML=_snap; _snapShown=true; } } catch(_){} }
+  if (!_snapShown) c.innerHTML = '<div style="grid-column:1/-1;color:var(--txt3);font-size:12px;padding:8px">Lade Statistik…</div>';
+  try { _dashStartRefreshTimer(); } catch(_){}   // v9.75: 5-Min-Hintergrund-Aktualisierung
   if (!_dashBootReady) return;   // v7.90: verfrühten Start-Lauf (Firma noch nicht gesetzt) überspringen
   try {
     const todayISO = new Date().toISOString().slice(0,10);
