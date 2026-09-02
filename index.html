@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.77';
+const APP_VERSION = 'v9.78';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17379,9 +17379,14 @@ function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, lifta
   const avgDays = _durN ? Math.round(_durSum/_durN/86400000) : null;
   let angPeriod=0, angSent=0;
   ((sd&&sd.ang)||[]).forEach(r => { const f=r.fields||{}; if(!allMode && (f.firma||'')!==firmaSlug) return; if(!_dashInPeriod(f.erstellt_am||f.erp_datum)) return; angPeriod++; if(f.fd_send_ticket_id||f.fd_send_email||f.fd_send_at) angSent++; });
+  // v9.78: „nicht versendet" separat ausweisen — das sind i.d.R. Aufträge, die ohne echtes Angebot
+  //   angelegt wurden (Platzhalter nur für den Maxise-Weg), nicht an Kunden gesendete Angebote.
+  const angNotSent = Math.max(0, angPeriod - angSent);
+  const angSub = angSent+' versendet · '+_pLbl +
+    (angNotSent>0 ? '<div style="margin-top:3px;color:#B45309;font-weight:600">'+angNotSent+' nicht versendet · Auftrag ohne Angebot</div>' : '');
   c.innerHTML =
     statCard('🛠', aufPeriod, 'Aufträge', _pLbl, "switchView('auftraege')") +
-    statCard('📄', angPeriod, 'Angebote', angSent+' versendet · '+_pLbl, "switchView('angebote')") +
+    statCard('📄', angPeriod, 'Angebote', angSub, "switchView('angebote')") +
     statCard('⚫', stornoPeriod, 'Storniert', _pLbl) +
     statCard('📋', berichtePeriod, 'Berichte', _pLbl) +
     statCard('⏱', (avgDays!=null ? avgDays : '–'), 'Ø Durchlaufzeit (Tage)', (avgDays!=null ? 'Kalendertage (keine Werktage) · '+_pLbl : 'keine abgeschlossenen ('+_pLbl+')')) +
