@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.84';
+const APP_VERSION = 'v9.85';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17652,7 +17652,8 @@ const KONE_DEFAULT_PRICES = {
     { label: 'Anfahrt-/Zustellpauschale (Einsatzpauschale)',                                            preis: 50,  einheit: '€' },
     { label: 'Monteursbegleitung ZÜS-Prüfung (pro Einsatz/Anlage, zzgl. Anfahrt)',                       preis: 100, einheit: '€' },
     { label: 'Notruf Konexion 10.3 GSM (Notrufservice inkl. Mietgerät, GSM, SIM-Card & Notbefreiung)',   preis: 40,  einheit: '€/Monat', highlight: true },
-    { label: 'Installation KONE-Notrufgerät – pro Installation (einmalig)',                              preis: 500, einheit: '€',       highlight: true },
+    { label: 'Installation Notrufgerät (einmalig, Laufzeit 3 Jahre)',                                   preis: 500, einheit: '€',       highlight: true, laufzeit: 3 },
+    { label: 'Installation Notrufgerät (einmalig, Laufzeit 5 Jahre)',                                   preis: 500, einheit: '€',       highlight: true, laufzeit: 5 },
   ],
   fussnote: 'Bei Aufschaltung des Notrufs auf den Subunternehmer beträgt die Mindestvertragslaufzeit drei (3) Jahre. Im Falle einer vorzeitigen Kündigung durch den Kunden vor Ablauf der Mindestvertragslaufzeit werden Deinstallationskosten in Höhe von 499,00 € berechnet.',
 };
@@ -19480,6 +19481,7 @@ const WV_WIZARD_STEPS = [
     ], default:'system' },
   { key:'notruf_gsm',           label:'Notruf und GSM-Service inkludieren', type:'checkbox', default:false },
   { key:'notrufgeraet_montage', label:'Montage Notrufgerät im Preis enthalten', type:'checkbox', default:false },
+  { key:'einmal_notruf',        label:'Installation Notrufgerät (€ netto, einmalig)', type:'number', default:'', placeholder:'z.B. 900.00', step:'0.01', min:0 },   // v9.85: einmalige Notrufgerät-Installation (aus Preisliste, laufzeitabhängig)
   { key:'zues_komplett',        label:'ZÜS-Organisation, Durchführung und Begleitung (ZÜS komplett)', type:'checkbox', default:false },
   { key:'vertragsbeginn',       label:'Vertragsbeginn', type:'date' },
   { key:'laufzeit_jahre',       label:'Laufzeit in Jahren', type:'select', options:['1','2','3','5','10'], default:'1' },
@@ -19560,6 +19562,7 @@ const WV_WIZARD_TEMPLATE =
   '---\n\n'+
   '## § 6 Vergütung\n\n'+
   'Das Wartungsentgelt beträgt insgesamt {{jahresumsatz}} (Abrechnung: {{abrechnung_typ}}, Turnus: {{abrechnung_turnus}}, Rate: {{turnus_betrag}}).\n\n'+
+  '{{einmalkosten_zeile}}'+
   'Alle Preise verstehen sich netto zzgl. der jeweils gültigen gesetzlichen Umsatzsteuer.\n\n'+
   'Das Wartungsentgelt wird jährlich zum Jahreswechsel an die Entwicklung des Verbraucherpreisindex (Statistisches Bundesamt) angepasst. Rechnungen sind innerhalb von 14 Tagen ohne Abzug zur Zahlung fällig.\n\n'+
   'Über den Wartungsumfang hinausgehende Leistungen (Reparaturen, Störungen, Sondereinsätze) werden nach tatsächlichem Aufwand auf Basis der jeweils gültigen Verrechnungssätze des Auftragnehmers abgerechnet.\n\n'+
@@ -20557,6 +20560,7 @@ window._wvWizardSave = function(vorlageId) {
 function _wvWizardBuildUebersicht(ans) {
   const wartungstypLabel = ans.wartungstyp === 'voll' ? 'Vollwartung (Verschleißteile inklusive)' : 'Systemwartung (Reparaturen separat nach Aufwand)';
   const jahresPreis = parseFloat(String(ans.jahrespreis_netto||'').replace(',','.')) || 0;
+  const einmalNetto = parseFloat(String(ans.einmal_notruf||'').replace(',','.')) || 0;   // v9.85
   const turnusLabel = ans.abrechnungs_turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich';
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' EUR';
   const ja  = 'enthalten';
@@ -20570,12 +20574,13 @@ function _wvWizardBuildUebersicht(ans) {
     '- **Wartungen pro Jahr:** ' + String(ans.anzahl_wartungen||'2'),
     '- **Notruf und GSM-Service:** ' + (ans.notruf_gsm ? ja : nein),
     '- **Montage Notrufgerät:** ' + (ans.notrufgeraet_montage ? ja : nein),
+    (einmalNetto > 0 ? '- **Installation Notrufgerät (einmalig):** ' + eur(einmalNetto) + ' netto' : null),   // v9.85
     '- **ZÜS-Organisation, Durchführung und Begleitung:** ' + (ans.zues_komplett ? ja : nein),
     '- **Vertragsbeginn:** ' + (_deDate(ans.vertragsbeginn) || ''),
     '- **Laufzeit:** ' + String(ans.laufzeit_jahre||'1') + ' Jahr(e)',
     '- **Abrechnungsturnus:** ' + turnusLabel,
     '- **Jahrespreis netto:** ' + (jahresPreis > 0 ? eur(jahresPreis) : '— wird separat vereinbart —'),
-  ];
+  ].filter(Boolean);
   return lines.join('\n');
 }
 
@@ -20602,7 +20607,17 @@ function _wvWizardBuildText(customTemplate) {
   const wartungstypLabel = ans.wartungstyp === 'voll' ? 'Vollwartung' : 'Systemwartung';
   const wartungstypBesch = ans.wartungstyp === 'voll' ? WV_WIZARD_SNIPPETS.wartungstyp_voll : WV_WIZARD_SNIPPETS.wartungstyp_system;
   const notrufGsmSec      = ans.notruf_gsm           ? WV_WIZARD_SNIPPETS.notruf_gsm           : '';
-  const notrufMontageSec  = ans.notrufgeraet_montage ? WV_WIZARD_SNIPPETS.notrufgeraet_montage : '';
+  // v9.85: § Montage Notrufgerät — wenn Einmalkosten gesetzt, den Betrag ausweisen; sonst (Checkbox) „im Entgelt enthalten".
+  const _einmalNotruf = parseFloat(String(ans.einmal_notruf||'').replace(',','.')) || 0;
+  const _eurT = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  let notrufMontageSec = '';
+  if (_einmalNotruf > 0) {
+    notrufMontageSec = '\n\n## § 4 Installation Notrufgerät\n\n'+
+      'Die Installation und Inbetriebnahme des Notrufgeräts inkl. Anschluss an die Anlagensteuerung wird einmalig mit **'+_eurT(_einmalNotruf)+' netto** berechnet und mit der ersten Rechnung fällig.\n\n'+
+      'Vorarbeiten in der Bauelektrik (Stromversorgung, separat abgesicherte Leitung zur Anlage) sind durch den Auftraggeber bereitzustellen.';
+  } else if (ans.notrufgeraet_montage) {
+    notrufMontageSec = WV_WIZARD_SNIPPETS.notrufgeraet_montage;
+  }
   const zuesSec           = ans.zues_komplett        ? WV_WIZARD_SNIPPETS.zues_komplett        : '';
   const uebersicht        = _wvWizardBuildUebersicht(ans);
   const tpl = (customTemplate && String(customTemplate).trim()) ? String(customTemplate) : WV_WIZARD_TEMPLATE;
@@ -20641,6 +20656,12 @@ function _wvWizardApplyToVars(vars) {
     vars.jahresumsatz  = eur(jahresPreis) + ' netto';
     vars.turnus_betrag = eur(turnus === 'quartal' ? jahresPreis/4 : jahresPreis) + ' netto';
   }
+  // v9.85: einmalige Notrufgerät-Installation
+  const einmalNetto = parseFloat(String(ans.einmal_notruf||'').replace(',','.')) || 0;
+  vars.einmalkosten = einmalNetto > 0 ? (eur(einmalNetto) + ' netto') : '—';
+  vars.einmalkosten_zeile = einmalNetto > 0
+    ? ('Die einmalige Installation des Notrufgeräts wird mit ' + eur(einmalNetto) + ' netto berechnet und ist mit der ersten Rechnung fällig.\n\n')
+    : '';
   vars.abrechnung_turnus = turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich';
   if (ans.anzahl_wartungen) vars.wartungen_pro_jahr = String(ans.anzahl_wartungen);
   // v7.37: Beginn + Laufzeit aus den Wizard-Schritten auch als start_datum/laufzeit_monate
@@ -21741,6 +21762,7 @@ async function _ensureVertraegeTable() {
     await ensureField('Vertraege', 'kunde_name',      'singleLineText');
     await ensureField('Vertraege', 'start_datum',     'singleLineText');
     await ensureField('Vertraege', 'laufzeit_monate', 'number', { precision:0 });
+    await ensureField('Vertraege', 'einmal_kosten_netto', 'number', { precision:2 });   // v9.85: einmalige Notrufgerät-Installation
     await ensureField('Vertraege', 'vorlage_id',     'singleLineText');  // Verknüpfung zur Vertragsvorlage
     await ensureField('Vertraege', 'pdf_modus',      'singleLineText');  // 'platzhalter' | 'ki'
     await ensureField('Vertraege', 'vertrag_text',   'multilineText');   // generierter Markdown — für Korrektur ohne KI-Neuwurf
@@ -43960,6 +43982,7 @@ function _nwvSyncPdfModeWithVorlage() {
     if (pdfSec)  pdfSec.style.display  = 'none';
     if (kondSec) kondSec.style.display = 'none';
     if (wizMount) wizMount.innerHTML = _wvWizardRenderUI(v.id);
+    setTimeout(_nwvSetupNotrufField, 30);   // v9.85: Einmalkosten aus Kundenpreisliste vorbefüllen (laufzeitabhängig)
     return;
   } else {
     if (wizSec)  wizSec.style.display  = 'none';
@@ -44179,6 +44202,96 @@ function _nwvReadWizardAnswers() {
   return ans;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   v9.85: Einmalige Notrufgerät-Installation aus der letzten Kundenpreisliste
+   ziehen — laufzeitabhängig (3 vs. 5 Jahre). Nur Aszendio hat Preislisten.
+   ══════════════════════════════════════════════════════════════════════ */
+let _nwvNotruf = null;   // { p3, p5, single, datum, gefunden, fehler }
+function _nwvExtractNotrufPreise(data){
+  const items = [...(Array.isArray(data.sonstiges)?data.sonstiges:[]), ...(Array.isArray(data.zusatzBlock)?data.zusatzBlock:[])]
+    .filter(s => s && String(s.einheit||'').trim()==='€' && /notrufger/i.test(String(s.label||'')));   // €=einmalig, „Notrufgerät" = Installation (nicht der €/Monat-Service)
+  const withYear = items.map(s => {
+    const m = String(s.label||'').match(/(\d+)\s*jahr/i);
+    return { preis: parseFloat(String(s.preis==null?'':s.preis).replace(',','.'))||0, jahre: (s.laufzeit!=null?+s.laufzeit:(m?+m[1]:null)) };
+  }).filter(x => x.preis > 0);
+  return {
+    p3: (withYear.find(x=>x.jahre===3)||{}).preis ?? null,
+    p5: (withYear.find(x=>x.jahre===5)||{}).preis ?? null,
+    single: withYear.length ? withYear[0].preis : null,
+  };
+}
+function _nwvNotrufPreisFuerLaufzeit(jahre){
+  const n = _nwvNotruf; if (!n || !n.gefunden) return null;
+  const j = parseInt(jahre,10) || 0;
+  if (n.p3!=null && n.p5!=null) return j >= 5 ? n.p5 : n.p3;   // 1,2,3 → 3-Jahre-Tarif · 5,10 → 5-Jahre-Tarif
+  if (n.p5!=null && j >= 5) return n.p5;
+  if (n.p3!=null) return n.p3;
+  if (n.p5!=null) return n.p5;
+  return (n.single!=null ? n.single : null);
+}
+async function _nwvLoadNotrufPreise(){
+  _nwvNotruf = null;
+  try {
+    const idxStr = document.getElementById('nwv-kunde-id')?.value;
+    const kunde = (idxStr!=='' && idxStr!=null && _kundenCache && _kundenCache.items) ? _kundenCache.items[+idxStr] : null;
+    const kundeNr = kunde ? String(kunde.kundennummer||'') : '';
+    if (!kundeNr) { _nwvNotruf = { gefunden:false }; _nwvApplyNotrufToField(); return; }
+    const firmaSlug = getCurrentFirmaSlug();
+    const pls = await atRead('Preislisten', null, ['firma','kunde_nummer','created','data_json']);
+    const mine = pls.filter(p => String(p.fields.firma||'')===firmaSlug && String(p.fields.kunde_nummer||'')===kundeNr)
+                    .sort((a,b) => String(b.fields.created||'').localeCompare(String(a.fields.created||'')));
+    if (mine.length){
+      let d = {}; try { d = JSON.parse(mine[0].fields.data_json||'{}'); } catch(_){}
+      _nwvNotruf = Object.assign(_nwvExtractNotrufPreise(d), { datum: String(mine[0].fields.created||'').slice(0,10), gefunden:true });
+    } else {
+      _nwvNotruf = { gefunden:false };
+    }
+  } catch(e){ _nwvNotruf = { gefunden:false, fehler: String(e&&e.message||e) }; }
+  _nwvApplyNotrufToField();
+}
+function _nwvApplyNotrufToField(){
+  const field = document.querySelector('#wv-wizard-inputs [data-key="einmal_notruf"]');
+  if (!field) return;
+  const hint = document.getElementById('nwv-notruf-hint');
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  const montageIncl = !!document.querySelector('#wv-wizard-inputs [data-key="notrufgeraet_montage"]')?.checked;
+  if (montageIncl){
+    field.value = '';
+    if (hint) hint.innerHTML = '„Montage im Preis enthalten" ist angehakt → keine gesonderten Einmalkosten.';
+    return;
+  }
+  const jahre = document.querySelector('#wv-wizard-inputs [data-key="laufzeit_jahre"]')?.value || '';
+  const n = _nwvNotruf;
+  if (!n || !n.gefunden){
+    if (hint) hint.innerHTML = (n && n.fehler) ? '⚠ Preisliste nicht ladbar — bitte manuell eintragen.' : 'Keine Kundenpreisliste gefunden — bitte manuell eintragen.';
+    return;
+  }
+  const preis = _nwvNotrufPreisFuerLaufzeit(jahre);
+  if (preis!=null && preis>0){
+    field.value = String(preis);
+    const hatBeide = (n.p3!=null && n.p5!=null);
+    const durTxt = hatBeide ? (' · Tarif '+((parseInt(jahre,10)||0)>=5?'5 Jahre':'3 Jahre')) : '';
+    if (hint) hint.innerHTML = '🔄 Aus Preisliste vom '+((typeof _deDate==='function') ? _deDate(n.datum) : n.datum)+durTxt+': <strong>'+eur(preis)+'</strong> — editierbar.';
+  } else {
+    if (hint) hint.innerHTML = 'Keine Notrufgerät-Installation in der Preisliste — bitte manuell eintragen.';
+  }
+}
+function _nwvSetupNotrufField(){
+  const field = document.querySelector('#wv-wizard-inputs [data-key="einmal_notruf"]');
+  if (!field) return;
+  if (!document.getElementById('nwv-notruf-hint')){
+    const hint = document.createElement('div');
+    hint.id = 'nwv-notruf-hint';
+    hint.style.cssText = 'font-size:11px;color:#4338CA;margin-top:4px;line-height:1.4';
+    hint.textContent = 'Wird aus der letzten Kundenpreisliste vorbefüllt…';
+    (field.parentNode || field).appendChild(hint);
+  }
+  const lz   = document.querySelector('#wv-wizard-inputs [data-key="laufzeit_jahre"]');
+  const mont = document.querySelector('#wv-wizard-inputs [data-key="notrufgeraet_montage"]');
+  [lz, mont].forEach(el => { if (el && !el._nwvNotrufBound){ el._nwvNotrufBound = true; el.addEventListener('change', _nwvApplyNotrufToField); } });
+  _nwvLoadNotrufPreise();
+}
+
 /* v6.83: Wenn der User im FD-Tab ist und Daten da → automatisch in den Manuell-Tab übernehmen,
  *   bevor Vorschau/Vertrag-Erstellen losläuft. Spart den manuellen „→ Übernehmen"-Klick. */
 async function _nwvAutoAdoptFdIfNeeded() {
@@ -44208,12 +44321,14 @@ async function _nwvSubmit() {
   const vorlageRec = (modal._vorlagen||[]).find(v => v.id === vorlageId);
   const isWizard   = !!(vorlageRec && vorlageRec.fields && vorlageRec.fields.wizard_mode === 'wartung');
   let wpa, turnus, start, laufzeit;
+  let einmalKosten = 0;   // v9.85: einmalige Notrufgerät-Installation
   if (isWizard) {
     const wAns = _nwvReadWizardAnswers();
     wpa      = +wAns.anzahl_wartungen || 2;
     turnus   = wAns.abrechnungs_turnus === 'quartal' ? 'quartal' : 'jaehrlich';
     start    = wAns.vertragsbeginn || new Date().toISOString().slice(0,10);
     laufzeit = (+wAns.laufzeit_jahre || 1) * 12;
+    einmalKosten = parseFloat(String(wAns.einmal_notruf||'').replace(',','.')) || 0;
   } else {
     wpa      = +document.getElementById('nwv-wpa').value || 4;
     turnus   = document.getElementById('nwv-turnus').value || 'jaehrlich';
@@ -44259,8 +44374,9 @@ async function _nwvSubmit() {
     // Optional: bestehende Preisliste des Kunden suchen (für Konditionen)
     let preislisteId = '';
     try {
-      const pls = await atRead('Preislisten', null);
-      const pl = pls.find(p => String(p.fields.firma||'') === firmaSlug && String(p.fields.kunde_nummer||'') === String(kunde.kundennummer||''));
+      const pls = await atRead('Preislisten', null, ['firma','kunde_nummer','created']);
+      const pl = pls.filter(p => String(p.fields.firma||'') === firmaSlug && String(p.fields.kunde_nummer||'') === String(kunde.kundennummer||''))
+                    .sort((a,b) => String(b.fields.created||'').localeCompare(String(a.fields.created||'')))[0];   // v9.85: neueste
       if (pl) preislisteId = pl.id;
     } catch(_){}
     // v5.80/81: Standard-Ansprechpartner + Postanschrift (Google-Maps-adresseId) einmal auflösen
@@ -44291,6 +44407,7 @@ async function _nwvSubmit() {
       kontakt_telefon:  resolvedKontakt.telefon,
       start_datum: start,
       laufzeit_monate: laufzeit,
+      einmal_kosten_netto: einmalKosten,   // v9.85: einmalige Notrufgerät-Installation
       vorlage_id: vorlageId,
       pdf_modus: pdfModus,
     };
