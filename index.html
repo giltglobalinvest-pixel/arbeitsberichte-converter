@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.87';
+const APP_VERSION = 'v9.88';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -19481,7 +19481,7 @@ const WV_WIZARD_STEPS = [
     ], default:'system' },
   { key:'notruf_gsm',           label:'Notruf und GSM-Service inkludieren', type:'checkbox', default:false },
   { key:'notrufgeraet_montage', label:'Montage Notrufgerät im Preis enthalten', type:'checkbox', default:false },
-  { key:'einmal_notruf',        label:'Installation Notrufgerät (€ netto, einmalig)', type:'number', default:'', placeholder:'z.B. 900.00', step:'0.01', min:0 },   // v9.85: einmalige Notrufgerät-Installation (aus Preisliste, laufzeitabhängig)
+  { key:'einmal_notruf',        label:'Installation Notrufgerät/e (€ netto, einmalig)', type:'number', default:'', placeholder:'z.B. 900.00', step:'0.01', min:0 },   // v9.85: einmalige Notrufgerät-Installation (aus Preisliste, laufzeitabhängig)
   { key:'zues_komplett',        label:'ZÜS-Organisation, Durchführung und Begleitung (ZÜS komplett)', type:'checkbox', default:false },
   { key:'vertragsbeginn',       label:'Vertragsbeginn', type:'date' },
   { key:'laufzeit_jahre',       label:'Laufzeit in Jahren', type:'select', options:['1','2','3','5','10'], default:'1' },
@@ -19502,8 +19502,8 @@ const WV_WIZARD_SNIPPETS = {
     'Der Auftragnehmer betreibt eine 24/7-Notrufzentrale, auf die das Notrufgerät der Anlage aufgeschaltet wird. Eingehende Notrufe werden entgegengenommen und im Bedarfsfall an einen Bereitschaftsdienst zur Befreiung weitergeleitet.\n\n'+
     'Die Kosten der GSM-Mobilfunkverbindung und der Aufschaltung auf die Notrufzentrale sind im Wartungsentgelt enthalten.',
   notrufgeraet_montage:
-    '\n\n## § 4 Montage Notrufgerät\n\n'+
-    'Die Montage und Inbetriebnahme des Notrufgeräts sowie der notwendige Anschluss an die Anlagensteuerung sind im Wartungsentgelt enthalten.\n\n'+
+    '\n\n## § 4 Montage Notrufgerät/e\n\n'+
+    'Die Montage und Inbetriebnahme des/der Notrufgerät/e sowie der notwendige Anschluss an die jeweilige Anlagensteuerung sind im Wartungsentgelt enthalten.\n\n'+
     'Vorarbeiten in der Bauelektrik (Stromversorgung, separat abgesicherte Leitung zur Anlage) sind durch den Auftraggeber bereitzustellen.',
   zues_komplett:
     '\n\n## § 5 ZÜS-Organisation, Durchführung und Begleitung\n\n'+
@@ -20577,7 +20577,7 @@ function _wvWizardBuildUebersicht(ans) {
     '- **Wartungen pro Jahr:** ' + String(ans.anzahl_wartungen||'2'),
     '- **Notruf und GSM-Service:** ' + (ans.notruf_gsm ? ja : nein),
     '- **Montage Notrufgerät:** ' + (ans.notrufgeraet_montage ? ja : nein),
-    (einmalNetto > 0 ? '- **Installation Notrufgerät (einmalig):** ' + eur(einmalNetto) + ' netto' : null),   // v9.85
+    (einmalNetto > 0 ? '- **Installation Notrufgerät/e (einmalig):** ' + eur(einmalNetto) + ' netto' : null),   // v9.85
     '- **ZÜS-Organisation, Durchführung und Begleitung:** ' + (ans.zues_komplett ? ja : nein),
     '- **Vertragsbeginn:** ' + (_deDate(ans.vertragsbeginn) || ''),
     '- **Laufzeit:** ' + String(ans.laufzeit_jahre||'1') + ' Jahr(e)',
@@ -20615,8 +20615,8 @@ function _wvWizardBuildText(customTemplate) {
   const _eurT = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
   let notrufMontageSec = '';
   if (_einmalNotruf > 0) {
-    notrufMontageSec = '\n\n## § 4 Installation Notrufgerät\n\n'+
-      'Die Installation und Inbetriebnahme des Notrufgeräts inkl. Anschluss an die Anlagensteuerung wird einmalig mit **'+_eurT(_einmalNotruf)+' netto** berechnet und mit der ersten Rechnung fällig.\n\n'+
+    notrufMontageSec = '\n\n## § 4 Installation Notrufgerät/e\n\n'+
+      'Die Installation und Inbetriebnahme des/der Notrufgerät/e inkl. Anschluss an die jeweilige Anlagensteuerung wird einmalig mit **'+_eurT(_einmalNotruf)+' netto** berechnet und mit der ersten Rechnung fällig.\n\n'+
       'Vorarbeiten in der Bauelektrik (Stromversorgung, separat abgesicherte Leitung zur Anlage) sind durch den Auftraggeber bereitzustellen.';
   } else if (ans.notrufgeraet_montage) {
     notrufMontageSec = WV_WIZARD_SNIPPETS.notrufgeraet_montage;
@@ -21005,6 +21005,35 @@ async function _acceptVertragPreview() {
   }
 }
 
+/** v9.88: baut die Aufzugs-Aufstellung als Markdown-TABELLE (statt nummerierter Liste).
+ *  rows: [{ fabrik, standort, halt, preis(number|null) }].
+ *  Spalten wie im OTIS-Beispiel: Fabrik-Nr. · Standort · Haltestellen · Nettopreis/Jahr.
+ *  Preis-Spalte + Gesamt-Zeile nur, wenn mindestens ein Aufzug einen Jahrespreis > 0 hat. */
+function _wvBuildAufzugTableMd(rows) {
+  rows = Array.isArray(rows) ? rows : [];
+  const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  const cell = (v) => String(v==null?'':v).replace(/\r?\n+/g, ', ').replace(/\|/g, '/').trim();
+  const anyPreis = rows.some(r => (+r.preis) > 0);
+  const head = anyPreis
+    ? '| Fabrik-Nr. | Standort | Haltestellen | Nettopreis/Jahr |\n| --- | --- | --- | --- |'
+    : '| Fabrik-Nr. | Standort | Haltestellen |\n| --- | --- | --- |';
+  const lines = rows.map(r => {
+    const fab  = cell(r.fabrik) || '—';
+    const std  = cell(r.standort) || '—';
+    const hv   = (r.halt==null || String(r.halt).trim()==='') ? '' : String(r.halt).trim();
+    const halt = hv || '—';
+    return anyPreis
+      ? '| '+fab+' | '+std+' | '+halt+' | '+((+r.preis)>0 ? eur(r.preis) : '—')+' |'
+      : '| '+fab+' | '+std+' | '+halt+' |';
+  });
+  let out = head + (lines.length ? '\n' + lines.join('\n') : '');
+  if (anyPreis) {
+    const total = rows.reduce((s,r) => s + ((+r.preis)>0 ? (+r.preis) : 0), 0);
+    out += '\n| **Gesamt** |  |  | **'+eur(total)+'** |';
+  }
+  return out;
+}
+
 function _buildVertragVars(vRec, plRec) {
   // v5.66: App-Verträge haben keine Preisliste-Verknüpfung → plRec ist {} und
   // plRec.fields undefined. Defensiv lesen + auf Vertrag-Record-Felder fallback.
@@ -21013,13 +21042,16 @@ function _buildVertragVars(vRec, plRec) {
   let plData = null; try { plData = JSON.parse(pf.data_json||'null'); } catch(_){}
   let anlagen = []; try { anlagen = JSON.parse(vf.anlagen_json||'[]'); } catch(_){}
   const wpa = +vf.wartungen_pro_jahr || 4;
-  // Jahresumsatz
-  let total = 0;
-  const aufzugZeilen = anlagen.map((a, i) => {
-    const p = _calcWartungspreisProAnlage(a, { ...plData, wartungenProJahr: wpa });
-    if (p != null && +a.haltestellen > 0) total += p;
-    return (i+1)+'. '+(a.adresse||'?')+(a.fabriknummer?' (Fabrik-Nr. '+a.fabriknummer+')':'')+(a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')+(p!=null?' · '+Number(p).toLocaleString('de-DE',{minimumFractionDigits:2})+' € netto/Jahr':'');
+  // Jahresumsatz + v9.88 Aufzugs-Tabelle (Preis je Aufzug bevorzugt aus gespeichertem jahrespreis)
+  const _tableRows = anlagen.map((a) => {
+    const saved = parseFloat(String(a.jahrespreis==null?'':a.jahrespreis).replace(',','.'));
+    const p = (isFinite(saved) && saved > 0)
+      ? saved
+      : _calcWartungspreisProAnlage(a, { ...plData, wartungenProJahr: wpa });
+    return { fabrik: a.fabriknummer, standort: a.adresse, halt: a.haltestellen, preis: (p!=null ? +p : null) };
   });
+  const total = _tableRows.reduce((s,r) => s + ((+r.preis)>0 ? +r.preis : 0), 0);
+  const aufzugTabelle = _wvBuildAufzugTableMd(_tableRows);
   const turnusBetrag = vf.abrechnung_turnus === 'quartal' ? total/4 : total;
   const eur = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
   // v5.79: Wenn auf dem Vertrag-Record Adresse/Kontakt fehlen (alt-angelegte App-Verträge),
@@ -21046,7 +21078,7 @@ function _buildVertragVars(vRec, plRec) {
     abrechnung_typ:     vf.abrechnung_typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
     abrechnung_turnus:  vf.abrechnung_turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
     wartungen_pro_jahr: String(wpa),
-    aufzug_liste:       aufzugZeilen.join('\n'),
+    aufzug_liste:       aufzugTabelle,
     aufzug_anzahl:      String(anlagen.length),
     jahresumsatz:       eur(total) + ' netto',
     turnus_betrag:      eur(turnusBetrag) + ' netto',
@@ -21278,6 +21310,110 @@ async function _buildVertragPDFBlob(text, vars) {
     }
   };
 
+  // ── v9.88: Markdown-Tabellen-Support (| a | b |) ─────────────
+  const _parseTableRow = (s) => {
+    let t = String(s||'').trim();
+    if (t.startsWith('|')) t = t.slice(1);
+    if (t.endsWith('|'))   t = t.slice(0, -1);
+    return t.split('|').map(c => c.trim());
+  };
+  const _isTableSep = (s) => {
+    if (!s || s.indexOf('|') < 0) return false;
+    const cells = _parseTableRow(s).filter(c => c !== '');
+    return cells.length > 0 && cells.every(c => /^:?-{2,}:?$/.test(c));
+  };
+  const _stripMd = (s) => String(s||'').replace(/\*+/g, '');
+  const renderMdTable = (header, bodyRows) => {
+    const ncol = header.length;
+    if (!ncol) return;
+    const pad = 1.8, fs = 9, lineH = 4.2;
+    doc.setFontSize(fs);
+    // Natürliche Spaltenbreiten (fett gemessen = breitester Fall)
+    doc.setFont('helvetica','bold');
+    const colNat = new Array(ncol).fill(0);
+    for (const r of [header, ...bodyRows]) {
+      for (let c = 0; c < ncol; c++) {
+        const w = doc.getTextWidth(_stripMd(r[c])) + pad*2;
+        if (w > colNat[c]) colNat[c] = w;
+      }
+    }
+    // Breitenverteilung: schmale Spalten behalten ihre natürliche (kopf-passende) Breite,
+    // die breiteste Spalte (i.d.R. Standort) nimmt Über-/Unterschuss auf → keine Kopf-Umbrüche.
+    const sumNat = colNat.reduce((a,b)=>a+b,0) || 1;
+    let colW = colNat.slice();
+    if (sumNat <= cw) {
+      const widest = colW.indexOf(Math.max(...colW));
+      colW[widest] += (cw - sumNat);
+    } else {
+      let overflow = sumNat - cw;
+      const order = colW.map((w,idx)=>idx).sort((a,b)=>colW[b]-colW[a]);
+      const floor = 14; // mm Mindestbreite
+      for (const idx of order) {
+        if (overflow <= 0.01) break;
+        const take = Math.min(Math.max(0, colW[idx]-floor), overflow);
+        colW[idx] -= take; overflow -= take;
+      }
+      if (overflow > 0.5) { const s2 = colW.reduce((a,b)=>a+b,0)||1; colW = colW.map(w=>w/s2*cw); }
+    }
+    // Ausrichtung aus dem Spaltenkopf ableiten
+    const align = header.map(h => {
+      const hl = _stripMd(h).toLowerCase();
+      if (/preis|netto|betrag|summe|kosten|€/.test(hl)) return 'right';
+      if (/haltestell|anzahl|st(ü|u)ck|\bstk\b/.test(hl)) return 'center';
+      return 'left';
+    });
+    const rowHeight = (cells) => {
+      let maxLines = 1;
+      for (let c = 0; c < ncol; c++) {
+        const lines = doc.splitTextToSize(_stripMd(cells[c]), Math.max(6, colW[c]-pad*2));
+        if (lines.length > maxLines) maxLines = lines.length;
+      }
+      return maxLines*lineH + pad*2;
+    };
+    const emitRow = (cells, opts={}) => {
+      const isHeader = !!opts.header;
+      const rowH = rowHeight(cells);
+      const y0 = y;
+      if (isHeader)      { doc.setFillColor(...NAVY);           doc.rect(ml, y0, cw, rowH, 'F'); }
+      else if (opts.zebra){ doc.setFillColor(245,247,250);      doc.rect(ml, y0, cw, rowH, 'F'); }
+      else if (opts.bold) { doc.setFillColor(234,239,246);      doc.rect(ml, y0, cw, rowH, 'F'); }
+      let x = ml;
+      for (let c = 0; c < ncol; c++) {
+        const raw = cells[c] || '';
+        const bold = isHeader || opts.bold || /\*\*/.test(raw);
+        doc.setFont('helvetica', bold ? 'bold' : 'normal');
+        doc.setFontSize(fs);
+        doc.setTextColor(...(isHeader ? [255,255,255] : GREY_TEXT));
+        const lines = doc.splitTextToSize(_stripMd(raw), Math.max(6, colW[c]-pad*2));
+        for (let li = 0; li < lines.length; li++) {
+          const tw = doc.getTextWidth(lines[li]);
+          let tx = x + pad;
+          if (align[c] === 'right')       tx = x + colW[c] - pad - tw;
+          else if (align[c] === 'center') tx = x + (colW[c] - tw)/2;
+          doc.text(lines[li], tx, y0 + pad + lineH*(li+1) - 1);
+        }
+        x += colW[c];
+      }
+      doc.setDrawColor(...GREY_LIGHT); doc.setLineWidth(0.2);
+      doc.rect(ml, y0, cw, rowH);
+      let vx = ml;
+      for (let c = 0; c < ncol-1; c++) { vx += colW[c]; doc.line(vx, y0, vx, y0+rowH); }
+      y = y0 + rowH;
+    };
+    const drawRow = (cells, opts={}) => {
+      const rowH = rowHeight(cells);
+      const pg0 = doc.internal.getNumberOfPages();
+      needSpace(rowH);
+      if (doc.internal.getNumberOfPages() > pg0 && !opts.header) emitRow(header, { header:true });
+      emitRow(cells, opts);
+    };
+    y += 1;
+    drawRow(header, { header:true });
+    bodyRows.forEach((r, ri) => drawRow(r, { zebra: ri % 2 === 1, bold: /\*\*/.test((r||[]).join('')) }));
+    y += 4;
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.setTextColor(...GREY_TEXT);
+  };
+
   // Markdown-Renderer (zeilenbasiert)
   // VORHER: Unterschriftslinien-Marker normalisieren — KI nutzt oft Ketten von _, \, ~ für Linien
   // die im Helvetica-Font seltsam aussehen. Wir ersetzen durch eine Marker-Zeile [[SIGLINE]].
@@ -21293,6 +21429,20 @@ async function _buildVertragPDFBlob(text, vars) {
     // Leerzeile = Abstand
     if (!line.trim()) {
       y += 3.5;
+      inList = false;
+      continue;
+    }
+    // v9.88: Markdown-Tabelle | a | b |  (Kopfzeile + Trennzeile ---)
+    if (line.trim().startsWith('|') && _isTableSep(paragraphs[i+1])) {
+      const header = _parseTableRow(line);
+      let j = i + 2;
+      const bodyRows = [];
+      while (j < paragraphs.length && paragraphs[j].trim().startsWith('|')) {
+        bodyRows.push(_parseTableRow(paragraphs[j]));
+        j++;
+      }
+      renderMdTable(header, bodyRows);
+      i = j - 1;
       inList = false;
       continue;
     }
@@ -44653,14 +44803,10 @@ async function _nwvResolveKundeAdresse(firmaSlug, kunde, chosenAnlagen) {
 }
 
 async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAnlagen, opts) {
-  // v9.86: je Aufzug — Fabrik-Nr · Produkt · Haltestellen · Jahrespreis netto (ohne Baujahr/Zugänge/Geschw./Nennlast)
-  const _eurL = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
-  const aufzugZeilen = chosenAnlagen.map((a, i) =>
-    (i+1)+'. '+(a.adresse||'?')+
-    (a.fabriknummer?' · Fabrik-Nr. '+a.fabriknummer:'')+
-    (a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')+
-    ((+a.jahrespreis>0)?' — **'+_eurL(a.jahrespreis)+' netto/Jahr**':'')
-  );
+  // v9.88: je Aufzug als TABELLE — Fabrik-Nr · Standort · Haltestellen · Nettopreis/Jahr + Gesamt-Zeile
+  const aufzugTabelle = _wvBuildAufzugTableMd(chosenAnlagen.map(a => ({
+    fabrik: a.fabriknummer, standort: a.adresse, halt: a.haltestellen, preis: a.jahrespreis
+  })));
   // v5.80/81: Kontakt aus ERP-Kontakte-Endpoint, Adresse via Google-Maps-Endpoint
   const firmaSlug = (opts && opts.firmaSlug) || getCurrentFirmaSlug();
   const kontakt = await _nwvResolveKontaktForKunde(firmaSlug, kunde);
@@ -44679,7 +44825,7 @@ async function _nwvBuildVertragsPdfFromWizard(vorlage, pdfModus, kunde, chosenAn
     abrechnung_typ:     opts.typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
     abrechnung_turnus:  opts.turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
     wartungen_pro_jahr: String(opts.wpa),
-    aufzug_liste:       aufzugZeilen.join('\n'),
+    aufzug_liste:       aufzugTabelle,
     aufzug_anzahl:      String(chosenAnlagen.length),
     jahresumsatz:       '',
     turnus_betrag:      '',
@@ -45178,16 +45324,15 @@ async function _applyCorrection(recId) {
     if (!corrected) throw new Error('KI hat einen leeren Text zurückgegeben.');
     // Build PDF aus korrigiertem Text. Vars rekonstruieren grob aus dem Record.
     let anlagen = []; try { anlagen = JSON.parse(f.anlagen_json||'[]'); } catch(_){}
-    const _eurL = (n) => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';   // v9.86
-    const aufzugZeilen = anlagen.map((a, i) =>
-      (i+1)+'. '+(a.adresse||'?')+(a.fabriknummer?' · Fabrik-Nr. '+a.fabriknummer:'')+(a.haltestellen?' · '+a.haltestellen+' Haltestellen':'')+((+a.jahrespreis>0)?' — **'+_eurL(a.jahrespreis)+' netto/Jahr**':'')
-    );
+    const aufzugTabelle = _wvBuildAufzugTableMd(anlagen.map(a => ({   // v9.88
+      fabrik: a.fabriknummer, standort: a.adresse, halt: a.haltestellen, preis: a.jahrespreis
+    })));
     const vars = {
       kunde_name: f.kunde_name || '',
       kunde_nummer: String(f.kunde_nummer||''),
       vertrag_titel: f.titel || '',
       vertragsnummer: f.vertragsnummer || '',
-      aufzug_liste: aufzugZeilen.join('\n'),
+      aufzug_liste: aufzugTabelle,
       aufzug_anzahl: String(anlagen.length),
       abrechnung_typ: f.abrechnung_typ === 'einzel' ? 'Einzelrechnung pro Aufzug' : 'Sammelrechnung über alle Aufzüge',
       abrechnung_turnus: f.abrechnung_turnus === 'quartal' ? 'Quartalsweise' : 'Jährlich',
