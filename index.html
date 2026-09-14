@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.89';
+const APP_VERSION = 'v9.90';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -45438,11 +45438,22 @@ async function _nwvShowPreview() {
   if (!vorlage) return toast('Vorlage nicht gefunden.','err');
 
   const anlagenAll = modal._anlagen || [];
+  // v9.90: Preis + Haltestellen JE AUFZUG aus dem Preis-Block mergen (wie im Submit),
+  //   sonst fehlen sie in der Vorschau-Tabelle (Haltestellen „—", keine Preisspalte).
+  const _preise = (typeof _nwvAnlagenPreiseGesamt==='function') ? _nwvAnlagenPreiseGesamt() : { rows:[], hasBlock:false };
+  const _preisByIdx = {}; (_preise.rows||[]).forEach(r => { _preisByIdx[String(r.idx)] = r; });
   const chosen = anlagenAll
     .map((a, i) => ({ a, i }))
     .filter(({ i }) => sel.includes(String(i)))
-    .map(({ a }) => a)
-    .map(a => ({ ...a, adresse: _buildAnlageAdresse(a) }));
+    .map(({ a, i }) => {
+      const pr = _preisByIdx[String(i)] || {};
+      return {
+        ...a,
+        adresse: _buildAnlageAdresse(a),
+        haltestellen: (pr.halt!=null && pr.halt>0) ? pr.halt : (a.haltestellen || 0),
+        jahrespreis: (+pr.preis||0),
+      };
+    });
   const nummer = document.getElementById('nwv-nummer-preview')?.textContent || '';
   try {
     if (pdfModus === 'ki' || vorgangExtra) {
