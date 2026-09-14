@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.88';
+const APP_VERSION = 'v9.89';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -44237,9 +44237,10 @@ function _nwvSelectKunde(kundeIdx) {
     selectedMeta.textContent = meta ? '· '+meta : '';
   }
   if (selectedBox) selectedBox.style.display = 'flex';
-  // Suchfeld leeren, damit es wieder als Suche dient
-  if (searchEl) searchEl.value = '';
-  _nwvFilterKunden();   // Liste neu rendern (alle, da Suchfeld leer ist)
+  // v9.89: Ein Vertrag = genau EIN Betreiber → nach Auswahl Suchfeld + Kandidatenliste ausblenden
+  if (searchEl) { searchEl.value = ''; searchEl.style.display = 'none'; }
+  const listElSel = document.getElementById('nwv-kunde-list');
+  if (listElSel) listElSel.style.display = 'none';
   _nwvOnKundeChange();
 }
 
@@ -44250,7 +44251,10 @@ function _nwvClearKunde() {
   const selectedBox  = document.getElementById('nwv-kunde-selected-box');
   if (hiddenEl) hiddenEl.value = '';
   if (selectedBox) selectedBox.style.display = 'none';
-  if (searchEl) { searchEl.value = ''; searchEl.focus(); }
+  // v9.89: Suchfeld + Kandidatenliste wieder einblenden
+  const listElClr = document.getElementById('nwv-kunde-list');
+  if (listElClr) listElClr.style.display = '';
+  if (searchEl) { searchEl.value = ''; searchEl.style.display = ''; searchEl.focus(); }
   _nwvFilterKunden();
   _nwvOnKundeChange();
 }
