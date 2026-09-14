@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.91';
+const APP_VERSION = 'v9.92';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17349,16 +17349,16 @@ function renderDashboard() {
   loadDashboardStats();
 }
 
-/* v9.73: Dashboard-Zeitraum (Monat/Jahr) — gilt für alle zeitraumbasierten Kacheln. */
-let _dashPeriod = (function(){ try { return localStorage.getItem('dash_period') || 'monat'; } catch(_){ return 'monat'; } })();
-function _dashPeriodKey(){ const n=new Date(); return _dashPeriod==='jahr' ? String(n.getFullYear()) : n.toISOString().slice(0,7); }
+/* v9.73: Dashboard-Zeitraum (Heute/Monat/Jahr) — gilt für alle zeitraumbasierten Kacheln. v9.92: „Heute" ergänzt (Default bleibt Monat). */
+let _dashPeriod = (function(){ try { const p = localStorage.getItem('dash_period'); return (p==='heute'||p==='jahr'||p==='monat') ? p : 'monat'; } catch(_){ return 'monat'; } })();
+function _dashPeriodKey(){ const n=new Date(); return _dashPeriod==='jahr' ? String(n.getFullYear()) : (_dashPeriod==='heute' ? n.toISOString().slice(0,10) : n.toISOString().slice(0,7)); }
 function _dashInPeriod(dateStr){ if(!dateStr) return false; const k=_dashPeriodKey(); return String(dateStr).slice(0,k.length)===k; }
-function _dashPeriodLabel(){ return _dashPeriod==='jahr' ? 'Aktuelles Jahr' : 'Aktueller Monat'; }
-function _dashSetPeriod(p){ if(p!=='monat'&&p!=='jahr')return; _dashPeriod=p; try{ localStorage.setItem('dash_period', p); }catch(_){} loadDashboardStats(); }
+function _dashPeriodLabel(){ return _dashPeriod==='jahr' ? 'Aktuelles Jahr' : (_dashPeriod==='heute' ? 'Heute' : 'Aktueller Monat'); }
+function _dashSetPeriod(p){ if(p!=='monat'&&p!=='jahr'&&p!=='heute')return; _dashPeriod=p; try{ localStorage.setItem('dash_period', p); }catch(_){} loadDashboardStats(); }
 function _dashRenderPeriodToggle(){
   const el=document.getElementById('dash-period-toggle'); if(!el) return;
   const pill=(p,label)=> '<button onclick="_dashSetPeriod(\''+p+'\')" style="border:0;border-radius:99px;padding:4px 13px;font-size:12px;font-weight:700;cursor:pointer;'+(_dashPeriod===p?'background:#334155;color:#fff':'background:transparent;color:var(--txt2)')+'">'+label+'</button>';
-  el.innerHTML = pill('monat','Monat') + pill('jahr','Jahr');
+  el.innerHTML = pill('heute','Heute') + pill('monat','Monat') + pill('jahr','Jahr');
 }
 
 /* v9.74: auf/ang-Daten für die Dashboard-Kacheln cachen — die langsamen Vollabrufe laufen nur
@@ -17414,7 +17414,7 @@ function _dashRenderStatCards(c, firmaSlug, allMode, reports, activeUsers, lifta
 
 /* v9.75: gerenderte Kacheln je Firma+Zeitraum in localStorage merken → nach Reload SOFORT anzeigen
    (nie mehr "Lade Statistik…"); im Hintergrund + alle 5 Min neu berechnen. */
-function _dashLoadSnapshot(firma, period){ try { return localStorage.getItem('dash_cards_'+firma+'_'+period) || localStorage.getItem('dash_cards_'+firma+'_'+(period==='jahr'?'monat':'jahr')) || null; } catch(_){ return null; } }
+function _dashLoadSnapshot(firma, period){ try { const fb = period==='monat' ? 'jahr' : 'monat'; return localStorage.getItem('dash_cards_'+firma+'_'+period) || localStorage.getItem('dash_cards_'+firma+'_'+fb) || null; } catch(_){ return null; } }
 function _dashSaveSnapshot(firma, period, html){ try { if(firma && html) localStorage.setItem('dash_cards_'+firma+'_'+period, html); } catch(_){} }
 function _dashSetRefreshing(on){ try { const el=document.getElementById('dash-refreshing'); if(el) el.style.display = on ? 'inline-flex' : 'none'; } catch(_){} }
 let _dashRefreshTimer = null;
