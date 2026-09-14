@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.92';
+const APP_VERSION = 'v9.93';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -44419,9 +44419,21 @@ function _nwvExtractZuesPreis(data){
   const p = hit ? (parseFloat(String(hit.preis==null?'':hit.preis).replace(',','.'))||0) : 0;
   return p>0 ? p : null;
 }
+function _nwvExtractNotrufServicePreis(data){   // v9.93: laufender Notruf-GSM-Service (Einheit €/Monat, Label „Notruf…") — NICHT die einmalige Installation
+  const items = [
+    ...(Array.isArray(data.sonstiges)?data.sonstiges:[]),
+    ...((data.zusatzBlock && Array.isArray(data.zusatzBlock.zeilen))?data.zusatzBlock.zeilen:[]),
+  ];
+  const hit = items.find(s => s && /notruf/i.test(String(s.label||'')) && /monat/i.test(String(s.einheit||'')));
+  const p = hit ? (parseFloat(String(hit.preis==null?'':hit.preis).replace(',','.'))||0) : 0;
+  return p>0 ? p : null;
+}
 function _nwvZuesAktiv(){ return !!document.querySelector('#wv-wizard-inputs [data-key="zues_komplett"]')?.checked; }
 function _nwvWartungenProJahr(){ return parseInt(document.querySelector('#wv-wizard-inputs [data-key="anzahl_wartungen"]')?.value,10) || 2; }
 function _nwvZuesPreisEffektiv(){ const pl=_nwvPreisliste; return (pl && pl.zuesPreis!=null) ? pl.zuesPreis : 720; }
+// v9.93: laufender Notruf-GSM-Service (Punkt 3) — Preisliste-Wert ist €/Monat, im Jahrespreis ×12
+function _nwvNotrufGsmAktiv(){ return !!document.querySelector('#wv-wizard-inputs [data-key="notruf_gsm"]')?.checked; }
+function _nwvNotrufJahrEffektiv(){ const pl=_nwvPreisliste; return (pl && pl.notrufMonat!=null) ? Math.round(pl.notrufMonat*12*100)/100 : 0; }
 function _nwvAutoPreisFuerAnlage(halt){
   const pl = _nwvPreisliste;
   if (!pl || !pl.gefunden || !pl.plData) return null;
@@ -44430,6 +44442,7 @@ function _nwvAutoPreisFuerAnlage(halt){
   let p = _calcWartungspreisProAnlage({ haltestellen:h }, Object.assign({}, pl.plData, { wartungenProJahr:_nwvWartungenProJahr() }));
   if (p == null) return null;
   if (_nwvZuesAktiv()) p += _nwvZuesPreisEffektiv();
+  if (_nwvNotrufGsmAktiv()) p += _nwvNotrufJahrEffektiv();   // v9.93: Notruf-GSM-Service €/Monat × 12
   return Math.round(p*100)/100;
 }
 function _nwvRecomputeAnlagePreis(id, forceAuto){
@@ -44462,8 +44475,10 @@ function _nwvUpdateAnlagenHint(){
   if (!pl.gefunden){ el.innerHTML = 'ℹ️ Keine Kundenpreisliste für diesen Kunden gefunden — Jahrespreise bitte manuell eintragen.'; return; }
   const wpa = _nwvWartungenProJahr();
   const zues = _nwvZuesAktiv();
+  const notruf = _nwvNotrufGsmAktiv();
   el.innerHTML = '🔄 Jahrespreis wird automatisch berechnet aus <strong>Haltestellen × '+wpa+' Wartung'+(wpa!==1?'en':'')+'/Jahr</strong> (Kundenpreisliste'+(pl.datum?' vom '+((typeof _deDate==='function')?_deDate(pl.datum):pl.datum):'')+')'
     + (zues ? ', <strong>+ ZÜS-Komplett '+eur(_nwvZuesPreisEffektiv())+' je Anlage</strong>' : '')
+    + (notruf ? ', <strong>+ Notruf '+eur(_nwvNotrufJahrEffektiv())+'/Jahr je Anlage</strong>' + (_nwvPreisliste&&_nwvPreisliste.notrufMonat!=null?' ('+eur(_nwvPreisliste.notrufMonat)+'/Monat × 12)':'') : '')
     + '. Du musst nur die <strong>Haltestellen</strong> eintragen — der Preis ist editierbar (Override).';
 }
 
@@ -44561,7 +44576,7 @@ async function _nwvLoadNotrufPreise(){
       let d = {}; try { d = JSON.parse(mine[0].fields.data_json||'{}'); } catch(_){}
       const datum = String(mine[0].fields.created||'').slice(0,10);
       _nwvNotruf = Object.assign(_nwvExtractNotrufPreise(d), { datum, gefunden:true });
-      _nwvPreisliste = { plData: d, zuesPreis: _nwvExtractZuesPreis(d), datum, gefunden:true };   // v9.91
+      _nwvPreisliste = { plData: d, zuesPreis: _nwvExtractZuesPreis(d), notrufMonat: _nwvExtractNotrufServicePreis(d), datum, gefunden:true };   // v9.91/93
     } else {
       _nwvNotruf = { gefunden:false };
       _nwvPreisliste = { gefunden:false };   // v9.91
@@ -44611,9 +44626,10 @@ function _nwvSetupNotrufField(){
   const mont = document.querySelector('#wv-wizard-inputs [data-key="notrufgeraet_montage"]');
   [lz, mont].forEach(el => { if (el && !el._nwvNotrufBound){ el._nwvNotrufBound = true; el.addEventListener('change', _nwvApplyNotrufToField); } });
   // v9.91: ZÜS-Komplett + Wartungshäufigkeit ändern den Auto-Wartungspreis je Aufzug → neu berechnen
-  const zuesEl = document.querySelector('#wv-wizard-inputs [data-key="zues_komplett"]');
-  const wpaEl  = document.querySelector('#wv-wizard-inputs [data-key="anzahl_wartungen"]');
-  [zuesEl, wpaEl].forEach(el => { if (el && !el._nwvPreisBound){ el._nwvPreisBound = true; el.addEventListener('change', _nwvRecomputeAllAnlagenPreise); } });
+  const zuesEl   = document.querySelector('#wv-wizard-inputs [data-key="zues_komplett"]');
+  const wpaEl    = document.querySelector('#wv-wizard-inputs [data-key="anzahl_wartungen"]');
+  const notrufEl = document.querySelector('#wv-wizard-inputs [data-key="notruf_gsm"]');   // v9.93
+  [zuesEl, wpaEl, notrufEl].forEach(el => { if (el && !el._nwvPreisBound){ el._nwvPreisBound = true; el.addEventListener('change', _nwvRecomputeAllAnlagenPreise); } });
   // v9.86: Preis-je-Aufzug-Block rendern + das globale „Jahrespreis netto"-Feld ausblenden (durch die Summe ersetzt)
   try {
     _nwvRenderAnlagenPreise();
