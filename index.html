@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.90';
+const APP_VERSION = 'v9.91';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -44284,6 +44284,7 @@ async function _nwvOnKundeChange() {
   const kundeIdxStr = document.getElementById('nwv-kunde-id').value;
   const listEl = document.getElementById('nwv-anlagen-list');
   modal._selectedAnlagen = [];
+  _nwvPreisliste = null; _nwvNotruf = null;   // v9.91: Preisliste/Notruf-Preise sind kundenspezifisch → bei Kundenwechsel invalidieren
   // Race-Token: nur die letzte Auswahl darf die UI aktualisieren
   const token = (modal._kundeToken = (modal._kundeToken||0) + 1);
   if (kundeIdxStr === '' || kundeIdxStr === null) {
@@ -44306,6 +44307,8 @@ async function _nwvOnKundeChange() {
     const mine = all.filter(a => String(a.kunde?.kundennummer||'') === kundenNr);
     modal._anlagen = mine;
     _nwvRenderAnlagen();
+    // v9.91: Wenn der Wizard schon gemountet ist (Preis-Block da), Kundenpreisliste für den neuen Kunden nachladen
+    if (document.getElementById('wv-anlagen-preise')) { try { _nwvLoadNotrufPreise(); } catch(_){} }
   } catch(e) {
     if (modal._kundeToken !== token) return;
     listEl.innerHTML = '<div style="padding:12px;color:var(--err);font-size:12px">❌ '+escapeHtml(e.message)+'</div>';
@@ -44395,8 +44398,75 @@ function _nwvOnAnlagePreisInput(el){
   const id = el.dataset.anlIdx, fld = el.dataset.anlFld;
   if (!state[id]) state[id] = {};
   state[id][fld] = el.value;
+  if (fld === 'halt') {
+    _nwvRecomputeAnlagePreis(id, true);   // v9.91: Haltestellen geändert → Jahrespreis neu aus Preisliste (Override aufheben)
+  } else if (fld === 'preis') {
+    state[id]._manual = true;             // v9.91: manuelle Preis-Eingabe = Override, nicht mehr auto-überschreiben
+  }
   _nwvUpdateGesamtDisplay();
 }
+/* ── v9.91: Auto-Wartungspreis je Aufzug ──────────────────────────────────
+   Jahrespreis = _calcWartungspreisProAnlage(Haltestellen, Wartungen/Jahr, Kundenliste)
+                 + (ZÜS-Komplett gewählt ? ZÜS-Preis/Anlage : 0)
+   ZÜS-Preis = sonstiges-Eintrag „ZÜS…Komplett" (Einheit €/Jahr), sonst Default 720.
+   Lineare Extrapolation über HS-Tabelle hinaus steckt in _calcWartungspreisProAnlage. */
+function _nwvExtractZuesPreis(data){
+  const items = [
+    ...(Array.isArray(data.sonstiges)?data.sonstiges:[]),
+    ...((data.zusatzBlock && Array.isArray(data.zusatzBlock.zeilen))?data.zusatzBlock.zeilen:[]),
+  ];
+  const hit = items.find(s => s && /z(ü|ue)s/i.test(String(s.label||'')) && /jahr/i.test(String(s.einheit||'')));
+  const p = hit ? (parseFloat(String(hit.preis==null?'':hit.preis).replace(',','.'))||0) : 0;
+  return p>0 ? p : null;
+}
+function _nwvZuesAktiv(){ return !!document.querySelector('#wv-wizard-inputs [data-key="zues_komplett"]')?.checked; }
+function _nwvWartungenProJahr(){ return parseInt(document.querySelector('#wv-wizard-inputs [data-key="anzahl_wartungen"]')?.value,10) || 2; }
+function _nwvZuesPreisEffektiv(){ const pl=_nwvPreisliste; return (pl && pl.zuesPreis!=null) ? pl.zuesPreis : 720; }
+function _nwvAutoPreisFuerAnlage(halt){
+  const pl = _nwvPreisliste;
+  if (!pl || !pl.gefunden || !pl.plData) return null;
+  const h = parseInt(halt,10) || 0;
+  if (!h) return null;
+  let p = _calcWartungspreisProAnlage({ haltestellen:h }, Object.assign({}, pl.plData, { wartungenProJahr:_nwvWartungenProJahr() }));
+  if (p == null) return null;
+  if (_nwvZuesAktiv()) p += _nwvZuesPreisEffektiv();
+  return Math.round(p*100)/100;
+}
+function _nwvRecomputeAnlagePreis(id, forceAuto){
+  const modal = document.getElementById('nwv-modal'); if(!modal) return;
+  const state = modal._anlagenPreise || (modal._anlagenPreise = {});
+  const st = state[id] || (state[id] = {});
+  if (forceAuto) st._manual = false;
+  if (st._manual) return;                       // manueller Override → nicht überschreiben
+  // Haltestellen aus dem DOM (Quelle der Wahrheit fürs Anzeigen), sonst aus State
+  const hEl = document.querySelector('#wv-anlagen-preise input[data-anl-idx="'+id+'"][data-anl-fld="halt"]');
+  const halt = hEl ? hEl.value : st.halt;
+  if (halt!=null && halt!=='') st.halt = halt;
+  const auto = _nwvAutoPreisFuerAnlage(halt);
+  if (auto == null) return;                     // keine Preisliste / keine Haltestellen → so lassen
+  st.preis = auto;
+  const el = document.querySelector('#wv-anlagen-preise input[data-anl-idx="'+id+'"][data-anl-fld="preis"]');
+  if (el) el.value = String(auto);
+}
+function _nwvRecomputeAllAnlagenPreise(){
+  const modal = document.getElementById('nwv-modal'); if(!modal) return;
+  (modal._selectedAnlagen||[]).forEach(id => _nwvRecomputeAnlagePreis(id, false));
+  _nwvUpdateGesamtDisplay();
+  _nwvUpdateAnlagenHint();
+}
+function _nwvUpdateAnlagenHint(){
+  const el = document.getElementById('wv-anlagen-hint'); if(!el) return;
+  const pl = _nwvPreisliste;
+  const eur = n => Number(n||0).toLocaleString('de-DE',{ minimumFractionDigits:2, maximumFractionDigits:2 }) + ' €';
+  if (pl == null){ el.innerHTML = 'Lade Kundenpreisliste für die automatische Preisberechnung…'; return; }
+  if (!pl.gefunden){ el.innerHTML = 'ℹ️ Keine Kundenpreisliste für diesen Kunden gefunden — Jahrespreise bitte manuell eintragen.'; return; }
+  const wpa = _nwvWartungenProJahr();
+  const zues = _nwvZuesAktiv();
+  el.innerHTML = '🔄 Jahrespreis wird automatisch berechnet aus <strong>Haltestellen × '+wpa+' Wartung'+(wpa!==1?'en':'')+'/Jahr</strong> (Kundenpreisliste'+(pl.datum?' vom '+((typeof _deDate==='function')?_deDate(pl.datum):pl.datum):'')+')'
+    + (zues ? ', <strong>+ ZÜS-Komplett '+eur(_nwvZuesPreisEffektiv())+' je Anlage</strong>' : '')
+    + '. Du musst nur die <strong>Haltestellen</strong> eintragen — der Preis ist editierbar (Override).';
+}
+
 function _nwvRenderAnlagenPreise(){
   const cont = document.getElementById('wv-anlagen-preise');
   if (!cont) return;   // nicht im Wizard-Modus
@@ -44429,10 +44499,11 @@ function _nwvRenderAnlagenPreise(){
     '</div>';
   }).join('');
   cont.innerHTML =
-    '<div style="font-weight:600;font-size:12px;color:var(--navy);margin-bottom:6px">Preis &amp; Haltestellen je Aufzug <span style="font-weight:400;color:var(--txt3)">('+sel.length+' Anlage'+(sel.length!==1?'n':'')+')</span></div>'+
+    '<div style="font-weight:600;font-size:12px;color:var(--navy);margin-bottom:4px">Preis &amp; Haltestellen je Aufzug <span style="font-weight:400;color:var(--txt3)">('+sel.length+' Anlage'+(sel.length!==1?'n':'')+')</span></div>'+
+    '<div id="wv-anlagen-hint" style="font-size:11px;color:#4338CA;margin-bottom:8px;line-height:1.4">Lade Kundenpreisliste für die automatische Preisberechnung…</div>'+
     rowsHtml+
     '<div id="wv-anlagen-gesamt" style="text-align:right;font-size:13px;font-weight:700;color:#065F46;padding:4px 2px;border-top:1px solid #A7F3D0;margin-top:2px">Gesamt: 0,00 € netto/Jahr</div>';
-  _nwvUpdateGesamtDisplay();
+  _nwvRecomputeAllAnlagenPreise();   // v9.91: Auto-Preise füllen (falls Preisliste schon geladen) + Gesamt + Hinweis
 }
 
 /** v5.73: Liest die Wizard-Antworten aus dem aktuell gemounteten #wv-wizard-inputs (NWV-Modal). */
@@ -44452,6 +44523,7 @@ function _nwvReadWizardAnswers() {
    ziehen — laufzeitabhängig (3 vs. 5 Jahre). Nur Aszendio hat Preislisten.
    ══════════════════════════════════════════════════════════════════════ */
 let _nwvNotruf = null;   // { p3, p5, single, datum, gefunden, fehler }
+let _nwvPreisliste = null;   // v9.91: { plData, zuesPreis, datum, gefunden } — Kundenpreisliste für Auto-Wartungspreis je Aufzug
 function _nwvExtractNotrufPreise(data){
   const items = [...(Array.isArray(data.sonstiges)?data.sonstiges:[]), ...(Array.isArray(data.zusatzBlock)?data.zusatzBlock:[])]
     .filter(s => s && String(s.einheit||'').trim()==='€' && /notrufger/i.test(String(s.label||'')));   // €=einmalig, „Notrufgerät" = Installation (nicht der €/Monat-Service)
@@ -44487,12 +44559,16 @@ async function _nwvLoadNotrufPreise(){
                     .sort((a,b) => String(b.fields.created||'').localeCompare(String(a.fields.created||'')));
     if (mine.length){
       let d = {}; try { d = JSON.parse(mine[0].fields.data_json||'{}'); } catch(_){}
-      _nwvNotruf = Object.assign(_nwvExtractNotrufPreise(d), { datum: String(mine[0].fields.created||'').slice(0,10), gefunden:true });
+      const datum = String(mine[0].fields.created||'').slice(0,10);
+      _nwvNotruf = Object.assign(_nwvExtractNotrufPreise(d), { datum, gefunden:true });
+      _nwvPreisliste = { plData: d, zuesPreis: _nwvExtractZuesPreis(d), datum, gefunden:true };   // v9.91
     } else {
       _nwvNotruf = { gefunden:false };
+      _nwvPreisliste = { gefunden:false };   // v9.91
     }
-  } catch(e){ _nwvNotruf = { gefunden:false, fehler: String(e&&e.message||e) }; }
+  } catch(e){ _nwvNotruf = { gefunden:false, fehler: String(e&&e.message||e) }; _nwvPreisliste = { gefunden:false, fehler:String(e&&e.message||e) }; }
   _nwvApplyNotrufToField();
+  try { _nwvRecomputeAllAnlagenPreise(); } catch(_){}   // v9.91: Auto-Wartungspreise füllen, sobald die Preisliste da ist
 }
 function _nwvApplyNotrufToField(){
   const field = document.querySelector('#wv-wizard-inputs [data-key="einmal_notruf"]');
@@ -44534,6 +44610,10 @@ function _nwvSetupNotrufField(){
   const lz   = document.querySelector('#wv-wizard-inputs [data-key="laufzeit_jahre"]');
   const mont = document.querySelector('#wv-wizard-inputs [data-key="notrufgeraet_montage"]');
   [lz, mont].forEach(el => { if (el && !el._nwvNotrufBound){ el._nwvNotrufBound = true; el.addEventListener('change', _nwvApplyNotrufToField); } });
+  // v9.91: ZÜS-Komplett + Wartungshäufigkeit ändern den Auto-Wartungspreis je Aufzug → neu berechnen
+  const zuesEl = document.querySelector('#wv-wizard-inputs [data-key="zues_komplett"]');
+  const wpaEl  = document.querySelector('#wv-wizard-inputs [data-key="anzahl_wartungen"]');
+  [zuesEl, wpaEl].forEach(el => { if (el && !el._nwvPreisBound){ el._nwvPreisBound = true; el.addEventListener('change', _nwvRecomputeAllAnlagenPreise); } });
   // v9.86: Preis-je-Aufzug-Block rendern + das globale „Jahrespreis netto"-Feld ausblenden (durch die Summe ersetzt)
   try {
     _nwvRenderAnlagenPreise();
