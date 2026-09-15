@@ -2906,7 +2906,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.97';
+const APP_VERSION = 'v9.98';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -5721,7 +5721,7 @@ async function openOvModal(recId) {
   const rec=_ovRecords.find(r=>r.id===recId);if(!rec)return;
   _currentOvRec=rec;
   const f=rec.fields;
-  document.getElementById('ov-modal-title').textContent='Bericht Nr. '+f.bericht_num+' · '+(f.standort||'')+(f.datum?' · '+f.datum:'');
+  document.getElementById('ov-modal-title').textContent='Bericht Nr. '+f.bericht_num+' · '+(f.standort||'')+(f.datum?' · '+_bfDatumDE(f.datum):'');   // v9.98: tt-mm-jjjj
   switchOvTab('out');
   document.getElementById('ov-modal').classList.add('show');
 
@@ -8439,7 +8439,7 @@ function _aufRenderBerichteSection(rec) {
           ? '<a href="'+escapeHtml(b.fd_ticket_url)+'" target="_blank" rel="noopener" style="background:#ECFDF5;color:#065F46;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #6EE7B7;text-decoration:none;display:inline-flex;align-items:center;gap:3px">🎫 #'+escapeHtml(String(b.fd_ticket_id))+' ↗</a>'
           : '<span style="background:#F3F4F6;color:#6B7280;font-size:11px;font-weight:600;padding:2px 8px;border-radius:99px;border:1px solid #E5E7EB">🎫 #'+escapeHtml(String(b.fd_ticket_id))+'</span>')
       : '';
-    const datumLabel = b.datum ? ' · '+escapeHtml(String(b.datum)) : '';
+    const datumLabel = b.datum ? ' · '+escapeHtml(_bfDatumDE(b.datum)) : '';   // v9.98: tt-mm-jjjj statt ISO
     // v5.24: 🎫-Push pro Bericht — nur sichtbar wenn FD konfiguriert und Bericht
     // noch kein Ticket hat (idempotent: kein Re-Push erlauben).
     const pushBtn = (canPushFd && !b.fd_ticket_id)
