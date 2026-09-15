@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.95';
+const APP_VERSION = 'v9.96';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -49423,6 +49423,12 @@ export default async function (req) {
         } catch(e) {
           results.push({ firma:slug, ok:false, error: e.message });
           try { await blob.setJSON("sync_status_"+slug, { firma:slug, error:e.message, finished:new Date().toISOString(), triggered_by:user.api_key||"cron" }); } catch(_){}
+          // v9.96: Totalausfall einer Firma ist IMMER wichtig → Hintergrund-Log
+          try { await atCreate("Diagnose_Logs", {
+            ts: new Date().toISOString(), firma: slug, reason: "sync_fatal",
+            user_key: String(user.api_key || "cron"),
+            log: JSON.stringify({ firma: slug, error: String((e && e.message) || e).slice(0, 2000) }, null, 1)
+          }); } catch(_){}
         }
       }
       const summary = { ran: results.length, started: new Date().toISOString(), results };
@@ -49624,6 +49630,7 @@ async function runSyncForFirma(firma, userKey) {
   }
 
   let created = 0, updated = 0, unchanged = 0, withAngebot = 0, errors = 0;
+  const errorDetails = [];   // v9.96: Fehlerdetails sammeln (wurden vorher kommentarlos verworfen)
   const USER_MANAGED = ["techniker_keys","techniker_namen","priority","tmpl","notizen","bilder","subunternehmer_preis","bericht_id","bericht_num","completed_at","created","created_by"];
 
   for (const a of toProcess) {
@@ -49706,8 +49713,52 @@ async function runSyncForFirma(firma, userKey) {
         await atCreate("Auftraege", fields);
         created++;
       }
-    } catch(e) { errors++; }
+    } catch(e) {
+      errors++;
+      if (errorDetails.length < 200) {
+        errorDetails.push({
+          auftrag: _erpAuftragNumber(a) || a.id,
+          ext_id: a.id,
+          msg: String((e && e.message) || e).slice(0, 300)
+        });
+      }
+    }
   }
+
+  // v9.96: NUR WICHTIGE Fehler ins Hintergrund-Log (Airtable "Diagnose_Logs", reason='sync_error').
+  //   Gruppiert nach Meldung (Zahlen normalisiert, damit gleiche Ursachen zusammenfallen).
+  //   Transiente Netz-/Rate-Limit-Fehler nur, wenn sie sich haeufen (>=5) — sonst waere das Log Rauschen.
+  let fehlerGruppen = [];
+  try {
+    const groups = new Map();
+    for (const d of errorDetails) {
+      const key = String(d.msg).replace(/\d+/g, "#").slice(0, 160);
+      const g = groups.get(key) || { meldung: d.msg, anzahl: 0, beispiele: [] };
+      g.anzahl++;
+      if (g.beispiele.length < 5) g.beispiele.push(d.auftrag);
+      groups.set(key, g);
+    }
+    const TRANSIENT = /rate.?limit|429|timeout|etimedout|econnreset|socket hang up|fetch failed|network/i;
+    fehlerGruppen = Array.from(groups.values())
+      .filter(g => !TRANSIENT.test(g.meldung) || g.anzahl >= 5)
+      .sort((a, b) => b.anzahl - a.anzahl)
+      .slice(0, 20);
+    if (fehlerGruppen.length > 0) {
+      await atCreate("Diagnose_Logs", {
+        ts: new Date().toISOString(),
+        firma: firma,
+        reason: "sync_error",
+        user_key: String(userKey || "cron"),
+        log: JSON.stringify({
+          firma: firma,
+          finished: new Date().toISOString(),
+          verarbeitet: toProcess.length,
+          fehler_gesamt: errors,
+          gruppen: fehlerGruppen
+        }, null, 1).slice(0, 90000)
+      });
+    }
+  } catch(_) {}
 
   const result = {
     firma, running: false,
@@ -51966,10 +52017,10 @@ function _buildSyncStatusBlock(firmaName, s) {
   } else if (s.error) {
     bg = '#FEE2E2'; border = '#FCA5A5'; color = '#991B1B';
     icon = '❌'; headline = 'Sync-Fehler';
-  } else if (s.finished && (s.errors||0) > 0) {
-    bg = '#FEF3C7'; border = '#FCD34D'; color = '#78350F';
-    icon = '⚠️'; headline = 'Mit Warnungen abgeschlossen';
   }
+  // v9.96: Kein „Mit Warnungen abgeschlossen" mehr. Die reine Fehler-ZAHL war ohne Ursache
+  //   nicht interpretierbar (und teils irreführend). Echte Fehler landen jetzt im Hintergrund-Log
+  //   (Diagnose_Logs, reason='sync_error') und werden dort ausgewertet — nicht mehr im Banner.
 
   const expanded = _isSyncBannerExpanded();
   const chevron = expanded ? '▴' : '▾';
@@ -52017,7 +52068,7 @@ function _buildSyncStatusBlock(firmaName, s) {
         '<strong>'+(s.unchanged||0)+'</strong> identisch',
         '<strong>'+(s.skipped||0)+'</strong> unverändert',
       ];
-      if ((s.errors||0) > 0) stats.push('<strong style="color:#B91C1C">'+s.errors+'</strong> Fehler');
+      // v9.96: Fehler-Zähler bewusst NICHT mehr im Banner — siehe Hintergrund-Log (Diagnose_Logs).
       lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.6;padding-top:6px;border-top:1px solid '+border+'">');
       lines.push('🕐 <strong>'+_formatAbsTime(s.finished)+'</strong> ('+_formatRelTime(s.finished)+', Dauer '+dur+'s)<br>');
       lines.push('📊 '+total+' Aufträge geprüft · '+stats.join(' · '));
