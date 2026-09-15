@@ -2905,7 +2905,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.93';
+const APP_VERSION = 'v9.94';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -10038,6 +10038,7 @@ async function openAuftragDetail(recId) {
       <div class="auf-row"><span class="lbl">🛗 Aufzüge im Auftrag</span><span class="val">${_aufAufzugCount(f)}${_aufAufzugCount(f)>1?' <span style="font-size:10px;font-weight:700;background:#EEF2FF;color:#3730A3;border:1px solid #C7D2FE;padding:1px 7px;border-radius:99px;margin-left:4px">Sammelauftrag</span>':''}</span></div>
       ${f.angebot_typ ? `<div class="auf-row"><span class="lbl">Angebots-Typ</span><span class="val">${_fmtAngebotTyp(f.angebot_typ)}</span></div>` : ''}
       ${f.bestellform ? `<div class="auf-row"><span class="lbl">Bestellform</span><span class="val">${String(f.bestellform).replace(/</g,'&lt;')}</span></div>` : ''}
+      ${(f.angebot_id && hasPermission('tool_angebote')) ? `<div class="auf-row"><span class="lbl">📄 Angebot</span><span class="val">${_aufRenderAngebotLink(f)}</span></div>` : ''}
       <div class="auf-row"><span class="lbl">AB-Datum</span><span class="val">${_renderAbDatumField(rec)}</span></div>
       ${(canSeePrices() && f.auftragswert_netto != null) ? `<div class="auf-row"><span class="lbl">💰 Auftragswert (netto)</span><span class="val" style="font-weight:700;color:#065f46">${_fmtEUR(f.auftragswert_netto)}</span></div>` : ''}
       <div class="auf-row"><span class="lbl">Vorlage</span><span class="val">${_renderTmplPicker(rec)}</span></div>
@@ -37560,6 +37561,53 @@ function _angToggleInfo() {
   const collapsed = b.classList.toggle('collapsed');
   if (a) a.textContent = collapsed ? '▸' : '▾';
 }
+/* v9.94: Verlinkung Auftrag → Quell-Angebot. Auftrag.angebot_id (Maxise-ERP-ID) → App_Angebote.erp_angebot_id.
+   FIRMA-GESCOPT (Maxise-ext_id/angebot_id kollidiert zwischen Aszendio & Aufzugshandwerk!). Anzeige projiziert
+   (schnell), Öffnen lädt den Vollrecord in den _angeboteCache, da openAngebotDetail den Cache braucht. */
+function _aufRenderAngebotLink(f){
+  const eid = (f && f.angebot_id!=null && String(f.angebot_id).trim()!=='') ? String(f.angebot_id).trim() : '';
+  if (!eid) return '—';
+  const firma = (f && f.firma) || '';
+  const slot = 'auf-anglink-'+eid+'-'+(firma||'x')+'-'+Math.random().toString(36).slice(2,8);
+  setTimeout(()=>{ try { _aufFillAngebotLink(eid, firma, slot); } catch(_){} }, 20);
+  return '<span id="'+slot+'" style="color:var(--txt3)">Maxise-Angebot '+escapeHtml(eid)+' <span style="font-size:11px">· lädt…</span></span>';
+}
+function _aufAngebotFilter(eid, firma){ return firma ? ("AND({erp_angebot_id}='"+eid+"',{firma}='"+firma+"')") : ("{erp_angebot_id}='"+eid+"'"); }
+function _aufFindAngebotInCache(eid, firma){
+  try { return ((typeof _angeboteCache!=='undefined' && _angeboteCache.items)||[]).find(r => String((r.fields||{}).erp_angebot_id||'')===String(eid) && (!firma || String((r.fields||{}).firma||'')===firma)) || null; } catch(_){ return null; }
+}
+async function _aufFillAngebotLink(eid, firma, slot){
+  if (!document.getElementById(slot)) return;
+  let hit = _aufFindAngebotInCache(eid, firma);
+  if (!hit) {
+    try { hit = (await atRead('App_Angebote', _aufAngebotFilter(eid, firma), ['app_angebot_num','erp_angebot_nummer','angebot_nr','firma','erp_angebot_id']))[0] || null; } catch(_){}
+  }
+  const el = document.getElementById(slot); if(!el) return;
+  if (hit) {
+    const num = (hit.fields||{}).app_angebot_num || (hit.fields||{}).erp_angebot_nummer || eid;
+    el.style.color = '';
+    el.innerHTML = '<a href="#" onclick="_aufOpenAngebotFromAuftrag(\''+eid+'\',\''+firma+'\');return false;" style="color:#2152A9;font-weight:700;text-decoration:none;border-bottom:1px dotted #2152A9" title="Quell-Angebot öffnen">🔗 ANG-'+escapeHtml(String(num))+'</a>';
+  } else {
+    el.innerHTML = 'Maxise-Angebot '+escapeHtml(eid)+' <span style="font-size:11px;color:var(--txt3)">· nicht in der App</span>';
+  }
+}
+async function _aufOpenAngebotFromAuftrag(eid, firma){
+  if (typeof hasPermission==='function' && !hasPermission('tool_angebote')) return toast('🔒 Keine Berechtigung für Angebote','err');   // v9.94: Techniker haben keinen Angebots-Zugriff
+  eid = String(eid||''); firma = String(firma||'');
+  let hit = _aufFindAngebotInCache(eid, firma);
+  if (!hit) {
+    try {
+      hit = (await atRead('App_Angebote', _aufAngebotFilter(eid, firma), null))[0] || null;   // Vollrecord fürs Detail
+      if (hit && typeof _angeboteCache!=='undefined') {
+        if (!_angeboteCache.items) _angeboteCache.items = [];
+        if (!_angeboteCache.items.some(x => x.id===hit.id)) _angeboteCache.items.push(hit);
+      }
+    } catch(e){ return toast('❌ Angebot laden: '+(e&&e.message||e),'err'); }
+  }
+  if (!hit) return toast('Quell-Angebot nicht in der App gefunden (evtl. nicht aus Maxise synchronisiert)','err');
+  openAngebotDetail(hit.id);
+}
+
 async function openAngebotDetail(recId) {
   let rec = (_angeboteCache.items||[]).find(r => r.id === recId);
   if (!rec) return toast('Angebot nicht gefunden','err');
