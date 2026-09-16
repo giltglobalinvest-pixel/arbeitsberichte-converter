@@ -2906,7 +2906,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.98';
+const APP_VERSION = 'v9.99';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -49447,6 +49447,29 @@ export default async function (req) {
 
 const ACTIVE_STATUSES = ["Auftrag bestätigt", "In Bearbeitung", "Abgeschlossen"];
 
+// v9.99 BUGFIX: Diese Funktion FEHLTE im Val, wurde in runSyncForFirma aber aufgerufen.
+//   Folge: jeder Auftrag, der wirklich geschrieben werden musste, warf
+//   "_erpAuftragNumber is not defined" -> wurde vom catch als Fehler gezaehlt (die 86).
+//   Unveraenderte Auftraege liefen durch, weil sie gar nicht erst verarbeitet werden.
+function _erpAuftragNumber(a) {
+  if (!a) return null;
+  const candidates = [
+    a.id,
+    a.auftragsnummer, a.auftragsNummer, a.auftragsNr, a.auftragNr, a.auftragNum, a.auftragNumber,
+    a.belegnummer,    a.belegNummer,    a.belegNr,    a.belegNum,
+    a.referenznummer, a.referenzNummer, a.refNr,      a.referenz,
+    a.bestellnummer,  a.bestellNummer,  a.bestellNr,
+    a.nummer,         a.number,         a.no,
+    a.angebot && a.angebot.auftragsnummer,
+    a.angebot && a.angebot.nummer,
+    a.auftragsbestaetigung && a.auftragsbestaetigung.nummer
+  ];
+  for (const v of candidates) {
+    if (v != null && v !== "" && v !== 0) return v;
+  }
+  return null;
+}
+
 function normStatus(s) {
   const t = String(s||"").toLowerCase().trim();
   if (!t) return "offen";
@@ -49716,13 +49739,17 @@ async function runSyncForFirma(firma, userKey) {
       }
     } catch(e) {
       errors++;
-      if (errorDetails.length < 200) {
-        errorDetails.push({
-          auftrag: _erpAuftragNumber(a) || a.id,
-          ext_id: a.id,
-          msg: String((e && e.message) || e).slice(0, 300)
-        });
-      }
+      // v9.99: Der Fehler-Handler darf NIE selbst werfen, sonst bricht der ganze Sync ab
+      //   (genau das passierte, weil hier _erpAuftragNumber aufgerufen wurde).
+      try {
+        if (errorDetails.length < 200) {
+          errorDetails.push({
+            auftrag: (a && (a.auftragsnummer || a.id)) || "?",
+            ext_id: a && a.id,
+            msg: String((e && e.message) || e).slice(0, 300)
+          });
+        }
+      } catch(_) {}
     }
   }
 
@@ -49769,6 +49796,7 @@ async function runSyncForFirma(firma, userKey) {
     total: active.length,
     toProcess: toProcess.length,
     skipped, created, updated, unchanged, withAngebot, errors,
+    errors_wichtig: fehlerGruppen.reduce(function(n, g){ return n + (g.anzahl || 0); }, 0),   // v9.99: steuert das Banner
     triggered_by: userKey
   };
   try { await blob.setJSON("sync_status_"+firma, result); } catch(_){}
@@ -51971,29 +51999,17 @@ function _renderLastSyncBanner() {
     const s = statuses[slug];
     if (!s) continue;
     const firmaName = (_firmenCache?.find(f => f.fields?.slug === slug)?.fields?.name) || slug;
-    blocks.push(_buildSyncStatusBlock(firmaName, s));
+    const _blk = _buildSyncStatusBlock(firmaName, s);
+    if (_blk) blocks.push(_blk);   // v9.99: leere Blöcke (= kein echter Fehler) nicht anzeigen
   }
   if (blocks.length === 0) {
-    // Noch nie gesynct → Hinweis nur wenn aktuelle Firma einen ERP-Tenant hat
-    if (!allMode) {
-      const tenant = _getErpTenantForFirma(firmaSlug);
-      if (tenant) {
-        el.innerHTML = _buildEmptyStateBlock();
-        el.style.display = '';
-        return;
-      }
-    }
+    // v9.99: Nichts anzeigen — weder „noch nie gesynct" noch Erfolgsmeldung.
+    //   Der Bereich bleibt leer, solange keine echten Fehler anliegen.
     el.style.display = 'none';
     return;
   }
   el.innerHTML = blocks.join('');
   el.style.display = '';
-}
-
-function _buildEmptyStateBlock() {
-  return '<div style="padding:8px 14px;background:#F3F4F6;border:1px solid #E5E7EB;border-radius:8px;font-size:12px;color:var(--txt2);line-height:1.5">'
-    + '⏳ Noch kein Sync durchgeführt. Klick oben auf <strong>🚀 Hintergrund-Sync</strong> oder <strong>🔄 ERP-Sync</strong>.'
-    + '</div>';
 }
 
 function _isSyncBannerExpanded() {
@@ -52009,19 +52025,20 @@ function toggleSyncBanner() {
 }
 
 function _buildSyncStatusBlock(firmaName, s) {
-  // running → blau, error → rot, success (errors=0) → grün, success-with-errors → gelb
-  let bg = '#D1FAE5', border = '#86EFAC', color = '#065F46';      // grün (Default success)
-  let icon = '✅', headline = 'Vollständig synchronisiert';
-  if (s.running) {
-    bg = '#DBEAFE'; border = '#93C5FD'; color = '#1E3A8A';
-    icon = '⏳'; headline = 'Sync läuft gerade';
-  } else if (s.error) {
+  // v9.99: Das Banner erscheint NUR noch bei ECHTEN Fehlern — sauberer oder laufender Sync
+  //   zeigt gar nichts an. „Echt" = harter Abbruch (s.error) oder Fehler, die der Sync selbst
+  //   als wichtig eingestuft hat (errors_wichtig; transientes Rauschen ist dort schon raus).
+  //   Details stehen im Hintergrund-Log (Diagnose_Logs, reason='sync_error'/'sync_fatal').
+  const _fatal   = !!s.error;
+  const _wichtig = +(s.errors_wichtig || 0);
+  if (!_fatal && _wichtig <= 0) return '';
+
+  let bg = '#FEF3C7', border = '#FCD34D', color = '#78350F';
+  let icon = '⚠️', headline = 'Sync mit Fehlern';
+  if (_fatal) {
     bg = '#FEE2E2'; border = '#FCA5A5'; color = '#991B1B';
-    icon = '❌'; headline = 'Sync-Fehler';
+    icon = '❌'; headline = 'Sync abgebrochen';
   }
-  // v9.96: Kein „Mit Warnungen abgeschlossen" mehr. Die reine Fehler-ZAHL war ohne Ursache
-  //   nicht interpretierbar (und teils irreführend). Echte Fehler landen jetzt im Hintergrund-Log
-  //   (Diagnose_Logs, reason='sync_error') und werden dort ausgewertet — nicht mehr im Banner.
 
   const expanded = _isSyncBannerExpanded();
   const chevron = expanded ? '▴' : '▾';
@@ -52069,10 +52086,13 @@ function _buildSyncStatusBlock(firmaName, s) {
         '<strong>'+(s.unchanged||0)+'</strong> identisch',
         '<strong>'+(s.skipped||0)+'</strong> unverändert',
       ];
-      // v9.96: Fehler-Zähler bewusst NICHT mehr im Banner — siehe Hintergrund-Log (Diagnose_Logs).
+      // v9.99: Das Banner erscheint nur noch bei echten Fehlern — dann gehoert die Zahl auch hin.
       lines.push('<div style="font-size:12px;color:'+color+';margin-top:6px;line-height:1.6;padding-top:6px;border-top:1px solid '+border+'">');
       lines.push('🕐 <strong>'+_formatAbsTime(s.finished)+'</strong> ('+_formatRelTime(s.finished)+', Dauer '+dur+'s)<br>');
       lines.push('📊 '+total+' Aufträge geprüft · '+stats.join(' · '));
+      if (_wichtig > 0) {
+        lines.push('<br>❗ <strong>'+_wichtig+' Auftrag/Aufträge konnten nicht übernommen werden</strong> — Ursache steht im Hintergrund-Log.');
+      }
       if (s.triggered_by) {
         const who = (s.triggered_by === 'cron') ? '🕐 Cron-Job' : (s.triggered_by === 'system') ? 'System' : ('User-Key '+String(s.triggered_by).slice(0,8)+'…');
         lines.push('<br>👤 ausgelöst von: '+who);
