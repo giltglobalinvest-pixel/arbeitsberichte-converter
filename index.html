@@ -2906,7 +2906,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v9.99';
+const APP_VERSION = 'v10.00';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -17190,12 +17190,19 @@ const TOOLS = {
     permission: 'tool_arbeitsberichte',
     launch: () => switchView('conv'),
   },
-  overview: {
-    label: 'Berichts-Übersicht',
-    desc:  'Alle gespeicherten Berichte durchsuchen, bearbeiten und exportieren.',
-    icon:  '📋',
-    permission: 'tool_overview',
-    launch: () => switchView('overview'),
+  angebote: {
+    label: 'Angebote',
+    desc:  'Angebote erstellen, versenden und nachverfolgen — mit Maxise-Sync und eigenem Nummernkreis (ANG-…).',
+    icon:  '📄',
+    permission: 'tool_angebote',
+    launch: () => switchView('angebote'),
+  },
+  auftraege: {
+    label: 'Aufträge',
+    desc:  'Aufträge ansehen, Berichte mit Unterschrift erfassen – mobil-optimiert für Techniker.',
+    icon:  '🛠',
+    permission: 'tool_auftraege',
+    launch: () => switchView('auftraege'),
   },
   wartung_kalk: {
     label: 'Wartungspreis-Kalkulator',
@@ -17204,12 +17211,12 @@ const TOOLS = {
     permission: 'tool_wartung_kalk',
     launch: () => switchView('wartung'),
   },
-  auftraege: {
-    label: 'Aufträge',
-    desc:  'Aufträge ansehen, Berichte mit Unterschrift erfassen – mobil-optimiert für Techniker.',
-    icon:  '🛠',
-    permission: 'tool_auftraege',
-    launch: () => switchView('auftraege'),
+  overview: {
+    label: 'Berichts-Übersicht',
+    desc:  'Alle gespeicherten Berichte durchsuchen, bearbeiten und exportieren.',
+    icon:  '📋',
+    permission: 'tool_overview',
+    launch: () => switchView('overview'),
   },
   anlagen: {
     label: 'Anlagen',
@@ -17259,9 +17266,9 @@ function renderDashboard() {
   const allowedKeysForTech = new Set(['tool_auftraege','tool_overview']);
   // Tools-Grid rendern
   const grid = document.getElementById('dash-tools');
-  let html = Object.entries(TOOLS)
-    .filter(([key, t]) => !techMode || allowedKeysForTech.has(t.permission))
-    .map(([key, t]) => {
+  // v10.00: Feste Reihenfolge — erste Zeile Converter · Angebote · Aufträge · Wartungspreis-Kalkulator,
+  //   direkt danach Wartungsverträge (aus dem Admin-Block vorgezogen; Admin-Gate bleibt erhalten), dann der Rest.
+  const _toolTile = ([key, t]) => {
       const allowed = hasPermission(t.permission);
       return `
         <button class="dash-tool" data-tool-key="${key}" ${allowed ? '' : 'disabled'} onclick="launchTool('${key}')">
@@ -17273,7 +17280,24 @@ function renderDashboard() {
             : '<div class="dash-tool-locked">🔒 Keine Berechtigung</div>'}
         </button>
       `;
-    }).join('');
+  };
+  const ERSTE_ZEILE = ['arbeitsberichte','angebote','auftraege','wartung_kalk'];
+  const _toolEntries = Object.entries(TOOLS)
+    .filter(([key, t]) => !techMode || allowedKeysForTech.has(t.permission));
+  const _vertraegeKachel = (isAdmin() && !techMode) ? `
+      <button class="dash-tool" onclick="switchView('vertraege')">
+        <div class="dash-tool-icon">📑</div>
+        <div class="dash-tool-label">Wartungsverträge</div>
+        <div class="dash-tool-desc">Einzel- und Sammelverträge erzeugen. App- und ERP-Verträge gemischt mit eigenem Nummernkreis (WV-…).</div>
+        <div class="dash-tool-stat">⚙ Admin</div>
+      </button>
+  ` : '';
+  let html =
+      _toolEntries.filter(([k]) => ERSTE_ZEILE.indexOf(k) >= 0)
+                  .sort((a, b) => ERSTE_ZEILE.indexOf(a[0]) - ERSTE_ZEILE.indexOf(b[0]))
+                  .map(_toolTile).join('')
+    + _vertraegeKachel
+    + _toolEntries.filter(([k]) => ERSTE_ZEILE.indexOf(k) < 0).map(_toolTile).join('');
   // Admin-only Kacheln (Verwaltung) – bei Techniker-Only komplett ausgeblendet
   if (isAdmin() && !techMode) {
     html += `
@@ -17287,12 +17311,6 @@ function renderDashboard() {
         <div class="dash-tool-icon">👤</div>
         <div class="dash-tool-label">Kontakte</div>
         <div class="dash-tool-desc">Alle Kunden-Kontakte auf einen Blick — Suche, manueller + Bulk-Sync zu Mailchimp.</div>
-        <div class="dash-tool-stat">⚙ Admin</div>
-      </button>
-      <button class="dash-tool" onclick="switchView('vertraege')">
-        <div class="dash-tool-icon">📑</div>
-        <div class="dash-tool-label">Wartungsverträge</div>
-        <div class="dash-tool-desc">Einzel- und Sammelverträge erzeugen. App- und ERP-Verträge gemischt mit eigenem Nummernkreis (WV-…).</div>
         <div class="dash-tool-stat">⚙ Admin</div>
       </button>
       <button class="dash-tool" onclick="switchView('rechnungen')">
