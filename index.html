@@ -3920,6 +3920,20 @@ async function loginWithUserKey(userKey) {
 }
 
 async function tryAutoLogin() {
+  // Direkt-Login per Link: Starter wie die FLP Werkstatt (externe App-Kachel) übergeben den
+  // persönlichen Zugangscode als ?code=… – nötig, weil eingebettete Seiten auf dem iPhone ihren
+  // localStorage verlieren. Der Code wird sofort aus der Adresszeile entfernt.
+  let linkKey = null;
+  try { linkKey = new URLSearchParams(location.search).get('code'); } catch(_) {}
+  if (linkKey && linkKey.trim()) {
+    try {
+      const u = new URL(location.href);
+      u.searchParams.delete('code');
+      history.replaceState(null, '', u.pathname + u.search + u.hash);
+    } catch(_) {}
+    try { await loginWithUserKey(linkKey.trim()); return true; }
+    catch(e) { console.warn('[Login] Code aus dem Link ungültig:', e.message); }
+  }
   const saved = localStorage.getItem('user_key_'+APP_CONFIG.PROJECT_ID);
   if (!saved) return false;
   try { await loginWithUserKey(saved); return true; }
