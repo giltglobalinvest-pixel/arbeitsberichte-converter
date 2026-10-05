@@ -2906,7 +2906,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.00';
+const APP_VERSION = 'v10.01';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -38448,11 +38448,15 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
     if (!empf) throw new Error('Kein Ansprechpartner (kontakt_id) am Angebot.');
     let angId = fAng.erp_angebot_id ? String(fAng.erp_angebot_id) : '';
     let quelle = angId ? 'verknüpft' : '';
-    if (!angId) {                                        // 1) bestehendes Aufwand-Angebot suchen (kein Duplikat)
-      const found = await _abFindErpAngebot(firmaSlug, fAng, { wantAufwand:true });
-      if (found && found.id) { angId = String(found.id); quelle = 'gefunden (Nr. '+(found.nummer||found.id)+')'; }
-    }
-    if (!angId && recId) {                               // 2) sonst Aufwand-Angebot in Maxise anlegen (Anfrage + Angebot)
+    // v10.01 BUGFIX „immer dieselbe Auftragsnummer": KEINE Suche mehr nach einem „passenden" bestehenden
+    //   Aufwand-Angebot. _abFindErpAngebot erkennt Aufwand-Angebote nur an Kunde + Anlage — die Preisprüfung
+    //   (v8.43) greift erst bei netto > 0, Aufwand-Angebote haben aber IMMER 0 €. Folge: Jeder neue Auftrag
+    //   an einer Anlage, an der schon einmal ein Aufwand-Auftrag lief, bekam dessen ALTES Maxise-Angebot und
+    //   damit (über _abFindErpAuftragByAngebot) dessen ALTEN Auftrag (belegt: Auftrag 1975 4x, 1980 3x).
+    //   Zwei Einsätze an derselben Anlage sind zwei Aufträge.
+    //   Wiederholungen DESSELBEN Angebots bleiben abgesichert: _angPushAufwandToErp schreibt erp_angebot_id
+    //   zurück (Airtable + Cache) → beim erneuten Lauf greift oben der Weg „verknüpft", kein Zweit-Angebot.
+    if (!angId && recId) {                               // Aufwand-Angebot in Maxise anlegen (Anfrage + Angebot)
       const info = await _angPushAufwandToErp(recId, null);   // wirft bei echtem Fehler
       if (info && info.id) { angId = String(info.id); quelle = 'neu angelegt (Aufwand-Angebot Nr. '+(info.nummer||info.id)+')'; }
     }
