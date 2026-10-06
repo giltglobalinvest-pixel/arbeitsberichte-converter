@@ -1586,6 +1586,28 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 .lm-dash-abr-r .f{font-size:12px;color:var(--txt2);font-weight:600}
 .lm-dot{width:9px;height:9px;border-radius:50%;flex:none;display:inline-block}
 .lm-dot.rot{background:#DC2626}.lm-dot.gelb{background:#F59E0B}
+/* v10.04: eigene Anlagen-Auswahl, Status, „aktuell aktiv" */
+.lm-kpi-s{font-size:10.5px;color:var(--txt3);margin-top:2px;font-weight:600;line-height:1.3}
+.lm-kpi.blau .lm-kpi-n{color:#1D4ED8}
+.lm-card.dim{opacity:.7}
+.lm-card.dim:hover{opacity:1}
+.lm-start{padding:34px 22px;font-size:14px;color:var(--txt2)}
+.lm-add-list{display:flex;flex-direction:column;gap:6px;max-height:52vh;overflow:auto;padding:1px}
+.lm-add-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--bdr);border-radius:10px;padding:8px 11px;background:var(--surf);cursor:pointer;font-size:13px;color:var(--txt)}
+.lm-add-row:hover{border-color:var(--navy-l)}
+.lm-add-row input{width:18px;height:18px;flex:none;margin:0}
+.lm-add-row .m{flex:1;min-width:180px;display:flex;flex-direction:column;gap:1px}
+.lm-add-row .m b{color:var(--navy);word-break:break-word}
+.lm-add-row.drin{background:var(--bg);cursor:default;opacity:.75}
+.lm-add-row:has(input:checked:not(:disabled)){border-color:#2152A9;background:#EFF6FF}
+.lm-add-ab{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--txt2)}
+.lm-add-ab input{border:1px solid var(--bdr);border-radius:8px;padding:6px 8px;font-size:13px;font-family:inherit;background:#fff;color:#222}
+.lm-st-opts{display:flex;flex-direction:column;gap:8px}
+.lm-st-opt{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--bdr);border-radius:10px;padding:10px 12px;cursor:pointer;background:var(--surf);font-size:13px;color:var(--txt)}
+.lm-st-opt:hover{border-color:var(--navy-l)}
+.lm-st-opt input{margin-top:3px;width:16px;height:16px;flex:none}
+.lm-st-opt .i{font-size:18px;line-height:1.2;flex:none}
+.lm-st-opt:has(input:checked){border-color:#2152A9;background:#EFF6FF}
 @media (max-width:760px){
   .lm-grid2,.lm-form,.lm-stats{grid-template-columns:1fr}
   .lm-kv{grid-template-columns:110px 1fr}
@@ -1598,6 +1620,8 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   .lm-kpi{padding:8px 9px;border-radius:10px}
   .lm-kpi-n{font-size:19px}
   .lm-kpi-l{font-size:10.5px;line-height:1.25}
+  .lm-kpi-s{font-size:9.5px}
+  .lm-add-row .m{min-width:0}
   .lm-doc{flex-wrap:wrap}
   .lm-doc-act{width:100%}
   .lm-modal{padding:6px}
@@ -3127,7 +3151,7 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.03';
+const APP_VERSION = 'v10.04';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -6489,7 +6513,7 @@ const FEATURES = {
   },
   liftmgmt_edit: {
     label: 'Liftmanagement: Akte bearbeiten',
-    desc:  'Darf in der Anlagenakte Verträge, Dokumente, Notizen, Störungen, TÜV-Termine und die KONE EQ-Nummer anlegen, ändern und löschen.',
+    desc:  'Darf Anlagen ins Liftmanagement aufnehmen, ihren Status setzen (aktiv, inaktiv, gekündigt, archiviert) und in der Akte Verträge, Dokumente, Notizen, Störungen, TÜV-Termine und die KONE EQ-Nummer anlegen, ändern und löschen.',
     default: false,
   },
   auftraege_view_all: {
@@ -56204,6 +56228,11 @@ function _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, page, total, f) {
  * Der Verlauf liest zusätzlich (nur lesend) Aufträge, Berichte, Angebote, Auftragsbestätigungen,
  * Datenaufnahmen, Briefberichte, LVs, GBUs und Servicebox-Wartungsverträge dieser Anlage.
  * Rechte: tool_liftmgmt (ansehen), liftmgmt_edit (Akte bearbeiten) — Admins haben beides.
+ * v10.04: Die Liste zeigt NUR Anlagen, die bewusst aufgenommen wurden („+ Anlage hinzufügen", lm_status).
+ *   Status (nur im Liftmanagement, Maxise bleibt unberührt): aktiv | inaktiv | gekuendigt | archiviert.
+ *   Erinnerungen (Wartungsrechnung) nur für aktive/gekündigte Anlagen; Kündigung → Aufgabe „Notruf ausbauen bis …".
+ *   Kachel „Aktuell aktiv": nur was heute wirklich läuft — Start („Aktiv ab" bzw. künftiger Vertragsbeginn) erreicht,
+ *   Gekündigte bis zum Kündigungsdatum.
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Rechenlogik (rein, ohne DOM/Netz). Datumswerte als 'YYYY-MM-DD' (lokale Kalendertage). ── */
@@ -56388,6 +56417,17 @@ const LM_AKTE_FIELDS = [
   { name:'hinweis',          type:'multilineText'  },   // 📌 angehefteter Hinweis (Liste + Akte)
   { name:'updated',          type:'singleLineText' },
   { name:'updated_by',       type:'singleLineText' },
+  { name:'lm_status',        type:'singleLineText' },   // v10.04: '' = nicht im Liftmanagement | aktiv | inaktiv | gekuendigt | archiviert
+  { name:'lm_seit',          type:'singleLineText' },   // aktiv ab (Start im Liftmanagement; in der Zukunft = zählt erst ab dann als „aktuell aktiv")
+  { name:'lm_von',           type:'singleLineText' },
+  { name:'status_am',        type:'singleLineText' },
+  { name:'status_von',       type:'singleLineText' },
+  { name:'gekuendigt_am',    type:'singleLineText' },   // Kündigung eingegangen am
+  { name:'gekuendigt_zum',   type:'singleLineText' },   // wirksam zum (Betreuung endet)
+  { name:'kuendigung_notiz', type:'multilineText'  },
+  { name:'notruf_ausbau',    type:'checkbox', options:{ icon:'check', color:'redBright' } },
+  { name:'notruf_ausbau_bis',type:'singleLineText' },
+  { name:'notruf_ausgebaut_am', type:'singleLineText' },
 ];
 const LM_VERTRAG_FIELDS = [
   { name:'vertragsnummer',          type:'singleLineText' },
@@ -56459,7 +56499,15 @@ const LM_TYPEN = {
   pruefung:  { label:'Prüfung',  icon:'🛡' },
   dokument:  { label:'Dokument', icon:'📄' },
   sonstiges: { label:'Eintrag',  icon:'📌' },
+  status:    { label:'Status',   icon:'🔁' },   // Statuswechsel im Liftmanagement (nur im Verlauf)
 };
+const LM_STATUS = {
+  aktiv:      { label:'Aktiv',      icon:'🟢', cls:'gruen' },
+  inaktiv:    { label:'Inaktiv',    icon:'⏸', cls:'grau'  },
+  gekuendigt: { label:'Gekündigt',  icon:'✂️', cls:'rot'   },
+  archiviert: { label:'Archiviert', icon:'🗄', cls:'grau'  },
+};
+const LM_NOTRUF_VORLAUF = 30;   // Dashboard/Zähler: Notruf-Ausbau ab 30 Tagen vor der Frist
 const LM_HERSTELLER = ['KONE','Schindler','OTIS','TK Elevator','Schmitt + Sohn','Haushahn','Kleemann','Orona','Liftequip','Hiro Lift','Riedl'];
 const LM_ANTRIEBE = ['Seil (Triebscheibe, Maschinenraum)','Seil (maschinenraumlos / MRL)','Hydraulik','Trommel','Zahnstange','Spindel','Sonstige'];
 const LM_PRUEFSTELLEN = ['TÜV SÜD','TÜV Rheinland','TÜV NORD','TÜV Hessen','TÜV Thüringen','TÜV Saarland','DEKRA','GTÜ','KÜS'];
@@ -56487,6 +56535,8 @@ const LM_ABR_VORLAUF = 30;           // so viele Tage vor der Fälligkeit wird e
 const LM_ABR_TURNUS = [[12, 'jährlich zum Wartungsbeginn'], [6, 'halbjährlich'], [3, 'vierteljährlich'], [1, 'monatlich'], [0, 'keine Erinnerung (z. B. Sammelrechnung)']];
 const LM_FILTER = {
   alle:       { label:'Anlagen',                test: () => true },
+  aktuell:    { label:'✅ Aktuell aktiv',       test: it => it.aktuell, tip:'Läuft heute wirklich: Status „Aktiv" und bereits gestartet (Gekündigte bis zum Kündigungsdatum). Anlagen, die erst später starten, zählen nicht mit.' },
+  startet:    { label:'⏳ Startet später',      test: it => !!it.aktiv.ab, nurWennDa: true, tip:'Status „Aktiv", aber der Start liegt in der Zukunft – zählt erst ab dem Starttag als „aktuell aktiv"' },
   abrechnung: { label:'💶 Wartung abrechnen',   test: it => it.abrOffen.length > 0, tip:'Wartungsrechnung fällig oder in ≤ 30 Tagen fällig und noch nicht geschrieben' },
   wartung:    { label:'In Wartung bei uns',     test: it => it.wartung },
   tuev:       { label:'TÜV fällig ≤ 60 Tage',   test: it => it.tuev.ampel === 'rot' || it.tuev.ampel === 'gelb' },
@@ -56518,7 +56568,9 @@ let _lmTablesChecked = false;   // Admin: Tabellen/Felder einmal je Sitzung sich
 let _lmTablesMissing = false;   // Akte-Tabellen fehlen → nur Maxise-Daten, keine Bearbeitung
 let _lmData = { firma:null, anlagen:null, akten:[], vertraege:[], eintraege:[], wv:[], abrechnungen:[], loadedAt:0, loading:null, loadingFirma:null, errors:[] };
 let _lmWartung = { firma:null, set:null, angebote:new Map(), loadedAt:0, loading:null, loadingFirma:null };
-let _lmUi = { firma:null, filter:'alle', q:'', sort:'adresse', limit:150, archiv:false, akteId:null, tab:'uebersicht', vlFilter:'alle', vlLimit:120, listScroll:0 };
+let _lmUi = { firma:null, filter:'alle', status:'alle', q:'', sort:'adresse', limit:150, akteId:null, tab:'uebersicht', vlFilter:'alle', vlLimit:120, listScroll:0 };
+let _lmAdd = null;              // offener Dialog „+ Anlage hinzufügen": { q, nurWartung, mitArchiv, sel:Set }
+let _lmAddTimer = null;
 let _lmAkteCache = {};          // 'firma|anlageId' → { src:{…}, eintraege:[…], errors:[…], at, loading }
 let _lmSearchTimer = null;
 let _lmUpload = null;           // Dateien des offenen Upload-Dialogs
@@ -56561,7 +56613,57 @@ function _lmFindAnlage(id) { return (_lmData.anlagen || []).find(x => x && Strin
 function _lmAkteOf(id) { const r = _lmData.akteMap && _lmData.akteMap.get(String(id)); return _lmAkteNorm(r && r.fields); }
 function _lmCache(id) { return _lmAkteCache[_lmData.firma + '|' + String(id)] || null; }
 function _lmCurItem() { const a = _lmFindAnlage(_lmUi.akteId); return a ? _lmItem(a) : null; }
-const LM_AKTE_DATUMSFELDER = ['wartung_seit','tuev_letzte_hp','tuev_naechste_hp','tuev_naechste_zp'];
+const LM_AKTE_DATUMSFELDER = ['wartung_seit','tuev_letzte_hp','tuev_naechste_hp','tuev_naechste_zp','gekuendigt_am','gekuendigt_zum','notruf_ausbau_bis','notruf_ausgebaut_am','lm_seit'];
+function _lmIstMitglied(f) { return !!(f && LM_STATUS[f.lm_status]); }                         // im Liftmanagement (auch inaktiv/archiviert)
+function _lmAbrRelevant(f) { return !!f && (f.lm_status === 'aktiv' || f.lm_status === 'gekuendigt'); }   // bekommt Rechnungs-Erinnerungen
+/* Notruf-Ausbau offen? (nach Kündigung, bis „✓ Notruf ausgebaut") */
+function _lmNotrufOffen(f) { return !!f && (f.lm_status === 'gekuendigt' || f.lm_status === 'archiviert') && !!f.notruf_ausbau && !f.notruf_ausgebaut_am && !!_lmParseDate(f.notruf_ausbau_bis); }
+/* Start-Signale einer Anlage: läuft schon ein Vertrag / eine Wartung, und welche Starts liegen noch in der Zukunft?
+   vertraege: [{ f, info }] aus der Akte · wv: Servicebox-Wartungsverträge · mx: Maxise-Wartungsverträge der Anlage */
+function _lmStartSignale(akte, vertraege, wv, mx, heute) {
+  heute = heute || _lmToday();
+  const f = akte || {}, kuenftig = [];
+  let laufend = false;
+  const zeit = (dt, ohneDatumLaufend) => {
+    if (_lmParseDate(dt)) { if (_lmDaysBetween(heute, dt) > 0) kuenftig.push(dt); else laufend = true; }
+    else if (ohneDatumLaufend) laufend = true;
+  };
+  (vertraege || []).forEach(v => { if (LM_VT_LAUFEND.includes(v.info.status)) laufend = true; else if (v.info.status === 'geplant') kuenftig.push(v.f.beginn); });
+  (wv || []).forEach(r => { const x = (r && r.fields) || {}; if (!x.archived && String(x.status || '') === 'aktiv') zeit(_lmDate(x.start_datum), true); });
+  (mx || []).forEach(m => { if (m && m.bestaetigt) zeit(m.beginn, true); });
+  if (f.wartung_status !== 'nein') zeit(f.wartung_seit, f.wartung_status === 'ja');
+  return { laufend, kuenftig };
+}
+/* „Aktuell aktiv" = läuft heute wirklich: Status Aktiv (Gekündigte bis einschließlich Kündigungsdatum) UND Start erreicht.
+   Start = „Aktiv ab" (lm_seit); läuft noch kein Vertrag, zählt außerdem der früheste künftige Vertrags-/Wartungsbeginn.
+   → { aktuell, ab: Start in der Zukunft ('' = schon gestartet), bis: Kündigungsdatum } */
+function _lmAktivInfo(akte, sig, heute) {
+  heute = heute || _lmToday();
+  const f = akte || {}, st = f.lm_status, out = { aktuell: false, ab: '', bis: '' };
+  if (st !== 'aktiv' && st !== 'gekuendigt') return out;
+  if (st === 'gekuendigt') {
+    if (!_lmParseDate(f.gekuendigt_zum) || _lmDaysBetween(heute, f.gekuendigt_zum) < 0) return out;   // Betreuung beendet
+    out.bis = f.gekuendigt_zum;
+  }
+  let ab = (_lmParseDate(f.lm_seit) && _lmDaysBetween(heute, f.lm_seit) > 0) ? f.lm_seit : '';
+  if (!(sig && sig.laufend)) {
+    const k = ((sig && sig.kuenftig) || []).filter(x => _lmParseDate(x) && _lmDaysBetween(heute, x) > 0).sort()[0];
+    if (k && (!ab || k > ab)) ab = k;
+  }
+  out.ab = ab;
+  out.aktuell = !ab;
+  return out;
+}
+/* Akten je Anlage (bei doppelt angelegten die zuletzt bearbeitete), Datumsfelder als ISO */
+function _lmAktenJeAnlage(d) {
+  const m = new Map();
+  (d.akten || []).forEach(r => {
+    const f = r.fields || {}, k = String(f.anlage_id || ''); if (!k) return;
+    const prev = m.get(k);
+    if (!prev || String(f.updated || '') > String(prev.updated || '')) m.set(k, _lmAkteNorm(f));
+  });
+  return m;
+}
 function _lmAkteNorm(f) { const o = Object.assign({}, f || {}); LM_AKTE_DATUMSFELDER.forEach(k => { if (o[k]) o[k] = _lmDate(o[k]); }); return o; }
 function _lmVtNorm(f) { const o = Object.assign({}, f || {}); ['beginn','gekuendigt_zum'].forEach(k => { if (o[k]) o[k] = _lmDate(o[k]); }); return o; }
 
@@ -56605,6 +56707,22 @@ async function _lmUpdate(table, recId, fields) {
   const d = await atUpdate(table, recId, fields);
   if (!d || d.error) throw new Error((d && d.error && (d.error.message || d.error.type)) || 'Airtable-Schreibfehler');
   return d;
+}
+/* Mehrere Datensätze auf einmal anlegen/ändern (Airtable: max. 10 je Anfrage) */
+async function _lmAtBatch(method, table, records) {
+  if (!APP_KEYS.airtableWriteKey) throw new Error('Kein Write-Token');
+  const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
+  const out = [];
+  for (let i = 0; i < records.length; i += 10) {
+    const r = await fetch('https://api.airtable.com/v0/' + baseId + '/' + encodeURIComponent(table), {
+      method, headers: { 'Authorization': 'Bearer ' + APP_KEYS.airtableWriteKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ records: records.slice(i, i + 10) }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok || d.error) { const e = new Error((d.error && (d.error.message || d.error.type)) || ('HTTP ' + r.status)); e.teil = out; throw e; }
+    (d.records || []).forEach(x => out.push(x));
+  }
+  return out;
 }
 async function _lmDelete(table, recId) {
   const d = await atDelete(table, recId);
@@ -56778,8 +56896,10 @@ function _lmAbrCompute(firma, d, w, rech, heute) {
   const anlagen = new Map((d.anlagen || []).filter(Boolean).map(a => [String(a.id), a]));
   const adr = id => { const a = anlagen.get(String(id)); return a ? String(a.anzeigeAdresse || a.name || '') : ''; };
   const kd = id => { const a = anlagen.get(String(id)); return (a && a.kunde && a.kunde.firmenname) || ''; };
-  const akteVon = new Map();
-  (d.akten || []).forEach(r => { const f = r.fields || {}; if (f.anlage_id) akteVon.set(String(f.anlage_id), _lmAkteNorm(f)); });
+  const akteVon = _lmAktenJeAnlage(d);
+  const relevant = aid => _lmAbrRelevant(akteVon.get(String(aid)));
+  const kEnde = aid => { const f = akteVon.get(String(aid)) || {}; return f.lm_status === 'gekuendigt' ? (f.gekuendigt_zum || '') : ''; };
+  const frueher = (x, y) => !_lmParseDate(x) ? (y || '') : (!_lmParseDate(y) ? x : (_lmDaysBetween(x, y) < 0 ? y : x));
   const manuell = new Map();
   (d.abrechnungen || []).forEach(r => { const f = r.fields || {}, k = String(f.vertrag_ref || ''); if (!k) return; if (!manuell.has(k)) manuell.set(k, []); manuell.get(k).push(Object.assign({ recId: r.id }, f)); });
   const mxByAnlage = new Map();
@@ -56801,7 +56921,7 @@ function _lmAbrCompute(firma, d, w, rech, heute) {
   for (const r of d.vertraege || []) {
     const f = _lmVtNorm(r.fields), info = _lmVertragInfo(f, heute);
     if (!LM_VT_LAUFEND.includes(info.status)) continue;
-    const aid = String(f.anlage_id || ''); if (!aid) continue;
+    const aid = String(f.anlage_id || ''); if (!aid || !relevant(aid)) continue;
     const mx = /^maxise:/.test(String(f.quelle || '')) ? String(f.quelle).slice(7) : '';
     if (mx) usedMx.add(mx);
     covered.add(aid);
@@ -56812,52 +56932,79 @@ function _lmAbrCompute(firma, d, w, rech, heute) {
     add({ ref: 'lm:' + r.id, refs: ['lm:' + r.id].concat(mx ? ['maxise:' + mx] : []), quelle: 'Vertrag in der Akte',
       titel: _lmArtLabel(f.art) + (f.vertragsnummer ? ' · ' + f.vertragsnummer : ''), anlageIds: [aid],
       adresse: adr(aid) || f.adresse || '', kunde: kd(aid) || f.kunde_name || f.partner || '', beginn: f.beginn, turnus,
-      ab: _lmDate(f.abrechnung_ab) || LM_ABR_START, ende: info.ende, preis: Math.round((+f.jahrespreis_netto || 0) * (turnus || 12) / 12 * 100) / 100, auftragIds });
+      ab: _lmDate(f.abrechnung_ab) || LM_ABR_START, ende: frueher(info.ende, kEnde(aid)), preis: Math.round((+f.jahrespreis_netto || 0) * (turnus || 12) / 12 * 100) / 100, auftragIds });
   }
   // 2) Servicebox-Wartungsverträge (Tabelle Vertraege, Status aktiv) — ggf. eine Rechnung für mehrere Anlagen
   for (const r of d.wv || []) {
     const f = r.fields || {}; if (f.archived || String(f.status || '') !== 'aktiv') continue;
     let al = []; try { al = JSON.parse(f.anlagen_json || '[]') || []; } catch(_){}
-    const ids = (Array.isArray(al) ? al : []).map(x => String((x && (x.id || x.anlage_id)) || '')).filter(Boolean);
+    const ids = (Array.isArray(al) ? al : []).map(x => String((x && (x.id || x.anlage_id)) || '')).filter(Boolean).filter(relevant);
     if (!ids.length || ids.every(id => covered.has(id))) continue;
+    const kEnden = ids.map(kEnde);
     if (f.erp_id) usedMx.add(String(f.erp_id));
     ids.forEach(id => covered.add(id));
     const turnus = /quartal/i.test(String(f.abrechnung_turnus || '')) ? 3 : 12;
     add({ ref: 'wv:' + r.id, refs: ['wv:' + r.id], quelle: 'Servicebox-Wartungsvertrag', titel: 'Wartungsvertrag ' + (f.vertragsnummer || f.titel || ''),
       anlageIds: ids, adresse: adr(ids[0]) + (ids.length > 1 ? ' (+' + (ids.length - 1) + ' weitere)' : ''), kunde: f.kunde_name || kd(ids[0]),
-      beginn: _lmDate(f.start_datum), turnus, ab: LM_ABR_START, ende: '', preis: Math.round((+f.jahrespreis_gesamt || 0) * turnus / 12 * 100) / 100, auftragIds: auftraegeFuer(ids) });
+      beginn: _lmDate(f.start_datum), turnus, ab: LM_ABR_START, ende: kEnden.every(Boolean) ? kEnden.sort().slice(-1)[0] : '', preis: Math.round((+f.jahrespreis_gesamt || 0) * turnus / 12 * 100) / 100, auftragIds: auftraegeFuer(ids) });
   }
   // 3) Maxise-Wartungsverträge mit bestätigtem Wartungsauftrag — automatisch, ohne Erfassung in der Akte
   mxByAnlage.forEach((list, aid) => {
-    if (covered.has(aid) || (akteVon.get(aid) || {}).wartung_status === 'nein') return;   // „nicht bei uns in Wartung" hat Vorrang
+    if (covered.has(aid) || !relevant(aid) || (akteVon.get(aid) || {}).wartung_status === 'nein') return;   // nur aufgenommene Anlagen; „nicht bei uns in Wartung" hat Vorrang
     covered.add(aid);
     list.forEach(m => {
       if (usedMx.has(m.angebotId)) return;
       add({ ref: 'maxise:' + m.angebotId, refs: ['maxise:' + m.angebotId], quelle: 'Maxise', angebotId: m.angebotId, titel: 'Maxise-Wartungsvertrag (Angebot ' + m.nummer + ')',
         anlageIds: [aid], adresse: adr(aid) || m.adresse || '', kunde: kd(aid) || m.kunde || '', beginn: m.beginn || m.auftragDatum || m.datum, turnus: 12,
-        ab: LM_ABR_START, ende: m.ende || '', preis: +m.jahrespreis || 0, auftragIds: m.auftragIds || [] });
+        ab: LM_ABR_START, ende: frueher(m.ende || '', kEnde(aid)), preis: +m.jahrespreis || 0, auftragIds: m.auftragIds || [] });
     });
   });
-  // 4) Akte: „Bei uns in Wartung: Ja" + Wartungsbeginn, aber (noch) kein Vertrag erfasst
+  // 4) Akte: Wartungsbeginn eingetragen, aber (noch) kein Vertrag erfasst
   akteVon.forEach((f, aid) => {
-    if (covered.has(aid) || f.wartung_status !== 'ja' || !_lmParseDate(f.wartung_seit)) return;
+    if (covered.has(aid) || !relevant(aid) || f.wartung_status === 'nein' || !_lmParseDate(f.wartung_seit)) return;
     covered.add(aid);
     add({ ref: 'akte:' + aid, refs: ['akte:' + aid], quelle: 'Wartungsbeginn in der Akte', titel: 'Wartung (ohne erfassten Vertrag)', anlageIds: [aid],
-      adresse: adr(aid) || f.adresse || '', kunde: kd(aid) || f.kunde_name || '', beginn: f.wartung_seit, turnus: 12, ab: LM_ABR_START, ende: '', preis: 0, auftragIds: auftraegeFuer([aid]) });
+      adresse: adr(aid) || f.adresse || '', kunde: kd(aid) || f.kunde_name || '', beginn: f.wartung_seit, turnus: 12, ab: LM_ABR_START, ende: kEnde(aid), preis: 0, auftragIds: auftraegeFuer([aid]) });
   });
   return items;
 }
 /* Offene Fälligkeiten als flache Zeilen (für Feld, Dashboard und Zähler; speicherbar in IndexedDB) */
 function _lmAbrRows(items) {
   const rows = [];
-  (items || []).forEach(o => (o.offen || []).forEach(x => rows.push({ firma: o.firma, ref: o.ref, anlageId: o.anlageIds[0], adresse: o.adresse, kunde: o.kunde, titel: o.titel,
+  (items || []).forEach(o => (o.offen || []).forEach(x => rows.push({ typ: 'rechnung', firma: o.firma, ref: o.ref, anlageId: o.anlageIds[0], adresse: o.adresse, kunde: o.kunde, titel: o.titel,
     quelle: o.quelle, turnus: o.turnus, preis: o.preis, faellig: x.faellig })));
   return rows.sort((a, b) => a.faellig.localeCompare(b.faellig));
 }
+/* Aufgaben aus Kündigungen: „Notruf ausbauen bis …" (bis „✓ Notruf ausgebaut") */
+function _lmNotrufRows(firma, d) {
+  const anlagen = new Map((d.anlagen || []).filter(Boolean).map(a => [String(a.id), a]));
+  const rows = [];
+  _lmAktenJeAnlage(d).forEach((f, aid) => {
+    if (!_lmNotrufOffen(f)) return;
+    const a = anlagen.get(aid);
+    rows.push({ typ: 'notruf', firma, ref: 'notruf:' + aid, anlageId: aid, adresse: (a && (a.anzeigeAdresse || a.name)) || f.adresse || '',
+      kunde: (a && a.kunde && a.kunde.firmenname) || f.kunde_name || '', titel: 'Notruf ausbauen', faellig: f.notruf_ausbau_bis, gekuendigt_zum: f.gekuendigt_zum || '' });
+  });
+  return rows;
+}
+/* Alle offenen Aufgaben (Rechnungen im Erinnerungsfenster + Notruf-Ausbau), früheste zuerst */
+function _lmTodoRows(items, d, firma) {
+  return _lmAbrRows(items).concat(_lmNotrufRows(firma, d)).sort((a, b) => a.faellig.localeCompare(b.faellig));
+}
+/* Für Dashboard/Zähler: Notruf-Ausbau erst ab 30 Tagen vor der Frist (Rechnungen sind schon gefenstert) */
+function _lmImFenster(r) { return r.typ !== 'notruf' || _lmDaysBetween(_lmToday(), r.faellig) <= LM_NOTRUF_VORLAUF; }
+function _lmTodoDringend(r) { return r.typ === 'notruf' ? _lmDaysBetween(_lmToday(), r.faellig) <= 7 : _lmAbrIstFaellig(r); }
+function _lmNotrufText(r) {
+  const t = _lmDaysBetween(_lmToday(), r.faellig);
+  return t < 0 ? 'Ausbau seit ' + (-t) + ' Tag' + (t === -1 ? '' : 'en') + ' überfällig (' + _lmFmtDE(r.faellig) + ')'
+    : (t === 0 ? 'Ausbau heute fällig (' + _lmFmtDE(r.faellig) + ')' : 'ausbauen bis ' + _lmFmtDE(r.faellig) + ' (in ' + t + ' Tag' + (t === 1 ? '' : 'en') + ')');
+}
+function _lmTodoText(r) { return r.typ === 'notruf' ? _lmNotrufText(r) : _lmAbrFaelligText(r); }
+function _lmTodoCls(r) { return _lmTodoDringend(r) ? 'rot' : (_lmImFenster(r) ? 'gelb' : 'blau'); }
 /* Auswertung für die aktuell geladene Firma (zwischengespeichert, bis sich Daten ändern) */
 function _lmAbrIdx() {
   const d = _lmData;
-  if (!d || !d.firma || !d.anlagen) return { items: [], byAnlage: new Map(), rows: [], wartungGeprueft: false, rechGeprueft: false };
+  if (!d || !d.firma || !d.anlagen) return { items: [], byAnlage: new Map(), rows: [], todos: [], fenster: [], wartungGeprueft: false, rechGeprueft: false };
   const w = (_lmWartung.firma === d.firma && _lmWartung.angebote) ? _lmWartung : null;
   const rech = (_lmRech.firma === d.firma && _lmRech.items) ? _lmRech : null;
   const key = [d.firma, d.loadedAt, w ? w.loadedAt : 0, rech ? rech.loadedAt : 0, _lmLocalVer, _lmToday()].join('|');
@@ -56865,7 +57012,8 @@ function _lmAbrIdx() {
   const items = _lmAbrCompute(d.firma, d, w, rech);
   const byAnlage = new Map();
   items.forEach(o => o.anlageIds.forEach(id => { if (!byAnlage.has(id)) byAnlage.set(id, []); byAnlage.get(id).push(o); }));
-  const idx = { items, byAnlage, rows: _lmAbrRows(items), wartungGeprueft: !!w, rechGeprueft: !!rech };
+  const todos = _lmTodoRows(items, d, d.firma);
+  const idx = { items, byAnlage, rows: _lmAbrRows(items), todos, fenster: todos.filter(_lmImFenster), wartungGeprueft: !!w, rechGeprueft: !!rech };
   _lmAbrIdxC = { key, idx };
   return idx;
 }
@@ -56902,7 +57050,11 @@ function _lmItem(a) {
   const abrOffen = [];
   abr.forEach(o => (o.offen || []).forEach(x => abrOffen.push(Object.assign({ ref: o.ref, titel: o.titel, preis: o.preis }, x))));
   abrOffen.sort((x, y) => x.faellig.localeCompare(y.faellig));
-  return { a, id, akteRec, akte, vertraege, eintraege, wv, wartung, wartungQuelle, maxiseWartung, tuev: _lmTuevInfo(akte, heute), kuendbar, stoerOffen, docs, wichtig, abr, abrOffen };
+  const status = LM_STATUS[akte.lm_status] ? akte.lm_status : '';
+  const notruf = _lmNotrufOffen(akte) ? { typ: 'notruf', faellig: akte.notruf_ausbau_bis } : null;
+  const mx = (_lmWartung.firma === d.firma && _lmWartung.angebote && _lmWartung.angebote.get(id)) || [];
+  const aktiv = _lmAktivInfo(akte, _lmStartSignale(akte, vertraege, wv, mx, heute), heute);
+  return { a, id, akteRec, akte, vertraege, eintraege, wv, wartung, wartungQuelle, maxiseWartung, tuev: _lmTuevInfo(akte, heute), kuendbar, stoerOffen, docs, wichtig, abr, abrOffen, status, notruf, aktiv, aktuell: aktiv.aktuell };
 }
 function _lmMatches(it, q) {
   if (!q) return true;
@@ -56994,10 +57146,11 @@ function _lmRenderListe() {
   body.innerHTML = '<div class="lm-wrap">' + _lmBannerHtml() +
     '<div class="lm-kpis" id="lm-kpis"></div>' +
     '<div id="lm-abr-panel"></div>' +
+    '<div class="lm-bar">' + (_lmCanEdit() ? '<button class="btn prim" id="lm-add-btn" onclick="lmAddDialog()">+ Anlage hinzufügen</button>' : '') +
+      '<span id="lm-st-chips" style="display:contents"></span></div>' +
     '<div class="lm-bar">' +
       '<div class="anl-search-wrap" style="flex:1"><span class="anl-search-ico">🔍</span><input class="anl-search-inp" id="lm-q" type="search" autocomplete="off" placeholder="Adresse, Fabrik-Nr., KONE EQ-Nr., Kunde …" value="' + escapeHtml(_lmUi.q) + '" oninput="_lmOnSearch(this.value)"></div>' +
       '<select class="lm-select" id="lm-sort" onchange="_lmSetSort(this.value)">' + sorts.map(([v, l]) => '<option value="' + v + '"' + (_lmUi.sort === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
-      '<label class="lm-chip" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox"' + (_lmUi.archiv ? ' checked' : '') + ' onchange="_lmSetArchiv(this.checked)"> Archivierte</label>' +
       '<button class="lm-chip" onclick="_lmExportCsv()" title="Gefilterte Liste als CSV (Excel) — mit EQ-Nr., Wartung, TÜV und Vertrag">⬇ CSV</button>' +
     '</div>' +
     '<div class="lm-list-info" id="lm-list-info"></div>' +
@@ -57007,26 +57160,51 @@ function _lmRenderListe() {
 }
 function _lmRenderListItems() {
   const listEl = document.getElementById('lm-list'); if (!listEl || !_lmData.anlagen) return;
-  const all = _lmData.anlagen.filter(a => a && a.id != null && (_lmUi.archiv || !a.archived)).map(_lmItem);
+  // v10.04: nur Anlagen, die ins Liftmanagement aufgenommen wurden; Status-Filter „Alle" = ohne Archivierte
+  const stF = _lmUi.status || 'alle';
+  const zaehler = { alle: 0, aktiv: 0, inaktiv: 0, gekuendigt: 0, archiviert: 0 };
+  const mitglieder = _lmData.anlagen.filter(a => {
+    if (!a || a.id == null) return false;
+    const st = _lmAkteOf(a.id).lm_status;
+    if (!LM_STATUS[st]) return false;
+    zaehler[st]++; if (st !== 'archiviert') zaehler.alle++;
+    return true;
+  });
+  const chips = document.getElementById('lm-st-chips');
+  if (chips) chips.innerHTML = [['alle', 'Alle'], ['aktiv', '🟢 Aktiv'], ['inaktiv', '⏸ Inaktiv'], ['gekuendigt', '✂️ Gekündigt'], ['archiviert', '🗄 Archiviert']]
+    .map(([k, l]) => '<button class="lm-chip' + (stF === k ? ' on' : '') + '" data-st="' + k + '" onclick="_lmSetStatusFilter(' + _lmA(k) + ')">' + l + ' <b>' + zaehler[k] + '</b></button>').join('');
+  const all = mitglieder.filter(a => { const st = _lmAkteOf(a.id).lm_status; return stF === 'alle' ? st !== 'archiviert' : st === stF; }).map(_lmItem);
   const kpiEl = document.getElementById('lm-kpis');
   if (kpiEl) kpiEl.innerHTML = Object.keys(LM_FILTER).map(k => {
     const n = k === 'alle' ? all.length : all.filter(LM_FILTER[k].test).length;
-    let cls = '';
-    if (k === 'wartung') cls = 'gruen';
+    if (LM_FILTER[k].nurWennDa && !n && _lmUi.filter !== k) return '';
+    let cls = '', sub = '';
+    if (k === 'aktuell') { cls = 'gruen'; const g = all.filter(it => it.aktuell && it.status === 'gekuendigt').length; if (g) sub = 'inkl. ' + g + ' gekündigt'; }
+    else if (k === 'startet') cls = 'blau';
+    else if (k === 'wartung') cls = 'gruen';
     else if (k === 'tuev' && n) cls = all.some(it => it.tuev.ampel === 'rot') ? 'rot' : 'gelb';
     else if ((k === 'kuendigung' || k === 'ohne_eq') && n) cls = 'gelb';
     else if (k === 'stoerung' && n) cls = 'rot';
     else if (k === 'abrechnung' && n) cls = all.some(it => it.abrOffen.some(_lmAbrIstFaellig)) ? 'rot' : 'gelb';
-    return '<button class="lm-kpi ' + cls + (_lmUi.filter === k ? ' on' : '') + '"' + (LM_FILTER[k].tip ? ' title="' + escapeHtml(LM_FILTER[k].tip) + '"' : '') + ' onclick="_lmSetFilter(' + _lmA(k) + ')"><div class="lm-kpi-n">' + n + '</div><div class="lm-kpi-l">' + escapeHtml(LM_FILTER[k].label) + '</div></button>';
+    return '<button class="lm-kpi ' + cls + (_lmUi.filter === k ? ' on' : '') + '" data-k="' + k + '"' + (LM_FILTER[k].tip ? ' title="' + escapeHtml(LM_FILTER[k].tip) + '"' : '') + ' onclick="_lmSetFilter(' + _lmA(k) + ')"><div class="lm-kpi-n">' + n + '</div><div class="lm-kpi-l">' + escapeHtml(LM_FILTER[k].label) + '</div>' +
+      (sub ? '<div class="lm-kpi-s">' + escapeHtml(sub) + '</div>' : '') + '</button>';
   }).join('');
   const abrIdx = _lmAbrIdx();
-  const pan = document.getElementById('lm-abr-panel'); if (pan) pan.innerHTML = _lmAbrPanelHtml(abrIdx);
-  if (abrIdx.wartungGeprueft) _lmNavBadge(abrIdx.rows);
+  const pan = document.getElementById('lm-abr-panel'); if (pan) pan.innerHTML = mitglieder.length ? _lmAbrPanelHtml(abrIdx) : '';
+  if (abrIdx.wartungGeprueft) _lmNavBadge(abrIdx.fenster);
   const flt = LM_FILTER[_lmUi.filter] || LM_FILTER.alle;
   const items = _lmSort(all.filter(flt.test).filter(it => _lmMatches(it, _lmUi.q)), _lmUi.sort);
   const cnt = document.getElementById('liftmgmt-count'); if (cnt) cnt.textContent = all.length;
   const info = document.getElementById('lm-list-info');
   if (info) info.textContent = items.length + ' von ' + all.length + ' Anlagen' + (_lmUi.filter !== 'alle' ? ' · Filter: ' + flt.label : '') + (_lmWartung.firma !== _lmData.firma ? ' · Maxise-Wartungsdaten werden geladen …' : '');
+  if (!mitglieder.length) {
+    const fn = ((_firmenCache || []).find(r => r && r.fields && r.fields.slug === _lmData.firma) || { fields: {} }).fields.name || _lmData.firma;
+    listEl.innerHTML = '<div class="lm-empty lm-start">🛗 <b>Noch keine Anlagen im Liftmanagement' + (fn ? ' der ' + escapeHtml(fn) : '') + '.</b><br>' +
+      'Ihr entscheidet selbst, welche Anlagen ihr hier betreut. Stammdaten kommen weiter aus Maxise – dort wird nichts verändert.' +
+      (_lmCanEdit() ? '<br><br><button class="btn prim" onclick="lmAddDialog()">+ Anlage hinzufügen</button>' : '<br><br>Anlagen hinzufügen kann, wer „Liftmanagement: Akte bearbeiten“ hat.') + '</div>';
+    if (info) info.textContent = '';
+    return;
+  }
   if (!items.length) { listEl.innerHTML = '<div class="lm-empty">Keine Anlage passt zu Suche und Filter.</div>'; return; }
   const shown = items.slice(0, _lmUi.limit);
   listEl.innerHTML = shown.map(_lmCardHtml).join('') +
@@ -57041,7 +57219,11 @@ function _lmCardHtml(it) {
   it.kuendbar.forEach(v => pills.push('<span class="lm-pill gelb" title="' + escapeHtml(v.info.label) + '">⏰ ' + (v.info.status === 'endet_bald' ? 'Vertrag endet ' + _lmFmtDE(v.info.ende) : 'Kündigung bis ' + _lmFmtDE(v.info.kuendigung_bis)) + '</span>'));
   if (it.stoerOffen) pills.push('<span class="lm-pill rot">🚨 ' + it.stoerOffen + ' Störung' + (it.stoerOffen > 1 ? 'en' : '') + '</span>');
   if (it.docs) pills.push('<span class="lm-pill grau" title="Dokumente in der Akte">📄 ' + it.docs + '</span>');
-  if (a.archived) pills.push('<span class="lm-pill grau">archiviert</span>');
+  if (it.aktiv.ab) pills.unshift('<span class="lm-pill blau" title="Zählt erst ab dann als „aktuell aktiv“">⏳ startet am ' + _lmFmtDE(it.aktiv.ab) + '</span>');
+  if (it.notruf) pills.unshift('<span class="lm-pill ' + _lmTodoCls(it.notruf) + '" title="' + escapeHtml(_lmNotrufText(it.notruf)) + '">📵 Notruf ausbauen bis ' + _lmFmtDE(it.notruf.faellig) + '</span>');
+  if (it.status === 'gekuendigt') pills.unshift('<span class="lm-pill rot">✂️ gekündigt' + (it.akte.gekuendigt_zum ? ' zum ' + _lmFmtDE(it.akte.gekuendigt_zum) : '') + '</span>');
+  else if (it.status === 'inaktiv' || it.status === 'archiviert') pills.unshift('<span class="lm-pill grau">' + LM_STATUS[it.status].icon + ' ' + LM_STATUS[it.status].label.toLowerCase() + '</span>');
+  if (a.archived) pills.push('<span class="lm-pill grau">in Maxise archiviert</span>');
   const meta = [
     a.fabriknummer ? '<span>Fabrik-Nr. <b>' + escapeHtml(a.fabriknummer) + '</b></span>' : '',
     it.akte.eq_nummer ? '<span>KONE EQ <b class="lm-eq">' + escapeHtml(it.akte.eq_nummer) + '</b></span>' : '',
@@ -57049,7 +57231,7 @@ function _lmCardHtml(it) {
     a.objektTyp ? '<span>' + escapeHtml(a.objektTyp) + '</span>' : '',
   ].filter(Boolean).join('');
   const hinweis = String(it.akte.hinweis || '').trim();
-  return '<div class="lm-card" onclick="lmOpenAkte(' + _lmA(it.id) + ')">' +
+  return '<div class="lm-card' + (it.status === 'inaktiv' || it.status === 'archiviert' ? ' dim' : '') + '" onclick="lmOpenAkte(' + _lmA(it.id) + ')">' +
     '<div class="lm-card-ico' + (it.wartung ? ' wartung' : '') + '">🛗</div>' +
     '<div class="lm-card-main">' +
       '<div class="lm-card-title">' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + it.id)) + '</div>' +
@@ -57059,25 +57241,26 @@ function _lmCardHtml(it) {
     '<div class="lm-card-side">' + pills.join('') + '</div>' +
   '</div>';
 }
-/* Das Feld „Wartungsrechnungen" über der Liste: was ist (bald) abzurechnen? */
+/* Das Feld „Zu erledigen" über der Liste: fällige Wartungsrechnungen und Notruf-Ausbau nach Kündigung */
 function _lmAbrPanelHtml(idx) {
-  const rows = idx.rows || [];
+  const rows = idx.todos || [];
   const hinweis = !idx.wartungGeprueft ? 'Maxise-Wartungsverträge werden geladen …' : (!idx.rechGeprueft ? 'Maxise-Rechnungen werden geprüft …' : '');
   if (!rows.length) {
     const next = (idx.items || []).filter(o => o.naechste).sort((a, b) => a.naechste.localeCompare(b.naechste))[0];
-    return '<div class="lm-abr-ok">✅ Keine Wartungsrechnung offen' + (next ? ' · nächste am <b>' + _lmFmtDE(next.naechste) + '</b>' + (next.adresse ? ' (' + escapeHtml(next.adresse) + ')' : '') : '') +
+    return '<div class="lm-abr-ok">✅ Nichts zu erledigen' + (next ? ' · nächste Wartungsrechnung am <b>' + _lmFmtDE(next.naechste) + '</b>' + (next.adresse ? ' (' + escapeHtml(next.adresse) + ')' : '') : '') +
       (hinweis ? ' <span class="lm-muted">· ' + hinweis + '</span>' : '') + '</div>';
   }
-  const ueber = rows.filter(_lmAbrIstFaellig).length, ed = _lmCanEdit();
+  const rot = rows.filter(r => _lmTodoCls(r) === 'rot').length, gelb = rows.filter(r => _lmTodoCls(r) === 'gelb').length, blau = rows.length - rot - gelb, ed = _lmCanEdit();
   const zeigen = _lmUi.abrAlle ? rows : rows.slice(0, 8);
-  return '<div class="lm-sec lm-abr-panel' + (ueber ? '' : ' gelb') + '"><h3>💶 Wartungsrechnungen' +
-      (ueber ? '<span class="lm-pill rot">' + ueber + ' fällig</span>' : '') + (rows.length - ueber ? '<span class="lm-pill gelb">' + (rows.length - ueber) + ' in ≤ ' + LM_ABR_VORLAUF + ' Tagen</span>' : '') +
+  return '<div class="lm-sec lm-abr-panel' + (rot ? '' : ' gelb') + '"><h3>🔔 Zu erledigen' +
+      (rot ? '<span class="lm-pill rot">' + rot + ' fällig</span>' : '') + (gelb ? '<span class="lm-pill gelb">' + gelb + ' in ≤ 30 Tagen</span>' : '') + (blau ? '<span class="lm-pill blau">' + blau + ' geplant</span>' : '') +
       (hinweis ? '<span class="lm-muted" style="font-weight:500">' + hinweis + '</span>' : '') + '</h3>' +
-    zeigen.map(r => { const f = _lmAbrIstFaellig(r); return '<div class="lm-abr-item ' + (f ? 'rot' : 'gelb') + '">' +
-      '<div class="lm-abr-main" onclick="lmOpenAkte(' + _lmA(r.anlageId) + ',' + _lmA('vertraege') + ')" title="Akte öffnen"><div class="lm-abr-t">' + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</div>' +
-        '<div class="lm-abr-m">' + escapeHtml([r.kunde, r.titel, _lmTurnusLabel(r.turnus)].filter(Boolean).join(' · ')) + '</div></div>' +
-      '<div class="lm-abr-due"><b>' + escapeHtml(_lmAbrFaelligText(r)) + '</b>' + (r.preis ? '<span>' + _lmMoney(r.preis) + ' netto</span>' : '') + '</div>' +
-      (ed ? '<div class="lm-abr-act"><button class="btn prim" onclick="lmAbrDialog(' + _lmA(r.ref) + ',' + _lmA(r.faellig) + ')">✓ Rechnung geschrieben</button></div>' : '') +
+    zeigen.map(r => { const n = r.typ === 'notruf'; return '<div class="lm-abr-item ' + _lmTodoCls(r) + '">' +
+      '<div class="lm-abr-main" onclick="lmOpenAkte(' + _lmA(r.anlageId) + ',' + _lmA(n ? 'uebersicht' : 'vertraege') + ')" title="Akte öffnen"><div class="lm-abr-t">' + (n ? '📵 ' : '💶 ') + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</div>' +
+        '<div class="lm-abr-m">' + escapeHtml((n ? [r.kunde, 'Notruf ausbauen', r.gekuendigt_zum ? 'gekündigt zum ' + _lmFmtDE(r.gekuendigt_zum) : ''] : [r.kunde, r.titel, _lmTurnusLabel(r.turnus)]).filter(Boolean).join(' · ')) + '</div></div>' +
+      '<div class="lm-abr-due"><b>' + escapeHtml(_lmTodoText(r)) + '</b>' + (!n && r.preis ? '<span>' + _lmMoney(r.preis) + ' netto</span>' : '') + '</div>' +
+      (ed ? '<div class="lm-abr-act">' + (n ? '<button class="btn prim" onclick="lmNotrufErledigt(' + _lmA(r.anlageId) + ')">✓ Notruf ausgebaut</button>'
+                                            : '<button class="btn prim" onclick="lmAbrDialog(' + _lmA(r.ref) + ',' + _lmA(r.faellig) + ')">✓ Rechnung geschrieben</button>') + '</div>' : '') +
     '</div>'; }).join('') +
     (rows.length > zeigen.length ? '<div style="text-align:center;margin-top:8px"><button class="btn" onclick="_lmUi.abrAlle=true;_lmRenderListItems()">Alle ' + rows.length + ' anzeigen</button></div>' : '') +
   '</div>';
@@ -57089,14 +57272,16 @@ function _lmOnSearch(v) {
 }
 function _lmSetFilter(k) { _lmUi.filter = (_lmUi.filter === k && k !== 'alle') ? 'alle' : k; _lmUi.limit = 150; _lmRenderListItems(); }
 function _lmSetSort(v) { _lmUi.sort = v; _lmUi.limit = 150; _lmRenderListItems(); }
-function _lmSetArchiv(b) { _lmUi.archiv = !!b; _lmUi.limit = 150; _lmRenderListItems(); }
+function _lmSetStatusFilter(k) { _lmUi.status = k; _lmUi.limit = 150; _lmRenderListItems(); }
 function _lmMore() { _lmUi.limit += 150; _lmRenderListItems(); }
 /* Gefilterte Liste als CSV für Excel (Semikolon, UTF-8 mit BOM) */
 function _lmExportCsv() {
   if (!_lmData.anlagen) return;
   const flt = LM_FILTER[_lmUi.filter] || LM_FILTER.alle;
-  const items = _lmSort(_lmData.anlagen.filter(a => a && a.id != null && (_lmUi.archiv || !a.archived)).map(_lmItem).filter(flt.test).filter(it => _lmMatches(it, _lmUi.q)), _lmUi.sort);
-  const head = ['Firma','Maxise-ID','Adresse','Fabrik-Nr.','KONE EQ-Nr.','Kunde','Kunden-Nr.','In Wartung bei uns','Quelle','Hersteller','Baujahr','Antrieb','Haltestellen','Nächste TÜV-Prüfung','Prüfart','Prüfstelle','Vertrag','Vertrag läuft bis','Nächste Kündigung bis','Wartungsrechnung offen (fällig am)','Offene Störungen','Hinweis'];
+  const stF = _lmUi.status || 'alle';
+  const items = _lmSort(_lmData.anlagen.filter(a => { if (!a || a.id == null) return false; const st = _lmAkteOf(a.id).lm_status; return LM_STATUS[st] && (stF === 'alle' ? st !== 'archiviert' : st === stF); })
+    .map(_lmItem).filter(flt.test).filter(it => _lmMatches(it, _lmUi.q)), _lmUi.sort);
+  const head = ['Firma','Maxise-ID','Adresse','Fabrik-Nr.','KONE EQ-Nr.','Kunde','Kunden-Nr.','In Wartung bei uns','Quelle','Hersteller','Baujahr','Antrieb','Haltestellen','Nächste TÜV-Prüfung','Prüfart','Prüfstelle','Vertrag','Vertrag läuft bis','Nächste Kündigung bis','Wartungsrechnung offen (fällig am)','Offene Störungen','Hinweis','Status im Liftmanagement','Aktuell aktiv','Aktiv ab','Gekündigt zum','Notruf ausbauen bis'];
   const rows = items.map(it => {
     const v = _lmVtSort(it.vertraege)[0], k = it.a.kunde || {}, f = it.akte;
     return [_lmData.firma, it.id, it.a.anzeigeAdresse || it.a.name || '', it.a.fabriknummer || '', f.eq_nummer || '', k.firmenname || '', k.kundennummer || '',
@@ -57104,7 +57289,9 @@ function _lmExportCsv() {
       it.tuev.faellig ? _lmFmtDE(it.tuev.faellig) : '', it.tuev.art || '', f.pruefstelle || '',
       v ? _lmArtLabel(v.f.art) + (v.f.vertragsnummer ? ' ' + v.f.vertragsnummer : '') : '', (v && v.info.ende) ? _lmFmtDE(v.info.ende) : '', (v && v.info.kuendigung_bis) ? _lmFmtDE(v.info.kuendigung_bis) : '',
       it.abrOffen.map(x => _lmFmtDE(x.faellig)).join(', '),
-      it.stoerOffen || '', String(f.hinweis || '').replace(/\s+/g, ' ').trim()];
+      it.stoerOffen || '', String(f.hinweis || '').replace(/\s+/g, ' ').trim(),
+      it.status ? LM_STATUS[it.status].label : '', it.aktuell ? 'ja' : 'nein', it.aktiv.ab ? _lmFmtDE(it.aktiv.ab) : (f.lm_seit ? _lmFmtDE(f.lm_seit) : ''),
+      f.gekuendigt_zum ? _lmFmtDE(f.gekuendigt_zum) : '', it.notruf ? _lmFmtDE(it.notruf.faellig) : ''];
   });
   const esc = x => { let t = String(x == null ? '' : x); if (/^[=+\-@]/.test(t)) t = "'" + t; return /[";\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
   const csv = '\ufeff' + [head].concat(rows).map(r => r.map(esc).join(';')).join('\r\n');
@@ -57174,8 +57361,17 @@ function _lmAktePillsHtml(it) {
   if (vs[0]) p.push('<span class="lm-pill ' + _lmVertragCls(vs[0].info.status) + '">📑 ' + escapeHtml(vs[0].info.label || _lmArtLabel(vs[0].f.art)) + '</span>');
   if (it.stoerOffen) p.push('<span class="lm-pill rot">🚨 ' + it.stoerOffen + ' offene Störung' + (it.stoerOffen > 1 ? 'en' : '') + '</span>');
   if (it.abrOffen.length) p.unshift('<span class="lm-pill ' + (_lmAbrIstFaellig(it.abrOffen[0]) ? 'rot' : 'gelb') + '">💶 Wartungsrechnung ' + escapeHtml(_lmAbrFaelligText(it.abrOffen[0])) + '</span>');
+  if (it.notruf) p.unshift('<span class="lm-pill ' + _lmTodoCls(it.notruf) + '">📵 Notruf ' + escapeHtml(_lmNotrufText(it.notruf)) + '</span>');
+  if (it.aktiv.ab) p.unshift('<span class="lm-pill blau" title="Bis dahin zählt die Anlage nicht als „aktuell aktiv“">⏳ startet am ' + _lmFmtDE(it.aktiv.ab) + ' (in ' + _lmDaysBetween(_lmToday(), it.aktiv.ab) + ' Tagen)</span>');
+  if (it.status) {
+    const st = LM_STATUS[it.status], seit = it.akte.lm_seit && !it.aktiv.ab && _lmDaysBetween(it.akte.lm_seit, _lmToday()) >= 0 ? it.akte.lm_seit : '';
+    p.unshift('<span class="lm-pill ' + st.cls + '" title="Status im Liftmanagement' + (it.akte.status_am ? ' seit ' + _lmFmtDE(_lmDate(it.akte.status_am)) : '') + (it.aktuell ? ' · zählt als „aktuell aktiv“' : '') + '">' + st.icon + ' ' +
+      (it.status === 'gekuendigt' && it.akte.gekuendigt_zum ? 'Gekündigt zum ' + _lmFmtDE(it.akte.gekuendigt_zum) : (it.status === 'aktiv' && seit ? 'Aktiv seit ' + _lmFmtDE(seit) : st.label)) + '</span>');
+  }
   const hinweis = String(it.akte.hinweis || '').trim();
-  return '<div class="lm-akte-pills">' + p.join('') + '</div>' + (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(hinweis) + '</div>' : '');
+  const nichtDrin = !it.status ? '<div class="lm-hinweis" style="background:#EFF6FF;border-color:#BFDBFE;border-left-color:#2152A9;color:#1E3A8A">ℹ️ Diese Anlage ist nicht im Liftmanagement – sie steht nicht in der Liste und bekommt keine Erinnerungen.' +
+    (_lmCanEdit() ? ' <button class="btn prim" style="margin-left:6px;padding:3px 10px;font-size:12px" onclick="lmAkteAufnehmen(this)">+ Ins Liftmanagement aufnehmen</button>' : '') + '</div>' : '';
+  return '<div class="lm-akte-pills">' + p.join('') + '</div>' + nichtDrin + (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(hinweis) + '</div>' : '');
 }
 function _lmRenderAkte() {
   const body = document.getElementById('liftmgmt-body'); if (!body) return;
@@ -57188,6 +57384,7 @@ function _lmRenderAkte() {
   const acts = [];
   if (typeof _galerieOpenForAnlage === 'function' && (hasPermission('tool_datenaufnahmen') || hasPermission('tool_anlagen'))) acts.push('<button class="btn" onclick="_lmFotos(this)" title="Alle Fotos dieser Anlage (Datenaufnahmen, Aufträge, LVs, Uploads)">📷 Fotos</button>');
   if (hasPermission('auftraege_create') && !a.archived && typeof createAuftragForAnlage === 'function') acts.push('<button class="btn" onclick="_lmNeuerAuftrag()" title="Neuen Auftrag für diese Anlage anlegen">+ Auftrag</button>');
+  if (it.status && _lmCanEdit()) acts.unshift('<button class="btn" onclick="lmStatusDialog()" title="Status im Liftmanagement: aktiv, inaktiv, gekündigt, archiviert">🔁 Status</button>');
   acts.push('<button class="btn" onclick="_lmReloadAkte()" title="Verlauf und Dokumente neu laden">↻</button>');
   body.innerHTML = '<div class="lm-wrap">' + _lmBannerHtml() +
     '<div class="lm-akte-head">' +
@@ -57207,7 +57404,7 @@ function _lmRenderAkte() {
 }
 function _lmRefreshAkteHead() {
   const it = _lmCurItem(); if (!it) return;
-  const ai = _lmAbrIdx(); if (ai.wartungGeprueft) _lmNavBadge(ai.rows);
+  const ai = _lmAbrIdx(); if (ai.wartungGeprueft) _lmNavBadge(ai.fenster);
   const s = document.getElementById('lm-akte-sub'); if (s) s.innerHTML = _lmAkteSubHtml(it);
   const p = document.getElementById('lm-akte-pills'); if (p) p.innerHTML = _lmAktePillsHtml(it);
   const t = document.getElementById('lm-tabs'); if (t) t.innerHTML = _lmTabsHtml(it);
@@ -57380,7 +57577,7 @@ function _lmVerlauf(it, c) {
   }
   for (const r of (c && c.eintraege) || it.eintraege) {
     const f = r.fields || {}, typ = LM_TYPEN[f.typ] ? f.typ : 'sonstiges';
-    const grp = typ === 'stoerung' ? 'stoerung' : ((typ === 'dokument' || typ === 'pruefung') ? 'dokument' : 'notiz');
+    const grp = typ === 'stoerung' ? 'stoerung' : ((typ === 'dokument' || typ === 'pruefung') ? 'dokument' : (typ === 'status' ? 'vertrag' : 'notiz'));
     const pills = [];
     if (typ === 'stoerung') pills.push({ cls: f.status === 'erledigt' ? 'gruen' : 'rot', label: f.status === 'erledigt' ? 'erledigt' : 'offen' });
     if (f.wichtig) pills.push({ cls: 'gelb', label: '📌 wichtig' });
@@ -57390,7 +57587,7 @@ function _lmVerlauf(it, c) {
       title: (f.titel || LM_TYPEN[typ].label) + (f.pruefart ? ' · ' + f.pruefart : ''), text: _lmShort(f.text, 320),
       meta: [kat ? kat.label : LM_TYPEN[typ].label, f.created_by ? '✍ ' + f.created_by : ''].filter(Boolean).join(' · '),
       pills, links: (Array.isArray(f.datei) ? f.datei : []).map(d => ({ label: '📎 ' + _lmShort(d.filename || 'Datei', 40), url: d.url })),
-      open: 'lmAkteTab(' + _lmA(grp === 'dokument' && typ === 'dokument' ? 'dokumente' : 'notizen') + ')' });
+      open: typ === 'status' ? '' : 'lmAkteTab(' + _lmA(grp === 'dokument' && typ === 'dokument' ? 'dokumente' : 'notizen') + ')' });
   }
   for (const v of it.vertraege) {
     const f = v.f;
@@ -57519,7 +57716,7 @@ function _lmTabUebersicht(it) {
       _lmIn('eq_nummer', 'KONE EQ-Nummer', f.eq_nummer, { cls: 'lm-eq', disabled: D, ph: 'z. B. 41234567', hint: 'Equipment-Nummer aus dem KONE-System – steht auf KONE-Angeboten und -Berichten.' }) +
       _lmIn('wartung_status', 'Bei uns in Wartung?', f.wartung_status || '', { type: 'select', disabled: D, options: [['', _lmWartungAutoLabel(it)], ['ja', 'Ja – wir warten diese Anlage'], ['nein', 'Nein – nicht bei uns in Wartung']] }) +
       '<div class="full" id="lm-eq-sugg"></div>' +
-      _lmIn('wartung_seit', 'Wartungsbeginn', f.wartung_seit, { type: 'date', disabled: D, hint: 'Ohne erfassten Vertrag erinnert die Akte jedes Jahr zu diesem Tag an die Wartungsrechnung (bei „Ja").' }) +
+      _lmIn('wartung_seit', 'Wartungsbeginn', f.wartung_seit, { type: 'date', disabled: D, hint: 'Ohne erfassten Vertrag erinnert die Akte jedes Jahr zu diesem Tag an die Wartungsrechnung (außer bei „Nein"). Liegt er in der Zukunft, zählt die Anlage erst ab dann als „aktuell aktiv".' }) +
       _lmIn('hersteller', 'Hersteller', f.hersteller, { list: 'lm-dl-herst', disabled: D }) +
       _lmIn('baujahr', 'Baujahr', f.baujahr, { inputmode: 'numeric', disabled: D }) +
       _lmIn('antrieb', 'Antrieb', f.antrieb || '', { type: 'select', disabled: D, options: [['', '–']].concat(LM_ANTRIEBE) }) +
@@ -58049,7 +58246,7 @@ function _lmEintragCardHtml(r) {
 }
 function _lmTabNotizenDyn(it) {
   const c = _lmCache(it.id);
-  const alle = ((c && c.eintraege) || it.eintraege).filter(r => (r.fields || {}).typ !== 'dokument');
+  const alle = ((c && c.eintraege) || it.eintraege).filter(r => !['dokument', 'status'].includes((r.fields || {}).typ));
   const byDate = (x, y) => String(_lmDate(y.fields.datum) || _lmDate(y.fields.created) || '').localeCompare(String(_lmDate(x.fields.datum) || _lmDate(x.fields.created) || ''));
   const offen = alle.filter(r => r.fields.typ === 'stoerung' && r.fields.status !== 'erledigt').sort(byDate);
   const pins = alle.filter(r => r.fields.wichtig && !offen.includes(r)).sort(byDate);
@@ -58183,7 +58380,7 @@ async function lmAbrRueckgaengig(recId) {
 }
 function _lmAbrNachAenderung() {
   _lmSoftRefresh();
-  const ai = _lmAbrIdx(); if (ai.wartungGeprueft) _lmNavBadge(ai.rows);
+  const ai = _lmAbrIdx(); if (ai.wartungGeprueft) _lmNavBadge(ai.fenster);
   const firma = _lmData.firma;
   Object.keys(_lmAbrSum).forEach(k => { if (k.split(',').includes(firma)) delete _lmAbrSum[k]; });   // Dashboard rechnet neu
   _lmAbrSpeichereSumme();
@@ -58192,19 +58389,206 @@ function _lmAbrNachAenderung() {
 function _lmAbrSpeichereSumme() {
   const ai = _lmAbrIdx(), firma = _lmData.firma;
   if (!firma || !ai.wartungGeprueft || !ai.rechGeprueft) return;
-  _lmAbrSum[firma] = { rows: ai.rows, loadedAt: Date.now() };
-  try { _bigCacheSet('lm_abr', firma, ai.rows); } catch(_){}
+  _lmAbrSum[firma] = { rows: ai.fenster, loadedAt: Date.now() };
+  try { _bigCacheSet('lm_todo', firma, ai.fenster); } catch(_){}
+}
+
+/* ── Anlagen ins Liftmanagement aufnehmen (nur hier — Maxise bleibt unverändert) ── */
+function lmAddDialog() {
+  if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
+  if (!_lmData.anlagen) return toast('Anlagen werden noch geladen …', '');
+  _lmAdd = { q: '', nurWartung: false, mitArchiv: false, sel: new Set() };
+  const fn = ((_firmenCache || []).find(r => r && r.fields && r.fields.slug === _lmData.firma) || { fields: {} }).fields.name || _lmData.firma;
+  const body = '<div class="lm-bar" style="margin-bottom:8px">' +
+      '<div class="anl-search-wrap" style="flex:1;min-width:220px"><span class="anl-search-ico">🔍</span><input class="anl-search-inp" id="lm-add-q" type="search" autocomplete="off" placeholder="Adresse, Fabrik-Nr., Kunde, Kunden-Nr. …" oninput="_lmAddSuche(this.value)"></div>' +
+      '<label class="lm-chip" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="lm-add-nw" onchange="_lmAdd.nurWartung=this.checked;_lmAddRender()"> nur mit Maxise-Wartungsvertrag</label>' +
+      '<label class="lm-chip" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" onchange="_lmAdd.mitArchiv=this.checked;_lmAddRender()"> in Maxise archivierte</label>' +
+    '</div><div class="lm-muted" style="margin-bottom:8px">Anklicken zum Auswählen – mehrere möglich. Stammdaten bleiben in Maxise, hier wird nur festgelegt, welche Anlagen ihr im Liftmanagement betreut.</div>' +
+    '<div id="lm-add-list" class="lm-add-list"></div>';
+  _lmModal('lm-add-modal', '+ Anlagen ins Liftmanagement aufnehmen · ' + escapeHtml(fn || ''), body,
+    '<span class="lm-muted" id="lm-add-info" style="margin-right:auto"></span>' +
+    '<label class="lm-add-ab" title="Startet die Betreuung erst später (z. B. neuer Wartungsvertrag), hier den Starttag eintragen – bis dahin zählt die Anlage nicht als „aktuell aktiv“.">Aktiv ab <input type="date" id="lm-add-ab" value="' + _lmToday() + '"></label>' +
+    '<button class="btn" onclick="_lmCloseModal(' + _lmA('lm-add-modal') + ')">Abbrechen</button>' +
+    '<button class="btn prim" id="lm-add-go" onclick="lmAddSpeichern(this)" disabled>✓ Hinzufügen</button>', { wide: true });
+  _lmAddRender();
+  setTimeout(() => { const q = document.getElementById('lm-add-q'); if (q) q.focus(); }, 60);
+}
+function _lmAddSuche(v) { if (!_lmAdd) return; _lmAdd.q = String(v || ''); clearTimeout(_lmAddTimer); _lmAddTimer = setTimeout(_lmAddRender, 120); }
+function _lmAddToggle(id, an) { if (!_lmAdd) return; if (an) _lmAdd.sel.add(String(id)); else _lmAdd.sel.delete(String(id)); _lmAddKnopf(); }
+function _lmAddKnopf() {
+  const n = _lmAdd ? _lmAdd.sel.size : 0, go = document.getElementById('lm-add-go');
+  if (go) { go.disabled = !n; go.textContent = n ? '✓ ' + n + ' Anlage' + (n === 1 ? '' : 'n') + ' hinzufügen' : '✓ Hinzufügen'; }
+}
+function _lmAddRender() {
+  const el = document.getElementById('lm-add-list'); if (!el || !_lmAdd) return;
+  const toks = _lmAdd.q.toLowerCase().split(/\s+/).filter(Boolean);
+  const wOk = _lmWartung.firma === _lmData.firma && _lmWartung.set;
+  const list = (_lmData.anlagen || []).filter(a => a && a.id != null && (_lmAdd.mitArchiv || !a.archived))
+    .filter(a => !_lmAdd.nurWartung || (wOk && _lmWartung.set.has(String(a.id))))
+    .filter(a => {
+      if (!toks.length) return true;
+      const k = a.kunde || {}, hay = [a.anzeigeAdresse, a.name, a.kennung, a.fabriknummer, k.firmenname, k.kundennummer, String(a.id)].join(' ').toLowerCase(), hn = _lmNorm(hay);
+      return toks.every(t => hay.includes(t) || (_lmNorm(t).length > 1 && hn.includes(_lmNorm(t))));
+    })
+    .sort((x, y) => String(x.anzeigeAdresse || x.name || '').localeCompare(String(y.anzeigeAdresse || y.name || ''), 'de'));
+  const shown = list.slice(0, 200);
+  el.innerHTML = shown.length ? shown.map(a => {
+    const id = String(a.id), st = _lmAkteOf(id).lm_status, drin = !!LM_STATUS[st], k = a.kunde || {};
+    return '<label class="lm-add-row' + (drin ? ' drin' : '') + '">' +
+      '<input type="checkbox"' + (drin ? ' disabled checked' : (_lmAdd.sel.has(id) ? ' checked' : '')) + ' onchange="_lmAddToggle(' + _lmA(id) + ',this.checked)">' +
+      '<span class="m"><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + id)) + '</b><span class="lm-muted">' +
+        escapeHtml([a.fabriknummer ? 'Fabrik-Nr. ' + a.fabriknummer : '', k.firmenname ? k.firmenname + (k.kundennummer ? ' (' + k.kundennummer + ')' : '') : ''].filter(Boolean).join(' · ')) + '</span></span>' +
+      (wOk && _lmWartung.set.has(id) ? '<span class="lm-pill gruen">Wartungsvertrag in Maxise</span>' : '') + (a.archived ? '<span class="lm-pill grau">in Maxise archiviert</span>' : '') +
+      (drin ? '<span class="lm-pill blau">schon drin · ' + escapeHtml(LM_STATUS[st].label) + '</span>' : '') +
+    '</label>';
+  }).join('') + (list.length > shown.length ? '<div class="lm-muted" style="padding:8px">… und ' + (list.length - shown.length) + ' weitere – bitte Suche verfeinern</div>' : '')
+    : '<div class="lm-empty">' + (_lmAdd.nurWartung && !wOk ? '⏳ Maxise-Wartungsverträge werden noch geladen …' : 'Keine Anlage gefunden.') + '</div>';
+  const info = document.getElementById('lm-add-info'); if (info) info.textContent = list.length + ' Anlage' + (list.length === 1 ? '' : 'n');
+  _lmAddKnopf();
+}
+/* Nimmt Anlagen auf (neu anlegen oder vorhandene Akte reaktivieren — Akte-Daten bleiben erhalten) */
+async function _lmAufnehmen(ids, ab) {
+  const heute = _lmToday(), wer = _lmUserName(), jetzt = _lmNowIso(), firma = _lmData.firma;
+  ab = _lmParseDate(ab) ? _lmDate(ab) : heute;
+  const neu = [], upd = [];
+  ids.forEach(id => {
+    const a = _lmFindAnlage(id); if (!a) return;
+    const fields = { firma, anlage_id: String(a.id), fabriknummer: String(a.fabriknummer || ''), adresse: String(a.anzeigeAdresse || a.name || ''), kunde_name: String((a.kunde || {}).firmenname || ''),
+      lm_status: 'aktiv', lm_seit: ab, lm_von: wer, status_am: jetzt, status_von: wer, gekuendigt_am: '', gekuendigt_zum: '', notruf_ausbau: false, notruf_ausbau_bis: '', updated: jetzt, updated_by: wer };
+    const cur = _lmData.akteMap && _lmData.akteMap.get(String(a.id));
+    if (cur) upd.push({ id: cur.id, fields }); else neu.push({ fields });
+  });
+  let recs = [];
+  try {
+    if (neu.length) recs = recs.concat(await _lmAtBatch('POST', LM_T_AKTE, neu));
+    if (upd.length) recs = recs.concat(await _lmAtBatch('PATCH', LM_T_AKTE, upd));
+  } catch(e) { (e.teil || []).concat(recs).forEach(r => _lmUpsertLocal('akte', r)); throw e; }
+  recs.forEach(r => _lmUpsertLocal('akte', r));
+  return recs;
+}
+async function lmAddSpeichern(btn) {
+  if (!_lmAdd || !_lmAdd.sel.size || !_lmCanEdit()) return;
+  const abEl = document.getElementById('lm-add-ab'), ab = (abEl && abEl.value) || _lmToday();
+  if (!_lmParseDate(ab)) return toast('Bitte ein gültiges Datum für „Aktiv ab“ eintragen.', 'err');
+  btn.disabled = true; btn.textContent = '⏳ füge hinzu …';
+  try {
+    const recs = await _lmAufnehmen([..._lmAdd.sel], ab);
+    _lmCloseModal('lm-add-modal'); _lmAdd = null;
+    const spaeter = _lmDaysBetween(_lmToday(), ab) > 0;
+    toast('✅ ' + recs.length + ' Anlage' + (recs.length === 1 ? '' : 'n') + ' ins Liftmanagement aufgenommen' + (spaeter ? ' – aktiv ab ' + _lmFmtDE(ab) : ''), 'ok');
+    if (_lmUi.status === 'archiviert') _lmUi.status = 'alle';
+    _lmAbrNachAenderung(); _lmRender();
+  } catch(e) { toast('❌ Nicht (vollständig) gespeichert: ' + ((e && e.message) || e), 'err'); btn.disabled = false; _lmAddRender(); _lmRender(); }
+}
+async function lmAkteAufnehmen(btn) {
+  if (!_lmCanEdit() || !_lmUi.akteId) return;
+  if (btn) btn.disabled = true;
+  try { await _lmAufnehmen([_lmUi.akteId]); toast('✅ Ins Liftmanagement aufgenommen', 'ok'); _lmAbrNachAenderung(); _lmRender(); }
+  catch(e) { toast('❌ ' + ((e && e.message) || e), 'err'); if (btn) btn.disabled = false; }
+}
+/* Status im Liftmanagement (nur hier — in Maxise ändert sich nichts) */
+function lmStatusDialog() {
+  if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
+  const it = _lmCurItem(); if (!it) return;
+  const f = it.akte, cur = it.status;
+  const hatNotruf = !!(String(f.notruf || '').trim() || it.vertraege.some(v => v.f.notruf_inkl || /notruf/.test(v.f.art || '')) || it.maxiseWartung);
+  const laufend = it.vertraege.filter(v => LM_VT_LAUFEND.includes(v.info.status) && v.info.status !== 'gekuendigt');
+  const opt = (v, icon, titel, text) => '<label class="lm-st-opt"><input type="radio" name="lm-st" value="' + v + '"' + (cur === v ? ' checked' : '') + ' onchange="_lmStatusDlgSync()">' +
+    '<span class="i">' + icon + '</span><span><b>' + titel + '</b><br><span class="lm-muted">' + text + '</span></span></label>';
+  const body = '<div class="lm-st-opts">' +
+      opt('aktiv', '🟢', 'Aktiv', 'Wird von uns betreut – Erinnerungen (Wartungsrechnung usw.) sind an.') +
+      opt('inaktiv', '⏸', 'Inaktiv', 'Vorübergehend nicht betreut (z. B. stillgelegt) – keine Rechnungs-Erinnerungen.') +
+      opt('gekuendigt', '✂️', 'Gekündigt', 'Betreuung endet zum Kündigungsdatum – Erinnerungen nur bis dahin, Aufgabe „Notruf ausbauen".') +
+      opt('archiviert', '🗄', 'Archivieren', 'Aus der Liste ausblenden (unter „Archiviert" zu finden) – keine Erinnerungen, jederzeit wieder aktivierbar.') +
+      opt('', '✖', 'Aus dem Liftmanagement entfernen', 'Nur hier – in Maxise ändert sich nichts. Die Akte bleibt gespeichert und ist beim erneuten Hinzufügen wieder da.') +
+    '</div>' +
+    '<div id="lm-st-aktiv" class="lm-form" style="margin-top:12px;display:none;background:#F0FDF4;border:1px solid #86EFAC;border-radius:10px;padding:10px">' +
+      _lmIn('st_aktiv_ab', 'Aktiv ab', ((cur === 'aktiv' || cur === 'gekuendigt') && f.lm_seit) ? f.lm_seit : _lmToday(), { type: 'date', hint: 'Liegt der Tag in der Zukunft, zählt die Anlage erst ab dann als „aktuell aktiv“.' }) +
+    '</div>' +
+    '<div id="lm-st-kuend" class="lm-form" style="margin-top:12px;display:none;background:#FEF2F2;border:1px solid #FCA5A5;border-radius:10px;padding:10px">' +
+      '<div class="lm-sep" style="border:none;margin:0;padding:0;color:#991B1B">✂️ Kündigung</div>' +
+      _lmIn('st_gek_am', 'Kündigung eingegangen am', f.gekuendigt_am || _lmToday(), { type: 'date' }) +
+      _lmIn('st_gek_zum', 'Wirksam zum (Betreuung endet) *', f.gekuendigt_zum || '', { type: 'date' }) +
+      _lmIn('st_notruf', '📵 Notruf muss ausgebaut werden', cur === 'gekuendigt' ? !!f.notruf_ausbau : hatNotruf, { type: 'checkbox', full: true }) +
+      _lmIn('st_notruf_bis', 'Notruf ausbauen bis', f.notruf_ausbau_bis || '', { type: 'date', hint: 'leer = zum Kündigungsdatum' }) +
+      (laufend.length ? _lmIn('st_vt', 'Laufende Verträge in der Akte zum selben Datum als gekündigt eintragen (' + laufend.length + ')', true, { type: 'checkbox', full: true }) : '') +
+      _lmIn('st_notiz', 'Notiz (z. B. Grund, wer hat gekündigt)', f.kuendigung_notiz || '', { type: 'textarea', full: true }) +
+    '</div>';
+  _lmModal('lm-st-modal', '🔁 Status im Liftmanagement · ' + escapeHtml(_lmShort(it.a.anzeigeAdresse || it.a.name || '', 50)), body,
+    '<button class="btn" onclick="_lmCloseModal(' + _lmA('lm-st-modal') + ')">Abbrechen</button><button class="btn prim" id="lm-st-go" onclick="lmStatusSpeichern(this)">💾 Speichern</button>');
+  _lmStatusDlgSync();
+}
+function _lmStatusDlgSync() {
+  const sel = document.querySelector('#lm-st-modal input[name="lm-st"]:checked');
+  const k = document.getElementById('lm-st-kuend'); if (k) k.style.display = (sel && sel.value === 'gekuendigt') ? 'grid' : 'none';
+  const a = document.getElementById('lm-st-aktiv'); if (a) a.style.display = (sel && sel.value === 'aktiv') ? 'grid' : 'none';
+}
+async function lmStatusSpeichern(btn) {
+  if (!_lmCanEdit()) return;
+  const it = _lmCurItem(); if (!it) return;
+  const sel = document.querySelector('#lm-st-modal input[name="lm-st"]:checked'); if (!sel) return toast('Bitte einen Status wählen.', 'err');
+  const neu = sel.value, alt = it.status;
+  const g = n => { const el = document.getElementById('lm-f-' + n); return el ? (el.type === 'checkbox' ? el.checked : String(el.value || '').trim()) : ''; };
+  const fields = { lm_status: neu, status_am: _lmNowIso(), status_von: _lmUserName() };
+  let text = '';
+  if (neu === 'gekuendigt') {
+    const zum = g('st_gek_zum');
+    if (!_lmParseDate(zum)) return toast('Bitte angeben, zu welchem Datum gekündigt wurde.', 'err');
+    const notruf = !!g('st_notruf'), bis = g('st_notruf_bis') || zum;
+    Object.assign(fields, { gekuendigt_am: g('st_gek_am') || _lmToday(), gekuendigt_zum: zum, kuendigung_notiz: g('st_notiz'), notruf_ausbau: notruf, notruf_ausbau_bis: notruf ? bis : '',
+      notruf_ausgebaut_am: (alt === 'gekuendigt' && notruf) ? (it.akte.notruf_ausgebaut_am || '') : '' });
+    text = 'Gekündigt zum ' + _lmFmtDE(zum) + (notruf ? ' · Notruf ausbauen bis ' + _lmFmtDE(bis) : ' · kein Notruf-Ausbau') + (fields.kuendigung_notiz ? '\n' + fields.kuendigung_notiz : '');
+  } else if (neu === 'aktiv' || neu === 'inaktiv') {
+    Object.assign(fields, { gekuendigt_am: '', gekuendigt_zum: '', notruf_ausbau: false, notruf_ausbau_bis: '' });   // Kündigung (falls vorhanden) zurückgenommen
+    if (alt === 'gekuendigt') text = 'Kündigung zurückgenommen';
+  }
+  if (neu === 'aktiv') {
+    const ab = g('st_aktiv_ab') || it.akte.lm_seit || _lmToday();
+    if (!_lmParseDate(ab)) return toast('Bitte ein gültiges Datum für „Aktiv ab“ eintragen.', 'err');
+    fields.lm_seit = _lmDate(ab);
+    if (!it.akte.lm_von) fields.lm_von = _lmUserName();
+    if (_lmDaysBetween(_lmToday(), fields.lm_seit) > 0) text = (text ? text + ' · ' : '') + 'aktiv ab ' + _lmFmtDE(fields.lm_seit);
+  }
+  btn.disabled = true;
+  try {
+    await _lmSaveAkteFields(it.a, fields);
+    if (neu === 'gekuendigt' && g('st_vt')) {
+      for (const v of it.vertraege.filter(v => LM_VT_LAUFEND.includes(v.info.status) && v.info.status !== 'gekuendigt')) {
+        _lmUpsertLocal('vertrag', await _lmUpdate(LM_T_VERTRAG, v.rec.id, { gekuendigt_zum: fields.gekuendigt_zum, updated: _lmNowIso() }));
+      }
+    }
+    const label = neu ? LM_STATUS[neu].label : 'aus dem Liftmanagement entfernt';
+    try { await _lmCreateEintrag(it.a, { typ: 'status', titel: 'Status: ' + label, text, datum: _lmToday() }); } catch(_){}
+    _lmCloseModal('lm-st-modal');
+    toast('✅ Status: ' + label, 'ok');
+    _lmAbrNachAenderung();
+    _lmRender();
+  } catch(e) { toast('❌ ' + ((e && e.message) || e), 'err'); btn.disabled = false; }
+}
+async function lmNotrufErledigt(anlageId) {
+  if (!_lmCanEdit()) return;
+  const a = _lmFindAnlage(anlageId); if (!a) return;
+  if (!confirm('Notruf an „' + (a.anzeigeAdresse || a.name || ('Anlage ' + anlageId)) + '" als ausgebaut vermerken?')) return;
+  try {
+    await _lmSaveAkteFields(a, { notruf_ausgebaut_am: _lmToday() });
+    try { await _lmCreateEintrag(a, { typ: 'status', titel: '📵 Notruf ausgebaut', datum: _lmToday() }); } catch(_){}
+    toast('✅ Notruf als ausgebaut vermerkt', 'ok');
+    _lmAbrNachAenderung();
+    if (_lmUi.akteId) _lmRender();
+  } catch(e) { toast('❌ ' + ((e && e.message) || e), 'err'); }
 }
 
 /* ── Benachrichtigung: Hinweis auf dem Dashboard + Zähler am Menüknopf ── */
 function _lmFirmenSlugs() { return (_firmenCache || []).map(r => (r && r.fields) || {}).filter(f => f.slug && f.aktiv !== false).map(f => f.slug); }
-async function _lmAbrLaden(firma, force) {
+/* Offene Aufgaben einer Firma fürs Dashboard (Rechnungen im Fenster + Notruf-Ausbau ≤ 30 Tage) */
+async function _lmTodosLaden(firma, force) {
   const [d, w, rech] = await Promise.all([
     _lmLoadFirma(firma, false),
     _lmLoadWartung(firma, !!force).catch(() => null),
     _lmLoadRechnungen(firma, !!force).catch(() => null),
   ]);
-  return _lmAbrCompute(firma, d, (w && w.firma === firma) ? w : null, (rech && rech.firma === firma && rech.items) ? rech : null);
+  const items = _lmAbrCompute(firma, d, (w && w.firma === firma) ? w : null, (rech && rech.firma === firma && rech.items) ? rech : null);
+  return _lmTodoRows(items, d, firma).filter(_lmImFenster);
 }
 async function _lmDashAbr(force) {
   const el = document.getElementById('lm-abr-banner');
@@ -58215,7 +58599,7 @@ async function _lmDashAbr(force) {
   const key = firmen.join(',');
   if (!key) return;
   let sum = _lmAbrSum[key];
-  if (!sum) { try { const c = await _bigCacheGet('lm_abr', key); if (c && Array.isArray(c.items)) sum = _lmAbrSum[key] = { rows: c.items, loadedAt: c.loadedAt }; } catch(_){} }
+  if (!sum) { try { const c = await _bigCacheGet('lm_todo', key); if (c && Array.isArray(c.items)) sum = _lmAbrSum[key] = { rows: c.items, loadedAt: c.loadedAt }; } catch(_){} }
   if (sum) { _lmDashAbrRender(el, sum.rows); _lmNavBadge(sum.rows); }
   if (!force && sum && (Date.now() - sum.loadedAt) < 15 * 60 * 1000) return;
   if (_lmDashAbrBusy[key]) return;
@@ -58224,52 +58608,53 @@ async function _lmDashAbr(force) {
     if (!sum) await new Promise(r => setTimeout(r, 1200));   // erst die Dashboard-Statistik
     let rows = [];
     for (const f of firmen) {
-      try { rows = rows.concat(_lmAbrRows(await _lmAbrLaden(f))); }
+      try { rows = rows.concat(await _lmTodosLaden(f)); }
       catch(e) { console.warn('[LM] Wartungsrechnungen ' + f + ':', e && e.message); }
     }
     rows.sort((a, b) => a.faellig.localeCompare(b.faellig));
     _lmAbrSum[key] = { rows, loadedAt: Date.now() };
-    try { _bigCacheSet('lm_abr', key, rows); } catch(_){}
+    try { _bigCacheSet('lm_todo', key, rows); } catch(_){}
     const jetzt = isFirmaAll() ? _lmFirmenSlugs().join(',') : getCurrentFirmaSlug();
     if (jetzt === key) { _lmDashAbrRender(document.getElementById('lm-abr-banner'), rows); _lmNavBadge(rows); }
   } finally { _lmDashAbrBusy[key] = false; }
 }
 function _lmDashAbrRender(el, rows) {
   if (!el) return;
-  rows = rows || [];
+  rows = (rows || []).filter(_lmImFenster);
   if (!rows.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
-  const ueber = rows.filter(_lmAbrIstFaellig).length, bald = rows.length - ueber;
+  const rot = rows.filter(_lmTodoDringend).length, gelb = rows.length - rot;
   const mehrereFirmen = new Set(rows.map(r => r.firma)).size > 1;
   el.style.display = '';
-  el.innerHTML = '<div class="lm-dash-abr' + (ueber ? ' rot' : '') + '">' +
-    '<div class="lm-dash-abr-h"><span class="t">💶 Wartungsrechnungen schreiben</span>' +
-      (ueber ? '<span class="lm-pill rot">' + ueber + ' fällig</span>' : '') + (bald ? '<span class="lm-pill gelb">' + bald + ' in ≤ ' + LM_ABR_VORLAUF + ' Tagen</span>' : '') +
-      '<button class="btn prim" onclick="_lmGoAbrechnung(' + _lmA(rows[0].firma) + ')">Zur Abrechnung →</button></div>' +
-    rows.slice(0, 6).map(r => '<div class="lm-dash-abr-r" onclick="_lmGoAbrechnung(' + _lmA(r.firma) + ',' + _lmA(r.anlageId) + ')">' +
-      '<span class="lm-dot ' + (_lmAbrIstFaellig(r) ? 'rot' : 'gelb') + '"></span>' +
-      '<span class="a"><b>' + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</b>' + (r.kunde ? ' <span class="lm-muted">· ' + escapeHtml(r.kunde) + '</span>' : '') +
+  el.innerHTML = '<div class="lm-dash-abr' + (rot ? ' rot' : '') + '">' +
+    '<div class="lm-dash-abr-h"><span class="t">🔔 Liftmanagement – zu erledigen</span>' +
+      (rot ? '<span class="lm-pill rot">' + rot + ' fällig</span>' : '') + (gelb ? '<span class="lm-pill gelb">' + gelb + ' in ≤ 30 Tagen</span>' : '') +
+      '<button class="btn prim" onclick="_lmGoTodo(' + _lmA(rows[0].firma) + ')">Öffnen →</button></div>' +
+    rows.slice(0, 6).map(r => '<div class="lm-dash-abr-r" onclick="_lmGoTodo(' + _lmA(r.firma) + ',' + _lmA(r.anlageId) + ',' + _lmA(r.typ === 'notruf' ? 'uebersicht' : 'vertraege') + ')">' +
+      '<span class="lm-dot ' + (_lmTodoDringend(r) ? 'rot' : 'gelb') + '"></span>' +
+      '<span class="a">' + (r.typ === 'notruf' ? '📵 ' : '💶 ') + '<b>' + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</b>' + (r.kunde ? ' <span class="lm-muted">· ' + escapeHtml(r.kunde) + '</span>' : '') +
         (mehrereFirmen ? ' <span class="lm-pill grau">' + escapeHtml(r.firma) + '</span>' : '') + '</span>' +
-      '<span class="f">' + escapeHtml(_lmAbrFaelligText(r)) + (r.preis ? ' · ' + _lmMoney(r.preis) : '') + '</span></div>').join('') +
+      '<span class="f">' + (r.typ === 'notruf' ? 'Notruf ' : 'Wartungsrechnung ') + escapeHtml(_lmTodoText(r)) + (r.typ !== 'notruf' && r.preis ? ' · ' + _lmMoney(r.preis) : '') + '</span></div>').join('') +
     (rows.length > 6 ? '<div class="lm-muted" style="margin:4px 8px 0">… und ' + (rows.length - 6) + ' weitere</div>' : '') +
   '</div>';
 }
-function _lmGoAbrechnung(firma, anlageId) {
+function _lmGoTodo(firma, anlageId, tab) {
   if (firma && getCurrentFirmaSlug() !== firma) setCurrentFirma(firma);
-  _lmUi.firma = getCurrentFirmaSlug(); _lmUi.limit = 150;
-  if (anlageId) { _lmUi.akteId = String(anlageId); _lmUi.tab = 'vertraege'; _lmUi.vlFilter = 'alle'; }
-  else { _lmUi.akteId = null; _lmUi.filter = 'abrechnung'; }
+  _lmUi.firma = getCurrentFirmaSlug(); _lmUi.limit = 150; _lmUi.status = 'alle';
+  if (anlageId) { _lmUi.akteId = String(anlageId); _lmUi.tab = tab || 'vertraege'; _lmUi.vlFilter = 'alle'; }
+  else { _lmUi.akteId = null; _lmUi.filter = 'alle'; }
   switchView('liftmgmt');
 }
 function _lmNavBadge(rows) {
   const b = document.getElementById('tnav-liftmgmt'); if (!b) return;
   let s = b.querySelector('.lm-nav-badge');
-  const n = (rows || []).length;
+  rows = (rows || []).filter(_lmImFenster);
+  const n = rows.length;
   if (!n) { if (s) s.remove(); return; }
-  const faellig = rows.filter(_lmAbrIstFaellig).length;
+  const faellig = rows.filter(_lmTodoDringend).length;
   if (!s) { s = document.createElement('span'); b.appendChild(s); }
   s.className = 'lm-nav-badge' + (faellig ? '' : ' gelb');
   s.textContent = String(n);
-  s.title = n + ' Wartungsrechnung' + (n === 1 ? '' : 'en') + (faellig ? ' (' + faellig + ' fällig)' : ' bald fällig');
+  s.title = n + ' Aufgabe' + (n === 1 ? '' : 'n') + ' im Liftmanagement' + (faellig ? ' (' + faellig + ' fällig)' : ' (bald fällig)');
 }
 
 /* ── lokale Caches nach dem Schreiben nachziehen (kein Komplett-Reload nötig) ── */
@@ -58297,11 +58682,11 @@ function _lmRemoveLocal(kind, recId) {
 }
 
 /* ── Dialog-Gerüst ── */
-function _lmModal(id, titleHtml, bodyHtml, footHtml) {
+function _lmModal(id, titleHtml, bodyHtml, footHtml, opts) {
   _lmCloseModal(id);
   const m = document.createElement('div');
   m.id = id; m.className = 'lm-modal';
-  m.innerHTML = '<div class="lm-modal-box"><div class="lm-modal-head"><span>' + titleHtml + '</span><button class="x" onclick="_lmCloseModal(' + _lmA(id) + ')" title="Schließen">✕</button></div>' +
+  m.innerHTML = '<div class="lm-modal-box"' + (opts && opts.wide ? ' style="max-width:880px"' : '') + '><div class="lm-modal-head"><span>' + titleHtml + '</span><button class="x" onclick="_lmCloseModal(' + _lmA(id) + ')" title="Schließen">✕</button></div>' +
     '<div class="lm-modal-body">' + bodyHtml + '</div>' + (footHtml ? '<div class="lm-modal-foot">' + footHtml + '</div>' : '') + '</div>';
   document.body.appendChild(m);
   return m;
