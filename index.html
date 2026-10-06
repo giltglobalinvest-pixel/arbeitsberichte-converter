@@ -2906,7 +2906,7 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.01';
+const APP_VERSION = 'v10.02';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -13750,8 +13750,10 @@ async function _aufCreateViaAufwandAngebot(btn) {
     equipmentnummer: anlage.equipmentnummer || '',
     anlage_id: String(anlage.id || ''),
     anlage_adresse: standort,
-    kunde_name: kunde.firmenname || ('Kunde '+(kunde.kundennummer||'')),
-    kunde_nummer: String(kunde.kundennummer || ''),
+    kunde_name: kunde.firmenname || ('Kunde '+(kunde.kundennummer||kunde.id||'')),
+    // v10.02: wie _loadKontakteForAnlage/_angAnlageToFields (kundennummer || id) — sonst fehlte bei Kunden ohne
+    //   kundennummer die Kundennummer am Angebot und das Maxise-Angebot (Anfrage) scheiterte mit „Kein Kunde verknüpft".
+    kunde_nummer: String(kunde.kundennummer || kunde.id || ''),
     kunde_adresse: '',
     kontakt_id: String(empfaengerId),
     kontakt_name: kontaktName || '',
@@ -13811,8 +13813,18 @@ async function _aufCreateViaAufwandAngebot(btn) {
   try { await Promise.race([ (abM && abM._reFillPromise) || Promise.resolve(), new Promise(res => setTimeout(res, 10000)) ]); } catch(_){}
   if (btn) btn.textContent = '⏳ Maxise-Auftrag + AB…';
   const pseudoBtn = document.createElement('button');
-  await _abGenerateAndSave(pseudoBtn, false, true);   // → Maxise-Aufwand-Angebot + mitangebot-Auftrag + lokaler Auftrag + AB, navigiert selbst zum Auftrag
+  const abRes = await _abGenerateAndSave(pseudoBtn, false, true);   // → Maxise-Aufwand-Angebot + mitangebot-Auftrag + lokaler Auftrag + AB, navigiert selbst zum Auftrag
   try { const leftover = document.getElementById('ab-modal'); if (leftover) leftover.remove(); } catch(_){}
+  // v10.02: Scheitert der Maxise-Teil, steht das Angebot schon. Bisher blieb nur der grüne „Angebot … angelegt"-Toast
+  //   hängen („angeblich angelegt") — jetzt klar und dauerhaft sagen, dass KEIN Auftrag entstand, warum, und wie weiter.
+  if (!abRes || !abRes.ok) {
+    const grund = (abRes && abRes.reason) || 'unbekannt';
+    if (typeof _mxTextModal === 'function') _mxTextModal('⚠ Angebot angelegt — Auftrag NICHT angelegt',
+      'Das Angebot ANG-'+angebotNum+' (nach Aufwand) wurde angelegt, aber der Maxise-Auftrag und die Auftragsbestätigung konnten NICHT erzeugt werden.\n\n'+
+      'Grund:\n'+grund+'\n\n'+
+      'Weiter: Angebote → ANG-'+angebotNum+' öffnen → „📋 Auftragsbestätigung" → „Erzeugen & speichern".\n'+
+      'Bitte keinen neuen Auftrag anlegen — sonst entsteht ein zweites Angebot.');
+  }
 }
 
 async function saveAuftrag() {
@@ -38217,16 +38229,22 @@ async function _abNextNummer(firmaSlug) {
   return max + 1;
 }
 /* v7.95: Prüfen, ob für dieses Angebot bereits eine Auftragsbestätigung existiert (Duplikat-Schutz).
-   Match über angebot_rec_id (Servicebox-Angebot) oder angebot_num. Neueste zuerst. Rückgabe: Record oder null. */
-async function _abFindExistingForAngebot(firmaSlug, angebotRecId, angebotNum) {
+   Match über angebot_rec_id (Servicebox-Angebot) oder angebot_num. Neueste zuerst. Rückgabe: Record oder null.
+   v10.02: Mit Record-ID NUR über angebot_rec_id. Die nackte Nummer ist mehrdeutig (ANG-2734 und Maxise-Angebot 2734
+   liegen im selben Zahlenbereich) und meldete sonst die AB eines ANDEREN Angebots als „bereits vorhanden".
+   Ohne Record-ID (AB direkt aus einem Maxise-Angebot) zählen nur ABs ohne angebot_rec_id — wie _angLoadAbMap (v8.36). */
+async function _abFindExistingForAngebot(firmaSlug, angebotRecId, angebotNum, angRef) {
   if (!angebotRecId && !angebotNum) return null;
   try {
     await _ensureAbTable();
     let recs = await atRead('Auftragsbestaetigungen', "{firma}='"+String(firmaSlug||'').replace(/'/g,"\\'")+"'");
     recs = (recs||[]).filter(r => {
       const f = r.fields || {};
-      const matches = (angebotRecId && String(f.angebot_rec_id||'') === String(angebotRecId))
-                   || (angebotNum   && String(f.angebot_num||'')    === String(angebotNum));
+      const rid = String(f.angebot_rec_id||'');
+      const matches = angebotRecId
+        ? rid === String(angebotRecId)
+        : (!rid && !!angebotNum && String(f.angebot_num||'') === String(angebotNum)
+           && (!angRef || _angAbPasstZuAngebot({ fabriknummer:f.fabriknummer, kunde_nummer:f.kunde_nummer }, angRef)));
       if (!matches) return false;
       // v8.52: AB, deren Maxise-Auftrag storniert ist, gilt NICHT als bestehende Beauftragung
       //   (der Auftrag existiert nicht mehr aktiv; die AB wird beim Erzeugen ohnehin ersetzt).
@@ -38243,7 +38261,8 @@ async function _abFindExistingForAngebot(firmaSlug, angebotRecId, angebotNum) {
 function _abAuftragTyp(fAng) {
   const mod = String((fAng && fAng.abrechnung_modus) || 'pauschal').toLowerCase();
   if (mod === 'aufwand') return 'aufwand';
-  const typ = String((fAng && fAng.angebot_typ) || '').toLowerCase();
+  // v10.02: aus Maxise synchronisierte Angebote tragen den Typ in erp_typ (z.B. „wartungNotruf") statt angebot_typ
+  const typ = String((fAng && (fAng.angebot_typ || fAng.erp_typ)) || '').toLowerCase();
   if (/modern/.test(typ)) return 'modernisierung';
   if (/wartung|notruf/.test(typ)) return 'wartung';
   return 'pauschal';
@@ -38291,39 +38310,6 @@ async function _abKiAuftragTyp(fAng) {
     console.warn('[AB-KI-Typ]', e && e.message);
     return { typ: fallback, begruendung: '(KI nicht erreichbar — deterministisch abgeleitet)', quelle: 'fallback' };
   }
-}
-/* v7.94: In den Maxise-Angeboten ein passendes Festpreis-Angebot suchen (Kunde + Anlage/Fabrik-Nr., kein Aufwand).
-   Verhindert Duplikate (wie Angebot 2963 des Mitarbeiters). Rückgabe { id, nummer } oder null. */
-async function _abFindErpAngebot(firmaSlug, fAng, opts) {
-  const wantAufwand = !!(opts && opts.wantAufwand);   // v8.08: true → nur Aufwand-Angebote, sonst nur Festpreis
-  let list = [];
-  try { list = await erpFetch('/aufzug/'+firmaSlug+'/api/angebote'); }
-  catch(e){ console.warn('[AB-AngebotMatch] Abruf:', e && e.message); return null; }
-  const items = Array.isArray(list) ? list : (list.content||list.items||list.data||[]);
-  const kdNr    = String((fAng && fAng.kunde_nummer)||'').trim();
-  const anlageId= String((fAng && fAng.anlage_id)||'').trim();
-  const fabrik  = String((fAng && (fAng.seriennummer||fAng.equipmentnummer))||'').trim();
-  const wantNetto = +(fAng && fAng.summe_netto_vp) || 0;   // v8.43: Servicebox-Angebotspreis (netto) — nur gleich-preisige Angebote sind „dasselbe Angebot"
-  const cands = [];
-  for (const it of items) {
-    let fx = null; try { fx = _angMaxiseListItemToFields(it, firmaSlug); } catch(_){ continue; }
-    if (!fx || !fx.erp_angebot_id) continue;
-    const istAufwand = /aufwand/i.test(String(fx.abrechnung_modus||''));
-    if (wantAufwand ? !istAufwand : istAufwand) continue;                       // v8.08: Aufwand vs. Festpreis je nach Ziel
-    if (kdNr && String(fx.kunde_nummer||'') !== kdNr) continue;                  // Kunde muss passen
-    const anlageOk = (anlageId && String(fx.anlage_id||'')===anlageId) || (fabrik && String(fx.seriennummer||'')===fabrik);
-    if (!anlageOk) continue;                                                     // Anlage/Fabrik-Nr. muss passen
-    // v8.43: KRITISCH — nur ein Angebot mit ~gleichem Preis wiederverwenden. Sonst wird z.B. ein Wartungsvertrag
-    //   derselben Anlage (anderer Preis!) als „passendes Festpreis-Angebot" genommen → Auftrag falsch verknüpft.
-    if (wantNetto > 0) {
-      const foundNetto = +(fx.summe_netto_vp) || 0;
-      if (Math.abs(foundNetto - wantNetto) > Math.max(1, wantNetto*0.02)) continue;
-    }
-    cands.push({ id:fx.erp_angebot_id, nummer:fx.erp_angebot_nummer, datum:fx.erp_datum||'' });
-  }
-  if (!cands.length) return null;
-  cands.sort((a,b) => String(b.datum).localeCompare(String(a.datum)) || (+b.id)-(+a.id));  // neuestes zuerst
-  return cands[0];
 }
 /* v7.94: Bei AB-Erstellung den korrekten Maxise-Auftrag anlegen.
    Typ-korrekt: Nach Aufwand → ohneangebot; Festpreis (Pauschal/Wartung/Modernisierung) → mitangebot
@@ -38418,7 +38404,9 @@ async function _angEnsureMaxiseAnlage(recId, force) {
   return { ok:true, linked:true, patch, fab };
 }
 /* v8.41: Idempotenz — gibt es zu diesem ERP-Angebot (angId) schon einen (nicht stornierten) Auftrag in Maxise?
-   Verhindert ein Duplikat, wenn ein früherer Versuch den Auftrag anlegte, aber danach abbrach (z.B. AB-Save-422). */
+   Verhindert ein Duplikat, wenn ein früherer Versuch den Auftrag anlegte, aber danach abbrach (z.B. AB-Save-422).
+   v10.02: Nur noch mit der EIGENEN Maxise-Angebots-ID des Angebots aufrufen (nie mit einem „gefundenen" fremden
+   Angebot) — sonst wird der Auftrag eines anderen Angebots wiederverwendet. Storno-Erkennung wie _angLoadBeauftragtSet. */
 async function _abFindErpAuftragByAngebot(firmaSlug, angId) {
   if (!angId) return null;
   try {
@@ -38426,9 +38414,35 @@ async function _abFindErpAuftragByAngebot(firmaSlug, angId) {
     const list = Array.isArray(res) ? res : ((res && (res.content||res.items||res.data)) || []);
     return (list||[]).find(a => {
       const aid = a && (a.angebotid ?? a.angebotId ?? (a.angebot && a.angebot.id));
-      return aid != null && String(aid) === String(angId) && String(a.status||'').toLowerCase() !== 'storniert';
+      return aid != null && String(aid) === String(angId) && !/storn/i.test(String(a.status||''));
     }) || null;
   } catch(e) { console.warn('[AB-ERP-Auftrag] Bestandsprüfung:', e && e.message); return null; }
+}
+/* v10.02: Scheitert der Maxise-Auftrag beim Umwandeln, den Grund ins Hintergrund-Log (Diagnose_Logs) schreiben —
+   bisher stand er nur kurz im Toast beim Nutzer und war danach nicht mehr nachvollziehbar. Best effort, wirft nie. */
+async function _abLogErpFehler(firmaSlug, recId, angebotNum, fAng, typ, err) {
+  try {
+    if (!APP_KEYS || !APP_KEYS.airtableWriteKey) return;
+    const f = fAng || {};
+    const body = (err && err.body && typeof err.body === 'object') ? err.body : null;
+    await _diagEnsureLogTable();
+    await atWrite('Diagnose_Logs', {
+      ts:          new Date().toISOString(),
+      firma:       String(firmaSlug || ''),
+      user_name:   (APP_KEYS.user && APP_KEYS.user.name) || '',
+      user_key:    (APP_KEYS.user && APP_KEYS.user.api_key) || '',
+      app_version: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : ''),
+      reason:      ('ab_auftrag_fehler · Angebot '+(angebotNum || recId || '?')).slice(0, 200),
+      ua:          (navigator.userAgent || '').slice(0, 400),
+      log:         JSON.stringify({
+        angebot: angebotNum || '', angebot_rec_id: recId || '', herkunft: f.herkunft || 'servicebox', typ: typ || '',
+        erp_angebot_id: f.erp_angebot_id || '', anlage_id: f.anlage_id || '', kunde_nummer: f.kunde_nummer || '', kontakt_id: f.kontakt_id || '',
+        fehler: String((err && err.message) || err || '').slice(0, 2000),
+        http: (err && err.status) || null,
+        upstream: body ? String(body.upstream_body_excerpt || body.trace || '').slice(0, 2000) : '',
+      }, null, 1),
+    });
+  } catch(e) { try { console.warn('[AB-ERP-Log]', e && e.message); } catch(_){} }
 }
 async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
   const firmaSlug = (fAng && fAng.firma) || getCurrentFirmaSlug();
@@ -38466,42 +38480,43 @@ async function _abCreateErpAuftrag(fAng, leistungText, recId, typOverride) {
     //   erbt/zeigt der mitangebot-Auftrag sie (das Auftrag-SET-DTO kann leistungsbeschreibung ohnehin nicht setzen).
     const payload = { angebotid:+angId, notizen:'', ...common };
     const _existA = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
-    if (_existA) return { created:_existA, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
+    if (_existA) return { created:_existA, reused:true, angId, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
     const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
-    return { created, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
+    return { created, reused:false, angId, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
   }
   // ── Festpreis → mitangebot → braucht ein Maxise-Angebot ──
   let angId = fAng.erp_angebot_id ? String(fAng.erp_angebot_id) : '';
   let quelle = angId ? 'verknüpft' : '';
-  if (!angId) {                                          // 1) bestehendes Maxise-Angebot suchen (kein Duplikat)
-    const found = await _abFindErpAngebot(firmaSlug, fAng);
-    if (found && found.id) { angId = String(found.id); quelle = 'gefunden (Nr. '+(found.nummer||found.id)+')'; }
-  }
-  if (!angId && recId) {                                 // 2) sonst Angebot in Maxise anlegen (Anfrage+Angebot)
-    let _pushErr = '';
-    try { await _angPushToErp(recId, null); } catch(e){ _pushErr = (e && e.message) || String(e); console.warn('[AB-AngebotPush]', _pushErr); }
-    const r = (_angeboteCache.items||[]).find(x=>x.id===recId);
-    if (r && r.fields && r.fields.erp_angebot_id) { angId = String(r.fields.erp_angebot_id); quelle = 'neu angelegt (Nr. '+(r.fields.erp_angebot_nummer||angId)+')'; }
-    // v8.33: Wenn KEIN Angebot entstand, den KONKRETEN Grund nennen. _angPushToErp bricht bei fehlender
-    //   anlage_id / kunde_nummer NUR mit Toast ab (kein throw) → hier explizit prüfen, damit der User weiß warum.
-    if (!angId) {
-      const _rf = (r && r.fields) || {};
-      const _fehlt = [(!_rf.anlage_id ? 'Maxise-Anlage (anlage_id)' : ''), (!_rf.kunde_nummer ? 'Kundennummer' : '')].filter(Boolean).join(' + ');
-      const _grund = _fehlt
-        ? (_fehlt+' fehlt — native Servicebox-Angebote müssen zuerst mit einer Maxise-Anlage + Kunde verknüpft werden')
-        : (_pushErr || 'ERP-Angebot konnte nicht angelegt werden');
-      throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag: '+_grund+'.');
+  // v10.02 BUGFIX „angeblich angelegt, aber kein Auftrag + keine neue AB" (beide Firmen): KEINE Suche mehr nach
+  //   einem „passenden" bestehenden Maxise-Angebot (wie v10.01 für Nach Aufwand). _abFindErpAngebot erkannte
+  //   Festpreis-Angebote nur an Kunde + Anlage + gleichem Preis. Lief an der Anlage schon einmal ein gleich
+  //   teurer Auftrag, bekam das NEUE Angebot dessen ALTES Maxise-Angebot und über _abFindErpAuftragByAngebot
+  //   dessen ALTEN Auftrag: in Maxise entstand weder Angebot noch Auftrag, die AB trug die alte Auftragsnummer,
+  //   gemeldet wurde trotzdem „angelegt". Ein Servicebox-Angebot bekommt jetzt immer sein EIGENES Maxise-Angebot.
+  //   Wiederholungen DESSELBEN Angebots bleiben abgesichert: _angPushToErp schreibt erp_angebot_id zurück
+  //   (Airtable + Cache) → beim erneuten Lauf greift oben der Weg „verknüpft", kein Zweit-Angebot.
+  if (!angId && recId) {                                 // Angebot in Maxise anlegen (Anfrage + Angebot)
+    let info = null;
+    try { info = await _angPushToErp(recId, null, { fromAb:true }); }   // wirft mit dem konkreten Grund
+    catch(e) {
+      const msg = String((e && e.message) || e);
+      const _fehlt = /Keine Anlage verknüpft/.test(msg) ? 'Maxise-Anlage (anlage_id)' : (/Kein Kunde verknüpft/.test(msg) ? 'Kundennummer' : '');
+      const _grund = _fehlt ? (_fehlt+' fehlt — native Servicebox-Angebote müssen zuerst mit einer Maxise-Anlage + Kunde verknüpft werden') : ('Maxise-Angebot konnte nicht angelegt werden: '+msg);
+      const err = new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag: '+_grund);
+      err.status = e && e.status; err.body = e && e.body;
+      throw err;
     }
+    if (info && info.id) { angId = String(info.id); quelle = 'neu angelegt (Nr. '+(info.nummer||info.id)+')'; }
   }
-  if (!angId) throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag braucht ein Angebot im ERP — konnte weder gefunden noch angelegt werden (Anlage/Kunde am Angebot prüfen).');
+  if (!angId) throw new Error(typ.charAt(0).toUpperCase()+typ.slice(1)+'-Auftrag braucht ein Angebot im ERP — konnte nicht angelegt werden (Anlage/Kunde am Angebot prüfen).');
   // v8.94: Leistung MITSENDEN (Festpreis-Zweig sendete sie bisher NICHT) — sonst blieb „Leistungsumfang" im Maxise-Auftrag LEER → Problem bei der Rechnung.
   //   Mehrere plausible Feldnamen (Maxise/Spring ignoriert unbekannte Felder, wie bei anderen Payloads auch) → trifft das angezeigte Feld sicher.
   // v9.15: notizen LEER (Maxise-Spalte kurz → v9.14 gab HTTP 500 „Data too long"). Leistung steht im Angebot (serviceDescription).
   const payload = { angebotid:+angId, notizen:'', ...common };
   const _existP = await _abFindErpAuftragByAngebot(firmaSlug, angId);   // v8.41: kein zweiter Auftrag, wenn schon einer existiert
-  if (_existP) return { created:_existP, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
+  if (_existP) return { created:_existP, reused:true, angId, bestellform:'MITANGEBOT', typ, angebotQuelle: quelle+' · bestehender Auftrag wiederverwendet' };
   const created = await _erpCreateVorgang(firmaSlug, ['api/auftraege/mitangebot','auftraege/mitangebot'], payload, null);
-  return { created, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
+  return { created, reused:false, angId, bestellform:'MITANGEBOT', typ, angebotQuelle:quelle };
 }
 /* v7.93: Lokalen Auftrags-Datensatz schreiben, damit der Auftrag SOFORT in der Auftragsübersicht erscheint.
    ext_id verhindert Duplikate beim späteren Maxise-Import. Rückgabe: lokale Record-ID. */
@@ -38654,7 +38669,7 @@ async function _abWarnIfExists(firmaSlug, angebotRecId, angebotNum) {
   box.innerHTML = '<div style="background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;padding:9px 12px;font-size:12px;color:#78350F;margin-bottom:14px">'+
     'ℹ <strong>Für dieses Angebot gibt es bereits eine Auftragsbestätigung:</strong> AB '+escapeHtml(_abDispNum(ef)||'?')+
     (ef.erp_auftrag_num?' · Maxise-Auftrag '+escapeHtml(String(ef.erp_auftrag_num)):'')+(ef.datum?' · '+escapeHtml(String(ef.datum)):'')+'. '+
-    'Ein erneutes „Erzeugen" <strong>ersetzt</strong> diese AB und verwendet denselben Maxise-Auftrag wieder — es entsteht kein Duplikat.'+
+    'Ein erneutes „Erzeugen" <strong>ersetzt</strong> diese AB. Gibt es zum eigenen Maxise-Angebot dieses Angebots schon einen Auftrag, wird er wiederverwendet (kein Duplikat) — sonst wird ein neuer angelegt.'+
   '</div>';
 }
 
@@ -38749,11 +38764,12 @@ function _abPreview() {
 /* v7.84: AB erzeugen — Servicebox-Nummer vergeben, PDF bauen, Datensatz + PDF speichern.
    v7.92: send=true → direkt nach dem Speichern den Freshdesk-Versand-Dialog öffnen. */
 async function _abGenerateAndSave(btn, send, silent) {
-  const m = document.getElementById('ab-modal'); if (!m) return;
+  // v10.02: liefert { ok, reason, ... } zurück, damit der 1-Klick-Weg (Neuer Auftrag nach Aufwand) ein Scheitern erkennt
+  const m = document.getElementById('ab-modal'); if (!m) return { ok:false, reason:'AB-Dialog nicht gefunden' };
   const _auto = !!silent;   // v9.66: headless/1-Klick — Rückfragen automatisch bejahen
   const firmaSlug = m._firmaSlug || getCurrentFirmaSlug();
-  if (isFirmaAll()) return toast('Bitte oben rechts eine konkrete Firma wählen.','err');
-  if (!APP_KEYS.airtableWriteKey) return toast('Kein Schreib-Zugriff (Airtable).','err');
+  if (isFirmaAll()) { toast('Bitte oben rechts eine konkrete Firma wählen.','err'); return { ok:false, reason:'Keine konkrete Firma gewählt' }; }
+  if (!APP_KEYS.airtableWriteKey) { toast('Kein Schreib-Zugriff (Airtable).','err'); return { ok:false, reason:'Kein Schreib-Zugriff (Airtable)' }; }
   const d = {};
   m.querySelectorAll('[data-abf]').forEach(el => { d[el.dataset.abf] = el.value || ''; });
   d.preis = m._preis || null;
@@ -38768,18 +38784,18 @@ async function _abGenerateAndSave(btn, send, silent) {
     if (!fAng && m._maxiseFAng) fAng = m._maxiseFAng;   // v8.89: Maxise-Quell-Angebot (kein lokaler Record) → Auftrag trotzdem anlegen + AB bekommt die Maxise-Nummer
     // v7.95: Duplikat-Prüfung — existiert für dieses Angebot schon eine AB (+ Auftrag)? Dann NICHT blind neu anlegen.
     if (btn) btn.textContent = '⏳ prüfe…';
-    const existingAb = await _abFindExistingForAngebot(firmaSlug, m._recId||'', d.angebotNum||'');
+    const existingAb = await _abFindExistingForAngebot(firmaSlug, m._recId||'', d.angebotNum||'', { seriennummer: d.fabriknummer||'', kunde_nummer: (m._src && m._src.kundeNummer)||'' });
     if (existingAb) {
       const ef = existingAb.fields || {};
       const proceed = _auto ? true : confirm(
         'Für Angebot '+(d.angebotNum||'?')+' gibt es bereits eine Auftragsbestätigung:\n\n'+
         '  • AB '+(_abDispNum(ef)||'?')+(ef.erp_auftrag_num?'  ·  Maxise-Auftrag '+ef.erp_auftrag_num:'')+(ef.datum?'  ·  '+ef.datum:'')+'\n\n'+
-        'Neu erzeugen? Die bestehende AB wird ERSETZT und derselbe Maxise-Auftrag wiederverwendet — kein Duplikat.\n\n'+
+        'Neu erzeugen? Die bestehende AB wird ERSETZT. Gibt es zum eigenen Maxise-Angebot dieses Angebots schon einen Auftrag, wird er wiederverwendet (kein Duplikat) — sonst wird ein neuer angelegt.\n\n'+
         'OK = AB neu erzeugen   ·   Abbrechen = nichts tun');
       if (!proceed) {
         toast('Abgebrochen — bestehende AB '+(_abDispNum(ef)||'')+' bleibt. (Ansicht: Vorlagen → 📋 Auftragsbestätigungen)','');
         if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
-        return;
+        return { ok:false, reason:'abgebrochen', cancelled:true };
       }
     }
     if (btn) btn.textContent = '⏳ erzeuge…';
@@ -38787,6 +38803,7 @@ async function _abGenerateAndSave(btn, send, silent) {
     //   enthalten (User-Vorgabe). Der Preis lebt in den Preisfeldern/im Angebot, nicht im Leistungsumfang.
     const leistungText = (d.leistungsumfang||'');
     let erpAuftragNum = '', erpAuftragId = '', erpBestellform = '', localAuftragId = '', erpTyp = '';
+    let erpErr = '', erpCancelled = false, erpReused = false, erpAngId = '';   // v10.02: Grund/Art fürs ehrliche Feedback
     if (fAng) {
       // v8.98: KEINE KI mehr für den Auftragstyp — sie lag wiederholt falsch (Modernisierung statt Pauschal).
       //   Typ deterministisch aus dem Angebot (abrechnung_modus/angebot_typ = erp_typ), Maxise wie Servicebox.
@@ -38840,23 +38857,42 @@ async function _abGenerateAndSave(btn, send, silent) {
             erpAuftragId   = String(erpAuftrag.id||'');
             erpBestellform = String((res && res.bestellform) || erpAuftrag.bestellform || '');
             erpTyp         = (res && res.typ) || typ;
+            erpReused      = !!(res && res.reused);
+            erpAngId       = String((res && res.angId) || '');
             localAuftragId = await _abWriteLocalAuftrag(fAng, erpAuftrag, leistungText, typ) || '';  // → sofort in der Auftragsübersicht
+          } else {
+            erpErr = 'Maxise-Proxy nicht eingerichtet oder keine konkrete Firma gewählt';
           }
         } catch(e) {
-          console.warn('[AB-ERP-Auftrag]', e && e.message);
-          toast('⚠ Auftrag konnte nicht in Maxise angelegt werden: '+((e&&e.message)||e)+' — AB nutzt eigene Nummer.','warn');
+          erpErr = String((e && e.message) || e);
+          console.warn('[AB-ERP-Auftrag]', erpErr);
+          try { _abLogErpFehler(firmaSlug, m._recId||'', d.angebotNum||'', fAng, typ, e); } catch(_){}
         }
       } else {
         // v8.35: proceed=false → kein ERP-Auftrag → die Block-Regel unten verhindert die AB.
+        erpCancelled = true;
       }
     }
     // v8.35: BLOCK-REGEL (User-Entscheidung) — ohne Maxise-Auftrag KEINE AB. Reihenfolge muss stimmen:
     //   Kunde + Anlage in Maxise → Angebot → Auftrag. Bricht die Kette, wird nichts erzeugt und der
     //   50001-Servicebox-Nummernkreis kommt als angezeigte AB-Nummer gar nicht mehr zum Einsatz.
     if (fAng && !erpAuftragNum) {
-      toast('Keine Auftragsbestätigung erstellt: Es entstand kein Maxise-Auftrag. Reihenfolge sicherstellen — Kunde + Anlage müssen in Maxise stimmen, dann Angebot → Auftrag (liefert die Nummer).','err');
+      if (erpCancelled) {
+        toast('Abgebrochen — kein Maxise-Auftrag und keine Auftragsbestätigung erstellt.','');
+      } else {
+        // v10.02: Grund nicht nur 4 s als Toast, sondern stehen lassen (kopierbar) — vorher sah man nur „kein Maxise-Auftrag".
+        const _grund = erpErr || 'Es entstand kein Maxise-Auftrag.';
+        toast('❌ Kein Maxise-Auftrag angelegt — keine Auftragsbestätigung erstellt. Grund: '+_grund.slice(0,220),'err');
+        if (!_auto && typeof _mxTextModal === 'function') {
+          _mxTextModal('❌ Auftrag nicht angelegt',
+            'Für Angebot '+(d.angebotNum||'?')+' wurde KEIN Maxise-Auftrag angelegt — deshalb auch keine Auftragsbestätigung.\n\n'+
+            'Grund:\n'+_grund+'\n\n'+
+            'Reihenfolge: Kunde + Anlage müssen in Maxise stimmen, dann Angebot → Auftrag (liefert die Nummer).\n'+
+            'Nach dem Beheben einfach erneut „Erzeugen & speichern" — ein bereits angelegtes Maxise-Angebot wird dabei wiederverwendet.');
+        }
+      }
       if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
-      return;
+      return { ok:false, reason: erpCancelled ? 'abgebrochen' : (erpErr || 'Es entstand kein Maxise-Auftrag.'), cancelled: erpCancelled };
     }
     const serviceboxNum = await _abNextNummer(firmaSlug);   // Fallback-Integer nur noch für die interne Spalte ab_nummer; ANGEZEIGT wird erpAuftragNum
     const nummer = erpAuftragNum || String(serviceboxNum);  // ANGEZEIGTE AB-Nummer — mit Block-Regel immer die Maxise-Auftragsnummer
@@ -38902,13 +38938,32 @@ async function _abGenerateAndSave(btn, send, silent) {
     // v8.51: Ersetzen statt Duplizieren — existiert schon eine AB für dieses Angebot (z.B. nach Storno/Neu-Anlage),
     //   die alte zuerst löschen, damit nicht zwei AB-Datensätze pro Angebot entstehen.
     try {
-      const _old = fields.angebot_rec_id ? _angAbByRec.get(String(fields.angebot_rec_id))
+      let _old = fields.angebot_rec_id ? _angAbByRec.get(String(fields.angebot_rec_id))
                  : (fields.angebot_num ? _angAbByNum.get(String(fields.angebot_num)) : null);
+      // v10.02: Nummern-Treffer nur ersetzen, wenn Anlage/Kunde passen (gleiche Nummer ≠ gleiches Angebot)
+      if (_old && !fields.angebot_rec_id && !_angAbPasstZuAngebot(_old, { seriennummer: fields.fabriknummer, kunde_nummer: fields.kunde_nummer })) _old = null;
       const _oldRid = _old && _old.ab_recid;
       if (_oldRid) {
         await atDelete('Auftragsbestaetigungen', _oldRid);
         _abListCache = (_abListCache||[]).filter(r=>r.id!==_oldRid);
         console.log('[AB-Save] alte AB '+_oldRid+' ersetzt (Neu-Erstellung für dasselbe Angebot).');
+        // v10.02: Hing die alte AB an einem ANDEREN lokalen Auftrag (bis v10.01 wurde fälschlich ein alter Auftrag
+        //   wiederverwendet und dessen ab_recid überschrieben), diesen Verweis lösen — nur wenn er noch auf die
+        //   gelöschte AB zeigt. Der Auftrag findet seine eigene AB dann wieder über die Maxise-Auftragsnummer.
+        const _oldLocal = _old.local_auftrag_recid;
+        if (_oldLocal && _oldLocal !== localAuftragId) {
+          try {
+            const _b = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID, _k = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+            const _lr = await fetch('https://api.airtable.com/v0/'+_b+'/Auftraege/'+encodeURIComponent(_oldLocal), { headers:{ Authorization:'Bearer '+_k }});
+            const _ld = _lr.ok ? await _lr.json() : null;
+            if (_ld && _ld.fields && _ld.fields.ab_recid === _oldRid) {
+              await atUpdate('Auftraege', _oldLocal, { ab_recid: '' });
+              const _cr = (typeof _auftragCache!=='undefined' && _auftragCache||[]).find(r=>r.id===_oldLocal);
+              if (_cr && _cr.fields) _cr.fields.ab_recid = '';
+              console.log('[AB-Save] veralteten AB-Verweis am Auftrag '+_oldLocal+' gelöst.');
+            }
+          } catch(e){ console.warn('[AB-Save] Alt-Auftrag-Verweis:', e && e.message); }
+        }
       }
     } catch(e){ console.warn('[AB-Save] Alt-AB-Löschung:', e && e.message); }
     const rec = await atWrite('Auftragsbestaetigungen', fields);
@@ -38916,7 +38971,7 @@ async function _abGenerateAndSave(btn, send, silent) {
     catch(e) { console.warn('[AB-Save] PDF-Upload:', e.message); }
     // v8.21: AB→Angebot-Map aktualisieren, damit das AB-/Auftrag-Link-Badge sofort in der Angebote-Übersicht erscheint
     try {
-      const _info = { ab_recid: rec.id, ab_nummer: fields.ab_nummer, erp_auftrag_num: fields.erp_auftrag_num, local_auftrag_recid: fields.local_auftrag_recid };
+      const _info = { ab_recid: rec.id, ab_nummer: fields.ab_nummer, erp_auftrag_num: fields.erp_auftrag_num, local_auftrag_recid: fields.local_auftrag_recid, fabriknummer: fields.fabriknummer, kunde_nummer: fields.kunde_nummer };
       if (fields.angebot_rec_id) _angAbByRec.set(String(fields.angebot_rec_id), _info);
       else if (fields.angebot_num) _angAbByNum.set(String(fields.angebot_num), _info);  // v8.36: Nummern-Map nur ohne rec-id (kein Fehlmatch auf fremde Angebote)
     } catch(_){}
@@ -38933,7 +38988,11 @@ async function _abGenerateAndSave(btn, send, silent) {
       } catch(e){ console.warn('[AB-Save] Auftrag-Verknüpfung:', e && e.message); }
     }
     const _typLabel = { aufwand:'Nach Aufwand', pauschal:'Pauschal', wartung:'Wartung', modernisierung:'Modernisierung' }[erpTyp] || erpTyp;
-    toast('✅ Auftragsbestätigung '+nummer+' erzeugt.' + (erpAuftragNum ? ' Maxise-Auftrag '+erpAuftragNum+' angelegt ('+_typLabel+' · '+(erpBestellform==='MITANGEBOT'?'Mit Angebot':'Ohne Angebot')+') → Auftragsübersicht.' : ' (kein ERP-Auftrag — eigene Nummer verwendet)'), 'ok');
+    // v10.02: ehrlich melden, ob der Auftrag NEU angelegt oder ein bestehender (zum selben Maxise-Angebot) verknüpft wurde
+    const _erpTxt = !erpAuftragNum ? ' (kein ERP-Auftrag — eigene Nummer verwendet)'
+      : erpReused ? ' Zu Maxise-Angebot '+(erpAngId||'?')+' gab es bereits Auftrag '+erpAuftragNum+' — dieser wurde verknüpft, es wurde KEIN neuer Auftrag angelegt.'
+      : ' Maxise-Auftrag '+erpAuftragNum+' neu angelegt ('+_typLabel+' · '+(erpBestellform==='MITANGEBOT'?'Mit Angebot':'Ohne Angebot')+') → Auftragsübersicht.';
+    toast('✅ Auftragsbestätigung '+nummer+' erzeugt.' + _erpTxt, 'ok');
     document.getElementById('ab-modal')?.remove();
     try { document.getElementById('ang-detail')?.remove(); } catch(_){}   // v8.43: Angebot-Detail schließen — wir springen gleich zum Auftrag
     // v7.92: frisch gespeicherten Datensatz für Liste/Versand verfügbar machen
@@ -38949,10 +39008,12 @@ async function _abGenerateAndSave(btn, send, silent) {
     } else {
       const url = URL.createObjectURL(blob); window.open(url,'_blank');
     }
+    return { ok:true, nummer, erpAuftragNum, reused: erpReused, localAuftragId, abRecId: rec.id };
   } catch(e) {
     console.error('[AB-Save]', e);
     toast('❌ '+(e.message||e),'err');
     if (btn) { btn.disabled = false; btn.innerHTML = orig || '💾 Erzeugen &amp; speichern'; }
+    return { ok:false, reason: String((e && e.message) || e) };
   }
 }
 
@@ -38976,7 +39037,7 @@ async function _angLoadAbMap(firmaSlug) {
     _angAbByRec = new Map(); _angAbByNum = new Map();
     for (const r of (abs||[])) {
       const f = r.fields||{};
-      const info = { ab_recid:r.id, ab_nummer:f.ab_nummer, erp_auftrag_num:f.erp_auftrag_num, local_auftrag_recid:f.local_auftrag_recid };
+      const info = { ab_recid:r.id, ab_nummer:f.ab_nummer, erp_auftrag_num:f.erp_auftrag_num, local_auftrag_recid:f.local_auftrag_recid, fabriknummer:f.fabriknummer, kunde_nummer:f.kunde_nummer };
       // v8.36: AB mit rec-id → NUR in die Rec-ID-Map. Nummern-Map ist ausschließlich Fallback für
       //   Legacy-ABs OHNE rec-id — sonst matcht eine AB fälschlich ein fremdes Angebot mit gleicher Nummer.
       const rid = String(f.angebot_rec_id||'');
@@ -38985,11 +39046,22 @@ async function _angLoadAbMap(firmaSlug) {
     }
   } catch(e) { console.warn('[Angebote] AB-Map:', e && e.message); }
 }
+/* v10.02: Treffer über die NUMMER (ABs ohne angebot_rec_id, v.a. aus Maxise-Angeboten) nur gelten lassen, wenn
+   Anlage bzw. Kunde zum Angebot passen. ANG-Nummern und Maxise-Angebots-IDs liegen im selben Zahlenbereich —
+   sonst stand z.B. ANG-2734 als „beauftragt · Auftrag X", weil Maxise-Angebot 2734 eine AB hatte. */
+function _angAbPasstZuAngebot(ab, f) {
+  const norm = (s) => String(s||'').replace(/\s+/g,'').toLowerCase();
+  const fabAb = norm(ab && ab.fabriknummer), fabAng = norm(f && (f.seriennummer || f.fabriknummer || f.equipmentnummer));
+  if (fabAb && fabAng) return fabAb === fabAng;
+  const kdAb = String((ab && ab.kunde_nummer) || '').trim(), kdAng = String((f && f.kunde_nummer) || '').trim();
+  if (kdAb && kdAng) return kdAb === kdAng;
+  return true;   // nichts zum Abgleichen → wie bisher
+}
 function _angFindAb(recId, f) {
   let ab = _angAbByRec.get(String(recId)) || null;
   if (!ab) {
     const nums = [f && f.erp_angebot_id, f && f.erp_angebot_nummer, f && f.app_angebot_num, f && f.angebot_nr].filter(Boolean).map(String);
-    for (const n of nums) { const hit = _angAbByNum.get(n); if (hit) { ab = hit; break; } }
+    for (const n of nums) { const hit = _angAbByNum.get(n); if (hit && _angAbPasstZuAngebot(hit, f)) { ab = hit; break; } }
   }
   if (!ab) return null;
   // v8.51: AB, deren Maxise-Auftrag storniert ist, gelten nicht mehr als aktive Beauftragung/Verknüpfung.
@@ -40302,15 +40374,20 @@ async function _angTryFindByOfferNumber(firmaSlug, offerNumber) {
   return null;
 }
 
-async function _angPushToErp(recId, btn) {
+async function _angPushToErp(recId, btn, opts) {
+  // v10.02: opts.fromAb → Aufruf aus der AB-/Auftrags-Erzeugung: Abbruchgründe und Fehler werden GEWORFEN
+  //   (statt nur kurz als Toast gezeigt), das Ergebnis { id, nummer, url } zurückgegeben und das Angebot-Detail
+  //   nicht neu geöffnet. Vorher sah der Aufrufer nur „kein Angebot entstanden" ohne den echten Grund.
+  const fromAb = !!(opts && opts.fromAb);
+  const stop = (msg) => { if (fromAb) throw new Error(msg); toast(msg,'err'); };
   const rec = (_angeboteCache.items||[]).find(r => r.id === recId);
-  if (!rec) return toast('Angebot nicht gefunden','err');
+  if (!rec) return stop('Angebot nicht gefunden');
   const f = rec.fields || {};
-  if (!f.anlage_id) return toast('Keine Anlage verknüpft','err');
-  if (!f.kunde_nummer) return toast('Kein Kunde verknüpft','err');
+  if (!f.anlage_id) return stop('Keine Anlage verknüpft');
+  if (!f.kunde_nummer) return stop('Kein Kunde verknüpft');
   const firmaSlug = f.firma || getCurrentFirmaSlug();
-  if (firmaSlug !== getCurrentFirmaSlug()) return toast('Bitte oben rechts die richtige Firma ('+firmaSlug+') wählen','err');
-  if (f.erp_angebot_id && !confirm('Dieses Angebot wurde bereits ins ERP gepusht (ID '+f.erp_angebot_id+').\n\nNochmal pushen? Das erzeugt ein zweites ERP-Angebot.')) return;
+  if (firmaSlug !== getCurrentFirmaSlug()) return stop('Bitte oben rechts die richtige Firma ('+firmaSlug+') wählen');
+  if (f.erp_angebot_id && !fromAb && !confirm('Dieses Angebot wurde bereits ins ERP gepusht (ID '+f.erp_angebot_id+').\n\nNochmal pushen? Das erzeugt ein zweites ERP-Angebot.')) return;
   const origLabel = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ pushe ins ERP…'; }
   try {
@@ -40393,6 +40470,11 @@ async function _angPushToErp(recId, btn) {
         });
       } catch(anfErr) {
         console.error('[ERP-Angebot-Push] Anfrage-Nachholung fehlgeschlagen:', anfErr);
+        if (fromAb) {   // v10.02: Grund an die AB-Erzeugung weitergeben (äußeres catch zeigt Details + wirft weiter)
+          const e2 = new Error('ERP-Anfrage konnte nicht angelegt werden: '+String((anfErr && anfErr.message) || anfErr).slice(0,300));
+          e2.status = anfErr && anfErr.status; e2.body = anfErr && anfErr.body;
+          throw e2;
+        }
         if (typeof _showErpErrorDetails === 'function' && anfErr.body && (anfErr.body.upstream_body_excerpt || anfErr.body.trace)) {
           _showErpErrorDetails(anfErr);
         } else {
@@ -40565,6 +40647,7 @@ async function _angPushToErp(recId, btn) {
     // ERP-Angebot-Daten extrahieren
     const erpId  = String(created.id || created.angebotid || created.angebotId || '');
     const erpNr  = String(created.angebotsnummer || created.nummer || created.belegnummer || '');
+    if (!erpId) throw new Error('ERP-Angebot angelegt, aber keine ID in der Antwort');   // v10.02: sonst wurde eine leere erp_angebot_id gespeichert
     // URL bauen — siehe Firmen-Konfig
     const fm = (_firmenCache||[]).find(x => x.fields.slug === firmaSlug);
     const baseUrl = fm?.fields?.erp_auftrag_url || '';
@@ -40573,7 +40656,7 @@ async function _angPushToErp(recId, btn) {
 
     // Im App-Record persistieren
     const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID;
-    await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
+    const _pr = await fetch('https://api.airtable.com/v0/'+baseId+'/App_Angebote/'+recId, {
       method:'PATCH',
       headers:{ 'Authorization':'Bearer '+APP_KEYS.airtableWriteKey, 'Content-Type':'application/json' },
       body: JSON.stringify({ fields: {
@@ -40583,6 +40666,8 @@ async function _angPushToErp(recId, btn) {
         erp_pushed_at: new Date().toISOString(),
       }}),
     });
+    // v10.02: Ohne gespeicherte erp_angebot_id legt der nächste Versuch ein ZWEITES Maxise-Angebot an → sichtbar warnen
+    if (!_pr.ok) { console.warn('[ERP-Angebot-Push] erp_angebot_id nicht gespeichert: HTTP '+_pr.status); toast('⚠ Maxise-Angebot '+erpId+' angelegt, aber die Verknüpfung am Angebot konnte nicht gespeichert werden (HTTP '+_pr.status+').','warn'); }
     const idx = (_angeboteCache.items||[]).findIndex(x => x.id === recId);
     if (idx >= 0) {
       _angeboteCache.items[idx].fields.erp_angebot_id     = erpId;
@@ -40590,15 +40675,18 @@ async function _angPushToErp(recId, btn) {
       _angeboteCache.items[idx].fields.erp_angebot_url    = erpUrl;
       _angeboteCache.items[idx].fields.erp_pushed_at      = new Date().toISOString();
     }
+    const _was = fromAb ? '✅ Maxise-Angebot '+erpId+' angelegt — lege jetzt den Auftrag an…' : '✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+')';
     if (recoveredFromSync) {
-      toast('✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+'). ⚠ FreshSales-Sync hatte einen Konfigurations-Fehler — bitte beim ERP-Admin DealType-Mapping prüfen.','ok');
+      toast(_was+' ⚠ FreshSales-Sync hatte einen Konfigurations-Fehler — bitte beim ERP-Admin DealType-Mapping prüfen.','ok');
     } else {
-      toast('✅ Im ERP angelegt (ID '+erpId+(erpNr?' / Nr. '+erpNr:'')+')','ok');
+      toast(_was,'ok');
     }
+    if (fromAb) return { id: erpId, nummer: erpNr, url: erpUrl };
     document.getElementById('ang-detail')?.remove();
     openAngebotDetail(recId);
   } catch(e) {
     console.error('[ERP-Angebot-Push] Fehler:', e);
+    if (fromAb) throw e;   // v10.02: die AB-Erzeugung zeigt den Grund (inkl. Maxise-Antwort) selbst an und bricht sauber ab
     // Wenn ERP-Body mit Trace vorhanden: ausführliches Diagnose-Modal
     if (typeof _showErpErrorDetails === 'function' && e && e.body && (e.body.upstream_body_excerpt || e.body.trace)) {
       _showErpErrorDetails(e);
