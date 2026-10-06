@@ -1608,6 +1608,24 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
 .lm-st-opt input{margin-top:3px;width:16px;height:16px;flex:none}
 .lm-st-opt .i{font-size:18px;line-height:1.2;flex:none}
 .lm-st-opt:has(input:checked){border-color:#2152A9;background:#EFF6FF}
+/* v10.05: Zugang zum Aufzug */
+.lm-zugang{background:#F0F9FF;border:1px solid #BAE6FD;border-left:4px solid #0284C7;border-radius:10px;padding:8px 12px;margin-top:10px;color:#0C4A6E;font-size:12.5px}
+.lm-zugang.leer{background:rgba(255,255,255,.12);border-color:rgba(255,255,255,.35);border-left-color:#FCD34D;color:#fff}
+.lm-zg-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-weight:800;font-size:13px}
+.lm-zg-leer{font-weight:600;font-size:11.5px;opacity:.85}
+.lm-zg-act{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+.lm-zg-b{border:1px solid #7DD3FC;background:#fff;color:#075985;border-radius:99px;padding:3px 10px;font-size:11.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.lm-zugang.leer .lm-zg-b{background:rgba(255,255,255,.18);border-color:rgba(255,255,255,.45);color:#fff}
+.lm-zg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(440px,100%),1fr));gap:5px 24px;margin-top:6px}
+.lm-zg-z{display:flex;gap:8px;align-items:baseline;min-width:0}
+.lm-zg-z .k{flex:none;font-size:11px;font-weight:700;color:#0369A1;min-width:128px}
+.lm-zg-z .v{min-width:0;word-break:break-word}
+.lm-zg-z a{color:#0369A1;font-weight:700}
+.lm-zg-src{font-size:10.5px;color:#64748B;font-weight:600}
+.lm-zugang.leer .lm-zg-z .k{color:#E0F2FE}
+.lm-zugang.leer a{color:#BAE6FD}
+.lm-zugang.leer .lm-zg-src{color:#CBD5E1}
+.lm-card-zg{font-size:11.5px;color:#075985;margin-top:4px;word-break:break-word}
 @media (max-width:760px){
   .lm-grid2,.lm-form,.lm-stats{grid-template-columns:1fr}
   .lm-kv{grid-template-columns:110px 1fr}
@@ -1621,6 +1639,9 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   .lm-kpi-n{font-size:19px}
   .lm-kpi-l{font-size:10.5px;line-height:1.25}
   .lm-kpi-s{font-size:9.5px}
+  .lm-zg-z{flex-direction:column;gap:0}
+  .lm-zg-z .k{min-width:0}
+  .lm-zg-act{margin-left:0}
   .lm-add-row .m{min-width:0}
   .lm-doc{flex-wrap:wrap}
   .lm-doc-act{width:100%}
@@ -3151,7 +3172,7 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.04';
+const APP_VERSION = 'v10.05';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -56408,7 +56429,14 @@ const LM_AKTE_FIELDS = [
   { name:'tragkraft_kg',     type:'singleLineText' },
   { name:'personen',         type:'singleLineText' },
   { name:'notruf',           type:'singleLineText' },
-  { name:'zugang',           type:'multilineText'  },
+  { name:'zugang',           type:'multilineText'  },   // v10.05: „Weitere Hinweise zum Zugang"
+  { name:'zugang_gebaeude',  type:'singleLineText' },   // v10.05: 🔑 Zugang zum Aufzug – wie kommen wir rein?
+  { name:'zugang_schluessel',type:'singleLineText' },   // Schlüssel – wo / wie?
+  { name:'zugang_code',      type:'singleLineText' },   // Code (Tresor / Tür)
+  { name:'mr_lage',          type:'singleLineText' },   // Maschinenraum – wo?
+  { name:'mr_zugang',        type:'singleLineText' },   // Maschinenraum – Zugang / Schlüssel
+  { name:'zugang_kontakt',   type:'singleLineText' },   // Ansprechpartner vor Ort
+  { name:'zugang_tel',       type:'singleLineText' },
   { name:'pruefstelle',      type:'singleLineText' },
   { name:'tuev_letzte_hp',   type:'singleLineText' },
   { name:'tuev_naechste_hp', type:'singleLineText' },
@@ -56488,7 +56516,7 @@ const LM_DOK_KAT = [
   { value:'vertrag',   label:'Verträge',               icon:'📑' },
   { value:'gbu',       label:'Gefährdungsbeurteilung', icon:'⚠️' },
   { value:'technik',   label:'Technik / Schaltpläne',  icon:'📐' },
-  { value:'notruf',    label:'Notruf / Zugang',        icon:'☎️' },
+  { value:'notruf',    label:'Zugang / Schlüssel / Notruf', icon:'🔑' },
   { value:'foto',      label:'Fotos',                  icon:'📷' },
   { value:'rechnung',  label:'Kaufmännisches',         icon:'💶' },
   { value:'sonstiges', label:'Sonstiges',              icon:'📄' },
@@ -56509,7 +56537,7 @@ const LM_STATUS = {
 };
 const LM_NOTRUF_VORLAUF = 30;   // Dashboard/Zähler: Notruf-Ausbau ab 30 Tagen vor der Frist
 const LM_HERSTELLER = ['KONE','Schindler','OTIS','TK Elevator','Schmitt + Sohn','Haushahn','Kleemann','Orona','Liftequip','Hiro Lift','Riedl'];
-const LM_ANTRIEBE = ['Seil (Triebscheibe, Maschinenraum)','Seil (maschinenraumlos / MRL)','Hydraulik','Trommel','Zahnstange','Spindel','Sonstige'];
+const LM_ANTRIEBE = ['Seil (Triebscheibe, Maschinenraum)','Seil (maschinenraumlos / MRL)','Hydraulik','Sonstige'];   // v10.05: ohne Trommel, Zahnstange, Spindel
 const LM_PRUEFSTELLEN = ['TÜV SÜD','TÜV Rheinland','TÜV NORD','TÜV Hessen','TÜV Thüringen','TÜV Saarland','DEKRA','GTÜ','KÜS'];
 const LM_PRUEFARTEN = ['Hauptprüfung','Zwischenprüfung','Nachprüfung','Sonderprüfung','Prüfung vor Inbetriebnahme'];
 const LM_ERGEBNISSE = ['ohne Mängel','geringfügige Mängel','Mängel','gefährliche Mängel'];
@@ -56543,6 +56571,7 @@ const LM_FILTER = {
   kuendigung: { label:'Vertrags-Radar ⏰',      test: it => it.kuendbar.length > 0, tip:'Kündigungsfrist endet in ≤ 90 Tagen oder Vertrag läuft ohne Verlängerung aus' },
   stoerung:   { label:'Offene Störungen',       test: it => it.stoerOffen > 0 },
   ohne_eq:    { label:'In Wartung ohne EQ-Nr.', test: it => it.wartung && !String(it.akte.eq_nummer || '').trim() && (!String(it.akte.hersteller || '').trim() || /kone/i.test(it.akte.hersteller)), tip:'KONE-Anlagen (oder Hersteller unbekannt) bei uns in Wartung, für die noch keine KONE EQ-Nummer hinterlegt ist' },
+  zugang:     { label:'🔑 Zugang fehlt',        test: it => !_lmHatZugang(it.akte), tip:'Noch nicht eingetragen, wie wir zum Aufzug und in den Maschinenraum kommen (Schlüssel, Code, Ansprechpartner)' },
   hinweis:    { label:'Mit Hinweis 📌',         test: it => !!String(it.akte.hinweis || '').trim() || it.wichtig > 0 },
 };
 const LM_VL_FILTER = [
@@ -56618,6 +56647,20 @@ function _lmIstMitglied(f) { return !!(f && LM_STATUS[f.lm_status]); }          
 function _lmAbrRelevant(f) { return !!f && (f.lm_status === 'aktiv' || f.lm_status === 'gekuendigt'); }   // bekommt Rechnungs-Erinnerungen
 /* Notruf-Ausbau offen? (nach Kündigung, bis „✓ Notruf ausgebaut") */
 function _lmNotrufOffen(f) { return !!f && (f.lm_status === 'gekuendigt' || f.lm_status === 'archiviert') && !!f.notruf_ausbau && !f.notruf_ausgebaut_am && !!_lmParseDate(f.notruf_ausbau_bis); }
+/* v10.05: Zugang zum Aufzug (Gebäude, Schlüssel, Maschinenraum, Ansprechpartner vor Ort) */
+const LM_ZUGANG_FELDER = ['zugang_gebaeude','zugang_schluessel','zugang_code','mr_lage','mr_zugang','zugang_kontakt','zugang_tel','zugang'];
+const LM_SCHLUESSEL_ORTE = ['Schlüsseltresor am Eingang','Schlüsseldepot (Feuerwehr)','beim Hausmeister','bei uns im Büro (Schlüsselbrett)','Kunde / Verwaltung öffnet – vorher anrufen','Zahlenschloss / Code an der Tür','Dreikantschlüssel genügt'];
+const LM_MR_LAGEN = ['Dach – über Treppenhaus','Dachgeschoss / Dachboden','Keller','unten neben dem Schacht','kein Maschinenraum (MRL) – Steuerung in oberster Haltestelle','Schaltschrank im Schacht / Türrahmen'];
+function _lmHatZugang(f) { return !!f && LM_ZUGANG_FELDER.some(k => String(f[k] == null ? '' : f[k]).trim() !== ''); }
+/* Kurzform für die Liste – bewusst ohne Code */
+function _lmZugangKurz(f) {
+  if (!f) return '';
+  const t = v => String(v == null ? '' : v).trim();
+  const teile = [t(f.zugang_schluessel) || t(f.zugang_gebaeude), t(f.mr_lage) ? 'Maschinenraum: ' + t(f.mr_lage) : ''].filter(Boolean);
+  if (!teile.length && t(f.mr_zugang)) teile.push('Maschinenraum: ' + t(f.mr_zugang));
+  if (!teile.length && t(f.zugang)) teile.push(t(f.zugang).split(/\n/)[0]);
+  return _lmShort(teile.join(' · '), 140);
+}
 /* Start-Signale einer Anlage: läuft schon ein Vertrag / eine Wartung, und welche Starts liegen noch in der Zukunft?
    vertraege: [{ f, info }] aus der Akte · wv: Servicebox-Wartungsverträge · mx: Maxise-Wartungsverträge der Anlage */
 function _lmStartSignale(akte, vertraege, wv, mx, heute) {
@@ -57059,7 +57102,8 @@ function _lmItem(a) {
 function _lmMatches(it, q) {
   if (!q) return true;
   const a = it.a, k = a.kunde || {};
-  const hay = [a.anzeigeAdresse, a.name, a.kennung, a.fabriknummer, a.objektTyp, k.firmenname, k.kundennummer, it.akte.eq_nummer, it.akte.hersteller, it.akte.hinweis, String(a.id)].join(' ').toLowerCase();
+  const hay = [a.anzeigeAdresse, a.name, a.kennung, a.fabriknummer, a.objektTyp, k.firmenname, k.kundennummer, it.akte.eq_nummer, it.akte.hersteller, it.akte.hinweis, String(a.id),
+    it.akte.zugang_gebaeude, it.akte.zugang_schluessel, it.akte.mr_lage, it.akte.mr_zugang, it.akte.zugang_kontakt].join(' ').toLowerCase();
   const hayN = _lmNorm(hay);
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(t => hay.includes(t) || (_lmNorm(t).length > 1 && hayN.includes(_lmNorm(t))));
 }
@@ -57183,7 +57227,7 @@ function _lmRenderListItems() {
     else if (k === 'startet') cls = 'blau';
     else if (k === 'wartung') cls = 'gruen';
     else if (k === 'tuev' && n) cls = all.some(it => it.tuev.ampel === 'rot') ? 'rot' : 'gelb';
-    else if ((k === 'kuendigung' || k === 'ohne_eq') && n) cls = 'gelb';
+    else if ((k === 'kuendigung' || k === 'ohne_eq' || k === 'zugang') && n) cls = 'gelb';
     else if (k === 'stoerung' && n) cls = 'rot';
     else if (k === 'abrechnung' && n) cls = all.some(it => it.abrOffen.some(_lmAbrIstFaellig)) ? 'rot' : 'gelb';
     return '<button class="lm-kpi ' + cls + (_lmUi.filter === k ? ' on' : '') + '" data-k="' + k + '"' + (LM_FILTER[k].tip ? ' title="' + escapeHtml(LM_FILTER[k].tip) + '"' : '') + ' onclick="_lmSetFilter(' + _lmA(k) + ')"><div class="lm-kpi-n">' + n + '</div><div class="lm-kpi-l">' + escapeHtml(LM_FILTER[k].label) + '</div>' +
@@ -57230,12 +57274,13 @@ function _lmCardHtml(it) {
     k.firmenname ? '<span>👤 ' + escapeHtml(k.firmenname) + (k.kundennummer ? ' (' + escapeHtml(k.kundennummer) + ')' : '') + '</span>' : '',
     a.objektTyp ? '<span>' + escapeHtml(a.objektTyp) + '</span>' : '',
   ].filter(Boolean).join('');
-  const hinweis = String(it.akte.hinweis || '').trim();
+  const hinweis = String(it.akte.hinweis || '').trim(), zg = _lmZugangKurz(it.akte);
   return '<div class="lm-card' + (it.status === 'inaktiv' || it.status === 'archiviert' ? ' dim' : '') + '" onclick="lmOpenAkte(' + _lmA(it.id) + ')">' +
     '<div class="lm-card-ico' + (it.wartung ? ' wartung' : '') + '">🛗</div>' +
     '<div class="lm-card-main">' +
       '<div class="lm-card-title">' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + it.id)) + '</div>' +
       '<div class="lm-card-meta">' + meta + '</div>' +
+      (zg ? '<div class="lm-card-zg">🔑 ' + escapeHtml(zg) + '</div>' : '') +
       (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(_lmShort(hinweis, 160)) + '</div>' : '') +
     '</div>' +
     '<div class="lm-card-side">' + pills.join('') + '</div>' +
@@ -57281,7 +57326,8 @@ function _lmExportCsv() {
   const stF = _lmUi.status || 'alle';
   const items = _lmSort(_lmData.anlagen.filter(a => { if (!a || a.id == null) return false; const st = _lmAkteOf(a.id).lm_status; return LM_STATUS[st] && (stF === 'alle' ? st !== 'archiviert' : st === stF); })
     .map(_lmItem).filter(flt.test).filter(it => _lmMatches(it, _lmUi.q)), _lmUi.sort);
-  const head = ['Firma','Maxise-ID','Adresse','Fabrik-Nr.','KONE EQ-Nr.','Kunde','Kunden-Nr.','In Wartung bei uns','Quelle','Hersteller','Baujahr','Antrieb','Haltestellen','Nächste TÜV-Prüfung','Prüfart','Prüfstelle','Vertrag','Vertrag läuft bis','Nächste Kündigung bis','Wartungsrechnung offen (fällig am)','Offene Störungen','Hinweis','Status im Liftmanagement','Aktuell aktiv','Aktiv ab','Gekündigt zum','Notruf ausbauen bis'];
+  const head = ['Firma','Maxise-ID','Adresse','Fabrik-Nr.','KONE EQ-Nr.','Kunde','Kunden-Nr.','In Wartung bei uns','Quelle','Hersteller','Baujahr','Antrieb','Haltestellen','Nächste TÜV-Prüfung','Prüfart','Prüfstelle','Vertrag','Vertrag läuft bis','Nächste Kündigung bis','Wartungsrechnung offen (fällig am)','Offene Störungen','Hinweis','Status im Liftmanagement','Aktuell aktiv','Aktiv ab','Gekündigt zum','Notruf ausbauen bis',
+    'Zugang Gebäude/Aufzug','Schlüssel','Code','Maschinenraum','Maschinenraum Zugang','Ansprechpartner vor Ort','Telefon vor Ort','Hinweise Zugang'];
   const rows = items.map(it => {
     const v = _lmVtSort(it.vertraege)[0], k = it.a.kunde || {}, f = it.akte;
     return [_lmData.firma, it.id, it.a.anzeigeAdresse || it.a.name || '', it.a.fabriknummer || '', f.eq_nummer || '', k.firmenname || '', k.kundennummer || '',
@@ -57291,7 +57337,8 @@ function _lmExportCsv() {
       it.abrOffen.map(x => _lmFmtDE(x.faellig)).join(', '),
       it.stoerOffen || '', String(f.hinweis || '').replace(/\s+/g, ' ').trim(),
       it.status ? LM_STATUS[it.status].label : '', it.aktuell ? 'ja' : 'nein', it.aktiv.ab ? _lmFmtDE(it.aktiv.ab) : (f.lm_seit ? _lmFmtDE(f.lm_seit) : ''),
-      f.gekuendigt_zum ? _lmFmtDE(f.gekuendigt_zum) : '', it.notruf ? _lmFmtDE(it.notruf.faellig) : ''];
+      f.gekuendigt_zum ? _lmFmtDE(f.gekuendigt_zum) : '', it.notruf ? _lmFmtDE(it.notruf.faellig) : '',
+      f.zugang_gebaeude || '', f.zugang_schluessel || '', f.zugang_code || '', f.mr_lage || '', f.mr_zugang || '', f.zugang_kontakt || '', f.zugang_tel || '', String(f.zugang || '').replace(/\s+/g, ' ').trim()];
   });
   const esc = x => { let t = String(x == null ? '' : x); if (/^[=+\-@]/.test(t)) t = "'" + t; return /[";\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
   const csv = '\ufeff' + [head].concat(rows).map(r => r.map(esc).join(';')).join('\r\n');
@@ -57353,6 +57400,36 @@ function _lmAkteSubHtml(it) {
     f.updated ? '<span>Akte geändert ' + _lmFmtDE(_lmDate(f.updated)) + (f.updated_by ? ' von ' + escapeHtml(f.updated_by) : '') + '</span>' : '',
   ].filter(Boolean).join('');
 }
+function _lmZugangHtml(it) {
+  const f = it.akte, ap = (it.a && it.a.ansprechpartner) || {}, ed = _lmCanEdit();
+  const t = v => String(v == null ? '' : v).trim(), e = v => escapeHtml(t(v));
+  const tel = v => { const n = t(v).replace(/[^0-9+]/g, ''); return n ? '<a href="tel:' + escapeHtml(n) + '">' + e(v) + '</a>' : e(v); };
+  const zeilen = [];
+  const add = (icon, label, html) => { if (html) zeilen.push('<div class="lm-zg-z"><span class="k">' + icon + ' ' + label + '</span><span class="v">' + html + '</span></div>'); };
+  add('🏢', 'Gebäude / Aufzug', e(f.zugang_gebaeude));
+  add('🔑', 'Schlüssel', [e(f.zugang_schluessel), t(f.zugang_code) ? 'Code <b class="lm-eq">' + e(f.zugang_code) + '</b>' : ''].filter(Boolean).join(' · '));
+  add('⚙️', 'Maschinenraum', [e(f.mr_lage), e(f.mr_zugang)].filter(Boolean).join(' – '));
+  const apName = [ap.anrede, ap.vorname, ap.nachname].filter(Boolean).join(' '), apTel = ap.mobile || ap.telefon || '';
+  if (t(f.zugang_kontakt) || t(f.zugang_tel)) add('📞', 'Vor Ort', [e(f.zugang_kontakt), tel(f.zugang_tel)].filter(Boolean).join(' · '));
+  else if (apName || apTel) add('📞', 'Vor Ort', [e(apName) + (ap.rolle ? ' (' + e(ap.rolle) + ')' : ''), tel(apTel)].filter(Boolean).join(' · ') + ' <span class="lm-zg-src">aus Maxise</span>');
+  add('📝', 'Hinweise', e(f.zugang).replace(/\n/g, '<br>'));
+  const hat = _lmHatZugang(f);
+  if (!hat && t(it.a && it.a.sonstigerHinweis)) add('ℹ️', 'Maxise-Hinweis', e(it.a.sonstigerHinweis));
+  const docs = (it.eintraege || []).filter(r => r.fields && r.fields.typ === 'dokument' && r.fields.kategorie === 'notruf').length;
+  const knoepfe = (docs ? '<button type="button" class="lm-zg-b" onclick="lmAkteTab(' + _lmA('dokumente') + ')">📎 ' + docs + (docs === 1 ? ' Foto/Dokument' : ' Fotos/Dokumente') + '</button>' : '') +
+    (ed ? '<button type="button" class="lm-zg-b" onclick="document.getElementById(\'lm-zg-file\').click()" title="Foto vom Schlüsseltresor, Weg zum Maschinenraum, Schlüsselplan …">📷 Foto/Plan</button>' +
+      '<input type="file" id="lm-zg-file" accept="image/*,application/pdf" multiple style="display:none" onchange="lmUploadDialog(this.files,\'notruf\');this.value=\'\'">' +
+      '<button type="button" class="lm-zg-b" id="lm-zg-edit" onclick="lmZugangBearbeiten()">✏️ ' + (hat ? 'bearbeiten' : 'eintragen') + '</button>' : '');
+  return '<div class="lm-zugang' + (hat ? '' : ' leer') + '" id="lm-zugang"><div class="lm-zg-h"><span>🔑 Zugang zum Aufzug</span>' + (hat ? '' : '<span class="lm-zg-leer">noch nicht eingetragen</span>') +
+    (knoepfe ? '<span class="lm-zg-act">' + knoepfe + '</span>' : '') + '</div>' + (zeilen.length ? '<div class="lm-zg-grid">' + zeilen.join('') + '</div>' : '') + '</div>';
+}
+function lmZugangBearbeiten() {
+  if (_lmUi.tab !== 'uebersicht') lmAkteTab('uebersicht');
+  setTimeout(() => {
+    const el = document.getElementById('lm-zugang-form'); if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const inp = document.getElementById('lm-f-zugang_gebaeude'); if (inp && !inp.disabled) { try { inp.focus({ preventScroll: true }); } catch(_){} }
+  }, 80);
+}
 function _lmAktePillsHtml(it) {
   const p = [];
   p.push(it.wartung ? '<span class="lm-pill gruen" title="Quelle: ' + escapeHtml(it.wartungQuelle) + '">🟢 In Wartung bei uns</span>' : '<span class="lm-pill grau">⚪ nicht bei uns in Wartung' + (it.wartungQuelle ? ' (manuell)' : '') + '</span>');
@@ -57371,7 +57448,7 @@ function _lmAktePillsHtml(it) {
   const hinweis = String(it.akte.hinweis || '').trim();
   const nichtDrin = !it.status ? '<div class="lm-hinweis" style="background:#EFF6FF;border-color:#BFDBFE;border-left-color:#2152A9;color:#1E3A8A">ℹ️ Diese Anlage ist nicht im Liftmanagement – sie steht nicht in der Liste und bekommt keine Erinnerungen.' +
     (_lmCanEdit() ? ' <button class="btn prim" style="margin-left:6px;padding:3px 10px;font-size:12px" onclick="lmAkteAufnehmen(this)">+ Ins Liftmanagement aufnehmen</button>' : '') + '</div>' : '';
-  return '<div class="lm-akte-pills">' + p.join('') + '</div>' + nichtDrin + (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(hinweis) + '</div>' : '');
+  return '<div class="lm-akte-pills">' + p.join('') + '</div>' + nichtDrin + _lmZugangHtml(it) + (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(hinweis) + '</div>' : '');
 }
 function _lmRenderAkte() {
   const body = document.getElementById('liftmgmt-body'); if (!body) return;
@@ -57713,6 +57790,17 @@ function _lmTabUebersicht(it) {
   const form = '<div class="lm-sec" style="margin-top:14px"><h3>🗂 Anlagenakte <span class="lm-src">eigene Daten · je Firma getrennt</span></h3>' +
     (ed ? '' : '<div class="lm-muted" style="margin-bottom:8px">🔒 Nur Ansicht — zum Bearbeiten fehlt die Berechtigung „Liftmanagement: Akte bearbeiten".</div>') +
     '<div class="lm-form">' +
+      '<div class="lm-sep" id="lm-zugang-form" style="border-top:none;margin-top:0;padding-top:0">🔑 Zugang zum Aufzug <span class="lm-hint">steht oben in der Akte und kurz in der Liste</span></div>' +
+      _lmIn('zugang_gebaeude', 'Gebäude / Aufzug – wie kommen wir rein?', f.zugang_gebaeude, { full: true, disabled: D, ph: 'z. B. Haupteingang, Klingel „Hausmeister", Hintereingang über Hof' }) +
+      _lmIn('zugang_schluessel', 'Schlüssel – wo / wie?', f.zugang_schluessel, { list: 'lm-dl-schl', disabled: D, ph: 'z. B. Schlüsseltresor rechts am Eingang' }) +
+      _lmIn('zugang_code', 'Code (Tresor / Tür)', f.zugang_code, { disabled: D, ph: 'z. B. 4711' }) +
+      _lmIn('mr_lage', 'Maschinenraum – wo?', f.mr_lage, { list: 'lm-dl-mr', disabled: D, ph: 'z. B. Dach – über Treppenhaus' }) +
+      _lmIn('mr_zugang', 'Maschinenraum – Zugang / Schlüssel', f.mr_zugang, { disabled: D, ph: 'z. B. Schlüssel Nr. 3 am Bund, Dachluke – Leiter mitbringen' }) +
+      _lmIn('zugang_kontakt', 'Ansprechpartner vor Ort', f.zugang_kontakt, { disabled: D, ph: apName ? apName + ' (aus Maxise)' : 'z. B. Hausmeister Hr. Meier' }) +
+      _lmIn('zugang_tel', 'Telefon vor Ort', f.zugang_tel, { type: 'tel', disabled: D, ph: (ap.mobile || ap.telefon) ? (ap.mobile || ap.telefon) + ' (aus Maxise)' : 'z. B. 0170 1234567' }) +
+      _lmIn('zugang', 'Weitere Hinweise zum Zugang', f.zugang, { type: 'textarea', full: true, disabled: D, ph: 'z. B. Anmeldung beim Pförtner, nur 7–16 Uhr, Alarmanlage, Hund im Hof' }) +
+      (ed ? '<div class="full lm-form-foot" style="margin-top:0"><button type="button" class="btn prim" id="lm-save-zugang" onclick="lmSaveAkte(this)">💾 Zugang speichern</button><span class="lm-muted">speichert die ganze Akte</span></div>' : '') +
+      '<div class="lm-sep">🛗 Anlage &amp; Technik</div>' +
       _lmIn('eq_nummer', 'KONE EQ-Nummer', f.eq_nummer, { cls: 'lm-eq', disabled: D, ph: 'z. B. 41234567', hint: 'Equipment-Nummer aus dem KONE-System – steht auf KONE-Angeboten und -Berichten.' }) +
       _lmIn('wartung_status', 'Bei uns in Wartung?', f.wartung_status || '', { type: 'select', disabled: D, options: [['', _lmWartungAutoLabel(it)], ['ja', 'Ja – wir warten diese Anlage'], ['nein', 'Nein – nicht bei uns in Wartung']] }) +
       '<div class="full" id="lm-eq-sugg"></div>' +
@@ -57724,7 +57812,6 @@ function _lmTabUebersicht(it) {
       _lmIn('tragkraft_kg', 'Tragkraft (kg)', f.tragkraft_kg, { inputmode: 'numeric', disabled: D }) +
       _lmIn('personen', 'Personen', f.personen, { inputmode: 'numeric', disabled: D }) +
       _lmIn('notruf', 'Notrufsystem / Leitstelle', f.notruf, { disabled: D, ph: 'z. B. GSM-Notruf, KONE 24/7' }) +
-      _lmIn('zugang', 'Zugang / Schlüssel / Maschinenraum', f.zugang, { type: 'textarea', full: true, disabled: D, ph: 'z. B. Schlüsseltresor Code beim Hausmeister, Maschinenraum im DG' }) +
       '<div class="lm-sep">🛡 TÜV / ZÜS' + (ed ? ' <button type="button" class="btn" style="padding:3px 9px;font-size:11.5px" onclick="_lmTuevBerechnen()">↻ Termine aus letzter HP berechnen</button>' : '') + '</div>' +
       _lmIn('pruefstelle', 'Prüfstelle (ZÜS)', f.pruefstelle, { list: 'lm-dl-pruef', disabled: D }) +
       _lmIn('tuev_letzte_hp', 'Letzte Hauptprüfung', f.tuev_letzte_hp, { type: 'date', disabled: D }) +
@@ -57736,7 +57823,7 @@ function _lmTabUebersicht(it) {
     '</div>' +
     (ed ? '<div class="lm-form-foot"><button class="btn prim" id="lm-save-akte" onclick="lmSaveAkte(this)">💾 Akte speichern</button>' +
       (f.updated ? '<span class="lm-muted">zuletzt gespeichert ' + _lmFmtDE(_lmDate(f.updated)) + (f.updated_by ? ' von ' + escapeHtml(f.updated_by) : '') + '</span>' : '<span class="lm-muted">Für diese Anlage gibt es noch keine Akte – sie wird beim ersten Speichern angelegt.</span>') + '</div>' : '') +
-    dl('lm-dl-herst', LM_HERSTELLER) + dl('lm-dl-pruef', LM_PRUEFSTELLEN) +
+    dl('lm-dl-herst', LM_HERSTELLER) + dl('lm-dl-pruef', LM_PRUEFSTELLEN) + dl('lm-dl-schl', LM_SCHLUESSEL_ORTE) + dl('lm-dl-mr', LM_MR_LAGEN) +
   '</div>';
   return '<div class="lm-grid2">' + stamm + blick + '</div>' + form;
 }
@@ -57810,7 +57897,8 @@ function _lmTuevBerechnen() {
   if (g('tuev_naechste_hp')) g('tuev_naechste_hp').value = _lmAddMonths(hp, 24);
   toast('ZP = HP + 12 Monate, nächste HP = HP + 24 Monate – bitte speichern.', '');
 }
-const LM_AKTE_EDIT = ['eq_nummer','wartung_status','wartung_seit','hersteller','baujahr','antrieb','haltestellen','tragkraft_kg','personen','notruf','zugang','pruefstelle','tuev_letzte_hp','tuev_naechste_hp','tuev_naechste_zp','maengel','hinweis'];
+const LM_AKTE_EDIT = ['eq_nummer','wartung_status','wartung_seit','hersteller','baujahr','antrieb','haltestellen','tragkraft_kg','personen','notruf','zugang','pruefstelle','tuev_letzte_hp','tuev_naechste_hp','tuev_naechste_zp','maengel','hinweis',
+  'zugang_gebaeude','zugang_schluessel','zugang_code','mr_lage','mr_zugang','zugang_kontakt','zugang_tel'];
 async function _lmSaveAkteFields(a, fields) {
   const id = String(a.id);
   const base = { firma: _lmData.firma, anlage_id: id, fabriknummer: String(a.fabriknummer || ''), adresse: String(a.anzeigeAdresse || a.name || ''),
@@ -57826,7 +57914,9 @@ async function lmSaveAkte(btn) {
   const a = _lmFindAnlage(_lmUi.akteId); if (!a) return;
   const fields = {};
   for (const n of LM_AKTE_EDIT) { const el = document.getElementById('lm-f-' + n); if (el) fields[n] = String(el.value || '').trim(); }
-  const firma = _lmData.firma, id = String(a.id);
+  const vorher = _lmAkteOf(a.id);   // leer und nie gesetzt → nicht mitschicken (so stört ein noch fehlendes neues Feld nicht)
+  Object.keys(fields).forEach(k => { if (fields[k] === '' && String(vorher[k] == null ? '' : vorher[k]) === '') delete fields[k]; });
+  const firma = _lmData.firma, id = String(a.id), txt0 = btn ? btn.textContent : '';
   if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere …'; }
   try {
     await _lmSaveAkteFields(a, fields);
@@ -57834,8 +57924,11 @@ async function lmSaveAkte(btn) {
     if (_lmUi.akteId === id && _lmData.firma === firma) { _lmRefreshAkteHead(); _lmFillUebersichtDyn(_lmCurItem()); }
     // EQ-Nr. geändert → Verlauf mit der neuen Nummer erneut suchen (KONE-Berichte)
     _lmLoadAkteDetails(firma, id, true);
-  } catch(e) { toast('❌ Speichern fehlgeschlagen: ' + ((e && e.message) || e), 'err'); }
-  finally { if (btn) { btn.disabled = false; btn.textContent = '💾 Akte speichern'; } }
+  } catch(e) {
+    const m = String((e && e.message) || e);
+    toast('❌ Speichern fehlgeschlagen: ' + m + (/unknown field/i.test(m) ? ' – neue Felder fehlen noch: bitte einmal als Admin das Liftmanagement öffnen' : ''), 'err');
+  }
+  finally { if (btn) { btn.disabled = false; btn.textContent = txt0 || '💾 Akte speichern'; } }
 }
 
 /* ── Tab: Verlauf ── */
@@ -57997,7 +58090,7 @@ function lmVertragDialog(recId, prefill) {
     _lmIn(P + 'abrechnung_turnus_monate', 'Rechnung', (f.abrechnung_turnus_monate == null || f.abrechnung_turnus_monate === '') ? 12 : f.abrechnung_turnus_monate, { type: 'select', options: LM_ABR_TURNUS.map(([v, l]) => [String(v), l]) }) +
     _lmIn(P + 'abrechnung_ab', 'Erinnerung ab', _lmDate(f.abrechnung_ab), { type: 'date', hint: 'leer = Fälligkeiten ab ' + _lmFmtDE(LM_ABR_START) + '; ältere gelten als erledigt' }) +
     _lmIn(P + 'notizen', 'Notizen', f.notizen, { type: 'textarea', full: true }) +
-    '<label class="full">Vertrag als PDF anhängen (optional, max. 5 MB)<input type="file" id="lm-f-' + P + 'datei" accept="application/pdf,image/*"></label>' +
+    '<label class="full">Vertrag als PDF anhängen (optional – größere Dateien werden automatisch verkleinert)<input type="file" id="lm-f-' + P + 'datei" accept="application/pdf,image/*"></label>' +
     (Array.isArray(f.datei) && f.datei.length ? '<div class="full lm-muted">Vorhanden: ' + f.datei.map(d => '<a class="lm-link" href="' + escapeHtml(d.url) + '" target="_blank" rel="noopener">📎 ' + escapeHtml(d.filename || 'Datei') + '</a>').join(' ') + '</div>' : '') +
     '<input type="hidden" id="lm-f-' + P + 'quelle" value="' + escapeHtml(f.quelle || '') + '">' +
     '<div class="full lm-sugg" id="lm-v-prev"></div>' +
@@ -58030,7 +58123,7 @@ async function lmVertragSpeichern(btn, recId) {
   if (!_lmParseDate(fields.beginn)) return toast('Bitte den Vertragsbeginn angeben.', 'err');
   if (!fields.laufzeit_monate) return toast('Bitte die Erstlaufzeit in Monaten angeben.', 'err');
   const fileEl = document.getElementById('lm-f-v_datei'), file = fileEl && fileEl.files && fileEl.files[0];
-  if (file && file.size > LM_MAX_BYTES) return toast('Datei zu groß (' + _lmSize(file.size) + ', max. 5 MB).', 'err');
+  if (file && file.size > LM_MAX_BYTES && !_lmVerkleinerbar(file)) return toast('Datei zu groß (' + _lmSize(file.size) + ', max. 5 MB).', 'err');
   fields.updated = _lmNowIso();
   fields.adresse = String(a.anzeigeAdresse || a.name || ''); fields.kunde_name = String((a.kunde || {}).firmenname || '');
   if (!recId) Object.assign(fields, { firma: _lmData.firma, anlage_id: String(a.id), quelle: (document.getElementById('lm-f-v_quelle') || {}).value || '', created: _lmNowIso(), created_by: _lmUserName() });
@@ -58038,7 +58131,10 @@ async function lmVertragSpeichern(btn, recId) {
   try {
     let rec = recId ? await _lmUpdate(LM_T_VERTRAG, recId, fields) : await _lmCreate(LM_T_VERTRAG, fields);
     if (file) {
-      await atBlobUpload(rec.id, 'datei', file, file.name, file.type || 'application/pdf');
+      const fit = await _lmDateiPassend(file, t => { btn.textContent = '⏳ ' + t; });
+      btn.textContent = '⏳ lade hoch …';
+      await atBlobUpload(rec.id, 'datei', fit.blob, fit.name, fit.type || 'application/pdf');
+      if (fit.info) toast('📉 Automatisch verkleinert: ' + fit.info, 'ok');
       try { rec = await _lmFetchRec(LM_T_VERTRAG, rec.id); } catch(_){}
     }
     _lmUpsertLocal('vertrag', rec);
@@ -58062,7 +58158,7 @@ async function lmVertragLoeschen(recId) {
 function _lmTabDokumente(it) {
   return (_lmCanEdit() ? '<input type="file" id="lm-file" multiple style="display:none" onchange="lmUploadDialog(this.files);this.value=\'\'">' +
       '<div class="lm-drop" id="lm-drop" onclick="document.getElementById(\'lm-file\').click()">📥 <b>Dateien hierher ziehen</b> oder <u>auswählen</u><br>' +
-      '<span>TÜV-/ZÜS-Berichte, Prüfbuch, Verträge, Schaltpläne, Fotos · max. 5 MB je Datei (Fotos werden automatisch verkleinert)</span></div>' : '') +
+      '<span>TÜV-/ZÜS-Berichte, Prüfbuch, Verträge, Schaltpläne, Fotos · größere Fotos, PDFs und Videos werden automatisch auf unter 5 MB verkleinert</span></div>' : '') +
     '<div id="lm-dyn">' + _lmTabDokumenteDyn(it) + '</div>';
 }
 function _lmWireDrop() {
@@ -58127,13 +58223,15 @@ function _lmGuessKat(file) {
   if (/^image\//.test(t)) return 'foto';
   return 'sonstiges';
 }
-function lmUploadDialog(fileList) {
+function lmUploadDialog(fileList, katVorgabe) {
   if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
   const files = Array.from(fileList || []); if (!files.length) return;
   _lmUpload = { files };
-  const kat = _lmGuessKat(files[0]);
-  const zuGross = f => f.size > LM_MAX_BYTES && !/^image\//.test(f.type || '');
-  const body = '<div class="lm-up-files">' + files.map(f => '<div>' + (/^image\//.test(f.type || '') ? '🖼' : '📄') + ' ' + escapeHtml(f.name) + ' <span class="lm-muted">' + _lmSize(f.size) + '</span>' + (zuGross(f) ? ' <b style="color:#B91C1C">zu groß (max. 5 MB) – wird übersprungen</b>' : '') + '</div>').join('') + '</div>' +
+  const kat = (katVorgabe && LM_DOK_KAT.some(k => k.value === katVorgabe)) ? katVorgabe : _lmGuessKat(files[0]);
+  const groesse = f => f.size <= LM_MAX_BYTES ? '' : (_lmVerkleinerbar(f)
+    ? ' <b style="color:#B45309">über 5 MB – wird automatisch verkleinert' + (_lmIstVideo(f) ? ' (dauert etwa so lange wie das Video)' : '') + '</b>'
+    : ' <b style="color:#B91C1C">zu groß (max. 5 MB) – wird übersprungen</b>');
+  const body = '<div class="lm-up-files">' + files.map(f => '<div>' + (/^image\//.test(f.type || '') ? '🖼' : (_lmIstVideo(f) ? '🎬' : '📄')) + ' ' + escapeHtml(f.name) + ' <span class="lm-muted">' + _lmSize(f.size) + '</span>' + groesse(f) + '</div>').join('') + '</div>' +
     '<div class="lm-form" style="margin-top:12px">' +
       _lmIn('up_kat', 'Kategorie', kat, { type: 'select', options: LM_DOK_KAT.map(k => [k.value, k.icon + ' ' + k.label]) }) +
       _lmIn('up_datum', 'Datum des Dokuments', _lmToday(), { type: 'date' }) +
@@ -58154,6 +58252,13 @@ function lmUploadDialog(fileList) {
   const sel = document.getElementById('lm-f-up_kat');
   if (sel) sel.addEventListener('change', () => { const b = document.getElementById('lm-up-tuev'); if (b) b.style.display = sel.value === 'tuev' ? 'block' : 'none'; });
 }
+/* ── v10.05: Große Dateien automatisch verkleinern (Airtable nimmt max. 5 MB je Datei) ──
+   Fotos: kleiner rechnen (JPEG). PDFs: zuerst nur die Bilder im PDF neu komprimieren (Text bleibt Text);
+   reicht das nicht, werden die Seiten wie ein Scan als Bild neu aufgebaut. Videos: wie im Bericht (480p–720p). */
+const LM_ZIEL_BYTES = Math.floor(4.7 * 1024 * 1024);   // Ziel mit Sicherheitsabstand zur 5-MB-Grenze
+function _lmIstPdf(f) { return /pdf/i.test((f && f.type) || '') || /\.pdf$/i.test((f && f.name) || ''); }
+function _lmIstVideo(f) { return /^video\//i.test((f && f.type) || '') || /\.(mp4|mov|m4v|webm|3gp)$/i.test((f && f.name) || ''); }
+function _lmVerkleinerbar(f) { return /^image\//i.test((f && f.type) || '') || _lmIstPdf(f) || (_lmIstVideo(f) && typeof _bfFitVideoToLimit === 'function'); }
 async function _lmShrinkImage(file) {
   const url = URL.createObjectURL(file);
   try {
@@ -58165,6 +58270,215 @@ async function _lmShrinkImage(file) {
     return await new Promise(res => cv.toBlob(b => res(b || file), 'image/jpeg', 0.85));
   } finally { URL.revokeObjectURL(url); }
 }
+/* JPEG ohne EXIF-Block: PDF-Programme ignorieren die EXIF-Drehung, der Browser nicht → sonst stünde das Bild kopf */
+function _lmJpegOhneExif(b) {
+  if (!b || b.length < 4 || b[0] !== 0xFF || b[1] !== 0xD8) return b;
+  const teile = [b.subarray(0, 2)];
+  let i = 2, raus = false;
+  while (i + 4 <= b.length && b[i] === 0xFF) {
+    const m = b[i + 1];
+    if (m === 0xDA || m === 0xD9 || (m >= 0xD0 && m <= 0xD7) || m === 0x01 || m === 0xFF) break;   // ab hier Bilddaten / Sonderfälle: Rest unverändert
+    const ende = i + 2 + ((b[i + 2] << 8) | b[i + 3]);
+    if (ende > b.length) break;
+    if (m === 0xE1 && b[i + 4] === 0x45 && b[i + 5] === 0x78 && b[i + 6] === 0x69 && b[i + 7] === 0x66) raus = true;   // APP1 „Exif"
+    else teile.push(b.subarray(i, ende));
+    i = ende;
+  }
+  if (!raus) return b;
+  teile.push(b.subarray(i));
+  const out = new Uint8Array(teile.reduce((n, t) => n + t.length, 0));
+  let o = 0; teile.forEach(t => { out.set(t, o); o += t.length; });
+  return out;
+}
+/* PNG-Prädiktor (DecodeParms /Predictor ≥ 10) rückgängig machen – 8 Bit je Kanal */
+function _lmPngUnfilter(data, w, h, comps) {
+  const row = w * comps, out = new Uint8Array(row * h);
+  if (data.length < h * (row + 1)) return null;
+  let p = 0;
+  for (let y = 0; y < h; y++) {
+    const ft = data[p++], o = y * row;
+    for (let x = 0; x < row; x++) {
+      const r = data[p++], a = x >= comps ? out[o + x - comps] : 0, b = y ? out[o - row + x] : 0, c = (y && x >= comps) ? out[o - row + x - comps] : 0;
+      let v;
+      if (ft === 0) v = r;
+      else if (ft === 1) v = r + a;
+      else if (ft === 2) v = r + b;
+      else if (ft === 3) v = r + ((a + b) >> 1);
+      else if (ft === 4) { const pa = Math.abs(b - c), pb = Math.abs(a - c), pc = Math.abs(a + b - 2 * c); v = r + (pa <= pb && pa <= pc ? a : (pb <= pc ? b : c)); }
+      else return null;
+      out[o + x] = v & 255;
+    }
+  }
+  return out;
+}
+/* Ein Bild-Objekt im PDF kleiner neu kodieren (JPEG) – null, wenn es sich nicht lohnt oder unsicher wäre */
+async function _lmPdfBildNeu(P, obj, maxPx, q) {
+  const N = n => P.PDFName.of(n), d = obj.dict;
+  const zahl = k => { const v = d.lookup(N(k)); return v instanceof P.PDFNumber ? v.asNumber() : NaN; };
+  let filter = d.lookup(N('Filter'));
+  if (filter instanceof P.PDFArray) filter = filter.size() === 1 ? filter.lookup(0) : null;   // Filter-Ketten nicht anfassen
+  const w = zahl('Width'), h = zahl('Height'), bpc = zahl('BitsPerComponent');
+  if (!(w > 0 && h > 0) || bpc !== 8 || d.get(N('Decode')) || d.lookup(N('ImageMask')) === P.PDFBool.True || d.lookup(N('Mask')) instanceof P.PDFArray || d.get(N('SMaskInData'))) return null;
+  const sm = d.lookup(N('SMask'));
+  if (sm && sm.dict && sm.dict.get(N('Matte'))) return null;   // Matte verlangt gleiche Maße wie die Maske
+  const cs = d.lookup(N('ColorSpace'));
+  let comps = 0;
+  if (cs === N('DeviceRGB')) comps = 3;
+  else if (cs === N('DeviceGray')) comps = 1;
+  else if (cs instanceof P.PDFArray) {
+    const art = cs.lookup(0);
+    if (art === N('ICCBased')) { const st = cs.lookup(1), nn = st && st.dict && st.dict.lookup(N('N')); comps = nn instanceof P.PDFNumber ? nn.asNumber() : 0; }
+    else if (art === N('CalRGB')) comps = 3;
+    else if (art === N('CalGray')) comps = 1;
+  }
+  if (comps !== 1 && comps !== 3) return null;   // CMYK, Indexed, Sonderfarben → unverändert (notfalls Stufe 2)
+  const sc = Math.min(1, maxPx / Math.max(w, h)), cw = Math.max(1, Math.round(w * sc)), ch = Math.max(1, Math.round(h * sc));
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = ch;
+  const g = cv.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, cw, ch);
+  if (filter === N('DCTDecode')) {
+    const blob = new Blob([_lmJpegOhneExif(obj.contents)], { type: 'image/jpeg' });
+    let bild = null, url = '';
+    try {
+      if (typeof createImageBitmap === 'function') { try { bild = await createImageBitmap(blob); } catch(_){} }
+      if (!bild) { url = URL.createObjectURL(blob); bild = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('JPEG nicht lesbar')); i.src = url; }); }
+      if ((bild.naturalWidth || bild.width) !== w || (bild.naturalHeight || bild.height) !== h) return null;   // Maße passen nicht → nicht anfassen
+      g.drawImage(bild, 0, 0, cw, ch);
+    } finally { if (bild && bild.close) bild.close(); if (url) URL.revokeObjectURL(url); }
+  } else if (filter === N('FlateDecode')) {
+    if (w * h > 16000000) return null;   // Canvas-Grenze auf iPhone/iPad
+    let dp = d.lookup(N('DecodeParms'));
+    if (dp instanceof P.PDFArray) dp = dp.size() === 1 ? dp.lookup(0) : null;
+    const dz = k => { const v = dp && dp.lookup ? dp.lookup(N(k)) : null; return v instanceof P.PDFNumber ? v.asNumber() : null; };
+    const pred = dz('Predictor') || 1;
+    if (pred !== 1 && (pred < 10 || (dz('Colors') || 1) !== comps || (dz('Columns') || 1) !== w || (dz('BitsPerComponent') || 8) !== 8)) return null;
+    let raw = P.decodePDFRawStream(obj).decode();
+    if (pred >= 10) raw = _lmPngUnfilter(raw, w, h, comps);
+    if (!raw || raw.length < w * h * comps) return null;
+    const px = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0, j = 0, k = 0; i < w * h; i++) {
+      if (comps === 3) { px[j++] = raw[k++]; px[j++] = raw[k++]; px[j++] = raw[k++]; }
+      else { const v = raw[k++]; px[j++] = v; px[j++] = v; px[j++] = v; }
+      px[j++] = 255;
+    }
+    const voll = document.createElement('canvas');
+    voll.width = w; voll.height = h;
+    voll.getContext('2d').putImageData(new ImageData(px, w, h), 0, 0);
+    g.drawImage(voll, 0, 0, cw, ch);
+    voll.width = voll.height = 0;
+  } else return null;
+  const jpg = await new Promise(res => cv.toBlob(res, 'image/jpeg', q));
+  cv.width = cv.height = 0;   // Speicher sofort freigeben (iOS)
+  if (!jpg) return null;
+  const neu = new Uint8Array(await jpg.arrayBuffer());
+  if (neu.length >= obj.contents.length * 0.9) return null;   // lohnt sich nicht
+  const nd = d.clone(obj.dict.context);
+  nd.set(N('Width'), P.PDFNumber.of(cw)); nd.set(N('Height'), P.PDFNumber.of(ch));
+  nd.set(N('BitsPerComponent'), P.PDFNumber.of(8)); nd.set(N('ColorSpace'), N('DeviceRGB'));
+  nd.set(N('Filter'), N('DCTDecode')); nd.delete(N('DecodeParms')); nd.set(N('Length'), P.PDFNumber.of(neu.length));
+  return P.PDFRawStream.of(nd, neu);
+}
+/* Stufe 1: alle größeren Bilder im PDF verkleinern – Text, Links und Formularfelder bleiben erhalten */
+async function _lmPdfBilderKomprimieren(src, maxPx, q, onProgress) {
+  const P = window.PDFLib;
+  const doc = await P.PDFDocument.load(src, { ignoreEncryption: true, updateMetadata: false });
+  if (doc.isEncrypted) return { bytes: null, n: 0 };   // verschlüsselte Inhalte kann pdf-lib nicht lesen → Stufe 2
+  const N = n => P.PDFName.of(n), ctx = doc.context;
+  const objekte = ctx.enumerateIndirectObjects().filter(([, o]) => o instanceof P.PDFRawStream);
+  const masken = new Set();   // Bilder, die anderen als Maske dienen, müssen Graustufen bleiben
+  objekte.forEach(([, o]) => ['SMask', 'Mask'].forEach(k => { const r = o.dict.get(N(k)); if (r instanceof P.PDFRef) masken.add(r.toString()); }));
+  const bilder = objekte.filter(([ref, o]) => o.dict.lookup(N('Subtype')) === N('Image') && !masken.has(ref.toString()) && o.contents.length > 100 * 1024);
+  let n = 0;
+  for (let i = 0; i < bilder.length; i++) {
+    if (onProgress) onProgress('Bilder im PDF ' + (i + 1) + '/' + bilder.length);
+    try { const neu = await _lmPdfBildNeu(P, bilder[i][1], maxPx, q); if (neu) { ctx.assign(bilder[i][0], neu); n++; } }
+    catch(e) { console.warn('[LM] PDF-Bild bleibt unverändert:', e && e.message); }
+  }
+  if (!n) return { bytes: null, n: 0 };
+  if (onProgress) onProgress('PDF wird gespeichert …');
+  return { bytes: await doc.save({ useObjectStreams: true }), n };
+}
+/* Stufe 2: jede Seite als Bild (wie ein Scan) – Text ist danach nicht mehr markierbar */
+async function _lmPdfAlsBilder(src, dpi, q, onProgress) {
+  const pdfjs = await _ensurePdfJs();
+  if (!pdfjs) throw new Error('PDF-Leser nicht verfügbar');
+  const P = window.PDFLib;
+  const pdf = await pdfjs.getDocument({ data: src.slice() }).promise;   // pdf.js übernimmt den Puffer → Kopie
+  const out = await P.PDFDocument.create();
+  let summe = 0;
+  try {
+    for (let i = 1; i <= pdf.numPages; i++) {
+      if (onProgress) onProgress('Seite ' + i + '/' + pdf.numPages);
+      const page = await pdf.getPage(i);
+      const vp1 = page.getViewport({ scale: 1 });
+      const vp = page.getViewport({ scale: Math.min(dpi / 72, 4000 / Math.max(vp1.width, vp1.height)) });   // Großformate (Schaltpläne) begrenzen
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.floor(vp.width)); cv.height = Math.max(1, Math.floor(vp.height));
+      const g = cv.getContext('2d');
+      g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      const jpg = await new Promise(res => cv.toBlob(res, 'image/jpeg', q));
+      cv.width = cv.height = 0;
+      try { page.cleanup(); } catch(_){}
+      if (!jpg) throw new Error('Seite ' + i + ' ließ sich nicht umwandeln');
+      summe += jpg.size;
+      if (summe > LM_ZIEL_BYTES) return null;   // diese Stufe reicht nicht → gleich die nächste
+      const img = await out.embedJpg(new Uint8Array(await jpg.arrayBuffer()));
+      out.addPage([vp1.width, vp1.height]).drawImage(img, { x: 0, y: 0, width: vp1.width, height: vp1.height });
+    }
+  } finally { try { pdf.destroy(); } catch(_){} }
+  return await out.save({ useObjectStreams: true });
+}
+async function _lmShrinkPdf(file, onProgress) {
+  const src = new Uint8Array(await file.arrayBuffer());
+  if (window.PDFLib) {
+    for (const [maxPx, q] of [[2000, 0.72], [1500, 0.62], [1100, 0.55]]) {
+      let r;
+      try { r = await _lmPdfBilderKomprimieren(src, maxPx, q, onProgress); }
+      catch(e) { console.warn('[LM] PDF-Bilder komprimieren:', e && e.message); break; }
+      if (!r.n) break;   // keine verkleinerbaren Bilder → Stufe 2
+      if (r.bytes.length <= LM_ZIEL_BYTES) return { blob: new Blob([r.bytes], { type: 'application/pdf' }), art: 'bilder' };
+    }
+  }
+  let fehler = null;
+  for (const [dpi, q] of [[150, 0.7], [110, 0.6], [80, 0.5]]) {
+    let out = null;
+    try { out = await _lmPdfAlsBilder(src, dpi, q, onProgress); }
+    catch(e) { fehler = e; break; }
+    if (out && out.length <= LM_ZIEL_BYTES) return { blob: new Blob([out], { type: 'application/pdf' }), art: 'seiten' };
+  }
+  if (fehler && /password/i.test(String((fehler && (fehler.name || '')) + ' ' + (fehler && fehler.message)))) throw new Error('PDF ist passwortgeschützt und lässt sich nicht verkleinern');
+  throw new Error('PDF ließ sich nicht unter 5 MB bringen' + (fehler ? ' (' + ((fehler && fehler.message) || fehler) + ')' : ' – bitte aufteilen'));
+}
+/* Datei für den Upload passend machen (≤ 5 MB) → { blob, name, type, info } · wirft mit verständlicher Meldung */
+async function _lmDateiPassend(file, onProgress) {
+  const name = file.name || 'Datei', type = file.type || '';
+  if (file.size <= LM_MAX_BYTES) return { blob: file, name, type: type || (_lmIstPdf(file) ? 'application/pdf' : 'application/octet-stream'), info: '' };
+  const vorher = _lmSize(file.size);
+  if (/^image\//i.test(type)) {
+    if (onProgress) onProgress('Foto wird verkleinert …');
+    const b = await _lmShrinkImage(file);
+    if (b.size > LM_MAX_BYTES) throw new Error('Foto ließ sich nicht unter 5 MB bringen');
+    return { blob: b, name: name.replace(/\.[^.]+$/, '') + '.jpg', type: 'image/jpeg', info: name + ' (' + vorher + ' → ' + _lmSize(b.size) + ')' };
+  }
+  if (_lmIstPdf(file)) {
+    const r = await _lmShrinkPdf(file, onProgress);
+    return { blob: r.blob, name, type: 'application/pdf', info: name + ' (' + vorher + ' → ' + _lmSize(r.blob.size) + (r.art === 'seiten' ? ', Seiten als Bild – Text nicht mehr markierbar' : '') + ')' };
+  }
+  if (_lmIstVideo(file) && typeof _bfFitVideoToLimit === 'function') {
+    let out;
+    try { out = await _bfFitVideoToLimit(file, (pi, pn, fr) => onProgress && onProgress('Video wird verkleinert' + (pn > 1 ? ' (Durchgang ' + (pi + 1) + '/' + pn + ')' : '') + ' – ' + Math.round(fr * 100) + ' %')); }
+    catch(e) {
+      const m = String((e && e.message) || e);
+      throw new Error(m === 'unsupported' ? 'Video: dieses Gerät kann Videos nicht verkleinern – bitte einen Clip unter 5 MB wählen'
+        : m === 'toolong' ? 'Video zu lang für die automatische Verkleinerung (max. ca. 5 Min.)'
+        : m === 'toobig' ? 'Video ließ sich nicht unter 5 MB bringen – bitte einen kürzeren Clip wählen' : 'Video-Verkleinerung fehlgeschlagen: ' + m);
+    }
+    return { blob: out, name: out.name || name, type: out.type || 'video/webm', info: name + ' (' + vorher + ' → ' + _lmSize(out.size) + ')' };
+  }
+  throw new Error('zu groß (' + vorher + ', max. 5 MB)' + (/\.(docx?|xlsx?|pptx?)$/i.test(name) ? ' – bitte als PDF speichern, PDFs werden automatisch verkleinert' : ''));
+}
 async function lmUploadStart(btn) {
   const st = _lmUpload; if (!st || !st.files || !st.files.length) return;
   if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
@@ -58175,14 +58489,17 @@ async function lmUploadStart(btn) {
   const firma = _lmData.firma, id = String(a.id);
   btn.disabled = true;
   const prog = document.getElementById('lm-up-prog');
-  let ok = 0; const fehler = [];
+  let ok = 0; const fehler = [], verkleinert = [];
   for (let i = 0; i < st.files.length; i++) {
     const file = st.files[i];
-    if (prog) prog.textContent = '⏳ ' + (i + 1) + ' / ' + st.files.length + ': ' + file.name;
+    const stand = t => { if (prog) prog.textContent = '⏳ ' + (i + 1) + ' / ' + st.files.length + ': ' + file.name + (t ? ' – ' + t : ''); };
+    stand('');
     try {
-      let blob = file, name = file.name, type = file.type || 'application/octet-stream';
-      if (blob.size > LM_MAX_BYTES && /^image\//.test(type)) { blob = await _lmShrinkImage(file); type = 'image/jpeg'; name = name.replace(/\.[^.]+$/, '') + '.jpg'; }
-      if (blob.size > LM_MAX_BYTES) throw new Error('zu groß (' + _lmSize(file.size) + ', max. 5 MB)');
+      const fit = await _lmDateiPassend(file, stand);
+      const blob = fit.blob, name = fit.name, type = fit.type;
+      if (blob.size > LM_MAX_BYTES) throw new Error('zu groß (' + _lmSize(blob.size) + ', max. 5 MB)');
+      if (fit.info) verkleinert.push(fit.info);
+      stand('wird hochgeladen …');
       const rec = await _lmCreate(LM_T_EINTRAG, { titel: (st.files.length === 1 && titel1) ? titel1 : file.name.replace(/\.[^.]+$/, ''), firma, anlage_id: id, typ: 'dokument', kategorie: kat,
         text, datum, pruefart, ergebnis, created: _lmNowIso(), created_by: _lmUserName() });
       await atBlobUpload(rec.id, 'datei', blob, name, type);
@@ -58200,8 +58517,9 @@ async function lmUploadStart(btn) {
   }
   _lmUpload = null;
   _lmCloseModal('lm-up-modal');
-  if (fehler.length) _mxTextModal('⚠ ' + ok + ' von ' + st.files.length + ' Dateien hochgeladen', 'Nicht übernommen:\n\n' + fehler.join('\n'));
-  else toast('✅ ' + ok + ' Datei' + (ok === 1 ? '' : 'en') + ' in der Akte gespeichert', 'ok');
+  const kleinTxt = verkleinert.length ? 'Automatisch verkleinert: ' + verkleinert.join('; ') : '';
+  if (fehler.length) _mxTextModal('⚠ ' + ok + ' von ' + st.files.length + ' Dateien hochgeladen', 'Nicht übernommen:\n\n' + fehler.join('\n') + (kleinTxt ? '\n\n' + kleinTxt : ''));
+  else toast('✅ ' + ok + ' Datei' + (ok === 1 ? '' : 'en') + ' in der Akte gespeichert' + (kleinTxt ? ' · ' + kleinTxt : ''), 'ok');
   if (_lmUi.akteId === id && _lmData.firma === firma) { _lmRefreshAkteHead(); _lmRefreshDyn(); }
 }
 /* Nach einem TÜV-Bericht die Prüftermine fortschreiben (HP alle 2 Jahre, ZP dazwischen) */
