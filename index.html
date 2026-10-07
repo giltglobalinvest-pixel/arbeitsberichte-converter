@@ -3718,7 +3718,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.16';
+const APP_VERSION = 'v10.17';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -11724,7 +11724,8 @@ let _anlagenCache = { firma:null, items:null, loadedAt:0, loading:false };
 let _anlagenMatches = [];        // aktuell gefilterte Treffer für Index-Lookup beim Klick
 let _anlagenDebounceTimer = null;
 let _currentSelectedAnlage = null;  // ausgewählte Anlage für ERP-Auftragserstellung
-let _kontakteCache = new Map();     // kundenNr → Kontakte[]
+let _kontakteCache = new Map();     // v10.17: Firma|Kundennummer → Kontakte[] (dieselbe Nummer gibt es in beiden Firmen)
+function _ktK(firma, nr) { return String(firma || (typeof getCurrentFirmaSlug === 'function' ? getCurrentFirmaSlug() : '') || '') + '|' + String(nr == null ? '' : nr); }
 
 /* ════════════════════════════════════════════════════════════
    ERP-CACHE (localStorage, stale-while-revalidate)
@@ -12056,11 +12057,11 @@ async function _loadKontakteForAnlage(anlage) {
   hint.textContent = 'Lade Kontakte für Kunde '+kundenNr+'…';
   const firmaSlug = getCurrentFirmaSlug();
   try {
-    let kontakte = _kontakteCache.get(kundenNr);
+    let kontakte = _kontakteCache.get(_ktK(firmaSlug, kundenNr));
     if (!kontakte) {
       kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
       if (!Array.isArray(kontakte)) kontakte = (kontakte && (kontakte.content || kontakte.items || kontakte.data)) || [];
-      _kontakteCache.set(kundenNr, kontakte);
+      _kontakteCache.set(_ktK(firmaSlug, kundenNr), kontakte);
     }
     if (kontakte.length === 0) {
       sel.innerHTML = '<option value="">(Keine Kontakte für diesen Kunden im ERP)</option>';
@@ -23519,12 +23520,12 @@ async function _mailchimpBulkSyncFromKundenView() {
     const kundenNr = k.kundennummer || k.id;
     let kontakte = [];
     try {
-      if (_kontakteCache.has(String(kundenNr))) {
-        kontakte = _kontakteCache.get(String(kundenNr));
+      if (_kontakteCache.has(_ktK(firmaSlug, kundenNr))) {
+        kontakte = _kontakteCache.get(_ktK(firmaSlug, kundenNr));
       } else {
         const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
         kontakte = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
-        _kontakteCache.set(String(kundenNr), kontakte);
+        _kontakteCache.set(_ktK(firmaSlug, kundenNr), kontakte);
       }
     } catch(e) {
       stats.errors.push('Kunde '+kundenNr+': '+e.message.slice(0,120));
@@ -23603,12 +23604,12 @@ async function renderKontakteView(opts) {
           const nr = k.kundennummer || k.id;
           try {
             let kontakte;
-            if (_kontakteCache.has(String(nr))) {
-              kontakte = _kontakteCache.get(String(nr));
+            if (_kontakteCache.has(_ktK(firmaSlug, nr))) {
+              kontakte = _kontakteCache.get(_ktK(firmaSlug, nr));
             } else {
               const res = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(nr)+'/Kontakte');
               kontakte = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
-              _kontakteCache.set(String(nr), kontakte);
+              _kontakteCache.set(_ktK(firmaSlug, nr), kontakte);
             }
             for (const c of kontakte) {
               if (!c) continue;
@@ -45918,12 +45919,12 @@ async function _nwvResolveKontaktForKunde(firmaSlug, kunde) {
   if (!kdNr) return fallback;
   try {
     let kontakte;
-    if (_kontakteCache && _kontakteCache.has && _kontakteCache.has(String(kdNr))) {
-      kontakte = _kontakteCache.get(String(kdNr));
+    if (_kontakteCache && _kontakteCache.has && _kontakteCache.has(_ktK(firmaSlug, kdNr))) {
+      kontakte = _kontakteCache.get(_ktK(firmaSlug, kdNr));
     } else {
       kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kdNr)+'/Kontakte');
       if (!Array.isArray(kontakte)) kontakte = (kontakte && (kontakte.content || kontakte.items || kontakte.data)) || [];
-      if (_kontakteCache && _kontakteCache.set) _kontakteCache.set(String(kdNr), kontakte);
+      if (_kontakteCache && _kontakteCache.set) _kontakteCache.set(_ktK(firmaSlug, kdNr), kontakte);
     }
     if (!Array.isArray(kontakte) || !kontakte.length) return fallback;
     const isStandard = k => !!(
@@ -46754,12 +46755,12 @@ async function openKundeDetail(kundeIdOrIdx) {
     try {
       const kundenNr = kunde.kundennummer || kunde.id;
       let kontakte;
-      if (_kontakteCache.has(String(kundenNr))) {
-        kontakte = _kontakteCache.get(String(kundenNr));
+      if (_kontakteCache.has(_ktK(firmaSlug, kundenNr))) {
+        kontakte = _kontakteCache.get(_ktK(firmaSlug, kundenNr));
       } else {
         kontakte = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
         if (!Array.isArray(kontakte)) kontakte = (kontakte && (kontakte.content || kontakte.items || kontakte.data)) || [];
-        _kontakteCache.set(String(kundenNr), kontakte);
+        _kontakteCache.set(_ktK(firmaSlug, kundenNr), kontakte);
       }
       _renderKundeKontakteList(kontakte);
     } catch(e) {
@@ -46925,13 +46926,13 @@ async function _setStandardAnsprechpartner(idx, btn) {
   }
 
   if (success) {
-    _kontakteCache.delete(String(kundenNr));
+    _kontakteCache.delete(_ktK(firmaSlug, kundenNr));
     if (btn) { btn.textContent = '⭐ Standard'; btn.style.background='#FBBF24'; btn.style.color='#78350F'; }
     toast('⭐ Standard-Ansprechpartner gesetzt ('+success._hint+')','ok');
     try {
       const fresh = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
       const list = Array.isArray(fresh) ? fresh : ((fresh && (fresh.content||fresh.items||fresh.data))||[]);
-      _kontakteCache.set(String(kundenNr), list);
+      _kontakteCache.set(_ktK(firmaSlug, kundenNr), list);
       _renderKundeKontakteList(list);
     } catch(_) {}
     return;
@@ -46975,10 +46976,10 @@ async function _createStandardKontaktWorkaround(kundenNr, basisKontakt) {
     toast('✅ Neuer Kontakt mit Rolle "'+rolle+'" angelegt','ok');
     document.getElementById('std-ansp-fail')?.remove();
     // Kontakte-Cache leeren + neu laden
-    _kontakteCache.delete(String(kundenNr));
+    _kontakteCache.delete(_ktK(firmaSlug, kundenNr));
     const fresh = await erpFetch('/aufzug/'+firmaSlug+'/api/Kunden/'+encodeURIComponent(kundenNr)+'/Kontakte');
     const list = Array.isArray(fresh) ? fresh : ((fresh && (fresh.content||fresh.items||fresh.data))||[]);
-    _kontakteCache.set(String(kundenNr), list);
+    _kontakteCache.set(_ktK(firmaSlug, kundenNr), list);
     _renderKundeKontakteList(list);
     setTimeout(() => {
       alert('Kontakt angelegt. Bitte jetzt einen Bulk-Import-Test machen — wenn der durchläuft, '+
@@ -47213,7 +47214,7 @@ function _normalizeRechnung(r, erpHost, today) {
   const anlageId = anlage.id || '';
   const fabriknummer = anlage.fabriknummer || '';
   let status = String(r.status || r.zahlungsstatus || '').toLowerCase();
-  const storniert = !!(r.storniert || r.canceled);
+  const storniert = !!(r.storniert || r.canceled || r.cancelled) || /storn|cancel/.test(status);   // v10.17: auch Status „Storniert"/„Cancelled" – zählt nirgends mit
   if (storniert) status = 'storniert';
   else if (bezahltAm) status = 'bezahlt';
   else if (status.includes('bezahlt') || status.includes('paid')) status = 'bezahlt';
@@ -47454,12 +47455,12 @@ function _openNewKontaktFromKundeDetail() {
     kundenId:   kunde.kundennummer || kunde.id,
     kundenname: kunde.firmenname,
     onCreated: async () => {
-      _kontakteCache.delete(String(kunde.kundennummer || kunde.id));
+      _kontakteCache.delete(_ktK(modal._firmaSlug, kunde.kundennummer || kunde.id));
       // Neu laden
       try {
         const k = await erpFetch('/aufzug/'+modal._firmaSlug+'/api/Kunden/'+encodeURIComponent(kunde.kundennummer || kunde.id)+'/Kontakte');
         const list = Array.isArray(k) ? k : (k.content || k.items || k.data || []);
-        _kontakteCache.set(String(kunde.kundennummer || kunde.id), list);
+        _kontakteCache.set(_ktK(modal._firmaSlug, kunde.kundennummer || kunde.id), list);
         _renderKundeKontakteList(list);
       } catch(_){}
     }
@@ -48047,7 +48048,7 @@ async function _submitCreateKontakt() {
     const created = await erpFetch('/aufzug/'+m._firmaSlug+'/api/kontakte', { method:'POST', body: payload });
     if (!created || !created.id) throw new Error('ERP gab keine ID zurück.');
     // Kontakte-Cache invalidieren
-    _kontakteCache.delete(String(opts.kundenId));
+    _kontakteCache.delete(_ktK(m._firmaSlug, opts.kundenId));
     toast('🚀 Kontakt "'+vorname+' '+nachname+'" angelegt.', 'ok');
     m.remove();
     // ── Auto-Sync zu Mailchimp (fire-and-forget, nicht blockierend) ──
@@ -57270,7 +57271,7 @@ const LM_SRC_FIELDS = {
   bb:        ['firma','app_bb_num','erstellt_am','titel','status','app_pdf','anlage_id'],
   lv:        ['firma','lv_num','titel','status','erstellt_am','pdf','anlage_id'],
   gbu:       ['firma','anlage_id','status','erstellt_am','naechste_pruefung','gbu_pdf'],
-  wv:        ['firma','vertragsnummer','titel','status','start_datum','laufzeit_monate','wartungen_pro_jahr','jahrespreis_gesamt','vertrag_pdf','anlagen_json','archived','created','kunde_name','kontakt_name','kontakt_email'],
+  wv:        ['firma','vertragsnummer','titel','status','start_datum','laufzeit_monate','wartungen_pro_jahr','jahrespreis_gesamt','vertrag_pdf','anlagen_json','archived','created','kunde_name','kontakt_name','kontakt_email','abrechnung_turnus'],
 };
 
 /* ── Zustand ── */
@@ -58749,7 +58750,7 @@ function _lmTabsHtml(it) {
     ['uebersicht', '📋 Übersicht'],
     ['wartung', '🔧 Wartungsberichte' + (_lmCache(it.id) && _lmCache(it.id).src ? ' (' + _lmWartBerichte(it, _lmCache(it.id)).length + ')' : '')],
     ['verlauf', '🕘 Verlauf'],
-    ['vertraege', '📑 Verträge' + ((it.vertraege.length + it.wv.length) ? ' (' + (it.vertraege.length + it.wv.length) + ')' : '')],
+    ['vertraege', '📑 Verträge' + (it.vertraege.length ? ' (' + it.vertraege.length + ')' : '')],   // v10.17: nur der gewählte Vertrag zählt
     ['anfragen', typeof _anTabLabel === 'function' ? _anTabLabel(it) : '📨 Anfragen'],
     ['dokumente', '📂 Dokumente' + (it.docs ? ' (' + it.docs + ')' : '')],
     ['notizen', '📝 Notizen & Störungen' + (it.stoerOffen ? ' · 🚨 ' + it.stoerOffen : '')],
@@ -59319,7 +59320,7 @@ function _lmFillUebersichtDyn(it) {
     st.innerHTML = '<div class="lm-stats">' +
       box('Wartung bei uns', it.wartung ? '🟢 ja <span class="lm-muted">(' + escapeHtml(it.wartungQuelle) + ')</span>' : '⚪ nein') +
       box('TÜV / ZÜS', '<span class="lm-pill ' + _lmAmpelCls(it.tuev.ampel) + '">' + escapeHtml(_lmTuevKurz(it.tuev)) + '</span>') +
-      box('Vertrag', vs[0] ? escapeHtml(vs[0].info.label || _lmArtLabel(vs[0].f.art)) : (it.wv.length ? 'Servicebox-WV ' + escapeHtml(String((it.wv[0].fields || {}).vertragsnummer || '')) : (mx.length ? mx.length + '× Wartungsangebot in Maxise' : '– keiner erfasst'))) +
+      box('Vertrag', vs[0] ? escapeHtml(vs[0].info.label || _lmArtLabel(vs[0].f.art)) : ((it.wv.length + mx.length) ? '<a class="lm-link" onclick="lmAkteTab(' + _lmA('vertraege') + ')">noch nicht gewählt · ' + (it.wv.length + mx.length) + ' Angebot' + ((it.wv.length + mx.length) === 1 ? '' : 'e') + ' →</a>' : '– keiner erfasst')) +   // v10.17
       (typeof _lmRvBlickHtml === 'function' ? box('Rahmenvereinbarung', _lmRvBlickHtml(it)) : '') +   // v10.12
       box('Letzte Wartung', loading ? lad : (wd.length ? _lmFmtDE(wd[wd.length - 1]) + ' <span class="lm-muted">· ' + wd.filter(x => x.slice(0, 4) === jahr).length + '× in ' + jahr + '</span>' : '– kein Wartungsbericht')) +
       box('Wartungsfenster', !it.wartF ? (it.wartung ? '<span class="lm-muted">wird berechnet …</span>' : '–') : (it.wartF.status === 'unbekannt' ? '<span class="lm-muted">Wartungen pro Jahr fehlt</span>'
@@ -59505,28 +59506,30 @@ function _lmTabVertraegeDyn(it) {
   if (akteAbr) html += '<div class="lm-vt gelb"><div class="lm-vt-head"><span class="lm-vt-title">Wartung laut früherer Angabe in der Akte</span><span class="lm-pill grau">ohne erfassten Vertrag</span></div>' +
     '<div class="lm-vt-line">Wartungsbeginn ' + _lmFmtDE(akteAbr.beginn) + ' – früher direkt in der Akte eingetragen. Bitte als Vertrag erfassen: dann kommen Laufzeit, Kündigung und Preis dazu, und die Angaben stehen nur noch im Vertrag.</div>' +
     (_lmCanEdit() ? '<div class="lm-vt-act"><button class="btn prim" onclick="lmAltAlsVertrag()">→ als Vertrag erfassen</button></div>' : '') + _lmAbrBlockHtml(akteAbr) + '</div>';
-  if (!vs.length && !akteAbr) html += '<div class="lm-empty" style="margin-bottom:12px">Noch kein Vertrag in der Akte.' + (_lmCanEdit() ? ' Mit „+ Vertrag erfassen" anlegen' + (mx.length ? ' oder unten ein Maxise-Angebot übernehmen' : '') + '.' : '') + '</div>';
+  const wvs = (c && c.src && c.src.wvs) || [], wahl = mx.length + wvs.filter(r => !(r.fields || {}).archived).length;   // v10.17: Angebote zur Auswahl
+  if (!vs.length && !akteAbr) html += '<div class="lm-empty lm-vt-leer" style="margin-bottom:12px"><b>Noch kein Vertrag gewählt.</b> Es gibt genau einen Vertrag je Aufzug' +
+    (wahl ? ' – unten ' + (wahl === 1 ? 'das Angebot' : 'eines der ' + wahl + ' Angebote') + ' mit „✓ Als Vertrag nehmen" wählen' + (_lmCanEdit() ? ' oder mit „+ Vertrag erfassen" selbst anlegen' : '') : (_lmCanEdit() ? ' – mit „+ Vertrag erfassen" anlegen' : '')) + '.</div>';
   html += vs.map(v => _lmVertragCardHtml(v, wDates, '', _lmAbrBlockHtml(abr.get('lm:' + v.rec.id)))).join('');
   if (mx.length) {
     const prices = canSeePrices();
-    html += '<div class="lm-h4">🔗 Wartungs-/Notruf-Angebote in Maxise</div>' + mx.map(m => {
+    html += _lmVtWahlKopf(vs) + '<div class="lm-h4">🔗 Wartungs-/Notruf-Angebote in Maxise</div>' + mx.map(m => {
       const uebernommen = it.vertraege.some(v => String(v.f.quelle || '') === 'maxise:' + m.angebotId);
       return '<div class="lm-vt grau"><div class="lm-vt-head"><span class="lm-vt-title">Maxise-Angebot ' + escapeHtml(m.nummer) + '</span>' +
         (it.maxiseWartung ? '<span class="lm-pill gruen">Wartungsauftrag bestätigt</span>' : '<span class="lm-pill grau">ohne bestätigten Auftrag</span>') + '</div>' +
         '<div class="lm-vt-line">' + escapeHtml([m.bezeichnung, m.beginn ? 'Beginn ' + _lmFmtDE(m.beginn) : '', m.ende ? 'Ende ' + _lmFmtDE(m.ende) : 'unbefristet', m.proJahr ? m.proJahr + '× Wartung/Jahr' : '', (prices && m.jahrespreis) ? _lmMoney(m.jahrespreis) + ' netto/Jahr' : ''].filter(Boolean).join(' · ')) + '</div>' +
         _lmAbrBlockHtml(abr.get('maxise:' + m.angebotId)) +
-        (_lmCanEdit() && !uebernommen ? '<div class="lm-vt-act"><button class="btn" onclick="lmVertragAusMaxise(' + _lmA(m.angebotId) + ')">→ als Vertrag in die Akte übernehmen</button></div>' : (uebernommen ? '<div class="lm-vt-line">✓ in die Akte übernommen</div>' : '')) +
+        (_lmCanEdit() && !uebernommen ? '<div class="lm-vt-act"><button class="btn prim" onclick="lmVertragAusMaxise(' + _lmA(m.angebotId) + ')">✓ Als Vertrag nehmen</button></div>' : (uebernommen ? '<div class="lm-vt-line lm-vt-gewaehlt">✓ als Vertrag gewählt</div>' : '')) +
       '</div>';
     }).join('');
   } else if (_lmWartung.firma !== _lmData.firma) html += '<div class="lm-muted" style="margin-top:10px">⏳ Maxise-Wartungsangebote werden geladen …</div>';
-  const wvs = (c && c.src && c.src.wvs) || [];
   if (wvs.length) {
-    html += '<div class="lm-h4">📑 Wartungsverträge aus der Servicebox (WV)</div>' + wvs.map(r => {
-      const f = r.fields || {};
-      return '<div class="lm-vt ' + (f.status === 'aktiv' ? 'gruen' : 'grau') + '"><div class="lm-vt-head"><span class="lm-vt-title">' + escapeHtml(f.vertragsnummer || f.titel || 'Wartungsvertrag') + '</span><span class="lm-pill ' + (f.status === 'aktiv' ? 'gruen' : 'grau') + '">' + escapeHtml(f.status || 'entwurf') + '</span>' + (f.archived ? '<span class="lm-pill grau">archiviert</span>' : '') + '</div>' +
+    html += (mx.length ? '' : _lmVtWahlKopf(vs)) + '<div class="lm-h4">📑 Wartungsverträge aus der Servicebox (WV)</div>' + wvs.map(r => {
+      const f = r.fields || {}, gewaehlt = it.vertraege.some(v => String(v.f.quelle || '') === 'wv:' + r.id);   // v10.17
+      return '<div class="lm-vt ' + (f.status === 'aktiv' ? 'gruen' : 'grau') + '"><div class="lm-vt-head"><span class="lm-vt-title">' + escapeHtml(f.vertragsnummer || f.titel || 'Wartungsvertrag') + '</span><span class="lm-pill ' + (f.status === 'aktiv' ? 'gruen' : 'grau') + '" title="Status des Wartungsvertrags in der Servicebox">' + escapeHtml(f.status || 'entwurf') + '</span>' + (f.archived ? '<span class="lm-pill grau">archiviert</span>' : '') + (gewaehlt ? '<span class="lm-pill gruen">✓ als Vertrag gewählt</span>' : '') + '</div>' +
         '<div class="lm-vt-line">' + escapeHtml([_lmDate(f.start_datum) ? 'Start ' + _lmFmtDE(_lmDate(f.start_datum)) : '', f.laufzeit_monate ? f.laufzeit_monate + ' Mon. Laufzeit' : '', f.wartungen_pro_jahr ? f.wartungen_pro_jahr + '× Wartung/Jahr' : '', (canSeePrices() && Number(f.jahrespreis_gesamt)) ? _lmMoney(f.jahrespreis_gesamt) + ' netto/Jahr' : ''].filter(Boolean).join(' · ')) + '</div>' +
         (Array.isArray(f.vertrag_pdf) && f.vertrag_pdf[0] ? '<div class="lm-tl-links"><a href="' + escapeHtml(f.vertrag_pdf[0].url) + '" target="_blank" rel="noopener">📄 Vertrag (PDF)</a></div>' : '') +
-        _lmAbrBlockHtml(abr.get('wv:' + r.id)) + (typeof _anVertragZeileHtml === 'function' ? _anVertragZeileHtml(it.id, 'wv:' + r.id, true) : '') + '</div>';
+        _lmAbrBlockHtml(abr.get('wv:' + r.id)) + (typeof _anVertragZeileHtml === 'function' ? _anVertragZeileHtml(it.id, 'wv:' + r.id, true) : '') +
+        (_lmCanEdit() && !gewaehlt && !f.archived ? '<div class="lm-vt-act"><button class="btn prim" onclick="lmVertragAusWv(' + _lmA(r.id) + ')">✓ Als Vertrag nehmen</button></div>' : '') + '</div>';
     }).join('');
   }
   return html;
@@ -59539,6 +59542,33 @@ function lmVertragAusMaxise(angebotId) {
     vertragsnummer: 'Maxise-Angebot ' + m.nummer, art, notruf_inkl: art !== 'wartung', beginn: m.beginn || m.datum || '',
     laufzeit_monate: (m.beginn && m.ende) ? _lmMonthsBetween(m.beginn, m.ende) : 12, verlaengerung_monate: 12, kuendigungsfrist_monate: 3,
     wartungen_pro_jahr: m.proJahr || '', jahrespreis_netto: m.jahrespreis || '', quelle: 'maxise:' + m.angebotId,
+    _herkunft: 'Aus Maxise-Angebot ' + m.nummer + ' – Angaben bitte prüfen und speichern.',
+  });
+}
+/* v10.17: Kopf über den Angeboten – ohne Vertrag „einen wählen", mit Vertrag „weitere, nicht gewählt" */
+function _lmVtWahlKopf(vs) {
+  return '<div class="lm-h4 lm-vt-wahl-h">' + (vs.length ? '🗂 Weitere Angebote – nicht als Vertrag gewählt' : '🗂 Angebote für diesen Aufzug – einen als Vertrag wählen') + '</div>';
+}
+/* v10.17: andere Verträge in der Akte dieses Aufzugs (es gibt nur einen) */
+function _lmVtAndere(anlageId, ohneId) { return (_lmData.vertraege || []).filter(r => r && r.id !== ohneId && String((r.fields || {}).anlage_id || '') === String(anlageId)); }
+/* v10.17: Servicebox-Wartungsvertrag (auch Entwurf) als DEN Vertrag dieses Aufzugs nehmen – vorbelegt, das PDF kommt mit */
+function lmVertragAusWv(recId) {
+  const id = String(_lmUi.akteId), c = _lmCache(id);
+  const r = ((c && c.src && c.src.wvs) || []).concat((_lmData.wvMap && _lmData.wvMap.get(id)) || []).find(x => x && x.id === recId); if (!r) return toast('Wartungsvertrag nicht gefunden.', 'err');
+  const f = r.fields || {}, a = _lmFindAnlage(id) || {};
+  let al = []; try { al = JSON.parse(f.anlagen_json || '[]') || []; } catch(_){}
+  al = Array.isArray(al) ? al : [];
+  const meine = al.find(x => String((x && (x.id || x.anlage_id)) || '') === id) || {};
+  const preis = Number(meine.jahrespreis) > 0 ? Number(meine.jahrespreis) : ((al.length === 1 && Number(f.jahrespreis_gesamt) > 0) ? Number(f.jahrespreis_gesamt) : '');
+  const notruf = !!(_lmData.wvNotruf && _lmData.wvNotruf.has(r.id)), t = String(f.abrechnung_turnus || '').toLowerCase();
+  const pdf = Array.isArray(f.vertrag_pdf) && f.vertrag_pdf[0] && f.vertrag_pdf[0].url ? f.vertrag_pdf[0] : null, nr = f.vertragsnummer || f.titel || '';
+  lmVertragDialog(null, {
+    vertragsnummer: nr, art: notruf ? 'wartung_notruf' : 'wartung', notruf_inkl: notruf, partner: f.kunde_name || (a.kunde || {}).firmenname || '',
+    beginn: _lmDate(f.start_datum) || '', laufzeit_monate: Number(f.laufzeit_monate) || 12, verlaengerung_monate: 12, kuendigungsfrist_monate: 3,
+    wartungen_pro_jahr: Number(f.wartungen_pro_jahr) || '', jahrespreis_netto: preis,
+    abrechnung_turnus_monate: /quartal|viertel/.test(t) ? 3 : (/halb/.test(t) ? 6 : (/monat/.test(t) ? 1 : 12)),
+    quelle: 'wv:' + r.id, _pdf: pdf ? { url: pdf.url, name: pdf.filename || ((nr || 'Wartungsvertrag') + '.pdf') } : null,
+    _herkunft: 'Aus Servicebox-Wartungsvertrag ' + (nr || '') + (f.status ? ' (Status dort: ' + f.status + ')' : '') + ' – Angaben bitte prüfen und speichern.',
   });
 }
 function lmVertragDialog(recId, prefill) {
@@ -59547,8 +59577,10 @@ function lmVertragDialog(recId, prefill) {
   const rec = recId ? (_lmData.vertraege || []).find(r => r.id === recId) : null;
   if (recId && !rec) return toast('Vertrag nicht gefunden.', 'err');
   const f = rec ? _lmVtNorm(rec.fields) : Object.assign({ art: 'wartung', partner: (a.kunde || {}).firmenname || '', beginn: '', laufzeit_monate: 12, verlaengerung_monate: 12, kuendigungsfrist_monate: 3, wartungen_pro_jahr: 4 }, prefill || {});
-  const P = 'v_';
-  const body = '<div class="lm-form" oninput="_lmVertragVorschau()" onchange="_lmVertragVorschau()">' +
+  const P = 'v_', alte = rec ? [] : _lmVtAndere(a.id);   // v10.17: es gibt nur einen Vertrag je Aufzug
+  const body = (alte.length ? '<div class="lm-banner warn" id="lm-v-ersetzt">⚠ Es gibt nur einen Vertrag je Aufzug – beim Speichern ersetzt dieser den bisherigen (' + escapeHtml(alte.map(x => x.fields.vertragsnummer || _lmArtLabel(x.fields.art)).join(', ')) + ').</div>' : '') +
+    (f._herkunft ? '<div class="lm-sugg" style="margin:0 0 12px">📑 <span style="flex:1;min-width:0">' + escapeHtml(f._herkunft) + '</span></div>' : '') +
+    '<div class="lm-form" oninput="_lmVertragVorschau()" onchange="_lmVertragVorschau()">' +
     _lmIn(P + 'vertragsnummer', 'Vertragsnummer', f.vertragsnummer, { ph: 'z. B. WV-2026-014' }) +
     _lmIn(P + 'art', 'Art', f.art || 'wartung', { type: 'select', options: LM_VERTRAG_ARTEN.map(x => [x.value, x.label]) }) +
     _lmIn(P + 'partner', 'Vertragspartner', f.partner, { full: true, ph: 'Kunde / Hausverwaltung' }) +
@@ -59570,6 +59602,8 @@ function lmVertragDialog(recId, prefill) {
     _lmIn(P + 'notizen', 'Notizen', f.notizen, { type: 'textarea', full: true }) +
     '<label class="full">Vertrag als PDF anhängen (optional – größere Dateien werden automatisch verkleinert)<input type="file" id="lm-f-' + P + 'datei" accept="application/pdf,image/*"></label>' +
     (Array.isArray(f.datei) && f.datei.length ? '<div class="full lm-muted">Vorhanden: ' + f.datei.map(d => '<a class="lm-link" href="' + escapeHtml(d.url) + '" target="_blank" rel="noopener">📎 ' + escapeHtml(d.filename || 'Datei') + '</a>').join(' ') + '</div>' : '') +
+    (f._pdf && f._pdf.url ? '<div class="full lm-sugg" id="lm-v-pdf" style="margin:0">📄 <span style="flex:1;min-width:0">Der Vertrag (PDF) aus der Servicebox kommt mit: <a class="lm-link" href="' + escapeHtml(f._pdf.url) + '" target="_blank" rel="noopener">' + escapeHtml(f._pdf.name) + '</a> – eine oben gewählte Datei ersetzt ihn.</span></div>' +
+      '<input type="hidden" id="lm-f-' + P + 'pdf_url" value="' + escapeHtml(f._pdf.url) + '"><input type="hidden" id="lm-f-' + P + 'pdf_name" value="' + escapeHtml(f._pdf.name) + '">' : '') +   // v10.17
     '<input type="hidden" id="lm-f-' + P + 'quelle" value="' + escapeHtml(f.quelle || '') + '">' +
     '<div class="full lm-sugg" id="lm-v-prev"></div>' +
   '</div>';
@@ -59647,6 +59681,9 @@ async function lmVertragSpeichern(btn, recId) {
   fields.updated = _lmNowIso();
   fields.adresse = String(a.anzeigeAdresse || a.name || ''); fields.kunde_name = String((a.kunde || {}).firmenname || '');
   if (!recId) Object.assign(fields, { firma: _lmData.firma, anlage_id: String(a.id), quelle: (document.getElementById('lm-f-v_quelle') || {}).value || '', created: _lmNowIso(), created_by: _lmUserName() });
+  const alte = recId ? [] : _lmVtAndere(a.id);   // v10.17: nur ein Vertrag je Aufzug
+  if (alte.length && !confirm('Es gibt nur einen Vertrag je Aufzug.\n\nDer bisherige Vertrag „' + alte.map(x => x.fields.vertragsnummer || _lmArtLabel(x.fields.art)).join('", „') + '" wird durch den neuen ersetzt und aus der Akte entfernt.\n\nFortfahren?')) return;
+  const pdfUrl = (!recId && !file) ? String((document.getElementById('lm-f-v_pdf_url') || {}).value || '') : '', pdfName = String((document.getElementById('lm-f-v_pdf_name') || {}).value || 'Vertrag.pdf');
   btn.disabled = true; btn.textContent = '⏳ speichere …';
   try {
     let rec = recId ? await _lmUpdate(LM_T_VERTRAG, recId, fields) : await _lmCreate(LM_T_VERTRAG, fields);
@@ -59657,9 +59694,20 @@ async function lmVertragSpeichern(btn, recId) {
       if (fit.info) toast('📉 Automatisch verkleinert: ' + fit.info, 'ok');
       try { rec = await _lmFetchRec(LM_T_VERTRAG, rec.id); } catch(_){}
     }
+    if (pdfUrl) {   // v10.17: Vertrag (PDF) aus der Servicebox mit übernehmen
+      try {
+        btn.textContent = '⏳ übernehme PDF …';
+        const r0 = await fetch(pdfUrl); if (!r0.ok) throw new Error('HTTP ' + r0.status);
+        const b = await r0.blob();
+        const fit = await _lmDateiPassend(new File([b], pdfName, { type: b.type || 'application/pdf' }), t => { btn.textContent = '⏳ ' + t; });
+        await atBlobUpload(rec.id, 'datei', fit.blob, fit.name, fit.type || 'application/pdf');
+        try { rec = await _lmFetchRec(LM_T_VERTRAG, rec.id); } catch(_){}
+      } catch (e) { toast('⚠ Vertrag gespeichert – das PDF aus der Servicebox ließ sich nicht übernehmen (' + ((e && e.message) || e) + '). Bitte von Hand anhängen.', 'err'); }
+    }
     _lmUpsertLocal('vertrag', rec);
+    for (const x of alte) { try { await _lmDelete(LM_T_VERTRAG, x.id); _lmRemoveLocal('vertrag', x.id); } catch (e) { toast('⚠ Bisherigen Vertrag nicht entfernt: ' + ((e && e.message) || e), 'err'); } }   // v10.17
     _lmCloseModal('lm-v-modal');
-    toast('✅ Vertrag gespeichert' + (nrBeginn ? ' · ☎ Notruf ab ' + _lmFmtDE(nrBeginn) + ' – Erinnerung ab ' + _lmFmtDE(_lmAddDays(nrBeginn, -LM_NOTRUF_BESTELLEN)) : ''), 'ok');
+    toast('✅ Vertrag gespeichert' + (alte.length ? ' – ersetzt den bisherigen' : '') + (nrBeginn ? ' · ☎ Notruf ab ' + _lmFmtDE(nrBeginn) + ' – Erinnerung ab ' + _lmFmtDE(_lmAddDays(nrBeginn, -LM_NOTRUF_BESTELLEN)) : ''), 'ok');
     _lmSoftRefresh();
     try { if (typeof anNachVertragGespeichert === 'function') anNachVertragGespeichert(rec, !recId); } catch(_){}   // v10.09
   } catch(e) {
@@ -63866,20 +63914,21 @@ async function _lmKdAdresseAufloesen(g) {
   _lmKdAdrCache.set(ck, String(adr || '').split('\n').map(x => x.trim()).filter(Boolean).join(', '));
   if (_lmData.firma === firma && _lmUi.kundeKey === g.key) _lmKdAnzeigen();
 }
-/* Verträge einer Anlage (Akte, Servicebox-WV, Maxise mit bestätigtem Wartungsauftrag) – je Vertrag eindeutig */
+/* Verträge einer Anlage (Akte, aktiver Servicebox-WV, Maxise mit bestätigtem Wartungsauftrag) – je Vertrag eindeutig.
+   v10.17: Entwürfe zählen nicht; was als Vertrag in die Akte gewählt ist, steht nur einmal da. */
 function _lmKdVertraege(it) {
-  const out = [];
+  const out = [], gewaehlt = q => (it.vertraege || []).some(v => String(v.f.quelle || '') === q);
   for (const v of it.vertraege || []) out.push({ key: 'lm:' + v.rec.id, titel: _lmArtLabel(v.f.art) + (v.f.vertragsnummer ? ' · ' + v.f.vertragsnummer : ''), info: v.info.label || '', cls: _lmVertragCls(v.info.status), laufend: LM_VT_LAUFEND.includes(v.info.status), quelle: 'Akte' });
   for (const r of it.wv || []) {
     const f = r.fields || {};
-    if (f.archived) continue;
+    if (f.archived || String(f.status || '') !== 'aktiv' || gewaehlt('wv:' + r.id)) continue;
     out.push({ key: 'wv:' + r.id, titel: 'Wartungsvertrag ' + (f.vertragsnummer || f.titel || ''), info: [f.status ? 'Status ' + f.status : '', _lmDate(f.start_datum) ? 'seit ' + _lmFmtDE(_lmDate(f.start_datum)) : ''].filter(Boolean).join(' · '),
       cls: String(f.status || '') === 'aktiv' ? 'gruen' : 'grau', laufend: String(f.status || '') === 'aktiv', quelle: 'Servicebox' });
   }
   /* Maxise: nur bestätigte Wartungsaufträge, und nicht doppelt, wenn der Vertrag schon in der Akte steht */
   const mx = (_lmWartung.firma === _lmData.firma && _lmWartung.angebote && _lmWartung.angebote.get(String(it.id))) || [];
   for (const m of mx) {
-    if (!m || !m.bestaetigt || (it.vertraege || []).some(v => String(v.f.quelle || '') === 'maxise:' + m.angebotId)) continue;
+    if (!m || !m.bestaetigt || gewaehlt('maxise:' + m.angebotId)) continue;
     out.push({ key: 'mx:' + m.angebotId, titel: 'Maxise-Wartung · Angebot ' + (m.nummer || m.angebotId), info: [m.beginn ? 'Beginn ' + _lmFmtDE(m.beginn) : '', m.ende ? 'bis ' + _lmFmtDE(m.ende) : '', m.proJahr ? m.proJahr + '× Wartung/Jahr' : ''].filter(Boolean).join(' · '),
       cls: 'gruen', laufend: true, quelle: 'Maxise' });
   }
