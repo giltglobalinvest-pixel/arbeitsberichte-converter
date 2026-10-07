@@ -2062,6 +2062,40 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
 .rvl-nwv-preis.an{background:#EDE9FE;border-color:#7C3AED}
 .rvl-nwv-preis .btn{padding:4px 10px;font-size:12px}
 #nwv-rv-hinweis .rvl-hinweis{margin:0 0 8px}
+/* v10.13: 👥 Kunden im Liftmanagement */
+.kd-list{display:flex;flex-direction:column;gap:8px}
+.lm-card-ico.kd-ico{background:#EEF2FF}
+.kd-karte .lm-card-meta b{color:var(--txt)}
+.kd-anl{font-size:11.5px;color:var(--txt3);margin-top:4px;overflow-wrap:anywhere}
+.kd-head{padding-bottom:14px}
+.kd-grid>.lm-sec+.lm-sec{margin-top:0}
+.kd-head .lm-akte-sub a{color:#fff;text-decoration:underline;text-underline-offset:2px}
+.lm-akte-sub .kd-kunde-link{color:#fff;text-decoration:underline;text-underline-offset:2px;cursor:pointer;font-weight:700}
+.lm-akte-sub .kd-kunde-link:hover{opacity:.85}
+.kd-kt-wrap{overflow-x:auto}
+.kd-kt{width:100%;border-collapse:collapse;font-size:12.5px}
+.kd-kt th{text-align:left;font-size:11px;font-weight:700;color:var(--txt3);text-transform:uppercase;letter-spacing:.03em;padding:6px 8px;border-bottom:1px solid var(--bdr)}
+.kd-kt td{padding:7px 8px;border-bottom:1px solid var(--bdr);vertical-align:top;overflow-wrap:anywhere}
+.kd-kt tr:last-child td{border-bottom:0}
+.kd-kt tr.haupt td{background:#F0FDF4}
+.kd-kt a{color:#2152A9;text-decoration:none;font-weight:600}
+.kd-primaer{display:inline-block;background:#DCFCE7;color:#166534;border:1px solid #86EFAC;border-radius:99px;padding:1px 8px;font-size:11px;font-weight:700;white-space:nowrap}
+.kd-aufz{display:flex;flex-direction:column;gap:8px}
+.kd-aufz-i{border:1px solid var(--bdr);border-left:4px solid #CBD5E1;border-radius:10px;padding:9px 12px;cursor:pointer;background:var(--surf);color:var(--txt)}
+.kd-aufz-i.wartung{border-left-color:#22C55E}
+.kd-aufz-i:hover{border-color:#93C5FD;background:#F8FBFF}
+.kd-aufz-t{font-weight:700;color:var(--navy);font-size:13.5px;overflow-wrap:anywhere}
+.kd-aufz-m{font-size:11.5px;color:var(--txt3);margin-top:2px;overflow-wrap:anywhere}
+.kd-aufz-p{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px}
+.kd-vt-anl{overflow-wrap:anywhere}
+@media (max-width:560px){
+  .kd-kt thead{display:none}
+  .kd-kt,.kd-kt tbody,.kd-kt tr,.kd-kt td{display:block;width:100%;box-sizing:border-box}
+  .kd-kt tr{border-bottom:1px solid var(--bdr);padding:6px 0}
+  .kd-kt tr:last-child{border-bottom:0}
+  .kd-kt td{border:0;padding:2px 4px}
+  .kd-kt td:empty{display:none}
+}
 </style>
 </head>
 <body>
@@ -3608,7 +3642,7 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.12';
+const APP_VERSION = 'v10.13';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -58059,7 +58093,7 @@ async function renderLiftmgmtView(opts) {
     return;
   }
   const firma = getCurrentFirmaSlug();
-  if (_lmUi.firma !== firma) { if (_lmUi.akteId) _lmHistVerwerfen(); _lmUi.firma = firma; _lmUi.akteId = null; _lmUi.herkunft = ''; _lmUi.filter = 'alle'; _lmUi.limit = 150; _lmUi.listScroll = 0; }
+  if (_lmUi.firma !== firma) { if (_lmUi.akteId) _lmHistVerwerfen(); _lmUi.firma = firma; _lmUi.akteId = null; _lmUi.herkunft = ''; _lmUi.filter = 'alle'; _lmUi.limit = 150; _lmUi.listScroll = 0; _lmUi.kundeKey = null; }
   if (opts.force) { _lmAkteCache = {}; }
   if (!_lmTablesChecked && isAdmin() && APP_KEYS.airtableWriteKey) {
     _lmTablesChecked = true;
@@ -58093,7 +58127,8 @@ function _lmFirmaWahlHtml() {
 }
 function _lmRender() {
   if (_lmUi.akteId) _lmRenderAkte(); else if (_lmUi.ansicht === 'anfragen' && typeof _anRenderListe === 'function') _anRenderListe();
-  else if (_lmUi.ansicht === 'rahmen' && typeof _lmRvRenderListe === 'function') _lmRvRenderListe(); else _lmRenderListe();
+  else if (_lmUi.ansicht === 'rahmen' && typeof _lmRvRenderListe === 'function') _lmRvRenderListe();
+  else if (_lmUi.ansicht === 'kunden' && typeof _lmKdRender === 'function') _lmKdRender(); else _lmRenderListe();   // v10.13
 }
 /* Aktualisiert nur die dynamischen Teile — Eingabefelder (Suche, Akte-Formular) bleiben unangetastet */
 function _lmSoftRefresh() {
@@ -58104,6 +58139,11 @@ function _lmSoftRefresh() {
   } else {
     if (_lmUi.ansicht === 'anfragen' && typeof _anRenderListItems === 'function') { if (!document.getElementById('an-list')) return _lmRender(); _anRenderListItems(); return; }
     if (_lmUi.ansicht === 'rahmen' && typeof _lmRvRenderItems === 'function') { if (!document.getElementById('rvl-list')) return _lmRender(); _lmRvRenderItems(); return; }   // v10.12
+    if (_lmUi.ansicht === 'kunden' && typeof _lmKdRender === 'function') {   // v10.13
+      if (_lmUi.kundeKey) { if (!document.getElementById('kd-seite')) return _lmRender(); _lmKdSeiteDyn(); return; }
+      if (!document.getElementById('kd-list')) return _lmRender();
+      _lmKdRenderItems(); return;
+    }
     if (!document.getElementById('lm-list')) return _lmRender();
     _lmRenderListItems();
   }
@@ -58563,7 +58603,7 @@ function _lmAktuelleAnsicht() {
   for (const id in zu) { const el = document.getElementById(id); if (el && el.classList.contains('show')) return zu[id]; }
   return '';
 }
-function _lmZurueckLabel() { return _lmUi.herkunft === 'anlagen' ? 'Anlagen' : (_lmUi.herkunft === 'dashboard' ? 'Dashboard' : (_lmUi.herkunft === 'auftraege' ? 'Aufträge' : (!_lmUi.herkunft && _lmUi.ansicht === 'rahmen' ? 'Rahmenvereinbarungen' : 'Übersicht'))); }
+function _lmZurueckLabel() { return _lmUi.herkunft === 'anlagen' ? 'Anlagen' : (_lmUi.herkunft === 'dashboard' ? 'Dashboard' : (_lmUi.herkunft === 'auftraege' ? 'Aufträge' : (!_lmUi.herkunft && _lmUi.ansicht === 'rahmen' ? 'Rahmenvereinbarungen' : (!_lmUi.herkunft && _lmUi.ansicht === 'kunden' && typeof _lmKdZurueckLabel === 'function' ? _lmKdZurueckLabel() : 'Übersicht')))); }
 function _lmAkteVerlassen() {
   const her = _lmUi.herkunft;
   _lmUi.akteId = null; _lmUi.herkunft = '';
@@ -58588,7 +58628,7 @@ function lmCloseAkte() {
 /* Menüknopf / Dashboard-Kachel: immer die Startansicht des Liftmanagements (keine zuletzt offene Akte) */
 function lmNavOeffnen() {
   _lmHistVerwerfen();
-  Object.assign(_lmUi, { ansicht: 'anlagen', akteId: null, herkunft: '', filter: 'alle', status: 'alle', q: '', limit: 150, listScroll: 0, abrAlle: false, wartAlle: false, abrAuf: false, wartAuf: false });
+  Object.assign(_lmUi, { ansicht: 'anlagen', akteId: null, kundeKey: null, herkunft: '', filter: 'alle', status: 'alle', q: '', limit: 150, listScroll: 0, abrAlle: false, wartAlle: false, abrAuf: false, wartAuf: false });
   switchView('liftmgmt');
   const b = document.getElementById('liftmgmt-body'); if (b) b.scrollTop = 0;
 }
@@ -58630,7 +58670,9 @@ function _lmAkteSubHtml(it) {
   return [
     a.fabriknummer ? '<span>Fabrik-Nr. <b>' + escapeHtml(a.fabriknummer) + '</b></span>' : '',
     f.eq_nummer ? '<span>KONE EQ <b class="lm-eq">' + escapeHtml(f.eq_nummer) + '</b></span>' : '',
-    k.firmenname ? '<span>👤 ' + escapeHtml(k.firmenname) + (k.kundennummer ? ' (' + escapeHtml(k.kundennummer) + ')' : '') + '</span>' : '',
+    k.firmenname ? '<span>👤 ' + (typeof lmKdVonAnlage === 'function'   // v10.13
+      ? '<a class="kd-kunde-link" onclick="lmKdVonAnlage(' + _lmA(it.id) + ')" title="Kundenseite: alle Aufzüge, Ansprechpartner und Verträge dieses Kunden">' + escapeHtml(k.firmenname) + '</a>'
+      : escapeHtml(k.firmenname)) + (k.kundennummer ? ' (' + escapeHtml(k.kundennummer) + ')' : '') + '</span>' : '',
     a.objektTyp ? '<span>' + escapeHtml(a.objektTyp) + '</span>' : '',
     '<span>Maxise-ID ' + escapeHtml(it.id) + '</span>',
     f.updated ? '<span>Akte geändert ' + _lmFmtDE(_lmDate(f.updated)) + (f.updated_by ? ' von ' + escapeHtml(f.updated_by) : '') + '</span>' : '',
@@ -62134,9 +62176,10 @@ function _anZahlen(list) {
   return z;
 }
 function _anUmschalterHtml() {
-  const z = _anZahlen(_anAlle()), an = _lmUi.ansicht === 'anfragen', rv = _lmUi.ansicht === 'rahmen';
+  const z = _anZahlen(_anAlle()), an = _lmUi.ansicht === 'anfragen', rv = _lmUi.ansicht === 'rahmen', kd = _lmUi.ansicht === 'kunden';
   return '<div class="lm-ansicht" id="lm-ansicht" role="tablist">' +
-    '<button type="button" role="tab" aria-selected="' + !(an || rv) + '" class="' + (an || rv ? '' : 'on') + '" onclick="lmAnsicht(\'anlagen\')">🛗 Anlagen</button>' +
+    '<button type="button" role="tab" aria-selected="' + !(an || rv || kd) + '" class="' + (an || rv || kd ? '' : 'on') + '" onclick="lmAnsicht(\'anlagen\')">🛗 Anlagen</button>' +
+    (typeof _lmKdUmschalterKnopf === 'function' ? _lmKdUmschalterKnopf(kd) : '') +   // v10.13
     '<button type="button" role="tab" aria-selected="' + an + '" class="' + (an ? 'on' : '') + '" data-k="anfragen" onclick="lmAnsicht(\'anfragen\')">📨 Anfragen' +
       (z.offen ? ' <b class="an-zahl">' + z.offen + ' offen</b>' : '') +
       (z.antwort ? ' <span class="an-merk gelb" title="Antwort des Kunden eingegangen">📬 ' + z.antwort + '</span>' : '') +
@@ -62146,7 +62189,8 @@ function _anUmschalterHtml() {
 }
 function _anUmschalterAktualisieren() { const el = document.getElementById('lm-ansicht'); if (el) el.outerHTML = _anUmschalterHtml(); }
 function lmAnsicht(k) {
-  _lmUi.ansicht = (k === 'anfragen' || k === 'rahmen') ? k : 'anlagen';
+  _lmUi.ansicht = (k === 'anfragen' || k === 'rahmen' || k === 'kunden') ? k : 'anlagen';
+  _lmUi.kundeKey = null;   // v10.13: Reiter „👥 Kunden" führt immer zur Kundenliste
   _lmRender();
   const b = document.getElementById('liftmgmt-body'); if (b) b.scrollTop = 0;
 }
@@ -62961,6 +63005,7 @@ function _lmRvAnzeigen(firma) {
       // nur Übersicht und Verträge – andere Reiter können gerade ausgefüllte Felder haben
       if ((_lmUi.tab === 'vertraege' || _lmUi.tab === 'uebersicht') && typeof _lmRefreshDyn === 'function') _lmRefreshDyn();
     } else if (_lmUi.ansicht === 'rahmen') _lmRvRenderItems();
+    else if (_lmUi.ansicht === 'kunden' && typeof _lmKdAnzeigen === 'function') _lmKdAnzeigen();   // v10.13: 📜 an den Kunden
     else if (_lmUi.ansicht !== 'anfragen' && document.getElementById('lm-list') && typeof _lmRenderListItems === 'function') _lmRenderListItems();
     else if (typeof _anUmschalterAktualisieren === 'function') _anUmschalterAktualisieren();
   }
@@ -63575,6 +63620,426 @@ if (typeof _nwvUpdateAnlagenHint === 'function' && !_nwvUpdateAnlagenHint._lmRv)
     return r;
   };
   _nwvUpdateAnlagenHint._lmRv = true;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v10.13: 👥 KUNDEN IM LIFTMANAGEMENT (beide Firmen)
+   Liste der Kunden, bei denen wir Aufzüge in Wartung haben – z. B. „SWVG GmbH" mit
+   Aalener Str. … – gebildet aus den Maxise-Anlagen der Firma (Kunde der Anlage).
+   „In Wartung bei uns" wie in der Anlagenliste (Vertrag in der Akte, Servicebox-WV oder
+   bestätigter Maxise-Wartungsauftrag). Kundenseite wie im alten LiftManager: Details
+   (Firma, Adresse, Anzahl der Aufzüge), Ansprechpartner aus Maxise mit Hauptansprechpartner,
+   alle Aufzüge des Kunden, Wartungsverträge und – wenn vorhanden – die Rahmenvereinbarung.
+   Maxise bleibt unverändert (nur lesen).
+   ═══════════════════════════════════════════════════════════════════════ */
+const LM_KD_FILTER = [
+  ['wartung', '🔧 Mit Wartungsvertrag', g => g.wartung > 0],
+  ['lm', '🛗 Im Liftmanagement', g => g.lm > 0],
+  ['alle', 'Alle Kunden mit Anlagen', () => true],
+];
+let _lmKdUi = { q: '', filter: 'wartung', sort: 'name', scroll: 0, alle: false };
+let _lmKdSuchTimer = null;
+let _lmKdCache = { key: '', list: [] };
+let _lmKdZaehlTimer = null;
+let _lmKdErpStand = { firma: '', laden: null, fehlerAt: 0, map: null, mapKey: '' };
+let _lmKdKontakte = new Map();        // Firma|Kundennummer → Ansprechpartner aus Maxise (eigener Speicher: der des CRM kennt die Firma nicht)
+let _lmKdKontakteLaden = new Map();   // Firma|Kundennummer → laufende Anfrage
+let _lmKdAdrCache = new Map();        // Firma|Kunde → Adresse aus Maxise (über die Adress-ID), '' = keine
+let _lmKdAdrLaeuft = new Set();
+
+/* ── Daten ── */
+function _lmKdKey(k) {
+  k = k || {};
+  if (k.kundennummer != null && String(k.kundennummer).trim()) return 'nr:' + String(k.kundennummer).trim();
+  if (k.id != null && String(k.id).trim()) return 'id:' + String(k.id).trim();
+  const n = typeof _lmRvNameKey === 'function' ? _lmRvNameKey(k.firmenname) : _lmNorm(k.firmenname);
+  return n ? 'name:' + n : '';
+}
+/* Maxise-Kundenliste (Adresse, Telefon, E-Mail) – dieselbe wie unter CRM → Kunden, einmal je Firma */
+function _lmKdErpListe() {
+  const c = typeof _kundenCache !== 'undefined' ? _kundenCache : null;
+  return (c && c.firma === _lmData.firma && Array.isArray(c.items)) ? c.items : [];
+}
+function _lmKdErp(kunde) {
+  const items = _lmKdErpListe(), st = _lmKdErpStand;
+  const mk = _lmData.firma + '|' + items.length + '|' + ((typeof _kundenCache !== 'undefined' && _kundenCache.loadedAt) || 0);
+  if (st.mapKey !== mk) { st.map = new Map(); items.forEach(x => { const k = _lmKdKey(x); if (k && !st.map.has(k)) st.map.set(k, x); }); st.mapKey = mk; }
+  return st.map.get(_lmKdKey(kunde)) || null;
+}
+function _lmKdErpLaden() {
+  const firma = _lmData.firma, st = _lmKdErpStand;
+  if (!firma || typeof _erpTryPaths !== 'function' || isFirmaAll()) return;
+  const c = typeof _kundenCache !== 'undefined' ? _kundenCache : null;
+  if (c && c.firma === firma && (c.items || []).length && Date.now() - (c.loadedAt || 0) < 30 * 60 * 1000) return;
+  if (st.laden && st.firma === firma) return;
+  if (st.firma === firma && Date.now() - st.fehlerAt < 5 * 60 * 1000) return;
+  st.firma = firma;
+  st.laden = (async () => {
+    try {
+      const res = await _erpTryPaths(firma, ['api/kunden', 'kunden']);
+      const items = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
+      if (items.length) _kundenCache = { firma, items, loadedAt: Date.now() };
+      else st.fehlerAt = Date.now();
+    } catch (_) { st.fehlerAt = Date.now(); }
+  })();
+  st.laden.then(() => { st.laden = null; _lmKdAnzeigen(); });
+}
+function _lmKdAdresse(kunde) {
+  const e = _lmKdErp(kunde) || kunde || {};
+  const flach = [e.strasse, [e.plz, e.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  return flach || _lmKdAdrCache.get(_lmData.firma + '|' + _lmKdKey(kunde)) || '';
+}
+/* Kundenseite: Steht die Anschrift in Maxise nur hinter der Adress-ID, wird sie einmal aufgelöst –
+   mit derselben Funktion wie beim Wartungsvertrag (Ergebnis zwischengespeichert) */
+async function _lmKdAdresseAufloesen(g) {
+  if (!g) return;
+  const firma = _lmData.firma, ck = firma + '|' + g.key;
+  if (_lmKdAdresse(g.kunde) || _lmKdAdrCache.has(ck) || _lmKdAdrLaeuft.has(ck) || typeof _nwvResolveKundeAdresse !== 'function' || isFirmaAll()) return;
+  const e = _lmKdErp(g.kunde) || g.kunde || {}, re = e.defaultrechnungsempfaenger || {};
+  if (!e.adresseId && !re.adresseId && !re.id) return;
+  _lmKdAdrLaeuft.add(ck);
+  let adr = '';
+  try { adr = await _nwvResolveKundeAdresse(firma, e, []); } catch (_) {}
+  _lmKdAdrLaeuft.delete(ck);
+  _lmKdAdrCache.set(ck, String(adr || '').split('\n').map(x => x.trim()).filter(Boolean).join(', '));
+  if (_lmData.firma === firma && _lmUi.kundeKey === g.key) _lmKdAnzeigen();
+}
+/* Verträge einer Anlage (Akte, Servicebox-WV, Maxise mit bestätigtem Wartungsauftrag) – je Vertrag eindeutig */
+function _lmKdVertraege(it) {
+  const out = [];
+  for (const v of it.vertraege || []) out.push({ key: 'lm:' + v.rec.id, titel: _lmArtLabel(v.f.art) + (v.f.vertragsnummer ? ' · ' + v.f.vertragsnummer : ''), info: v.info.label || '', cls: _lmVertragCls(v.info.status), laufend: LM_VT_LAUFEND.includes(v.info.status), quelle: 'Akte' });
+  for (const r of it.wv || []) {
+    const f = r.fields || {};
+    if (f.archived) continue;
+    out.push({ key: 'wv:' + r.id, titel: 'Wartungsvertrag ' + (f.vertragsnummer || f.titel || ''), info: [f.status ? 'Status ' + f.status : '', _lmDate(f.start_datum) ? 'seit ' + _lmFmtDE(_lmDate(f.start_datum)) : ''].filter(Boolean).join(' · '),
+      cls: String(f.status || '') === 'aktiv' ? 'gruen' : 'grau', laufend: String(f.status || '') === 'aktiv', quelle: 'Servicebox' });
+  }
+  /* Maxise: nur bestätigte Wartungsaufträge, und nicht doppelt, wenn der Vertrag schon in der Akte steht */
+  const mx = (_lmWartung.firma === _lmData.firma && _lmWartung.angebote && _lmWartung.angebote.get(String(it.id))) || [];
+  for (const m of mx) {
+    if (!m || !m.bestaetigt || (it.vertraege || []).some(v => String(v.f.quelle || '') === 'maxise:' + m.angebotId)) continue;
+    out.push({ key: 'mx:' + m.angebotId, titel: 'Maxise-Wartung · Angebot ' + (m.nummer || m.angebotId), info: [m.beginn ? 'Beginn ' + _lmFmtDE(m.beginn) : '', m.ende ? 'bis ' + _lmFmtDE(m.ende) : '', m.proJahr ? m.proJahr + '× Wartung/Jahr' : ''].filter(Boolean).join(' · '),
+      cls: 'gruen', laufend: true, quelle: 'Maxise' });
+  }
+  return out;
+}
+/* Kunden der Firma aus den Maxise-Anlagen – zwischengespeichert, solange sich nichts ändert */
+function _lmKdSchluessel() {
+  const d = _lmData, rv = typeof _lmRvStand === 'function' && d.firma ? _lmRvStand(d.firma).loadedAt : 0;
+  const key = [d.firma, d.loadedAt, typeof _lmLocalVer !== 'undefined' ? _lmLocalVer : 0, _lmWartung.firma === d.firma ? _lmWartung.loadedAt : 0, rv,
+    (typeof _kundenCache !== 'undefined' && _kundenCache.firma === d.firma) ? _kundenCache.loadedAt : 0, _lmToday()].join('|');
+  return { key, ai: d.anlagen ? _lmAbrIdx() : null, wi: d.anlagen ? _lmWartIdx() : null };   // neu, sobald Rechnungen/Wartungsberichte da sind
+}
+function _lmKdAktuell(s) { s = s || _lmKdSchluessel(); return _lmKdCache.key === s.key && _lmKdCache.ai === s.ai && _lmKdCache.wi === s.wi; }
+function _lmKdListe() {
+  const d = _lmData, sk = _lmKdSchluessel();
+  if (_lmKdAktuell(sk)) return _lmKdCache.list;
+  const map = new Map();
+  for (const a of d.anlagen || []) {
+    if (!a || a.id == null) continue;
+    const k = a.kunde || {}, kk = _lmKdKey(k); if (!kk) continue;
+    let g = map.get(kk);
+    if (!g) { g = { key: kk, kunde: k, items: [], wartung: 0, lm: 0, aufzuege: 0, vertraege: new Map(), abr: 0, wart: 0, stoer: 0 }; map.set(kk, g); }
+    if (!g.kunde.firmenname && k.firmenname) g.kunde = k;
+    const it = _lmItem(a);
+    g.items.push(it);
+    if (it.wartung) g.wartung++;
+    if (it.status) g.lm++;
+    g.aufzuege += Math.max(1, Math.round(+a.anzahlAufzuege) || 1);
+    if (it.status && it.abrOffen.some(_lmAbrIstFaellig)) g.abr++;
+    if (it.status && it.wartF && (it.wartF.status === 'faellig' || it.wartF.status === 'ueberfaellig')) g.wart++;
+    g.stoer += it.stoerOffen || 0;
+    for (const v of _lmKdVertraege(it)) {
+      const x = g.vertraege.get(v.key) || Object.assign({ anlagen: [] }, v);
+      x.anlagen.push(it); g.vertraege.set(v.key, x);
+    }
+  }
+  const adr = it => String(it.a.anzeigeAdresse || it.a.name || '').toLowerCase();
+  const list = [...map.values()];
+  list.forEach(g => {
+    g.name = String(g.kunde.firmenname || '(ohne Namen)');
+    g.items.sort((x, y) => (!!y.wartung - !!x.wartung) || (!!y.status - !!x.status) || adr(x).localeCompare(adr(y), 'de'));
+    g.rv = typeof _lmRvFuerKunde === 'function' ? _lmRvFuerKunde(g.kunde) : [];
+  });
+  _lmKdCache = { key: sk.key, ai: sk.ai, wi: sk.wi, firma: d.firma, list };
+  return list;
+}
+function _lmKdFind(key) { return _lmKdListe().find(g => g.key === key) || null; }
+function _lmKdText(g) {
+  const e = _lmKdErp(g.kunde) || {};
+  return [g.name, g.kunde.kundennummer, _lmKdAdresse(g.kunde), e.email, e.telefon]
+    .concat(g.items.map(it => [it.a.anzeigeAdresse, it.a.name, it.a.fabriknummer].join(' ')))
+    .concat(g.rv.map(x => 'RV ' + (x.rec.fields.rv_nummer || '')))
+    .join(' ').toLowerCase();
+}
+
+/* ── Neu zeichnen nach dem Laden ── */
+function _lmKdAnzeigen() {
+  if (!_lmViewVisible() || _lmUi.ansicht !== 'kunden' || _lmUi.akteId) return;
+  if (_lmUi.kundeKey) { if (document.getElementById('kd-seite')) _lmKdSeiteDyn(); }
+  else _lmKdRenderItems();
+}
+
+/* ── Umschalter „🛗 Anlagen | 👥 Kunden | 📨 Anfragen | 📜 Rahmenvereinbarungen" ── */
+function _lmKdUmschalterKnopf(on) {
+  let n = 0;
+  const zahl = list => list.filter(g => g.wartung > 0).length;
+  if (_lmData.anlagen) {
+    if (on || _lmKdAktuell()) n = zahl(_lmKdListe());
+    else {
+      const alt = _lmKdCache.firma === _lmData.firma ? zahl(_lmKdCache.list) : -1;
+      if (alt > 0) n = alt;   // bis zur Neuberechnung die letzte Zahl – kein Flackern beim Nachladen
+      if (!_lmKdZaehlTimer) _lmKdZaehlTimer = setTimeout(() => {   // neu berechnen erst nach dem Zeichnen der Anlagenliste
+        _lmKdZaehlTimer = null;
+        if (!_lmData.anlagen || !document.getElementById('lm-ansicht')) return;
+        const vorher = _lmKdCache.firma === _lmData.firma ? zahl(_lmKdCache.list) : -1;
+        if (zahl(_lmKdListe()) !== vorher && typeof _anUmschalterAktualisieren === 'function') _anUmschalterAktualisieren();
+      }, 60);
+    }
+  }
+  return '<button type="button" role="tab" aria-selected="' + !!on + '" class="' + (on ? 'on' : '') + '" data-k="kunden" onclick="lmAnsicht(\'kunden\')" title="Kunden, bei denen wir Aufzüge in Wartung haben">' +
+    '👥 Kunden' + (n ? ' <b class="an-zahl">' + n + '</b>' : '') + '</button>';
+}
+function _lmKdZurueckLabel() {
+  const g = _lmUi.kundeKey ? _lmKdFind(_lmUi.kundeKey) : null;
+  return g ? _lmShort(g.name, 28) : 'Kunden';
+}
+
+/* ── Liste ── */
+function _lmKdRender() {
+  if (_lmUi.kundeKey) return _lmKdSeite();
+  const body = document.getElementById('liftmgmt-body'); if (!body) return;
+  _lmKdErpLaden();
+  if (typeof _lmRvNachladen === 'function') _lmRvNachladen();
+  const sorts = [['name', 'Name A–Z'], ['aufzuege', 'Meiste Aufzüge'], ['wartung', 'Meiste in Wartung'], ['offen', 'Offene Aufgaben zuerst']];
+  body.innerHTML = '<div class="lm-wrap">' + _lmBannerHtml() + (typeof _anUmschalterHtml === 'function' ? _anUmschalterHtml() : '') +
+    '<div class="lm-bar" id="kd-chips"></div>' +
+    '<div class="lm-bar">' +
+      '<div class="anl-search-wrap" style="flex:1"><span class="anl-search-ico">🔍</span><input class="anl-search-inp" id="kd-q" type="search" autocomplete="off" placeholder="Kunde, Kd-Nr., Ort, Anlage, Fabrik-Nr. …" value="' + escapeHtml(_lmKdUi.q) + '" oninput="_lmKdOnSearch(this.value)"></div>' +
+      '<select class="lm-select" id="kd-sort" onchange="_lmKdUi.sort=this.value;_lmKdRenderItems()">' + sorts.map(([v, l]) => '<option value="' + v + '"' + (_lmKdUi.sort === v ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' +
+    '</div>' +
+    '<div class="lm-list-info" id="kd-info"></div>' +
+    '<div class="kd-list" id="kd-list"></div></div>';
+  _lmKdRenderItems();
+  const b = document.getElementById('liftmgmt-body'); if (b && _lmKdUi.scroll) { b.scrollTop = _lmKdUi.scroll; _lmKdUi.scroll = 0; }
+}
+function _lmKdOnSearch(v) { _lmKdUi.q = String(v || ''); clearTimeout(_lmKdSuchTimer); _lmKdSuchTimer = setTimeout(_lmKdRenderItems, 120); }
+function lmKdFilter(k) { _lmKdUi.filter = k; _lmKdUi.alle = false; _lmKdRenderItems(); }
+function _lmKdRenderItems() {
+  const el = document.getElementById('kd-list'); if (!el) return;
+  if (typeof _anUmschalterAktualisieren === 'function') _anUmschalterAktualisieren();
+  if (!_lmData.anlagen) { el.innerHTML = '<div class="lm-empty">⏳ Anlagen werden geladen …</div>'; return; }
+  const alle = _lmKdListe();
+  const chips = document.getElementById('kd-chips');
+  if (chips) chips.innerHTML = LM_KD_FILTER.map(([k, l, t]) => '<button class="lm-chip' + (_lmKdUi.filter === k ? ' on' : '') + '" data-k="' + k + '" onclick="lmKdFilter(' + _lmA(k) + ')">' + l + ' <b>' + alle.filter(t).length + '</b></button>').join('');
+  const test = (LM_KD_FILTER.find(x => x[0] === _lmKdUi.filter) || LM_KD_FILTER[0])[2];
+  const q = _lmKdUi.q.trim().toLowerCase();
+  let list = alle.filter(test);
+  if (q) list = list.filter(g => { const t = _lmKdText(g); return q.split(/\s+/).every(w => t.includes(w)); });
+  const offen = g => g.abr + g.wart + g.stoer;
+  const cmp = {
+    name: (x, y) => x.name.localeCompare(y.name, 'de'),
+    aufzuege: (x, y) => (y.aufzuege - x.aufzuege) || x.name.localeCompare(y.name, 'de'),
+    wartung: (x, y) => (y.wartung - x.wartung) || x.name.localeCompare(y.name, 'de'),
+    offen: (x, y) => (offen(y) - offen(x)) || x.name.localeCompare(y.name, 'de'),
+  }[_lmKdUi.sort] || ((x, y) => x.name.localeCompare(y.name, 'de'));
+  list.sort(cmp);
+  const info = document.getElementById('kd-info');
+  const aufz = list.reduce((n, g) => n + g.aufzuege, 0), inW = list.reduce((n, g) => n + g.wartung, 0);
+  if (info) info.textContent = list.length + ' Kunde' + (list.length === 1 ? '' : 'n') + ' · ' + aufz + ' Aufzüge · ' + inW + ' davon in Wartung bei uns' + (_lmWartung.firma !== _lmData.firma ? ' · Maxise-Wartungsdaten werden geladen …' : '');
+  if (!list.length) {
+    el.innerHTML = '<div class="lm-empty">' + (alle.length ? 'Kein Kunde passt zu Suche und Filter.' : 'Keine Anlagen in Maxise.') + '</div>';
+    return;
+  }
+  const max = _lmKdUi.alle ? list.length : 150, zeigen = list.slice(0, max);
+  el.innerHTML = zeigen.map(_lmKdKarteHtml).join('') +
+    (list.length > max ? '<button class="btn" style="align-self:center;margin:8px auto" onclick="_lmKdUi.alle=true;_lmKdRenderItems()">Alle ' + list.length + ' Kunden anzeigen</button>' : '');
+}
+function _lmKdKarteHtml(g) {
+  const k = g.kunde, adr = _lmKdAdresse(k);
+  const anl = g.items.map(it => String(it.a.anzeigeAdresse || it.a.name || '').split(',')[0]).filter(Boolean);
+  const pills = [
+    '<span class="lm-pill grau" title="Aufzüge des Kunden in Maxise">🛗 ' + g.aufzuege + (g.aufzuege === 1 ? ' Aufzug' : ' Aufzüge') + '</span>',
+    g.wartung ? '<span class="lm-pill gruen" title="In Wartung bei uns">🔧 ' + g.wartung + ' in Wartung</span>' : '<span class="lm-pill grau">⚪ keine in Wartung</span>',
+    g.vertraege.size ? '<span class="lm-pill blau" title="Wartungsverträge (Akte, Servicebox, Maxise)">📑 ' + g.vertraege.size + ' Vertr' + (g.vertraege.size === 1 ? 'ag' : 'äge') + '</span>' : '',
+    g.abr ? '<span class="lm-pill rot">💶 ' + g.abr + ' Rechnung' + (g.abr === 1 ? '' : 'en') + ' fällig</span>' : '',
+    g.wart ? '<span class="lm-pill gelb">🔧 ' + g.wart + ' Wartung' + (g.wart === 1 ? '' : 'en') + ' fällig</span>' : '',
+    g.stoer ? '<span class="lm-pill rot">🚨 ' + g.stoer + ' Störung' + (g.stoer === 1 ? '' : 'en') + '</span>' : '',
+  ].filter(Boolean);
+  if (g.rv.length) pills.unshift('<span class="lm-pill ' + (_lmRvStKey(g.rv[0].rec.fields) === 'entwurf' ? 'grau' : 'lila') + '" title="Rahmenvereinbarung ' + escapeHtml(_lmRvTitel(g.rv[0].rec.fields)) + '">📜 RV ' + escapeHtml(g.rv[0].rec.fields.rv_nummer || '') + '</span>');
+  return '<div class="lm-card kd-karte" data-key="' + escapeHtml(g.key) + '" onclick="lmKdOeffnen(' + _lmA(g.key) + ')">' +
+    '<div class="lm-card-ico kd-ico">👥</div>' +
+    '<div class="lm-card-main">' +
+      '<div class="lm-card-title">' + escapeHtml(g.name) + '</div>' +
+      '<div class="lm-card-meta">' + [k.kundennummer ? '<span>Kd-Nr. <b>' + escapeHtml(k.kundennummer) + '</b></span>' : '', adr ? '<span>📍 ' + escapeHtml(adr) + '</span>' : ''].filter(Boolean).join('') + '</div>' +
+      (anl.length ? '<div class="kd-anl">🛗 ' + escapeHtml(anl.slice(0, 4).join(' · ')) + (anl.length > 4 ? ' <span class="lm-muted">+ ' + (anl.length - 4) + ' weitere</span>' : '') + '</div>' : '') +
+    '</div>' +
+    '<div class="lm-card-side">' + pills.join('') + '</div>' +
+  '</div>';
+}
+
+/* ── Kundenseite ── */
+function lmKdOeffnen(key) {
+  const b = document.getElementById('liftmgmt-body');
+  if (b && !_lmUi.kundeKey) _lmKdUi.scroll = b.scrollTop;
+  _lmUi.ansicht = 'kunden'; _lmUi.kundeKey = String(key); _lmUi.akteId = null; _lmUi.listScroll = 0;
+  _lmRender();
+  if (b) b.scrollTop = 0;
+}
+function lmKdZurueck() { _lmUi.kundeKey = null; _lmRender(); }
+/* Aus der Akte: Kundenname → Kundenseite */
+function lmKdVonAnlage(anlageId) {
+  const a = _lmFindAnlage(anlageId); if (!a) return;
+  const key = _lmKdKey(a.kunde); if (!key) return;
+  if (typeof _lmHistVerwerfen === 'function') _lmHistVerwerfen();
+  Object.assign(_lmUi, { ansicht: 'kunden', kundeKey: key, akteId: null, herkunft: '', listScroll: 0 });
+  _lmRender();
+  const b = document.getElementById('liftmgmt-body'); if (b) b.scrollTop = 0;
+}
+function _lmKdSeite() {
+  const body = document.getElementById('liftmgmt-body'); if (!body) return;
+  const g = _lmKdFind(_lmUi.kundeKey);
+  if (!g) {
+    body.innerHTML = '<div class="lm-wrap">' + (_lmData.anlagen ? '<div class="lm-empty" style="max-width:560px;margin:30px auto">Diesen Kunden gibt es in Maxise (' + escapeHtml(_lmData.firma || '') + ') nicht mehr.<br><br><button class="btn" onclick="lmKdZurueck()">← Zu den Kunden</button></div>'
+      : '<div class="lm-empty">⏳ Anlagen werden geladen …</div>') + '</div>';
+    return;
+  }
+  _lmKdErpLaden();
+  if (typeof _lmRvNachladen === 'function') _lmRvNachladen();
+  const acts = ['<span id="kd-crm" style="display:contents"></span>',   // „👥 CRM" (Admins), sobald die Maxise-Kundenliste da ist
+    '<button class="btn" onclick="lmKdNeuLaden(this)" title="Ansprechpartner und Anlagen neu laden">↻</button>'];
+  body.innerHTML = '<div class="lm-wrap" id="kd-seite">' + _lmBannerHtml() +
+    '<div class="lm-akte-head kd-head">' +
+      '<div class="lm-akte-top">' +
+        '<button class="lm-akte-back" onclick="lmKdZurueck()" title="Zurück zur Kundenliste">← <span>Kunden</span></button>' +
+        '<div style="flex:1;min-width:200px"><div class="lm-akte-title">👥 ' + escapeHtml(g.name) + '</div><div class="lm-akte-sub" id="kd-sub"></div></div>' +
+        '<div class="lm-akte-actions">' + acts.join('') + '</div>' +
+      '</div>' +
+      '<div id="kd-kopf"></div>' +
+    '</div>' +
+    '<div class="lm-akte-body">' +
+      '<div class="lm-grid2 kd-grid"><div class="lm-sec"><h3>📋 Details <span class="lm-src">aus Maxise</span></h3><div id="kd-details"></div></div>' +
+        '<div class="lm-sec"><h3>👤 Ansprechpartner <span class="lm-src">aus Maxise</span></h3><div id="kd-kontakte"><div class="lm-muted">⏳ wird geladen …</div></div></div></div>' +
+      '<div class="lm-sec" style="margin-top:14px"><h3 id="kd-aufz-h">🛗 Aufzüge</h3><div id="kd-aufzuege"></div></div>' +
+      '<div class="lm-sec" style="margin-top:14px"><h3 id="kd-vt-h">📑 Wartungsverträge</h3><div id="kd-vertraege"></div></div>' +
+    '</div></div>';
+  _lmKdSeiteDyn();
+  _lmKdKontakteZeigen(g);
+  if (_lmUi.listScroll) { body.scrollTop = _lmUi.listScroll; _lmUi.listScroll = 0; }   // zurück aus der Akte: dieselbe Stelle
+}
+function _lmKdSeiteDyn() {
+  const g = _lmKdFind(_lmUi.kundeKey); if (!g) return;
+  _lmKdAdresseAufloesen(g);   // läuft im Hintergrund; bis dahin „wird ermittelt …"
+  const k = g.kunde, e = _lmKdErp(k) || {}, adr = _lmKdAdresse(k);
+  const tel = t => t ? '<a href="tel:' + escapeHtml(String(t).replace(/[^0-9+]/g, '')) + '">' + escapeHtml(t) + '</a>' : '';
+  const mail = m => m ? '<a href="mailto:' + escapeHtml(m) + '">' + escapeHtml(m) + '</a>' : '';
+  const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+  set('kd-crm', isAdmin() && typeof openKundeDetail === 'function' && _lmKdErp(k) ? '<button class="btn" onclick="_lmKdCrm()" title="Im CRM öffnen – dort Kontakte anlegen und Rechnungen sehen">👥 CRM</button>' : '');
+  set('kd-sub', [k.kundennummer ? '<span>Kd-Nr. <b>' + escapeHtml(k.kundennummer) + '</b></span>' : '', adr ? '<span>📍 ' + escapeHtml(adr) + '</span>' : '',
+    (e.telefon || k.telefon) ? '<span>☎ ' + tel(e.telefon || k.telefon) + '</span>' : '', (e.email || k.email) ? '<span>✉ ' + mail(e.email || k.email) + '</span>' : ''].filter(Boolean).join(''));
+  set('kd-kopf', '<div class="lm-akte-pills">' + [
+    '<span class="lm-pill grau">🛗 ' + g.aufzuege + (g.aufzuege === 1 ? ' Aufzug' : ' Aufzüge') + '</span>',
+    g.wartung ? '<span class="lm-pill gruen">🔧 ' + g.wartung + ' in Wartung bei uns</span>' : '<span class="lm-pill grau">⚪ keine Anlage in Wartung</span>',
+    '<span class="lm-pill ' + (g.lm ? 'blau' : 'grau') + '">🛗 ' + g.lm + ' im Liftmanagement</span>',
+    g.vertraege.size ? '<span class="lm-pill blau">📑 ' + g.vertraege.size + ' Vertr' + (g.vertraege.size === 1 ? 'ag' : 'äge') + '</span>' : '',
+    g.abr ? '<span class="lm-pill rot">💶 ' + g.abr + ' Rechnung' + (g.abr === 1 ? '' : 'en') + ' fällig</span>' : '',
+    g.wart ? '<span class="lm-pill gelb">🔧 ' + g.wart + ' Wartung' + (g.wart === 1 ? '' : 'en') + ' fällig</span>' : '',
+    g.stoer ? '<span class="lm-pill rot">🚨 ' + g.stoer + ' offene Störung' + (g.stoer === 1 ? '' : 'en') + '</span>' : '',
+  ].filter(Boolean).join('') + '</div>' + (g.rv.length && typeof _lmRvHinweisHtml === 'function' ? _lmRvHinweisHtml(g.rv, {}) : ''));
+  const row = (l, v) => v ? '<div class="k">' + l + '</div><div>' + v + '</div>' : '';
+  const nr = String(k.kundennummer || k.id || '').trim();
+  const kl = (nr && _lmKdKontakte.get(_lmData.firma + '|' + nr)) || [];
+  const hid = _lmKdHauptId(e.id != null ? e : k), hc = kl.find(c => _lmKdIstHaupt(c, hid));
+  const hName = hc ? ([hc.anrede, hc.vorname, hc.nachname].filter(Boolean).join(' ').trim() || hc.name || '') : '';
+  const laedt = _lmKdErpStand.laden || _lmKdAdrLaeuft.has(_lmData.firma + '|' + g.key);
+  set('kd-details', '<div class="lm-kv">' + row('Firma', escapeHtml(g.name)) + row('Kd-Nr.', escapeHtml(k.kundennummer || '')) + row('Adresse', escapeHtml(adr) || (laedt ? '<span class="lm-muted">wird ermittelt …</span>' : '')) +
+    row('Telefon', tel(e.telefon || k.telefon)) + row('E-Mail', mail(e.email || k.email)) +
+    row('Hauptansprechpartner', hc ? '<b>' + escapeHtml(hName) + '</b>' + [hc.telefon || hc.mobil || hc.mobile ? ' · ' + tel(hc.telefon || hc.mobil || hc.mobile) : '', hc.email ? ' · ' + mail(hc.email) : ''].join('') : '') +
+    row('Anzahl der Aufzüge', '<b>' + g.aufzuege + '</b>' + (g.items.length !== g.aufzuege ? ' <span class="lm-muted">(' + g.items.length + ' Anlagen)</span>' : '') + ' · <a class="lm-link" onclick="document.getElementById(\'kd-aufz-h\').scrollIntoView({behavior:\'smooth\'})">Alle Aufzüge →</a>') +
+    row('In Wartung bei uns', String(g.wartung)) + row('Im Liftmanagement', String(g.lm)) + '</div>');
+  const h = document.getElementById('kd-aufz-h'); if (h) h.textContent = '🛗 Aufzüge (' + g.items.length + ')';
+  set('kd-aufzuege', '<div class="kd-aufz">' + g.items.map(it => {
+    const p = [it.wartung ? '<span class="lm-pill gruen" title="Laut ' + escapeHtml(it.wartungQuelle || '') + '">🟢 Wartung bei uns</span>' : '<span class="lm-pill grau">⚪ nicht in Wartung</span>'];
+    if (it.status) p.push('<span class="lm-pill ' + LM_STATUS[it.status].cls + '">' + LM_STATUS[it.status].icon + ' ' + LM_STATUS[it.status].label + '</span>');
+    else p.push('<span class="lm-pill grau" title="Nicht im Liftmanagement – in der Akte aufnehmen">nicht im Liftmanagement</span>');
+    if (it.wartF && it.wartF.fenster) p.push('<span class="lm-pill lm-wf-pill ' + (it.wartF.status === 'ueberfaellig' ? 'rot' : (it.wartF.status === 'faellig' ? 'gelb' : 'grau')) + '">🔧 ' + _lmAmpelHtml(it.wartF) + '</span>');
+    if (it.tuev.ampel !== 'grau') p.push('<span class="lm-pill ' + _lmAmpelCls(it.tuev.ampel) + '">🛡 ' + escapeHtml(_lmTuevKurz(it.tuev)) + '</span>');
+    if (it.abrOffen.some(_lmAbrIstFaellig)) p.push('<span class="lm-pill rot">💶 Rechnung fällig</span>');
+    if (it.stoerOffen) p.push('<span class="lm-pill rot">🚨 ' + it.stoerOffen + ' Störung' + (it.stoerOffen > 1 ? 'en' : '') + '</span>');
+    return '<div class="kd-aufz-i' + (it.wartung ? ' wartung' : '') + (it.status ? '' : ' aussen') + '" data-id="' + escapeHtml(it.id) + '" onclick="lmOpenAkte(' + _lmA(it.id) + ')" title="Akte öffnen">' +
+      '<div class="kd-aufz-t">🛗 ' + escapeHtml(it.a.anzeigeAdresse || it.a.name || ('Anlage ' + it.id)) + '</div>' +
+      '<div class="kd-aufz-m">' + escapeHtml([it.a.fabriknummer ? 'Fabrik-Nr. ' + it.a.fabriknummer : '', it.akte.hersteller || '', it.a.anzahlAufzuege > 1 ? it.a.anzahlAufzuege + ' Aufzüge' : ''].filter(Boolean).join(' · ')) + '</div>' +
+      '<div class="kd-aufz-p">' + p.join('') + '</div></div>';
+  }).join('') + '</div>');
+  const vh = document.getElementById('kd-vt-h'); if (vh) vh.textContent = '📑 Wartungsverträge (' + g.vertraege.size + ')';
+  const vs = [...g.vertraege.values()].sort((x, y) => (y.laufend - x.laufend) || x.titel.localeCompare(y.titel, 'de'));
+  set('kd-vertraege', vs.length ? vs.map(v => '<div class="lm-vt ' + v.cls + '"><div class="lm-vt-head"><span class="lm-vt-title">' + escapeHtml(v.titel) + '</span><span class="lm-pill grau">' + escapeHtml(v.quelle) + '</span></div>' +
+      (v.info ? '<div class="lm-vt-line">' + escapeHtml(v.info) + '</div>' : '') +
+      '<div class="lm-vt-line kd-vt-anl">🛗 ' + v.anlagen.map(it => '<a class="lm-link" onclick="lmOpenAkte(' + _lmA(it.id) + ',\'vertraege\')">' + escapeHtml(String(it.a.anzeigeAdresse || it.a.name || it.id).split(',')[0]) + '</a>').join(' · ') + '</div></div>').join('')
+    : '<div class="lm-muted">' + (_lmWartung.firma !== _lmData.firma ? '⏳ Maxise-Wartungsdaten werden geladen …' : 'Kein Wartungsvertrag erfasst.') + '</div>');
+}
+/* Ansprechpartner aus Maxise (dieselben wie unter CRM → Kunden), Hauptansprechpartner zuerst –
+   erkannt am Kontakt selbst (wie im CRM) oder am Verweis des Maxise-Kunden auf den Kontakt */
+function _lmKdHauptId(e) {
+  e = e || {};
+  const o = e.hauptansprechpartner || e.hauptAnsprechpartner || e.standardansprechpartner || e.standardAnsprechpartner;
+  const id = e.hauptansprechpartnerId ?? e.hauptAnsprechpartnerId ?? e.standardansprechpartnerId ?? e.standardAnsprechpartnerId ?? (o && typeof o === 'object' ? o.id : null);
+  return id != null && String(id).trim() ? String(id).trim() : '';
+}
+function _lmKdIstHaupt(c, hauptId) {
+  return !!(c && ((hauptId && c.id != null && String(c.id).trim() === hauptId) ||
+    c.istStandardansprechpartner || c.istStandardAnsprechpartner || c.isStandard || c.standard || c.isDefault || c.default || c.hauptansprechpartner || c.isPrimary || c.primary));
+}
+async function _lmKdKontakteZeigen(g, neu) {
+  const el = () => document.getElementById('kd-kontakte');
+  const nr = String(g.kunde.kundennummer || g.kunde.id || '').trim();
+  if (!nr) { if (el()) el().innerHTML = '<div class="lm-muted">Ohne Kundennummer keine Ansprechpartner aus Maxise.</div>'; return; }
+  const ck = _lmData.firma + '|' + nr;
+  let list = !neu ? (_lmKdKontakte.get(ck) || null) : null;
+  if (!list) {
+    try {
+      let p = _lmKdKontakteLaden.get(ck);
+      if (!p) { p = erpFetch('/aufzug/' + _lmData.firma + '/api/Kunden/' + encodeURIComponent(nr) + '/Kontakte'); _lmKdKontakteLaden.set(ck, p); }
+      const r = await p;
+      _lmKdKontakteLaden.delete(ck);
+      list = Array.isArray(r) ? r : ((r && (r.content || r.items || r.data)) || []);
+      _lmKdKontakte.set(ck, list);
+    } catch (e) {
+      _lmKdKontakteLaden.delete(ck);
+      if (el() && _lmUi.kundeKey === g.key) el().innerHTML = '<div class="lm-muted">⚠ Ansprechpartner konnten nicht geladen werden: ' + escapeHtml((e && e.message) || e) + '</div>';
+      return;
+    }
+  }
+  if (!el() || _lmUi.kundeKey !== g.key) return;
+  _lmKdSeiteDyn();   // Hauptansprechpartner in den Details
+  if (!list.length) { el().innerHTML = '<div class="lm-muted">In Maxise sind keine Ansprechpartner hinterlegt.</div>'; return; }
+  const hid = _lmKdHauptId(_lmKdErp(g.kunde) || g.kunde), haupt = c => _lmKdIstHaupt(c, hid);
+  const s = list.slice().sort((x, y) => haupt(y) - haupt(x));
+  const tel = t => t ? '<a href="tel:' + escapeHtml(String(t).replace(/[^0-9+]/g, '')) + '">' + escapeHtml(t) + '</a>' : '';
+  el().innerHTML = '<div class="kd-kt-wrap"><table class="kd-kt"><thead><tr><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Primär</th></tr></thead><tbody>' + s.map(c => {
+    const name = [c.anrede, c.vorname, c.nachname].filter(Boolean).join(' ').trim() || c.name || '(ohne Name)';
+    const tels = [c.telefon, c.mobil || c.mobile || c.handy].filter(Boolean);
+    return '<tr' + (haupt(c) ? ' class="haupt"' : '') + '><td><b>' + escapeHtml(name) + '</b>' + (c.rolle || c.funktion ? '<div class="lm-muted">' + escapeHtml(c.rolle || c.funktion) + '</div>' : '') + '</td>' +
+      '<td>' + (c.email ? '<a href="mailto:' + escapeHtml(c.email) + '">' + escapeHtml(c.email) + '</a>' : '') + '</td>' +
+      '<td>' + tels.map(tel).join('<br>') + '</td>' +
+      '<td>' + (haupt(c) ? '<span class="kd-primaer">Primär</span>' : '') + '</td></tr>';
+  }).join('') + '</tbody></table></div>';
+}
+async function lmKdNeuLaden(btn) {
+  const g = _lmKdFind(_lmUi.kundeKey); if (!g) return;
+  if (btn) btn.disabled = true;
+  try {
+    if (typeof _kundenCache !== 'undefined' && _kundenCache.firma === _lmData.firma) _kundenCache.loadedAt = 0;
+    _lmKdErpStand.fehlerAt = 0;
+    _lmKdErpLaden();
+    await _lmKdKontakteZeigen(g, true);
+  } finally { if (btn) btn.disabled = false; }
+}
+function _lmKdCrm() {
+  const g = _lmKdFind(_lmUi.kundeKey), e = g && _lmKdErp(g.kunde); if (!e) return;
+  const idx = _lmKdErpListe().indexOf(e);   // openKundeDetail liest eine Zahl zuerst als Position in der Kundenliste
+  if (idx >= 0 && _kundenCache.items === _lmKdErpListe()) openKundeDetail(idx);
 }
 
 </script>
