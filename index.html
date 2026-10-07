@@ -1869,6 +1869,9 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
   .ob-grund{grid-template-columns:1fr 64px 58px}
   .ob-kontakt .ob-call{flex:1 1 auto;text-align:center}
 }
+/* v10.16: Angebotsnummer öffnet das Angebot, 📄 das PDF */
+button.ob-nr{border:0;cursor:pointer;line-height:inherit}
+button.ob-nr:hover,button.ob-nr:focus-visible{background:#1E40AF;outline:none;box-shadow:0 0 0 2px #BFDBFE}
 #ob-banner{padding-bottom:0}
 /* v10.09: 📨 Anfragen an Kunden (Liftmanagement) */
 .lm-ansicht{display:inline-flex;gap:4px;background:var(--surf);border:1px solid var(--bdr);border-radius:12px;padding:4px;margin:0 0 14px;max-width:100%;box-sizing:border-box;flex-wrap:wrap}
@@ -3715,7 +3718,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.15';
+const APP_VERSION = 'v10.16';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -61359,11 +61362,11 @@ function _obKarteHtml(o, mehrere) {
   const tipp = o.phase === 'faellig' && o.nichtErreicht >= 2 ? '<div class="ob-tipp">📵 ' + o.nichtErreicht + '× nicht erreicht – Tipp: ✉ Nachfass-Mail schicken.</div>' : '';
   const btn = (txt, fn, cls, tip) => '<button class="btn ' + (cls || '') + '" onclick="event.stopPropagation();' + fn + '"' + (tip ? ' title="' + escapeHtml(tip) + '"' : '') + '>' + txt + '</button>';
   const id = _obA(o.id), dlg = v => 'obNachfassDialog(' + id + (v ? ',' + _obA(v) : '') + ')';
-  const auf = btn('📄', '_obOpenAngebot(' + id + ')', '', 'Angebot öffnen');
+  const pdf = 'obPdfOeffnen(' + id + ',this)', auf = btn('📄', pdf, 'ob-pdf', 'PDF öffnen');   // v10.16: PDF direkt, ohne Wechsel zu den Angeboten
   let akt;
-  if (!ed) akt = btn('📄 Angebot öffnen', '_obOpenAngebot(' + id + ')');
-  else if (o.phase === 'unversendet') akt = btn('📤 Als versendet vermerken', 'obVersendetDialog(' + id + ')', 'prim') + btn('📄 Angebot öffnen', '_obOpenAngebot(' + id + ')');
-  else if (o.phase === 'gewonnen' || o.phase === 'verloren') akt = (_obWiederOeffenbar(o) ? btn('↺ wieder öffnen', 'obWiederOeffnen(' + id + ')') : '') + btn('📄 Angebot öffnen', '_obOpenAngebot(' + id + ')');
+  if (!ed) akt = btn('📄 PDF', pdf, 'ob-pdf', 'PDF öffnen');
+  else if (o.phase === 'unversendet') akt = btn('📤 Als versendet vermerken', 'obVersendetDialog(' + id + ')', 'prim') + btn('📄 PDF', pdf, 'ob-pdf', 'PDF öffnen');
+  else if (o.phase === 'gewonnen' || o.phase === 'verloren') akt = (_obWiederOeffenbar(o) ? btn('↺ wieder öffnen', 'obWiederOeffnen(' + id + ')') : '') + btn('📄 PDF', pdf, 'ob-pdf', 'PDF öffnen');
   else if (o.phase === 'erinnerung') akt = btn('📞 Jetzt nachfassen', dlg(), 'prim') + btn('🔔 Verschieben', dlg('erinnerung')) + btn('🔕 Erinnerung aufheben', 'obErinnerungWeg(' + id + ')') + auf;
   else if (o.phase === 'sales') akt = btn('🎉 Beauftragt', dlg('beauftragt'), 'ob-gruen') + btn('✖ Abgelehnt', dlg('abgelehnt'), 'ob-rot') + btn('🔔 Erinnerung', dlg('erinnerung'), '', 'Später nochmal beim Kunden nachfassen') + auf;
   else akt = btn('📞 Nachfassen', dlg(), 'prim') + btn('✉ Mail', 'obMailDialog(' + id + ')', '', 'Nachfass-Mail schreiben') + btn('🎉 Beauftragt', dlg('beauftragt'), 'ob-gruen') + btn('✖ Abgelehnt', dlg('abgelehnt'), 'ob-rot') + auf;
@@ -61371,7 +61374,7 @@ function _obKarteHtml(o, mehrere) {
   const kl = o.phase === 'faellig' ? o.naechster.status + (o.naechster.art === 'erinnerung' ? ' mit-erinnerung' : '') : o.phase;
   return '<div class="ob-karte ' + kl + '" data-id="' + escapeHtml(o.id) + '">' +
     '<div class="ob-kopf">' +
-      '<div class="ob-main"><div class="ob-titel"><span class="ob-nr">' + escapeHtml(o.nr) + '</span> ' + titel +
+      '<div class="ob-main"><div class="ob-titel"><button type="button" class="ob-nr" onclick="event.stopPropagation();_obOpenAngebot(' + id + ')" title="Angebot in „Angebote“ öffnen">' + escapeHtml(o.nr) + '</button> ' + titel +
         (mehrere ? ' <span class="lm-pill grau">' + escapeHtml(_obFirmaName(o.firma)) + '</span>' : '') + (o.maxise ? ' <span class="lm-pill lila" title="aus Maxise synchronisiert">Maxise</span>' : '') + '</div>' +
         (kd ? '<div class="ob-kd">' + kd + '</div>' : '') +
         '<div class="ob-meta">' + meta + '</div></div>' +
@@ -61807,6 +61810,57 @@ async function _obOpenAngebot(id) {
   }
   if (o.maxise && typeof _angOpenMaxiseRec === 'function') _angOpenMaxiseRec(id);
   else if (typeof openAngebotDetail === 'function') openAngebotDetail(id);
+}
+
+/* ── v10.16: 📄 PDF direkt hier öffnen (Vorschau über dem Nachfass-Board, kein Wechsel zu den Angeboten) ── */
+async function obPdfOeffnen(id, btn) {
+  const o = _obFindItem(id); if (!o) return;
+  const alt = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳'; }
+  try {
+    const blob = await _obPdfBlob(o);
+    if (!blob) return toast('Zu ' + o.nr + ' gibt es noch kein PDF' + (o.maxise ? ' in Maxise.' : ' – im Angebot „📄 PDF erzeugen“.'), 'err');
+    if (typeof _showVorlagenPreview !== 'function') { window.open(URL.createObjectURL(blob), '_blank'); return; }
+    _showVorlagenPreview(blob, o.nr);
+    const m = document.getElementById('vlg-preview-modal');
+    const kopf = m && m.querySelector('span'); if (kopf) kopf.textContent = '📄 Angebot ' + o.nr + (o.adresse ? ' · ' + o.adresse : '');
+    const dl = m && m.querySelector('a[download]'); if (dl) dl.setAttribute('download', 'Angebot-' + String(o.nr).replace(/[^\w.-]+/g, '_') + '.pdf');
+  } catch (e) { toast('❌ PDF nicht geladen: ' + String((e && e.message) || e).slice(0, 160), 'err'); }
+  finally { if (btn) { btn.disabled = false; btn.innerHTML = alt; } }
+}
+/* Servicebox-PDF (Airtable-Links laufen nach ein paar Stunden ab → notfalls frisch holen), sonst Original-PDF aus Maxise (nur lesen) */
+async function _obPdfBlob(o) {
+  const laden = async url => { if (!url) return null; try { const r = await fetch(url); if (!r.ok) return null; const b = await r.blob(); return b && b.size ? b : null; } catch(_) { return null; } };
+  let b = await laden(o.pdf);
+  if (!b && (o.pdf || !o.maxise)) {
+    try {
+      const baseId = APP_KEYS.appBaseId || APP_CONFIG.APP_BASE_ID, key = APP_KEYS.airtableReadKey || APP_KEYS.airtableWriteKey;
+      const r = await fetch('https://api.airtable.com/v0/' + baseId + '/App_Angebote/' + encodeURIComponent(o.id), { headers: { 'Authorization': 'Bearer ' + key } });
+      const rec = r.ok ? await r.json() : null, a = rec && rec.fields && Array.isArray(rec.fields.app_pdf) && rec.fields.app_pdf[0];
+      if (a && a.url) { b = await laden(a.url); if (b) { const alt = _obFindRec(o.id); if (alt) alt.fields.app_pdf = rec.fields.app_pdf; o.pdf = a.url; } }
+    } catch(_){}
+  }
+  if (!b && o.f.erp_angebot_id) b = await _obMaxisePdf(o);
+  return b ? new Blob([b], { type: 'application/pdf' }) : null;
+}
+async function _obMaxisePdf(o) {
+  const firma = o.firma || getCurrentFirmaSlug(), id = String(o.f.erp_angebot_id || '').trim();
+  const alle = ['wartungNotruf', 'aufwand', 'modernisierung', 'pauschal'];
+  const seg = (typeof _mxAngebotTypSeg === 'function' ? _mxAngebotTypSeg({ typ: o.f.erp_typ }) : '') || (alle.includes(o.f.erp_typ) ? o.f.erp_typ : '');
+  let g = null;   // Maxise baut die PDF-Adresse mit angebot.id – die steht im Angebot
+  for (const p of [seg ? 'api/angebote/' + seg + '/' + encodeURIComponent(id) : '', 'api/angebote/' + encodeURIComponent(id)].filter(Boolean)) {
+    try { const x = await erpFetch('/aufzug/' + firma + '/' + p); if (x && !Array.isArray(x)) { g = x; break; } } catch(e) { if (e && (e.status === 401 || e.status === 403)) break; }
+  }
+  const ids = [...new Set([g && g.angebot && g.angebot.id, g && g.id, id].map(v => String(v == null ? '' : v).trim()).filter(Boolean))];
+  for (const sg of (seg ? [seg] : []).concat(alle.filter(x => x !== seg))) {
+    for (const x of ids) {
+      try {
+        const r = await erpFetchRaw('/aufzug/' + firma + '/api/angebote/' + sg + '/' + encodeURIComponent(x) + '/pdf', 'application/octet-stream');
+        if (r.ok && r.blob && r.blob.size && (await r.blob.slice(0, 1024).text()).indexOf('%PDF') >= 0) return r.blob;
+      } catch(_){}
+    }
+  }
+  return null;
 }
 
 /* ── Menüknopf + Dashboard ── */
