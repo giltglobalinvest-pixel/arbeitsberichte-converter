@@ -2152,6 +2152,13 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
   .st-kunde+.st-wert{margin-left:40px}
   .st-wert:empty{display:none}
 }
+/* v10.15: ✨ KI liest den Wartungsbericht („✓ Wartung erledigt") */
+.wk-status{font-size:12px;line-height:1.45;color:var(--txt3);background:#F8FAFC;border:1px dashed var(--bdr);border-radius:8px;padding:7px 10px;font-weight:500}
+.wk-status.laeuft{color:#5B21B6;background:#F5F3FF;border:1px solid #DDD6FE}
+.wk-status.ok{color:#14532D;background:#F0FDF4;border:1px solid #BBF7D0}
+.wk-status.warn{color:#92400E;background:#FFFBEB;border:1px solid #FDE68A}
+.wk-status .wk-link{background:none;border:0;padding:0;margin-left:6px;font:inherit;font-weight:700;color:inherit;text-decoration:underline;cursor:pointer}
+.lm-form input.wk-ki{background:#F5F3FF;border-color:#A78BFA;box-shadow:inset 0 0 0 1px #A78BFA}
 </style>
 </head>
 <body>
@@ -3708,7 +3715,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.14';
+const APP_VERSION = 'v10.15';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -58453,9 +58460,11 @@ function lmWartungErledigtDialog(anlageId, modus) {
     '</div><div class="lm-muted" id="lm-wa-prog" style="margin-top:8px">Ein Wartungsbericht aus der Servicebox zählt automatisch – hier nur Wartungen ohne Servicebox-Bericht eintragen. Alle Berichte stehen in der Akte unter „🔧 Wartungsberichte".</div>';
   _lmModal('lm-wa-modal', upload ? '📎 Wartungsbericht hochladen' : '✓ Wartung erledigt', body,
     '<button class="btn" onclick="_lmCloseModal(' + _lmA('lm-wa-modal') + ')">Abbrechen</button><button class="btn prim" id="lm-wa-go" onclick="lmWartungErledigtSpeichern(this,' + _lmA(anlageId) + ',' + (upload ? 'true' : 'false') + ')">💾 Speichern</button>');
+  if (typeof _wkDialogBereit === 'function') _wkDialogBereit();   // v10.15: KI liest Datum + Techniker aus dem Bericht
 }
 async function lmWartungErledigtSpeichern(btn, anlageId, mussDatei) {
   const a = _lmFindAnlage(anlageId); if (!a || !_lmCanEdit()) return;
+  if (typeof _wkLaeuft === 'function' && _wkLaeuft()) return toast('⏳ Die KI liest den Bericht noch – einen Moment.', 'err');   // v10.15
   const g = n => { const el = document.getElementById('lm-f-' + n); return el ? String(el.value || '').trim() : ''; };
   const datum = g('wa_datum'), tech = g('wa_techniker'), text = g('wa_text');
   const fileEl = document.getElementById('lm-f-wa_datei'), files = Array.from((fileEl && fileEl.files) || []);
@@ -64586,6 +64595,180 @@ function stCsv() {
   link.download = 'beste-kunden-' + firma + '-' + _stUi.zeit + '-' + _lmToday() + '.csv';
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 4000);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+ * v10.15: ✨ KI liest den Wartungsbericht – Dialog „✓ Wartung erledigt" / „📎 Wartungsbericht hochladen"
+ *   PDF oder Foto anhängen → die KI liest „Wartung durchgeführt am" und „Techniker" aus und trägt beides ein.
+ *   Die Notiz bleibt leer. Was schon von Hand eingetragen ist, bleibt stehen. Ohne KI-Zugang ändert sich nichts.
+ *   Läuft über den eigenen Server (der Schlüssel bleibt dort), wie der KI-Text beim Nachfassen.
+ * ═══════════════════════════════════════════════════════════════════════ */
+const WK_MAX_DATEIEN = 6;                     // so viele Dateien (Seiten) liest die KI höchstens
+const WK_MAX_PDF = 20 * 1024 * 1024;          // größere PDFs: Datum und Techniker von Hand
+const WK_MAX_GESAMT = 20 * 1024 * 1024;       // die Anfrage bleibt mit Base64 (× 4/3) unter 32 MB
+const WK_MAX_BILD = Math.floor(3.75 * 1024 * 1024);   // je Foto höchstens 5 MB als Base64
+const WK_TIMEOUT = 90000;
+const WK_BILDTYPEN = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const WK_HINWEIS = '✨ Datum und Techniker liest die KI aus dem angehängten Bericht.';
+const WK_SCHEMA = { type: 'object', properties: {
+  datum: { type: 'string', description: 'Tag der Durchführung als JJJJ-MM-TT, leer wenn nicht sicher erkennbar' },
+  techniker: { type: 'string', description: 'Vor- und Nachname der Person(en), die die Wartung durchgeführt haben, leer wenn nicht erkennbar' },
+}, required: ['datum', 'techniker'], additionalProperties: false };
+let _wkLauf = null, _wkNr = 0, _wkDlgNr = 0;   // laufende Auswertung { nr, ac, dlg }
+
+/* ── rein (ohne DOM/Netz) ── */
+function _wkPrompt(heute) {
+  return 'Du liest einen Wartungsbericht für einen Aufzug – Papierbericht, Scan, Foto oder PDF, auch von Subunternehmern ' +
+    'oder Herstellern (KONE, Schindler, TK Elevator, Otis u. a.). Gib genau zwei Angaben zurück:\n' +
+    '1. datum: der Tag, an dem die Wartung durchgeführt wurde, als JJJJ-MM-TT. Nicht das Druck- oder Erstellungsdatum, ' +
+    'nicht die nächste oder fällige Wartung, nicht das Datum einer TÜV/ZÜS-Prüfung. Ging die Wartung über mehrere Tage, ' +
+    'nimm den letzten Tag. Zweistellige Jahre gehören ins 21. Jahrhundert. Ist kein Datum sicher lesbar, gib "" zurück.\n' +
+    '2. techniker: Vor- und Nachname der Person(en), die die Wartung durchgeführt haben (Monteur, Techniker, ' +
+    '„durchgeführt von"), so wie im Bericht geschrieben. Mehrere Personen mit ", " trennen; „Nachname, Vorname" als ' +
+    '„Vorname Nachname" schreiben. Keine Firmennamen, keine Kunden, Hausmeister oder Kundenunterschriften. ' +
+    'Ist kein Name sicher lesbar, gib "" zurück.\n' +
+    'Heute ist der ' + _lmFmtDE(heute) + '. Rate nicht – lieber "" als eine falsche Angabe.';
+}
+function _wkAnfrage(bloecke, heute) {
+  return {
+    model: 'claude-opus-5-5', max_tokens: 16000, fallbacks: 'default',
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: WK_SCHEMA } },
+    messages: [{ role: 'user', content: (bloecke || []).concat([{ type: 'text', text: _wkPrompt(heute) }]) }],
+  };
+}
+/* Antwort der KI prüfen → { datum: 'JJJJ-MM-TT' | '', datumRoh, datumGrund: '' | 'zukunft' | 'ungueltig', techniker } */
+function _wkAuswerten(out, heute) {
+  out = out || {};
+  const r = { datum: '', datumRoh: '', datumGrund: '', techniker: '' };
+  let d = String(out.datum == null ? '' : out.datum).trim();
+  const de = /^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/.exec(d);
+  if (de) d = (de[3].length === 2 ? '20' + de[3] : de[3]) + '-' + de[2].padStart(2, '0') + '-' + de[1].padStart(2, '0');
+  if (d) {
+    r.datumRoh = d;
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d);
+    const t = m && new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+    if (!m || +m[1] < 2000 || t.getUTCMonth() !== +m[2] - 1 || t.getUTCDate() !== +m[3]) r.datumGrund = 'ungueltig';
+    else if (d > heute) r.datumGrund = 'zukunft';
+    else r.datum = d;
+  }
+  let tech = String(out.techniker == null ? '' : out.techniker).replace(/\s+/g, ' ').trim().replace(/^[-–:;,\s]+|[-–:;,\s]+$/g, '');
+  if (/^(unbekannt|keine?( angaben?)?|n\s*[./]?\s*a\.?|nicht (erkennbar|lesbar|angegeben)|-+|\?+)$/i.test(tech)) tech = '';
+  r.techniker = tech.slice(0, 80);
+  return r;
+}
+
+/* ── Dialog ── */
+function _wkVerfuegbar() { return typeof APP_KEYS !== 'undefined' && !!(APP_KEYS && APP_KEYS.anthropicKey); }
+function _wkLaeuft() { return !!_wkLauf; }
+function _wkAktuell(nr, dlg) { const m = document.getElementById('lm-wa-modal'); return !!(_wkLauf && _wkLauf.nr === nr && m && m.dataset.wk === dlg); }
+function _wkStatus(cls, html) { const el = document.getElementById('lm-wa-ki'); if (el) { el.className = 'full wk-status' + (cls ? ' ' + cls : ''); el.innerHTML = html; } }
+function _wkKnopf(liest) { const b = document.getElementById('lm-wa-go'); if (!b) return; b.disabled = !!liest; b.textContent = liest ? '⏳ KI liest …' : '💾 Speichern'; }
+/* Aufruf am Ende von lmWartungErledigtDialog: Hinweis, Datei-Auswahl beobachten, Eingaben von Hand merken */
+function _wkDialogBereit() {
+  const m = document.getElementById('lm-wa-modal'), f = document.getElementById('lm-f-wa_datei');
+  if (_wkLauf) { try { _wkLauf.ac.abort(); } catch(_){} _wkLauf = null; }
+  if (!m || !f) return;
+  m.dataset.wk = String(++_wkDlgNr);
+  if (!_wkVerfuegbar()) return;
+  ['wa_datum', 'wa_techniker'].forEach(n => {
+    const el = document.getElementById('lm-f-' + n); if (!el) return;
+    const hand = () => { el.dataset.wkHand = '1'; el.classList.remove('wk-ki'); };
+    el.addEventListener('input', hand); el.addEventListener('change', hand);
+  });
+  const lbl = f.closest('label');
+  if (lbl) lbl.insertAdjacentHTML('afterend', '<div class="full wk-status" id="lm-wa-ki" role="status" aria-live="polite">' + WK_HINWEIS + '</div>');
+  f.addEventListener('change', () => lmWaKiLesen(f));
+}
+function lmWaKiAbbrechen() {
+  if (!_wkLauf) return;
+  const l = _wkLauf; _wkLauf = null;
+  try { l.ac.abort(); } catch(_){}
+  _wkKnopf(false);
+  _wkStatus('warn', 'KI abgebrochen – bitte Datum und Techniker selbst eintragen.');
+}
+async function lmWaKiLesen(input) {
+  const m = document.getElementById('lm-wa-modal'); if (!m || !input || !_wkVerfuegbar()) return;
+  if (_wkLauf) { try { _wkLauf.ac.abort(); } catch(_){} }
+  const dlg = m.dataset.wk, nr = ++_wkNr, ac = new AbortController(), files = Array.from(input.files || []);
+  _wkLauf = { nr, ac, dlg };
+  ['wa_datum', 'wa_techniker'].forEach(n => { const el = document.getElementById('lm-f-' + n); if (el) el.classList.remove('wk-ki'); });
+  if (!files.length) { _wkLauf = null; _wkKnopf(false); return _wkStatus('', WK_HINWEIS); }
+  _wkKnopf(true);
+  _wkStatus('laeuft', '⏳ Die KI liest den Bericht … <button type="button" class="wk-link" onclick="lmWaKiAbbrechen()">ohne KI weiter</button>');
+  const timer = setTimeout(() => { try { ac.abort(); } catch(_){} }, WK_TIMEOUT);
+  try {
+    const { bloecke, uebersprungen } = await _wkBloecke(files);
+    if (!_wkAktuell(nr, dlg)) return;
+    if (!bloecke.length) return _wkStatus('warn', '⚠ ' + escapeHtml(uebersprungen[0] || 'Die KI kann diese Datei nicht lesen') + ' – bitte Datum und Techniker selbst eintragen.');
+    const out = await _wkFrage(bloecke, ac.signal);
+    if (!_wkAktuell(nr, dlg)) return;
+    _wkEintragen(_wkAuswerten(out, _lmToday()), uebersprungen);
+  } catch (e) {
+    if (!_wkAktuell(nr, dlg)) return;
+    const grund = (e && e.name === 'AbortError') ? 'Die KI hat zu lange gebraucht' : 'KI nicht erreichbar: ' + String((e && e.message) || e).slice(0, 160);
+    _wkStatus('warn', '⚠ ' + escapeHtml(grund) + ' – bitte Datum und Techniker selbst eintragen.');
+  } finally {
+    clearTimeout(timer);
+    if (_wkAktuell(nr, dlg)) _wkKnopf(false);
+    if (_wkLauf && _wkLauf.nr === nr) _wkLauf = null;
+  }
+}
+/* PDFs gehen unverändert mit, Fotos als JPEG (wie beim Hochladen verkleinert) */
+async function _wkBloecke(files) {
+  const bloecke = [], uebersprungen = [];
+  let summe = 0;
+  for (const f of files) {
+    if (bloecke.length >= WK_MAX_DATEIEN) { uebersprungen.push('nur die ersten ' + WK_MAX_DATEIEN + ' Dateien gelesen'); break; }
+    try {
+      if (_lmIstPdf(f)) {
+        if (f.size > WK_MAX_PDF || summe + f.size > WK_MAX_GESAMT) { uebersprungen.push(f.name + ' ist für die KI zu groß'); continue; }
+        bloecke.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: await _wkBase64(f) } });
+        summe += f.size;
+      } else if (/^image\//i.test(f.type || '') || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(f.name || '')) {
+        const b = await _lmShrinkImage(f);
+        const typ = String((b && b.type) || '').toLowerCase();
+        if (!b || !WK_BILDTYPEN.includes(typ) || b.size > WK_MAX_BILD) { uebersprungen.push(f.name + ' lässt sich nicht lesen'); continue; }
+        if (summe + b.size > WK_MAX_GESAMT) { uebersprungen.push(f.name + ' ist für die KI zu groß'); continue; }
+        bloecke.push({ type: 'image', source: { type: 'base64', media_type: typ, data: await _wkBase64(b) } });
+        summe += b.size;
+      } else uebersprungen.push(f.name + ' ist kein PDF oder Foto');
+    } catch(_) { uebersprungen.push(f.name + ' lässt sich nicht lesen'); }
+  }
+  return { bloecke, uebersprungen };
+}
+function _wkBase64(blob) {
+  return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result).split(',')[1] || ''); r.onerror = () => rej(r.error || new Error('Datei nicht lesbar')); r.readAsDataURL(blob); });
+}
+async function _wkFrage(bloecke, signal) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+    body: JSON.stringify(_wkAnfrage(bloecke, _lmToday())),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d && d.error && d.error.message) || ('HTTP ' + r.status));
+  if (d.stop_reason === 'refusal') throw new Error('die KI hat den Bericht nicht ausgewertet');
+  if (d.stop_reason === 'max_tokens') throw new Error('Antwort unvollständig');
+  const roh = (d.content || []).filter(b => b && b.type === 'text').map(b => b.text).join('');
+  try { return JSON.parse(roh); } catch(_) { throw new Error('Antwort nicht lesbar'); }
+}
+/* Ergebnis eintragen – nur in Felder, die nicht schon von Hand ausgefüllt wurden */
+function _wkEintragen(e, uebersprungen) {
+  const dEl = document.getElementById('lm-f-wa_datum'), tEl = document.getElementById('lm-f-wa_techniker');
+  const teile = [], hinweise = [];
+  if (e.datum && dEl) {
+    if (!dEl.dataset.wkHand) { dEl.value = e.datum; dEl.classList.add('wk-ki'); teile.push('Wartung am <b>' + _lmFmtDE(e.datum) + '</b>'); }
+    else if (dEl.value !== e.datum) hinweise.push('Datum laut Bericht: ' + _lmFmtDE(e.datum) + ' (deine Eingabe bleibt)');
+  } else if (e.datumGrund === 'zukunft') hinweise.push('Das Datum im Bericht (' + escapeHtml(_lmFmtDE(e.datumRoh) || e.datumRoh) + ') liegt in der Zukunft – nicht übernommen, bitte prüfen');
+  else hinweise.push('Kein Datum im Bericht gefunden – bitte das Datum prüfen');
+  if (e.techniker && tEl) {
+    if (!tEl.dataset.wkHand || !tEl.value.trim()) { tEl.value = e.techniker; tEl.classList.add('wk-ki'); teile.push('Techniker <b>' + escapeHtml(e.techniker) + '</b>'); }
+    else if (tEl.value.trim() !== e.techniker) hinweise.push('Techniker laut Bericht: ' + escapeHtml(e.techniker) + ' (deine Eingabe bleibt)');
+  } else if (!e.techniker) hinweise.push('Keinen Techniker im Bericht gefunden');
+  if (uebersprungen && uebersprungen.length) hinweise.push(escapeHtml(uebersprungen.join(' · ')));
+  if (teile.length) _wkStatus('ok', '✨ Aus dem Bericht eingetragen: ' + teile.join(' · ') + ' – bitte kurz prüfen.' + (hinweise.length ? '<br>' + hinweise.join(' · ') + '.' : ''));
+  else _wkStatus('warn', '⚠ ' + hinweise.join(' · ') + '.');
 }
 
 </script>
