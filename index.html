@@ -1729,6 +1729,28 @@ body.theme-playful .auf-empty,body.theme-playful .hist-empty{color:rgba(255,255,
   .lm-wb-m{flex-basis:calc(100% - 120px)}
   .lm-wb-a{width:100%;justify-content:flex-start}
 }
+/* v10.10: ☎ Notruf – Kasten im Akte-Kopf, Zeilen in „Zu erledigen" */
+.lm-notruf{background:#F8FAFC;border:1px solid #CBD5E1;border-left:4px solid #64748B;border-radius:10px;padding:8px 12px;margin-top:10px;color:#1E293B;font-size:12.5px}
+.lm-notruf.gruen{background:#F0FDF4;border-color:#BBF7D0;border-left-color:#16A34A}
+.lm-notruf.gelb{background:#FFFBEB;border-color:#FDE68A;border-left-color:#D97706}
+.lm-notruf.rot{background:#FEF2F2;border-color:#FECACA;border-left-color:#DC2626;box-shadow:0 0 0 2px rgba(220,38,38,.12)}
+.lm-notruf.blau{background:#EFF6FF;border-color:#BFDBFE;border-left-color:#2563EB}
+.lm-notruf .lm-zg-h .lm-pill{font-size:11.5px}
+.lm-notruf .lm-zg-z .k{color:#475569;min-width:110px}
+.lm-notruf .lm-zg-b{border-color:#CBD5E1;color:#1E293B}
+.lm-notruf .lm-zg-b.prim{background:#2152A9;border-color:#2152A9;color:#fff}
+.lm-notruf.rot .lm-zg-b.prim{background:#DC2626;border-color:#DC2626}
+.lm-abr-act{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.lm-abr-item.achtung{background:#FEF2F2;border-color:#FECACA}
+.lm-abr-item.achtung .lm-abr-t{color:#991B1B}
+@media (max-width:760px){
+  .lm-notruf .lm-zg-z .k{min-width:0}
+  .lm-abr-act{justify-content:flex-start}
+}
+/* v10.11: „📬 Kunde hat geantwortet" in „Zu erledigen" und auf dem Dashboard */
+.lm-dot.blau{background:#2563EB}
+.lm-abr-item.antwort{border-left:4px solid #2563EB;background:#F8FAFF}
+.lm-abr-item.antwort .lm-abr-due b{color:#1D4ED8}
 body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
 
 /* v10.07: Formular „Neuer Auftrag" passt aufs Handy – kein Feld darf das Raster breiter machen als den Bildschirm */
@@ -1976,6 +1998,9 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
   .an-map-w{grid-column:2}
   .an-tab-akt{margin-left:0;width:100%}
 }
+/* v10.11: Grund einer Sperre direkt neben dem Knopf „Über Freshdesk senden" */
+.an-fuss-sperre{flex:1 1 260px;align-self:center;color:#B91C1C;font-size:12px;font-weight:700;text-align:left;line-height:1.35}
+.an-fuss-sperre:empty{display:none}
 </style>
 </head>
 <body>
@@ -3522,7 +3547,7 @@ body.theme-playful .lm-list-info{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.09';
+const APP_VERSION = 'v10.11';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -56679,6 +56704,12 @@ function _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, page, total, f) {
  *   (Vertrag in der Akte > Servicebox-Wartungsvertrag > Maxise) und sind in der Akte nicht mehr änderbar; frühere
  *   Angaben direkt in der Akte gelten nur noch, solange kein Vertrag erfasst ist. Wartungsberichte auf Papier oder vom
  *   Subunternehmer lassen sich als PDF/Foto hochladen (zählen als Wartung); Reiter „🔧 Wartungsberichte" zeigt alle.
+ * v10.10: Notruf laut Vertrag: „Startdatum Notruf" im Vertrag (leer = Vertragsbeginn, nur später möglich). 3 Wochen vor
+ *   Notrufbeginn „Notruf wird benötigt – Gerät bestellen", 2 Wochen vorher „Notruf-Montage fällig", ab Notrufbeginn ohne
+ *   Bestätigung „🚨 ACHTUNG Notruf nicht aktiv" (auch für schon laufende Verträge – Abfrage je Anlage). Kündigung eines
+ *   Vertrags mit Notruf → „Notruf ausbauen bis Vertragsende". Stand je Anlage im Kasten „☎ Notruf" der Akte.
+ * v10.11: Antwortet ein Kunde auf eine Anfrage (📨), steht „📬 Kunde hat geantwortet" unter „Zu erledigen", auf dem
+ *   Dashboard und am Zähler – bis „Antwort einlesen"/„Gelöst". Die Tickets werden auch im Hintergrund geprüft.
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Rechenlogik (rein, ohne DOM/Netz). Datumswerte als 'YYYY-MM-DD' (lokale Kalendertage). ── */
@@ -56901,6 +56932,12 @@ const LM_AKTE_FIELDS = [
   { name:'rechnung_an',      type:'multilineText'  },   // v10.09: Rechnungsadresse laut Kunde
   { name:'rechnung_email',   type:'singleLineText' },
   { name:'rechnung_referenz',type:'singleLineText' },
+  { name:'notruf_status',      type:'singleLineText' },   // v10.10: '' = noch nicht bestätigt | bestellt | aktiv | nicht_aktiv | ausgebaut
+  { name:'notruf_status_am',   type:'singleLineText' },
+  { name:'notruf_status_von',  type:'singleLineText' },
+  { name:'notruf_status_notiz',type:'multilineText'  },
+  { name:'notruf_bestellt_am', type:'singleLineText' },   // Notrufgerät bestellt
+  { name:'notruf_montiert_am', type:'singleLineText' },   // Notrufgerät von uns montiert
 ];
 const LM_VERTRAG_FIELDS = [
   { name:'vertragsnummer',          type:'singleLineText' },
@@ -56928,6 +56965,7 @@ const LM_VERTRAG_FIELDS = [
   { name:'abrechnung_ab',           type:'singleLineText' },                     // Erinnerungen ab (leer = LM_ABR_START)
   { name:'adresse',                 type:'singleLineText' },                     // Spiegel für Listen/Erinnerungen
   { name:'kunde_name',              type:'singleLineText' },
+  { name:'notruf_beginn',           type:'singleLineText' },                     // v10.10: Startdatum Notruf (leer = Vertragsbeginn)
 ];
 const LM_EINTRAG_FIELDS = [
   { name:'titel',       type:'singleLineText' },
@@ -56984,6 +57022,17 @@ const LM_STATUS = {
   archiviert: { label:'Archiviert', icon:'🗄', cls:'grau'  },
 };
 const LM_NOTRUF_VORLAUF = 30;   // Dashboard/Zähler: Notruf-Ausbau ab 30 Tagen vor der Frist
+const LM_NOTRUF_BESTELLEN = 21;    // v10.10: 3 Wochen vor Notrufbeginn „Notruf wird benötigt – Gerät bestellen"
+const LM_NOTRUF_MONTAGE = 14;      // 2 Wochen vor Notrufbeginn „Notruf-Montage fällig"
+const LM_NOTRUF_AB = '2026-09-01'; // Ausbau nach Vertrags-Kündigung erst für Vertragsenden ab diesem Tag (ältere gelten als erledigt)
+const LM_NOTRUF_STATUS = {         // Stand je Anlage ('' = noch nicht als aktiv bestätigt)
+  bestellt:    { label:'Gerät bestellt', icon:'📦', cls:'blau'  },
+  aktiv:       { label:'aktiv',          icon:'✅', cls:'gruen' },
+  nicht_aktiv: { label:'nicht aktiv',    icon:'🚨', cls:'rot'   },
+  ausgebaut:   { label:'ausgebaut',      icon:'📵', cls:'grau'  },
+};
+/* Servicebox-Wartungsvertrag mit Notruf: Assistent „Notruf und GSM-Service: enthalten" bzw. Abschnitt „Notrufaufschaltung" im Vertragstext */
+const LM_WV_NOTRUF_FORMEL = "OR(FIND('GSM-Service:** enthalten',{vertrag_text}&''),AND(FIND('Notruf und GSM-Service',{vertrag_text}&''),NOT(FIND('GSM-Service:** NICHT',{vertrag_text}&''))),FIND('Notrufaufschaltung',{vertrag_text}&''))";
 const LM_HERSTELLER = ['KONE','Schindler','OTIS','TK Elevator','Schmitt + Sohn','Haushahn','Kleemann','Orona','Liftequip','Hiro Lift','Riedl'];
 const LM_ANTRIEBE = ['Seil (Triebscheibe, Maschinenraum)','Seil (maschinenraumlos / MRL)','Hydraulik','Sonstige'];   // v10.05: ohne Trommel, Zahnstange, Spindel
 const LM_PRUEFSTELLEN = ['TÜV SÜD','TÜV Rheinland','TÜV NORD','TÜV Hessen','TÜV Thüringen','TÜV Saarland','DEKRA','GTÜ','KÜS'];
@@ -57015,6 +57064,7 @@ const LM_FILTER = {
   startet:    { label:'⏳ Startet später',      test: it => !!it.aktiv.ab, nurWennDa: true, tip:'Status „Aktiv", aber der Start liegt in der Zukunft – zählt erst ab dem Starttag als „aktuell aktiv"' },
   abrechnung: { label:'💶 Wartung abrechnen',   test: it => it.abrOffen.length > 0, tip:'Wartungsrechnung fällig oder in ≤ 30 Tagen fällig und noch nicht geschrieben' },
   wartfaellig:{ label:'🔧 Wartung fällig',      test: it => !!it.wartF && (it.wartF.status === 'ueberfaellig' || it.wartF.status === 'faellig'), tip:'Laufendes Wartungsfenster noch ohne Wartung (gelb) oder ein Fenster ist abgelaufen (rot) – Wartungsberichte zählen automatisch' },
+  notruf:     { label:'☎ Notruf offen',         test: it => !!(it.notrufAufgabe || (it.notruf && _lmImFenster(it.notruf))), nurWennDa: true, tip:'Notrufgerät bestellen (3 Wochen vor Notrufbeginn), Montage fällig (2 Wochen vorher), 🚨 Notruf nicht aktiv oder Ausbau nach Kündigung (ab 30 Tagen vor der Frist)' },
   wartung:    { label:'In Wartung bei uns',     test: it => it.wartung },
   tuev:       { label:'TÜV fällig ≤ 60 Tage',   test: it => it.tuev.ampel === 'rot' || it.tuev.ampel === 'gelb' },
   kuendigung: { label:'Vertrags-Radar ⏰',      test: it => it.kuendbar.length > 0, tip:'Kündigungsfrist endet in ≤ 90 Tagen oder Vertrag läuft ohne Verlängerung aus' },
@@ -57095,7 +57145,8 @@ function _lmFindAnlage(id) { return (_lmData.anlagen || []).find(x => x && Strin
 function _lmAkteOf(id) { const r = _lmData.akteMap && _lmData.akteMap.get(String(id)); return _lmAkteNorm(r && r.fields); }
 function _lmCache(id) { return _lmAkteCache[_lmData.firma + '|' + String(id)] || null; }
 function _lmCurItem() { const a = _lmFindAnlage(_lmUi.akteId); return a ? _lmItem(a) : null; }
-const LM_AKTE_DATUMSFELDER = ['wartung_seit','tuev_letzte_hp','tuev_naechste_hp','tuev_naechste_zp','gekuendigt_am','gekuendigt_zum','notruf_ausbau_bis','notruf_ausgebaut_am','lm_seit'];
+const LM_AKTE_DATUMSFELDER = ['wartung_seit','tuev_letzte_hp','tuev_naechste_hp','tuev_naechste_zp','gekuendigt_am','gekuendigt_zum','notruf_ausbau_bis','notruf_ausgebaut_am','lm_seit',
+  'notruf_status_am','notruf_bestellt_am','notruf_montiert_am'];
 function _lmIstMitglied(f) { return !!(f && LM_STATUS[f.lm_status]); }                         // im Liftmanagement (auch inaktiv/archiviert)
 function _lmAbrRelevant(f) { return !!f && (f.lm_status === 'aktiv' || f.lm_status === 'gekuendigt'); }   // bekommt Rechnungs-Erinnerungen
 /* Notruf-Ausbau offen? (nach Kündigung, bis „✓ Notruf ausgebaut") */
@@ -57161,7 +57212,7 @@ function _lmAktenJeAnlage(d) {
   return m;
 }
 function _lmAkteNorm(f) { const o = Object.assign({}, f || {}); LM_AKTE_DATUMSFELDER.forEach(k => { if (o[k]) o[k] = _lmDate(o[k]); }); return o; }
-function _lmVtNorm(f) { const o = Object.assign({}, f || {}); ['beginn','gekuendigt_zum'].forEach(k => { if (o[k]) o[k] = _lmDate(o[k]); }); return o; }
+function _lmVtNorm(f) { const o = Object.assign({}, f || {}); ['beginn','gekuendigt_zum','notruf_beginn'].forEach(k => { if (o[k]) o[k] = _lmDate(o[k]); }); return o; }
 
 /* ── Airtable ── */
 async function _lmAtList(table, formula, fields) {
@@ -57249,7 +57300,7 @@ async function _lmLoadFirma(firma, force) {
   const p = (async () => {
     if (force && _anlagenCache.firma === firma) _anlagenCache.loadedAt = 0;   // Maxise frisch holen
     const F = '{firma}=' + _lmQ(firma);
-    const [rA, rAk, rV, rE, rW, rAb, rAn] = await Promise.allSettled([
+    const [rA, rAk, rV, rE, rW, rAb, rAn, rWn] = await Promise.allSettled([
       _loadAnlagenForFirma(firma),
       _lmAtList(LM_T_AKTE, F),
       _lmAtList(LM_T_VERTRAG, F),
@@ -57257,6 +57308,7 @@ async function _lmLoadFirma(firma, force) {
       _lmAtList('Vertraege', F, ['firma','vertragsnummer','titel','status','anlagen_json','archived','start_datum','abrechnung_turnus','jahrespreis_gesamt','kunde_name','erp_id','wartungen_pro_jahr']),
       _lmAtList(LM_T_ABR, F),
       typeof LM_T_ANFRAGE !== 'undefined' ? _lmAtList(LM_T_ANFRAGE, F) : Promise.resolve([]),   // v10.09: Anfragen an Kunden
+      _lmAtList('Vertraege', 'AND(' + F + ',' + LM_WV_NOTRUF_FORMEL + ')', ['firma']),            // v10.10: Servicebox-WV mit Notruf (nur IDs)
     ]);
     if (rA.status === 'rejected') throw rA.reason;
     const errors = [];
@@ -57272,6 +57324,7 @@ async function _lmLoadFirma(firma, force) {
       firma, anlagen: (rA.value || []).slice(),
       akten: val(rAk, 'Akten'), vertraege: val(rV, 'Verträge'), eintraege: val(rE, 'Einträge'), wv: val(rW, 'WV', true), abrechnungen: val(rAb, 'Abrechnungen'),
       anfragen: val(rAn, 'Anfragen', true), anfragenFehlt: rAn.status === 'rejected' && _lmIsMissingTable(rAn.reason),
+      wvNotruf: new Set(val(rWn, 'WV-Notruf', true).map(r => r.id)),
       loadedAt: Date.now(), loading: null, loadingFirma: null, errors,
     };
     _lmIndex(d);
@@ -57344,6 +57397,7 @@ async function _lmLoadWartung(firma, force) {
         angebotId: angId,
         nummer: String(ang.angebotsnummer || ang.nummer || ang.id || ''),
         bezeichnung: ang.bezeichnung || ang.titel || '',
+        typ: String(ang.typ || ang.angebotTyp || ang.angebotsTyp || w.typ || '').toUpperCase(),
         status: ang.status || '',
         beginn: _lmDate(w.vertragsBeginn || w.contractStartDate || w.vertragsstart || ''),
         ende,
@@ -57705,31 +57759,151 @@ function _lmAbrRows(items) {
     quelle: o.quelle, turnus: o.turnus, regel: o.regel, beginn: o.beginn, preis: x.preis != null ? x.preis : o.preis, anteil: x.anteil || 1, bis: x.bis || '', faellig: x.faellig })));
   return rows.sort((a, b) => a.faellig.localeCompare(b.faellig));
 }
-/* Aufgaben aus Kündigungen: „Notruf ausbauen bis …" (bis „✓ Notruf ausgebaut") */
-function _lmNotrufRows(firma, d) {
+/* ═══ v10.10: Notruf laut Vertrag ═══
+   Soll: Verträge in der Akte mit Notruf („☎ Notruf inklusive" bzw. Art „Wartung + Notruf"/„Notruf") ab „Startdatum Notruf"
+   (leer = Vertragsbeginn); ohne Vertrag in der Akte ein aktiver Servicebox-Wartungsvertrag mit Notruf (ab Vertragsstart).
+   Ist: Stand je Anlage in der Akte – notruf_status '' (noch nicht bestätigt) | bestellt | aktiv | nicht_aktiv | ausgebaut. */
+function _lmVtHatNotruf(f) { return !!f && (!!f.notruf_inkl || /notruf/.test(String(f.art || ''))); }
+function _lmNotrufStart(f) {   // Startdatum Notruf – nie vor dem Vertragsbeginn
+  const b = _lmDate(f && f.beginn), nb = _lmDate(f && f.notruf_beginn);
+  return nb && (!b || nb > b) ? nb : b;
+}
+function _lmNotrufWv(d, aid) {
+  const set = d && d.wvNotruf; if (!set || !set.size) return [];
+  return ((d.wvMap && d.wvMap.get(String(aid))) || []).filter(r => { const f = r.fields || {}; return set.has(r.id) && !f.archived && String(f.status || '') === 'aktiv'; })
+    .map(r => { const f = r.fields || {}; return { id: r.id, nr: String(f.vertragsnummer || f.titel || ''), beginn: _lmDate(f.start_datum) }; });
+}
+/* Zeiträume, in denen Notruf geschuldet ist (nach Beginn): [{ ref, recId, quelle, titel, beginn, vertragBeginn, spaeter, ende, gekuendigt }]
+   ende = „gekündigt zum" (letzter Tag, wie beim Status „Gekündigt") bzw. Ende eines beendeten Vertrags; leer = läuft weiter */
+function _lmNotrufSoll(vertraege, wvNotruf, heute) {
+  heute = heute || _lmToday();
+  const out = [];
+  (vertraege || []).forEach(v => {
+    const f = v.f || {}; if (!_lmVtHatNotruf(f)) return;
+    const beginn = _lmNotrufStart(f); if (!beginn) return;
+    const gek = _lmParseDate(f.gekuendigt_zum) ? f.gekuendigt_zum : '';
+    let ende = gek;
+    if (!gek && v.info && v.info.status === 'beendet') ende = (v.info.ende && v.info.ende < heute) ? v.info.ende : _lmAddDays(heute, -1);   // ausgelaufen bzw. manuell beendet
+    out.push({ ref: 'lm:' + ((v.rec && v.rec.id) || ''), recId: (v.rec && v.rec.id) || '', quelle: 'akte', titel: _lmArtLabel(f.art) + (f.vertragsnummer ? ' · ' + f.vertragsnummer : ''),
+      beginn, vertragBeginn: _lmDate(f.beginn), spaeter: beginn !== _lmDate(f.beginn), ende, gekuendigt: !!gek });
+  });
+  if (!(vertraege || []).length) (wvNotruf || []).forEach(w => { if (w.beginn) out.push({ ref: 'wv:' + w.id, recId: '', quelle: 'wv', titel: 'Servicebox-Wartungsvertrag ' + w.nr,
+    beginn: w.beginn, vertragBeginn: w.beginn, spaeter: false, ende: '', gekuendigt: false }); });
+  return out.sort((x, y) => x.beginn.localeCompare(y.beginn));
+}
+/* Was ist heute zu tun? → { soll, laufend, naechster, status, relevant, aufgabe, demontage }
+   aufgabe: notruf_montage – Stufe „bestellen" ab 3 Wochen, „montage" ab 2 Wochen vor Notrufbeginn (bis „✓ montiert & aktiv")
+            notruf_aktiv   – Notruf ist laut Vertrag geschuldet, aber nicht als aktiv bestätigt → „🚨 ACHTUNG Notruf nicht aktiv"
+   demontage: ein Vertrag mit Notruf ist gekündigt, kein anderer läuft weiter, noch nicht ausgebaut
+              (Kündigung der ganzen Anlage läuft über den Status → _lmNotrufOffen) */
+function _lmNotrufLage(akte, soll, heute) {
+  heute = heute || _lmToday();
+  const f = akte || {}, st = LM_NOTRUF_STATUS[f.notruf_status] ? f.notruf_status : '';
+  const betreuungBis = f.lm_status === 'gekuendigt' && _lmParseDate(f.gekuendigt_zum) ? f.gekuendigt_zum : '';
+  const zr = (soll || []).map(s => { let bis = s.ende || ''; if (betreuungBis && (!bis || betreuungBis < bis)) bis = betreuungBis; return Object.assign({}, s, { bis }); })
+    .filter(s => !s.bis || s.beginn <= s.bis);   // vor dem Notrufbeginn gekündigt → kein Notruf
+  const laufend = zr.find(s => s.beginn <= heute && (!s.bis || heute <= s.bis)) || null;
+  const naechster = laufend ? null : (zr.find(s => s.beginn > heute) || null);
+  // nach einer Kündigung schon vor dem Vertragsende ausgebaut → kein Alarm „nicht aktiv" bis zum Ende
+  const frueherAusgebaut = st === 'ausgebaut' && !!laufend && (laufend.gekuendigt || !!betreuungBis) && _lmDate(f.notruf_ausgebaut_am) >= laufend.beginn;
+  const out = { soll: zr, laufend, naechster, status: st, relevant: _lmAbrRelevant(f), aufgabe: null, demontage: null, frueherAusgebaut };
+  if (!out.relevant) return out;
+  if (laufend) { if (st !== 'aktiv' && !frueherAusgebaut) out.aufgabe = { typ: 'notruf_aktiv', faellig: laufend.beginn, vertrag: laufend.titel }; }
+  else if (naechster && st !== 'aktiv') {
+    const tage = _lmDaysBetween(heute, naechster.beginn);
+    if (tage <= LM_NOTRUF_MONTAGE) out.aufgabe = { typ: 'notruf_montage', stufe: 'montage', faellig: naechster.beginn, vertrag: naechster.titel };
+    else if (tage <= LM_NOTRUF_BESTELLEN && st !== 'bestellt') out.aufgabe = { typ: 'notruf_montage', stufe: 'bestellen', faellig: naechster.beginn, vertrag: naechster.titel };
+  }
+  if (f.lm_status !== 'gekuendigt' && st !== 'ausgebaut') {
+    const aus = _lmDate(f.notruf_ausgebaut_am);
+    const dm = zr.filter(s => s.gekuendigt && s.ende >= LM_NOTRUF_AB && !(aus && aus >= s.beginn)
+      && !zr.some(o => o !== s && o.beginn <= _lmAddDays(s.ende, 1) && (!o.bis || o.bis > s.ende)))   // ein anderer Vertrag mit Notruf läuft nahtlos weiter → kein Ausbau
+      .sort((x, y) => x.ende.localeCompare(y.ende))[0];
+    if (dm) out.demontage = { faellig: dm.ende, vertrag: dm.titel };
+  }
+  return out;
+}
+/* Zeile für „Zu erledigen" / Dashboard (speicherbar) */
+function _lmNotrufAufgabeRow(x, f, aid) {
+  const st = LM_NOTRUF_STATUS[f && f.notruf_status] ? f.notruf_status : '';
+  return x.typ === 'notruf_aktiv'
+    ? { typ: 'notruf_aktiv', ref: 'notrufa:' + aid, anlageId: String(aid), titel: 'ACHTUNG Notruf nicht aktiv', faellig: x.faellig, vertrag: x.vertrag || '', status: st,
+        gemeldet: st === 'nicht_aktiv' ? _lmDate(f.notruf_status_am) : '', grund: st === 'nicht_aktiv' ? String(f.notruf_status_notiz || '').trim() : '' }
+    : { typ: 'notruf_montage', ref: 'notrufm:' + aid, anlageId: String(aid), stufe: x.stufe, titel: x.stufe === 'bestellen' ? 'Notrufgerät bestellen' : 'Notruf-Montage',
+        faellig: x.faellig, vertrag: x.vertrag || '', bestellt_am: st === 'bestellt' ? _lmDate(f.notruf_bestellt_am) : '' };
+}
+/* Aufgaben „Notruf" je Firma: Ausbau nach Kündigung (Anlage bzw. Vertrag), Gerät bestellen / Montage, ACHTUNG nicht aktiv */
+function _lmNotrufRows(firma, d, heute) {
+  heute = heute || _lmToday();
   const anlagen = new Map((d.anlagen || []).filter(Boolean).map(a => [String(a.id), a]));
   const rows = [];
   _lmAktenJeAnlage(d).forEach((f, aid) => {
-    if (!_lmNotrufOffen(f)) return;
     const a = anlagen.get(aid);
-    rows.push({ typ: 'notruf', firma, ref: 'notruf:' + aid, anlageId: aid, adresse: (a && (a.anzeigeAdresse || a.name)) || f.adresse || '',
-      kunde: (a && a.kunde && a.kunde.firmenname) || f.kunde_name || '', titel: 'Notruf ausbauen', faellig: f.notruf_ausbau_bis, gekuendigt_zum: f.gekuendigt_zum || '' });
+    const base = { firma, anlageId: aid, adresse: (a && (a.anzeigeAdresse || a.name)) || f.adresse || '', kunde: (a && a.kunde && a.kunde.firmenname) || f.kunde_name || '' };
+    if (_lmNotrufOffen(f)) rows.push(Object.assign({ typ: 'notruf', ref: 'notruf:' + aid, titel: 'Notruf ausbauen', faellig: f.notruf_ausbau_bis, gekuendigt_zum: f.gekuendigt_zum || '' }, base));
+    if (!_lmAbrRelevant(f)) return;
+    const vertraege = ((d.vertragMap && d.vertragMap.get(aid)) || []).map(r => { const vf = _lmVtNorm(r.fields); return { rec: r, f: vf, info: _lmVertragInfo(vf, heute) }; });
+    const nl = _lmNotrufLage(f, _lmNotrufSoll(vertraege, _lmNotrufWv(d, aid), heute), heute);
+    if (nl.aufgabe) rows.push(Object.assign(_lmNotrufAufgabeRow(nl.aufgabe, f, aid), base));
+    if (nl.demontage) rows.push(Object.assign({ typ: 'notruf', ref: 'notruf:' + aid, titel: 'Notruf ausbauen', faellig: nl.demontage.faellig, gekuendigt_zum: nl.demontage.faellig, vertrag: nl.demontage.vertrag }, base));
   });
   return rows;
 }
-/* Alle offenen Aufgaben (Rechnungen im Erinnerungsfenster + Notruf-Ausbau), früheste zuerst */
-function _lmTodoRows(items, d, firma) {
-  return _lmAbrRows(items).concat(_lmNotrufRows(firma, d)).sort((a, b) => a.faellig.localeCompare(b.faellig));
+/* v10.11: Antworten von Kunden auf Anfragen (📨) – bis „Antwort einlesen"/„Gelöst" */
+function _lmAnfrageRows(firma, d) {
+  const anlagen = new Map((d.anlagen || []).filter(Boolean).map(a => [String(a.id), a]));
+  return (d.anfragen || []).filter(r => r && r.fields && r.fields.status === 'antwort').map(r => {
+    const f = r.fields, aid = String(f.anlage_id || ''), a = anlagen.get(aid);
+    return { typ: 'anfrage', firma, ref: 'anfrage:' + r.id, anfrageId: r.id, anlageId: aid, adresse: (a && (a.anzeigeAdresse || a.name)) || f.adresse || '',
+      kunde: (a && a.kunde && a.kunde.firmenname) || f.kunde_name || '', titel: f.titel || '', nr: f.nr || '', von: f.antwort_von || '',
+      faellig: _lmDate(f.antwort_am) || _lmDate(f.updated) || _lmToday() };
+  });
 }
-/* Für Dashboard/Zähler: Notruf-Ausbau erst ab 30 Tagen vor der Frist (Rechnungen sind schon gefenstert) */
+/* Reihenfolge: ACHTUNG Notruf nicht aktiv, dann Antworten von Kunden, dann nach Fälligkeit */
+function _lmTodoSort(rows) {
+  const prio = r => r.typ === 'notruf_aktiv' ? 0 : (r.typ === 'anfrage' ? 1 : 2);
+  return rows.sort((a, b) => (prio(a) - prio(b)) || String(a.faellig).localeCompare(String(b.faellig)));
+}
+/* Alle offenen Aufgaben (Rechnungen im Erinnerungsfenster, Notruf, Antworten auf Anfragen) */
+function _lmTodoRows(items, d, firma) {
+  return _lmTodoSort(_lmAbrRows(items).concat(_lmNotrufRows(firma, d), _lmAnfrageRows(firma, d)));
+}
+function _lmIstNotruf(r) { return /^notruf/.test(String((r && r.typ) || '')); }
+/* Für Dashboard/Zähler: Notruf-Ausbau erst ab 30 Tagen vor der Frist (Rechnungen sind schon gefenstert, Montage-Aufgaben entstehen erst 3 Wochen vorher) */
 function _lmImFenster(r) { return r.typ !== 'notruf' || _lmDaysBetween(_lmToday(), r.faellig) <= LM_NOTRUF_VORLAUF; }
-function _lmTodoDringend(r) { return r.typ === 'notruf' ? _lmDaysBetween(_lmToday(), r.faellig) <= 7 : _lmAbrIstFaellig(r); }
+function _lmTodoDringend(r) {
+  if (r.typ === 'anfrage') return false;        // v10.11: Antwort des Kunden – eigene Markierung „📬"
+  if (r.typ === 'notruf_aktiv') return true;   // ACHTUNG Notruf nicht aktiv – immer rot
+  if (r.typ === 'notruf' || r.typ === 'notruf_montage') return _lmDaysBetween(_lmToday(), r.faellig) <= 7;
+  return _lmAbrIstFaellig(r);
+}
 function _lmNotrufText(r) {
   const t = _lmDaysBetween(_lmToday(), r.faellig);
   return t < 0 ? 'Ausbau seit ' + (-t) + ' Tag' + (t === -1 ? '' : 'en') + ' überfällig (' + _lmFmtDE(r.faellig) + ')'
     : (t === 0 ? 'Ausbau heute fällig (' + _lmFmtDE(r.faellig) + ')' : 'ausbauen bis ' + _lmFmtDE(r.faellig) + ' (in ' + t + ' Tag' + (t === 1 ? '' : 'en') + ')');
 }
-function _lmTodoText(r) { return r.typ === 'notruf' ? _lmNotrufText(r) : _lmAbrFaelligText(r); }
+function _lmNotrufMontageText(r) {
+  const t = _lmDaysBetween(_lmToday(), r.faellig), tg = n => n + ' Tag' + (n === 1 ? '' : 'en');
+  if (r.stufe === 'bestellen') return 'Notruf ab ' + _lmFmtDE(r.faellig) + ' (in ' + tg(t) + ') – Gerät rechtzeitig bestellen';
+  return t <= 0 ? 'Montage heute fällig – Notruf ab ' + _lmFmtDE(r.faellig) : 'Montage fällig bis ' + _lmFmtDE(r.faellig) + ' (in ' + tg(t) + ')';
+}
+function _lmNotrufAktivText(r) {
+  return r.gemeldet ? 'als nicht aktiv gemeldet am ' + _lmFmtDE(r.gemeldet) + (r.grund ? ': ' + _lmShort(r.grund, 80) : '')
+    : 'laut Vertrag seit ' + _lmFmtDE(r.faellig) + ' – noch nicht als aktiv bestätigt';
+}
+function _lmAnfrageText(r) { return 'Kunde hat geantwortet am ' + _lmFmtDE(r.faellig) + (r.von ? ' (' + r.von + ')' : ''); }
+function _lmTodoText(r) { return r.typ === 'anfrage' ? _lmAnfrageText(r) : (r.typ === 'notruf' ? _lmNotrufText(r) : (r.typ === 'notruf_montage' ? _lmNotrufMontageText(r) : (r.typ === 'notruf_aktiv' ? _lmNotrufAktivText(r) : _lmAbrFaelligText(r)))); }
+function _lmTodoIcon(r) { return r.typ === 'anfrage' ? '📬' : (r.typ === 'notruf' ? '📵' : (r.typ === 'notruf_aktiv' ? '🚨' : (r.typ === 'notruf_montage' ? (r.stufe === 'bestellen' ? '📦' : '🔧') : '💶'))); }
+function _lmTodoTitel(r) { return r.typ === 'anfrage' ? 'Kunde hat geantwortet' : (r.typ === 'notruf' ? 'Notruf ausbauen' : (r.typ === 'notruf_aktiv' ? 'ACHTUNG Notruf nicht aktiv' : (r.typ === 'notruf_montage' ? (r.stufe === 'bestellen' ? 'Notruf wird benötigt – Notrufgerät bestellen' : 'Notruf-Montage') : (r.titel || '')))); }
+/* Kurzform für Dashboard, Akte-Kopf und CSV */
+function _lmTodoKurz(r) {
+  if (r.typ === 'anfrage') return 'Kunde hat geantwortet – ' + (r.titel || 'Anfrage') + (r.nr ? ' (#' + r.nr + ')' : '');
+  if (r.typ === 'notruf') return 'Notruf ' + _lmNotrufText(r);
+  if (r.typ === 'notruf_aktiv') return 'ACHTUNG Notruf nicht aktiv' + (r.gemeldet ? ' (gemeldet am ' + _lmFmtDE(r.gemeldet) + ')' : ' – seit ' + _lmFmtDE(r.faellig) + ' nicht bestätigt');
+  if (r.typ === 'notruf_montage') return r.stufe === 'bestellen' ? 'Notruf ab ' + _lmFmtDE(r.faellig) + ' benötigt – Gerät bestellen' : 'Notruf-' + _lmNotrufMontageText(r);
+  return 'Wartungsrechnung ' + _lmAbrFaelligText(r);
+}
+function _lmNotrufPillText(r) { return r.typ === 'notruf_aktiv' ? '🚨 Notruf nicht aktiv' : (r.stufe === 'bestellen' ? '📦 Notrufgerät bestellen' : '🔧 Notruf-Montage bis ' + _lmFmtDE(r.faellig).slice(0, 6)); }
 function _lmTodoCls(r) { return _lmTodoDringend(r) ? 'rot' : (_lmImFenster(r) ? 'gelb' : 'blau'); }
 /* Auswertung für die aktuell geladene Firma (zwischengespeichert, bis sich Daten ändern) */
 function _lmAbrIdx() {
@@ -57775,11 +57949,14 @@ function _lmItem(a) {
   abr.forEach(o => (o.offen || []).forEach(x => abrOffen.push(Object.assign({ ref: o.ref, titel: o.titel, preis: o.preis }, x))));
   abrOffen.sort((x, y) => x.faellig.localeCompare(y.faellig));
   const status = LM_STATUS[akte.lm_status] ? akte.lm_status : '';
-  const notruf = _lmNotrufOffen(akte) ? { typ: 'notruf', faellig: akte.notruf_ausbau_bis } : null;
+  const notrufLage = _lmNotrufLage(akte, _lmNotrufSoll(vertraege, _lmNotrufWv(d, id), heute), heute);   // v10.10
+  const notruf = _lmNotrufOffen(akte) ? { typ: 'notruf', faellig: akte.notruf_ausbau_bis }
+    : (notrufLage.demontage ? { typ: 'notruf', faellig: notrufLage.demontage.faellig, vertrag: notrufLage.demontage.vertrag } : null);
+  const notrufAufgabe = notrufLage.aufgabe ? _lmNotrufAufgabeRow(notrufLage.aufgabe, akte, id) : null;
   const mx = (_lmWartung.firma === d.firma && _lmWartung.angebote && _lmWartung.angebote.get(id)) || [];
   const aktiv = _lmAktivInfo(akte, _lmStartSignale(akte, vertraege, wv, mx, heute), heute);
   const wartF = _lmWartIdx().byAnlage.get(id) || null;   // v10.06: nächste Wartung
-  return { a, id, akteRec, akte, vertraege, eintraege, wv, wartung, wartungQuelle, maxiseWartung, tuev: _lmTuevInfo(akte, heute), kuendbar, stoerOffen, docs, wichtig, abr, abrOffen, status, notruf, aktiv, aktuell: aktiv.aktuell, wartF };
+  return { a, id, akteRec, akte, vertraege, eintraege, wv, wartung, wartungQuelle, maxiseWartung, tuev: _lmTuevInfo(akte, heute), kuendbar, stoerOffen, docs, wichtig, abr, abrOffen, status, notruf, notrufLage, notrufAufgabe, aktiv, aktuell: aktiv.aktuell, wartF };
 }
 function _lmMatches(it, q) {
   if (!q) return true;
@@ -57832,6 +58009,7 @@ async function renderLiftmgmtView(opts) {
   }
   if (getCurrentFirmaSlug() !== firma || !_lmViewVisible()) return;
   if (!have || opts.force) _lmRender(); else _lmSoftRefresh();
+  if (typeof _anAntwortenPruefen === 'function') _anAntwortenPruefen(false).catch(() => {});   // v10.11: Kundenantworten in den Tickets
   _lmLoadWartung(firma, !!opts.force).then(() => { if (getCurrentFirmaSlug() === firma) _lmSoftRefresh(); }).catch(() => {});
   _lmLoadRechnungen(firma, !!opts.force).then(() => { if (getCurrentFirmaSlug() === firma) { _lmSoftRefresh(); _lmAbrSpeichereSumme(); } }).catch(() => {});
   _lmLoadWartBerichte(firma, !!opts.force).then(() => { if (getCurrentFirmaSlug() === firma) { _lmSoftRefresh(); _lmAbrSpeichereSumme(); } }).catch(() => {});
@@ -57916,6 +58094,7 @@ function _lmRenderListItems() {
     else if (k === 'stoerung' && n) cls = 'rot';
     else if (k === 'abrechnung' && n) cls = all.some(it => it.abrOffen.some(_lmAbrIstFaellig)) ? 'rot' : 'gelb';
     else if (k === 'wartfaellig' && n) cls = all.some(it => it.wartF && it.wartF.status === 'ueberfaellig') ? 'rot' : 'gelb';
+    else if (k === 'notruf' && n) cls = all.some(it => (it.notrufAufgabe && _lmTodoDringend(it.notrufAufgabe)) || (it.notruf && _lmTodoDringend(it.notruf))) ? 'rot' : 'gelb';
     return '<button class="lm-kpi ' + cls + (_lmUi.filter === k ? ' on' : '') + '" data-k="' + k + '"' + (LM_FILTER[k].tip ? ' title="' + escapeHtml(LM_FILTER[k].tip) + '"' : '') + ' onclick="_lmSetFilter(' + _lmA(k) + ')"><div class="lm-kpi-n">' + n + '</div><div class="lm-kpi-l">' + escapeHtml(LM_FILTER[k].label) + '</div>' +
       (sub ? '<div class="lm-kpi-s">' + escapeHtml(sub) + '</div>' : '') + '</button>';
   }).join('');
@@ -57953,7 +58132,9 @@ function _lmCardHtml(it) {
   if (it.stoerOffen) pills.push('<span class="lm-pill rot">🚨 ' + it.stoerOffen + ' Störung' + (it.stoerOffen > 1 ? 'en' : '') + '</span>');
   if (it.docs) pills.push('<span class="lm-pill grau" title="Dokumente in der Akte">📄 ' + it.docs + '</span>');
   if (it.aktiv.ab) pills.unshift('<span class="lm-pill blau" title="Zählt erst ab dann als „aktuell aktiv“">⏳ startet am ' + _lmFmtDE(it.aktiv.ab) + '</span>');
-  if (it.notruf) pills.unshift('<span class="lm-pill ' + _lmTodoCls(it.notruf) + '" title="' + escapeHtml(_lmNotrufText(it.notruf)) + '">📵 Notruf ausbauen bis ' + _lmFmtDE(it.notruf.faellig) + '</span>');
+  if (it.notruf) pills.unshift('<span class="lm-pill ' + _lmTodoCls(it.notruf) + '" title="' + escapeHtml(_lmNotrufText(it.notruf) + (it.notruf.vertrag ? ' – ' + it.notruf.vertrag + ' gekündigt' : '')) + '">📵 Notruf ausbauen bis ' + _lmFmtDE(it.notruf.faellig) + '</span>');
+  if (it.notrufAufgabe) pills.unshift('<span class="lm-pill ' + _lmTodoCls(it.notrufAufgabe) + '" title="' + escapeHtml(_lmTodoKurz(it.notrufAufgabe)) + '">' + _lmNotrufPillText(it.notrufAufgabe) + '</span>');
+  if (typeof _anFuerAnlage === 'function' && _anFuerAnlage(it.id).some(r => (r.fields || {}).status === 'antwort')) pills.unshift('<span class="lm-pill gelb" title="Der Kunde hat auf eine Anfrage geantwortet">📬 Antwort da</span>');   // v10.11
   if (it.status === 'gekuendigt') pills.unshift('<span class="lm-pill rot">✂️ gekündigt' + (it.akte.gekuendigt_zum ? ' zum ' + _lmFmtDE(it.akte.gekuendigt_zum) : '') + '</span>');
   else if (it.status === 'inaktiv' || it.status === 'archiviert') pills.unshift('<span class="lm-pill grau">' + LM_STATUS[it.status].icon + ' ' + LM_STATUS[it.status].label.toLowerCase() + '</span>');
   if (a.archived) pills.push('<span class="lm-pill grau">in Maxise archiviert</span>');
@@ -58001,20 +58182,42 @@ function _lmAbrPanelHtml(idx) {
     return '<div class="lm-abr-ok">✅ Nichts zu erledigen' + (next ? ' · nächste Wartungsrechnung am <b>' + _lmFmtDE(next.naechste) + '</b>' + (next.adresse ? ' (' + escapeHtml(next.adresse) + ')' : '') : '') +
       (hinweis ? ' <span class="lm-muted">· ' + hinweis + '</span>' : '') + '</div>';
   }
-  const rot = rows.filter(r => _lmTodoCls(r) === 'rot').length, gelb = rows.filter(r => _lmTodoCls(r) === 'gelb').length, blau = rows.length - rot - gelb, ed = _lmCanEdit();
+  const rest = rows.filter(r => r.typ !== 'anfrage'), antw = rows.length - rest.length;   // v10.11: Antworten eigens zählen
+  const rot = rest.filter(r => _lmTodoCls(r) === 'rot').length, gelb = rest.filter(r => _lmTodoCls(r) === 'gelb').length, blau = rest.length - rot - gelb, ed = _lmCanEdit();
+  const achtung = rows.filter(r => r.typ === 'notruf_aktiv').length;
   const zeigen = _lmUi.abrAlle ? rows : rows.slice(0, 8), auf = !!_lmUi.abrAuf;
-  return '<div class="lm-sec lm-abr-panel lm-auf' + (auf ? ' auf' : '') + (rot ? '' : ' gelb') + '"><h3>' + _lmAufBtn('abr', auf, '🔔 Zu erledigen' +
+  return '<div class="lm-sec lm-abr-panel lm-auf' + (auf ? ' auf' : '') + (rot || achtung ? '' : ' gelb') + '"><h3>' + _lmAufBtn('abr', auf, '🔔 Zu erledigen' +
       (rot ? '<span class="lm-pill rot">' + rot + ' fällig</span>' : '') + (gelb ? '<span class="lm-pill gelb">' + gelb + ' in ≤ 30 Tagen</span>' : '') + (blau ? '<span class="lm-pill blau">' + blau + ' geplant</span>' : '') +
+      (achtung ? '<span class="lm-pill rot">🚨 ' + achtung + '× Notruf nicht aktiv</span>' : '') +
+      (antw ? '<span class="lm-pill gelb">📬 ' + antw + (antw === 1 ? ' Antwort' : ' Antworten') + ' vom Kunden</span>' : '') +
       (hinweis ? '<span class="lm-muted" style="font-weight:500">' + hinweis + '</span>' : '')) + '</h3><div class="lm-auf-body">' +
-    zeigen.map(r => { const n = r.typ === 'notruf'; return '<div class="lm-abr-item ' + _lmTodoCls(r) + '">' +
-      '<div class="lm-abr-main" onclick="lmOpenAkte(' + _lmA(r.anlageId) + ',' + _lmA(n ? 'uebersicht' : 'vertraege') + ')" title="Akte öffnen"><div class="lm-abr-t">' + (n ? '📵 ' : '💶 ') + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</div>' +
-        '<div class="lm-abr-m">' + escapeHtml((n ? [r.kunde, 'Notruf ausbauen', r.gekuendigt_zum ? 'gekündigt zum ' + _lmFmtDE(r.gekuendigt_zum) : ''] : [r.kunde, r.titel, _lmTurnusText(r.turnus, r.regel, r.beginn)]).filter(Boolean).join(' · ')) + '</div></div>' +
-      '<div class="lm-abr-due"><b>' + escapeHtml(_lmTodoText(r)) + '</b>' + (!n && r.preis ? '<span>' + _lmMoney(r.preis) + ' netto' + (r.anteil < 1 ? ' · anteilig bis ' + _lmFmtDE(r.bis) : '') + '</span>' : (!n && r.anteil < 1 ? '<span>anteilig bis ' + _lmFmtDE(r.bis) + '</span>' : '')) + '</div>' +
-      (ed ? '<div class="lm-abr-act">' + (n ? '<button class="btn prim" onclick="lmNotrufErledigt(' + _lmA(r.anlageId) + ')">✓ Notruf ausgebaut</button>'
-                                            : '<button class="btn prim" onclick="lmAbrDialog(' + _lmA(r.ref) + ',' + _lmA(r.faellig) + ')">✓ Rechnung geschrieben</button>') + '</div>' : '') +
+    zeigen.map(r => { const af = r.typ === 'anfrage', n = _lmIstNotruf(r), re = !af && !n; return '<div class="lm-abr-item ' + _lmTodoCls(r) + (r.typ === 'notruf_aktiv' ? ' achtung' : '') + (af ? ' antwort' : '') + '">' +
+      '<div class="lm-abr-main" onclick="lmOpenAkte(' + _lmA(r.anlageId) + ',' + _lmA(af ? 'anfragen' : (n ? 'uebersicht' : 'vertraege')) + ')" title="Akte öffnen"><div class="lm-abr-t">' + _lmTodoIcon(r) + ' ' + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</div>' +
+        '<div class="lm-abr-m">' + escapeHtml((af ? [r.kunde, _lmTodoTitel(r), (r.titel || 'Anfrage') + (r.nr ? ' #' + r.nr : '')] : (n ? [r.kunde, _lmTodoTitel(r), _lmNotrufMeta(r)] : [r.kunde, r.titel, _lmTurnusText(r.turnus, r.regel, r.beginn)])).filter(Boolean).join(' · ')) + '</div></div>' +
+      '<div class="lm-abr-due"><b>' + escapeHtml(_lmTodoText(r)) + '</b>' + (re && r.preis ? '<span>' + _lmMoney(r.preis) + ' netto' + (r.anteil < 1 ? ' · anteilig bis ' + _lmFmtDE(r.bis) : '') + '</span>' : (re && r.anteil < 1 ? '<span>anteilig bis ' + _lmFmtDE(r.bis) + '</span>' : '')) + '</div>' +
+      (ed ? '<div class="lm-abr-act">' + (af ? _lmAnfrageKnoepfe(r) : (n ? _lmNotrufKnoepfe(r)
+                                            : '<button class="btn prim" onclick="lmAbrDialog(' + _lmA(r.ref) + ',' + _lmA(r.faellig) + ')">✓ Rechnung geschrieben</button>')) + '</div>' : '') +
     '</div>'; }).join('') +
     (rows.length > zeigen.length ? '<div style="text-align:center;margin-top:8px"><button class="btn" onclick="_lmUi.abrAlle=true;_lmRenderListItems()">Alle ' + rows.length + ' anzeigen</button></div>' : '') +
   '</div></div>';
+}
+/* v10.10: Notruf-Zeilen in „Zu erledigen" – Zusatzinfo und Knöpfe */
+function _lmNotrufMeta(r) {
+  if (r.typ === 'notruf') return r.vertrag ? r.vertrag + ' gekündigt zum ' + _lmFmtDE(r.gekuendigt_zum) : (r.gekuendigt_zum ? 'gekündigt zum ' + _lmFmtDE(r.gekuendigt_zum) : '');
+  return [r.vertrag, r.bestellt_am ? 'Gerät bestellt am ' + _lmFmtDE(r.bestellt_am) : ''].filter(Boolean).join(' · ');
+}
+function _lmNotrufKnoepfe(r) {
+  const a = _lmA(r.anlageId);
+  if (r.typ === 'notruf') return '<button class="btn prim" onclick="lmNotrufErledigt(' + a + ')">✓ Notruf ausgebaut</button>';
+  if (r.typ === 'notruf_aktiv') return '<button class="btn prim" onclick="lmNotrufDialog(' + a + ',' + _lmA('aktiv') + ')">✓ Notruf ist aktiv</button>';
+  return (r.stufe === 'bestellen' ? '<button class="btn" onclick="lmNotrufDialog(' + a + ',' + _lmA('bestellt') + ')">📦 Gerät bestellt</button>' : '') +
+    '<button class="btn prim" onclick="lmNotrufDialog(' + a + ',' + _lmA('aktiv') + ')">✓ Montiert &amp; aktiv</button>';
+}
+/* v10.11: Antwort des Kunden – einlesen oder als gelöst markieren */
+function _lmAnfrageKnoepfe(r) {
+  if (typeof anAntwortDialog !== 'function') return '';
+  const id = _lmA(r.anfrageId);
+  return '<button class="btn" onclick="anStatusSetzen(' + id + ',\'geloest\')">✅ Gelöst</button><button class="btn prim" onclick="anAntwortDialog(' + id + ')">📥 Antwort einlesen</button>';
 }
 /* Das Feld „Wartungen fällig" über der Liste – aufgebaut wie „Zu erledigen", mit Ampel je Fenster */
 function _lmWartPanelHtml(idx) {
@@ -58235,7 +58438,7 @@ function _lmExportCsv() {
     .map(_lmItem).filter(flt.test).filter(it => _lmMatches(it, _lmUi.q)), _lmUi.sort);
   const head = ['Firma','Maxise-ID','Adresse','Fabrik-Nr.','KONE EQ-Nr.','Kunde','Kunden-Nr.','In Wartung bei uns','Quelle','Hersteller','Baujahr','Antrieb','Haltestellen','Nächste TÜV-Prüfung','Prüfart','Prüfstelle','Vertrag','Vertrag läuft bis','Nächste Kündigung bis','Wartungsrechnung offen (fällig am)','Offene Störungen','Hinweis','Status im Liftmanagement','Aktuell aktiv','Aktiv ab','Gekündigt zum','Notruf ausbauen bis',
     'Zugang Gebäude/Aufzug','Schlüssel','Code','Maschinenraum','Maschinenraum Zugang','Ansprechpartner vor Ort','Telefon vor Ort','Hinweise Zugang',
-    'Wartungen pro Jahr','Letzte Wartung','Wartung Status','Wartung fällig bis'];
+    'Wartungen pro Jahr','Letzte Wartung','Wartung Status','Wartung fällig bis','Notruf laut Vertrag ab','Notruf-Stand','Notruf-Aufgabe'];
   const rows = items.map(it => {
     const v = _lmVtSort(it.vertraege)[0], k = it.a.kunde || {}, f = it.akte;
     return [_lmData.firma, it.id, it.a.anzeigeAdresse || it.a.name || '', it.a.fabriknummer || '', f.eq_nummer || '', k.firmenname || '', k.kundennummer || '',
@@ -58247,7 +58450,7 @@ function _lmExportCsv() {
       it.status ? LM_STATUS[it.status].label : '', it.aktuell ? 'ja' : 'nein', it.aktiv.ab ? _lmFmtDE(it.aktiv.ab) : (f.lm_seit ? _lmFmtDE(f.lm_seit) : ''),
       f.gekuendigt_zum ? _lmFmtDE(f.gekuendigt_zum) : '', it.notruf ? _lmFmtDE(it.notruf.faellig) : '',
       f.zugang_gebaeude || '', f.zugang_schluessel || '', f.zugang_code || '', f.mr_lage || '', f.mr_zugang || '', f.zugang_kontakt || '', f.zugang_tel || '', String(f.zugang || '').replace(/\s+/g, ' ').trim(),
-      it.wartF && it.wartF.n ? it.wartF.n : '', it.wartF && it.wartF.letzte ? _lmFmtDE(it.wartF.letzte) : '', it.wartF && it.wartF.fenster ? _lmWartText(it.wartF) : '', it.wartF && it.wartF.frist ? _lmFmtDE(it.wartF.frist) : ''];
+      it.wartF && it.wartF.n ? it.wartF.n : '', it.wartF && it.wartF.letzte ? _lmFmtDE(it.wartF.letzte) : '', it.wartF && it.wartF.fenster ? _lmWartText(it.wartF) : '', it.wartF && it.wartF.frist ? _lmFmtDE(it.wartF.frist) : ''].concat(_lmNotrufCsv(it));
   });
   const esc = x => { let t = String(x == null ? '' : x); if (/^[=+\-@]/.test(t)) t = "'" + t; return /[";\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
   const csv = '\ufeff' + [head].concat(rows).map(r => r.map(esc).join(';')).join('\r\n');
@@ -58257,6 +58460,12 @@ function _lmExportCsv() {
   document.body.appendChild(link); link.click(); link.remove();
   setTimeout(() => URL.revokeObjectURL(link.href), 5000);
   toast('⬇ ' + rows.length + ' Anlagen als CSV exportiert', 'ok');
+}
+
+function _lmNotrufCsv(it) {   // v10.10
+  const nl = it.notrufLage || {}, s = nl.laufend || nl.naechster;
+  return [s ? _lmFmtDE(s.beginn) : '', nl.status ? LM_NOTRUF_STATUS[nl.status].label : (s ? 'nicht bestätigt' : ''),
+    it.notrufAufgabe ? _lmTodoKurz(it.notrufAufgabe) : (it.notruf ? 'Notruf ' + _lmNotrufText(it.notruf) : '')];
 }
 
 /* ── Akte ── */
@@ -58398,6 +58607,7 @@ function _lmAktePillsHtml(it) {
   if (it.stoerOffen) p.push('<span class="lm-pill rot">🚨 ' + it.stoerOffen + ' offene Störung' + (it.stoerOffen > 1 ? 'en' : '') + '</span>');
   if (it.abrOffen.length) p.unshift('<span class="lm-pill ' + (_lmAbrIstFaellig(it.abrOffen[0]) ? 'rot' : 'gelb') + '">💶 Wartungsrechnung ' + escapeHtml(_lmAbrFaelligText(it.abrOffen[0])) + '</span>');
   if (it.notruf) p.unshift('<span class="lm-pill ' + _lmTodoCls(it.notruf) + '">📵 Notruf ' + escapeHtml(_lmNotrufText(it.notruf)) + '</span>');
+  if (it.notrufAufgabe) p.unshift('<span class="lm-pill ' + _lmTodoCls(it.notrufAufgabe) + '">' + _lmTodoIcon(it.notrufAufgabe) + ' ' + escapeHtml(_lmTodoKurz(it.notrufAufgabe)) + '</span>');
   if (it.aktiv.ab) p.unshift('<span class="lm-pill blau" title="Bis dahin zählt die Anlage nicht als „aktuell aktiv“">⏳ startet am ' + _lmFmtDE(it.aktiv.ab) + ' (in ' + _lmDaysBetween(_lmToday(), it.aktiv.ab) + ' Tagen)</span>');
   if (it.status) {
     const st = LM_STATUS[it.status], seit = it.akte.lm_seit && !it.aktiv.ab && _lmDaysBetween(it.akte.lm_seit, _lmToday()) >= 0 ? it.akte.lm_seit : '';
@@ -58408,7 +58618,50 @@ function _lmAktePillsHtml(it) {
   const nichtDrin = !it.status ? '<div class="lm-hinweis" style="background:#EFF6FF;border-color:#BFDBFE;border-left-color:#2152A9;color:#1E3A8A">ℹ️ Diese Anlage ist nicht im Liftmanagement – sie steht nicht in der Liste und bekommt keine Erinnerungen.' +
     (_lmCanEdit() ? ' <button class="btn prim" style="margin-left:6px;padding:3px 10px;font-size:12px" onclick="lmAkteAufnehmen(this)">+ Ins Liftmanagement aufnehmen</button>' : '') + '</div>' : '';
   if (typeof _anPillHtml === 'function') { const ap = _anPillHtml(it); if (ap) p.push(ap); }   // v10.09: offene Anfragen
-  return '<div class="lm-akte-pills">' + p.join('') + '</div>' + nichtDrin + _lmZugangHtml(it) + (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(hinweis) + '</div>' : '');
+  return '<div class="lm-akte-pills">' + p.join('') + '</div>' + nichtDrin + _lmNotrufBoxHtml(it) + _lmZugangHtml(it) + (hinweis ? '<div class="lm-hinweis">📌 ' + escapeHtml(hinweis) + '</div>' : '');
+}
+/* v10.10: Kasten „☎ Notruf" – nur wenn ein Vertrag Notruf enthält oder schon ein Stand vermerkt ist */
+function _lmNotrufBoxHtml(it) {
+  const nl = it.notrufLage, f = it.akte || {}, ed = _lmCanEdit();
+  if (!nl) return '';
+  const st = nl.status, soll = nl.soll || [], auf = it.notrufAufgabe, dem = it.notruf;
+  if (!soll.length && !st && !dem) return '';
+  const geschuldet = !!(nl.laufend || nl.naechster);
+  let cls = 'grau', chip;
+  if (auf && auf.typ === 'notruf_aktiv') { cls = 'rot'; chip = '🚨 ACHTUNG Notruf nicht aktiv'; }
+  else if (auf) { cls = _lmTodoCls(auf); chip = auf.stufe === 'bestellen' ? '📦 Notruf ab ' + _lmFmtDE(auf.faellig) + ' – Gerät bestellen' : '🔧 Montage fällig bis ' + _lmFmtDE(auf.faellig); }
+  else if (st === 'aktiv' && geschuldet) { cls = 'gruen'; chip = '✅ Notruf aktiv'; }
+  else if (nl.naechster) { cls = 'blau'; chip = '⏳ Notruf ab ' + _lmFmtDE(nl.naechster.beginn) + (st === 'bestellt' ? ' · Gerät bestellt' : ''); }
+  else if (st) { const s = LM_NOTRUF_STATUS[st]; cls = s.cls === 'gruen' ? 'grau' : s.cls; chip = s.icon + ' Notruf ' + s.label + (nl.frueherAusgebaut && nl.laufend && nl.laufend.bis ? ' (Vertrag läuft bis ' + _lmFmtDE(nl.laufend.bis) + ')' : ''); }
+  else chip = 'kein Notruf mehr geschuldet';
+  if (dem && cls !== 'rot') cls = _lmTodoCls(dem) === 'blau' ? (cls === 'grau' ? 'blau' : cls) : _lmTodoCls(dem);
+  const z = [], add = (icon, label, html) => z.push('<div class="lm-zg-z"><span class="k">' + icon + ' ' + label + '</span><span class="v">' + html + '</span></div>');
+  if (soll.length) soll.slice(-3).forEach(s => add('📑', 'Laut Vertrag', escapeHtml(s.titel) + ' · <b>Notruf ab ' + _lmFmtDE(s.beginn) + '</b>' +
+      (s.spaeter ? ' <span class="lm-muted">(Vertragsbeginn ' + _lmFmtDE(s.vertragBeginn) + ')</span>' : ' <span class="lm-muted">(= Vertragsbeginn)</span>') +
+      (s.bis ? ' · bis ' + _lmFmtDE(s.bis) + (s.gekuendigt ? ' (gekündigt)' : '') : '')));
+  else add('📑', 'Laut Vertrag', '<span class="lm-muted">in keinem erfassten Vertrag enthalten</span>');
+  if (nl.naechster && st !== 'aktiv') { const b = nl.naechster.beginn;
+    add('⏰', 'Erinnerung', '📦 Gerät bestellen ab ' + _lmFmtDE(_lmAddDays(b, -LM_NOTRUF_BESTELLEN)) + ' · 🔧 Montage fällig ab ' + _lmFmtDE(_lmAddDays(b, -LM_NOTRUF_MONTAGE)) + ' · ab ' + _lmFmtDE(b) + ' Abfrage „Notruf aktiv?"'); }
+  if (dem) add('📵', 'Ausbau', '<b>' + escapeHtml(_lmNotrufText(dem)) + '</b> <span class="lm-muted">(' + escapeHtml(dem.vertrag ? dem.vertrag + ' gekündigt' : 'Anlage gekündigt') + ')</span>');
+  if (String(f.notruf || '').trim()) add('📡', 'Notrufsystem', escapeHtml(f.notruf));
+  const am = _lmDate(f.notruf_status_am), wer = f.notruf_status_von ? ' von ' + escapeHtml(f.notruf_status_von) : '', notiz = String(f.notruf_status_notiz || '').trim();
+  const stand = st === 'aktiv' ? '✅ aktiv – bestätigt am ' + _lmFmtDE(am) + wer + (f.notruf_montiert_am ? ' · montiert am ' + _lmFmtDE(f.notruf_montiert_am) : '')
+    : st === 'nicht_aktiv' ? '<b style="color:#B91C1C">🚨 nicht aktiv</b> – gemeldet am ' + _lmFmtDE(am) + wer
+    : st === 'bestellt' ? '📦 Gerät bestellt am ' + _lmFmtDE(f.notruf_bestellt_am || am) + wer
+    : st === 'ausgebaut' ? '📵 ausgebaut am ' + _lmFmtDE(f.notruf_ausgebaut_am || am)
+    : 'noch nicht als aktiv bestätigt';
+  add('🕘', 'Stand', stand + (notiz ? ' <span class="lm-muted">· ' + escapeHtml(_lmShort(notiz, 140)) + '</span>' : ''));
+  const A = _lmA(it.id), k = [];
+  if (ed) {
+    if (st !== 'aktiv' && !nl.frueherAusgebaut && (geschuldet || st === 'nicht_aktiv' || st === 'bestellt')) k.push('<button type="button" class="lm-zg-b prim" onclick="lmNotrufDialog(' + A + ',' + _lmA('aktiv') + ')">✓ ' + (nl.laufend ? 'Notruf ist aktiv' : 'Montiert &amp; aktiv') + '</button>');
+    if (nl.naechster && st !== 'aktiv' && st !== 'bestellt') k.push('<button type="button" class="lm-zg-b" onclick="lmNotrufDialog(' + A + ',' + _lmA('bestellt') + ')">📦 Gerät bestellt</button>');
+    if (st === 'aktiv' || (nl.laufend && !st)) k.push('<button type="button" class="lm-zg-b" onclick="lmNotrufDialog(' + A + ',' + _lmA('nicht_aktiv') + ')">✗ nicht aktiv</button>');
+    if (dem) k.push('<button type="button" class="lm-zg-b" onclick="lmNotrufErledigt(' + A + ')">📵 Notruf ausgebaut</button>');
+    const vt = soll.filter(s => s.quelle === 'akte' && s.recId), v0 = (nl.laufend && nl.laufend.recId ? nl.laufend : (nl.naechster && nl.naechster.recId ? nl.naechster : vt[vt.length - 1]));
+    if (v0 && v0.recId) k.push('<button type="button" class="lm-zg-b" onclick="lmVertragDialog(' + _lmA(v0.recId) + ')" title="Notruf inklusive / Startdatum Notruf im Vertrag ändern">✏ Im Vertrag ändern</button>');
+  }
+  return '<div class="lm-notruf ' + cls + '" id="lm-notruf"><div class="lm-zg-h"><span>☎ Notruf</span><span class="lm-pill ' + cls + '">' + chip + '</span>' +
+    (k.length ? '<span class="lm-zg-act">' + k.join('') + '</span>' : '') + '</div><div class="lm-zg-grid">' + z.join('') + '</div></div>';
 }
 function _lmRenderAkte() {
   const body = document.getElementById('liftmgmt-body'); if (!body) return;
@@ -59013,7 +59266,11 @@ function _lmVertragCardHtml(v, wDates, plan, abrBlock) {
     kuend = hot('Nächste Kündigungsmöglichkeit: zum ' + _lmFmtDE(i.kuendigung_zum) + ', spätestens bis ' + _lmFmtDE(i.kuendigung_bis) + ' (noch ' + i.tage_bis_kuendigung + ' Tage)', i.status === 'kuendbar_bald');
   else if (i.status === 'endet_bald' || (i.status === 'aktiv' && !(+f.verlaengerung_monate)))
     kuend = hot('Endet am ' + _lmFmtDE(i.ende) + ' ohne Kündigung – Anschlussvertrag rechtzeitig klären', i.status === 'endet_bald');
-  const inkl = [f.notruf_inkl ? '☎ Notruf' : '', f.zues_inkl ? '🛡 ZÜS-Service' : '', f.wartungen_pro_jahr ? '🔧 ' + f.wartungen_pro_jahr + '× Wartung/Jahr' : ''].filter(Boolean).join(' · ');
+  const nrB = _lmVtHatNotruf(f) ? _lmNotrufStart(f) : '';   // v10.10
+  const inkl = [nrB ? '☎ Notruf' + (nrB !== f.beginn ? ' ab ' + _lmFmtDE(nrB) : '') : (_lmVtHatNotruf(f) ? '☎ Notruf' : ''), f.zues_inkl ? '🛡 ZÜS-Service' : '', f.wartungen_pro_jahr ? '🔧 ' + f.wartungen_pro_jahr + '× Wartung/Jahr' : ''].filter(Boolean).join(' · ');
+  const ak = _lmAkteOf(f.anlage_id), ausAm = _lmDate(ak.notruf_ausgebaut_am);
+  const nrDem = (nrB && _lmParseDate(f.gekuendigt_zum) && f.gekuendigt_zum > nrB) ? '<div class="lm-vt-line">📵 Notruf ausbauen bis <b>' + _lmFmtDE(f.gekuendigt_zum) + '</b>' +
+    (ausAm && ausAm >= nrB ? ' – ✓ ausgebaut am ' + _lmFmtDE(ausAm) : '') + '</div>' : '';
   const progress = (i.fortschritt != null && LM_VT_LAUFEND.includes(i.status)) ? '<div class="lm-prog" title="aktuelle Vertragsperiode"><div style="width:' + Math.round(i.fortschritt * 100) + '%"></div></div>' : '';
   return '<div class="lm-vt ' + _lmVertragCls(i.status) + '">' +
     '<div class="lm-vt-head"><span class="lm-vt-title">' + escapeHtml(_lmArtLabel(f.art)) + (f.vertragsnummer ? ' · ' + escapeHtml(f.vertragsnummer) : '') + '</span>' +
@@ -59021,7 +59278,7 @@ function _lmVertragCardHtml(v, wDates, plan, abrBlock) {
       (String(f.quelle || '').startsWith('maxise:') ? '<span class="lm-pill grau">aus Maxise übernommen</span>' : '') + '</div>' +
     '<div class="lm-vt-line">' + escapeHtml(lauf) + '</div>' + kuend +
     (f.partner ? '<div class="lm-vt-line">Vertragspartner: ' + escapeHtml(f.partner) + '</div>' : '') +
-    (inkl ? '<div class="lm-vt-line">' + escapeHtml(inkl) + '</div>' : '') +
+    (inkl ? '<div class="lm-vt-line">' + escapeHtml(inkl) + '</div>' : '') + nrDem +
     ((canSeePrices() && Number(f.jahrespreis_netto)) ? '<div class="lm-vt-line">💶 ' + _lmMoney(f.jahrespreis_netto) + ' netto / Jahr</div>' : '') +
     progress + plan + (abrBlock || '') +
     (f.notizen ? '<div class="lm-tl-text">' + escapeHtml(f.notizen) + '</div>' : '') +
@@ -59070,8 +59327,9 @@ function _lmTabVertraegeDyn(it) {
 function _lmMonthsBetween(a, b) { const d = _lmDaysBetween(a, b); return d == null ? null : Math.max(1, Math.round(d / 30.44)); }
 function lmVertragAusMaxise(angebotId) {
   const m = ((_lmWartung.angebote.get(_lmUi.akteId)) || []).find(x => x.angebotId === angebotId); if (!m) return;
+  const t = String(m.typ || ''), art = (!t || /NOTRUF/.test(t)) ? (/^NOTRUF$/.test(t) ? 'notruf' : 'wartung_notruf') : 'wartung';   // v10.10: ohne Typ wie bisher mit Notruf
   lmVertragDialog(null, {
-    vertragsnummer: 'Maxise-Angebot ' + m.nummer, art: 'wartung_notruf', beginn: m.beginn || m.datum || '',
+    vertragsnummer: 'Maxise-Angebot ' + m.nummer, art, notruf_inkl: art !== 'wartung', beginn: m.beginn || m.datum || '',
     laufzeit_monate: (m.beginn && m.ende) ? _lmMonthsBetween(m.beginn, m.ende) : 12, verlaengerung_monate: 12, kuendigungsfrist_monate: 3,
     wartungen_pro_jahr: m.proJahr || '', jahrespreis_netto: m.jahrespreis || '', quelle: 'maxise:' + m.angebotId,
   });
@@ -59093,10 +59351,12 @@ function lmVertragDialog(recId, prefill) {
     _lmIn(P + 'kuendigungsfrist_monate', 'Kündigungsfrist (Monate vor Ablauf)', f.kuendigungsfrist_monate, { type: 'number', min: 0, step: 1 }) +
     _lmIn(P + 'wartungen_pro_jahr', 'Wartungen pro Jahr', f.wartungen_pro_jahr, { type: 'number', min: 0, step: 1 }) +
     (canSeePrices() ? _lmIn(P + 'jahrespreis_netto', 'Jahrespreis netto (€)', f.jahrespreis_netto, { type: 'number', min: 0, step: '0.01' }) : '') +
-    _lmIn(P + 'notruf_inkl', '☎ Notruf inklusive', !!f.notruf_inkl, { type: 'checkbox' }) +
     _lmIn(P + 'zues_inkl', '🛡 ZÜS-Service inklusive', !!f.zues_inkl, { type: 'checkbox' }) +
     _lmIn(P + 'gekuendigt_zum', 'Gekündigt zum', f.gekuendigt_zum, { type: 'date', hint: 'nur ausfüllen, wenn gekündigt wurde' }) +
     _lmIn(P + 'status', 'Status', f.status || '', { type: 'select', options: [['', 'automatisch aus den Daten'], ['beendet', 'beendet (manuell)']] }) +
+    '<div class="lm-sep">☎ Notruf <span class="lm-hint">Erinnerung 3 Wochen vor Notrufbeginn „Gerät bestellen", 2 Wochen vorher „Montage fällig"</span></div>' +
+    _lmIn(P + 'notruf_inkl', '☎ Notruf inklusive', _lmVtHatNotruf(f), { type: 'checkbox' }) +
+    _lmIn(P + 'notruf_beginn', 'Startdatum Notruf', f.notruf_beginn || '', { type: 'date', hint: 'leer = ab Vertragsbeginn – nur eintragen, wenn der Notruf später beginnt' }) +
     '<div class="lm-sep">💶 Wartungsrechnung <span class="lm-hint">' + (_lmRegel(_lmData.firma) === 'kalender' ? 'Kalenderjahr: ganzes Jahr jeweils zum 01.01., unterjähriger Beginn sofort anteilig bis 31.12.' : 'fällig jeweils zum Vertrags-/Wartungsbeginn') + '</span></div>' +
     _lmIn(P + 'abrechnung_turnus_monate', 'Rechnung', (f.abrechnung_turnus_monate == null || f.abrechnung_turnus_monate === '') ? 12 : f.abrechnung_turnus_monate, { type: 'select', options: LM_ABR_TURNUS.map(([v, l]) => [String(v), l]) }) +
     _lmIn(P + 'abrechnung_ab', 'Erinnerung ab', _lmDate(f.abrechnung_ab), { type: 'date', hint: 'leer = Fälligkeiten ab ' + _lmFmtDE(LM_ABR_START) + '; ältere gelten als erledigt' }) +
@@ -59115,7 +59375,7 @@ function _lmVertragWerte() {
   const num = n => { const v = g(n); if (v === undefined || v === '' || v === false) return null; const x = Number(String(v).replace(',', '.')); return Number.isFinite(x) ? x : null; };
   const out = { vertragsnummer: g('vertragsnummer'), art: g('art'), partner: g('partner'), beginn: g('beginn'), laufzeit_monate: num('laufzeit_monate'),
     verlaengerung_monate: num('verlaengerung_monate'), kuendigungsfrist_monate: num('kuendigungsfrist_monate'), gekuendigt_zum: g('gekuendigt_zum'),
-    wartungen_pro_jahr: num('wartungen_pro_jahr'), notruf_inkl: !!g('notruf_inkl'), zues_inkl: !!g('zues_inkl'), status: g('status'), notizen: g('notizen'),
+    wartungen_pro_jahr: num('wartungen_pro_jahr'), notruf_inkl: !!g('notruf_inkl'), notruf_beginn: g('notruf_beginn') || '', zues_inkl: !!g('zues_inkl'), status: g('status'), notizen: g('notizen'),
     abrechnung_turnus_monate: num('abrechnung_turnus_monate'), abrechnung_ab: g('abrechnung_ab') };
   if (document.getElementById('lm-f-v_jahrespreis_netto')) out.jahrespreis_netto = num('jahrespreis_netto');
   return out;
@@ -59125,12 +59385,39 @@ function _lmAbrVorschauText(regel, beginn, t) {
   const erste = _lmAbrTermine('kalender', beginn, t, _lmAddMonths(beginn, 13))[0];
   return escapeHtml(_lmTurnusText(t, 'kalender')) + (erste && erste.anteil < 1 ? ' – erste Rechnung gleich zum <b>' + _lmFmtDE(beginn) + '</b> anteilig bis ' + _lmFmtDE(erste.bis) : '');
 }
+/* v10.10: Art „… + Notruf" schließt Notruf ein; Startdatum Notruf nur sichtbar, wenn Notruf dabei ist */
+function _lmVertragNotrufSync() {
+  const art = document.getElementById('lm-f-v_art'), chk = document.getElementById('lm-f-v_notruf_inkl'), nb = document.getElementById('lm-f-v_notruf_beginn');
+  if (!art || !chk) return;
+  const artNotruf = /notruf/.test(art.value || ''), vorher = art.dataset ? art.dataset.vorher : undefined;
+  if (artNotruf) chk.checked = true;
+  else if (vorher != null && /notruf/.test(vorher)) chk.checked = false;   // von „… + Notruf" auf eine Art ohne Notruf gewechselt
+  if (art.dataset) art.dataset.vorher = art.value || '';
+  chk.disabled = artNotruf;
+  chk.title = artNotruf ? 'Bei dieser Vertragsart ist Notruf immer enthalten' : '';
+  const lab = nb && nb.closest ? nb.closest('label') : null;
+  if (lab) lab.style.display = chk.checked ? '' : 'none';
+}
+function _lmNotrufVorschauText(w) {
+  if (!(w.notruf_inkl || /notruf/.test(w.art || ''))) return '';
+  const b = _lmDate(w.beginn), nb0 = _lmDate(w.notruf_beginn);
+  if (!b) return '';
+  if (nb0 && nb0 < b) return '<br>⚠ <b>Startdatum Notruf liegt vor dem Vertragsbeginn</b> – leer lassen = ab Vertragsbeginn';
+  const nb = nb0 && nb0 > b ? nb0 : b, ak = _lmAkteOf(_lmUi.akteId), heute = _lmToday();
+  let t = '<br>☎ Notruf ab <b>' + _lmFmtDE(nb) + '</b>' + (nb !== b ? ' (' + _lmMonthsBetween(b, nb) + ' Monat' + (_lmMonthsBetween(b, nb) === 1 ? '' : 'e') + ' nach Vertragsbeginn)' : ' (= Vertragsbeginn)');
+  if (ak.notruf_status === 'aktiv') t += ' · in der Akte schon als aktiv vermerkt';
+  else if (_lmDaysBetween(heute, nb) > 0) t += ' · 📦 Gerät bestellen ab ' + _lmFmtDE(_lmAddDays(nb, -LM_NOTRUF_BESTELLEN)) + ' · 🔧 Montage fällig ab ' + _lmFmtDE(_lmAddDays(nb, -LM_NOTRUF_MONTAGE));
+  else t += ' · läuft schon – in der Akte bestätigen, dass der Notruf aktiv ist';
+  if (_lmParseDate(w.gekuendigt_zum) && w.gekuendigt_zum > nb) t += '<br>📵 Notruf ausbauen bis ' + _lmFmtDE(w.gekuendigt_zum) + ' (Kündigung)';
+  return t;
+}
 function _lmVertragVorschau() {
   const el = document.getElementById('lm-v-prev'); if (!el) return;
+  _lmVertragNotrufSync();
   const i = _lmVertragInfo(_lmVertragWerte());
   const w = _lmVertragWerte(), t = w.abrechnung_turnus_monate == null ? 12 : w.abrechnung_turnus_monate;
   el.innerHTML = '<span>📅 ' + escapeHtml(i.label || '–') + (i.kuendigung_bis && (i.status === 'aktiv' || i.status === 'kuendbar_bald') ? ' · nächste Kündigung zum ' + _lmFmtDE(i.kuendigung_zum) + ' bis spätestens <b>' + _lmFmtDE(i.kuendigung_bis) + '</b>' : '') +
-    (_lmParseDate(w.beginn) && t > 0 ? '<br>💶 Wartungsrechnung ' + _lmAbrVorschauText(_lmRegel(_lmData.firma), w.beginn, t) : '') + '</span>';   // ein Flex-Kind → Fließtext
+    (_lmParseDate(w.beginn) && t > 0 ? '<br>💶 Wartungsrechnung ' + _lmAbrVorschauText(_lmRegel(_lmData.firma), w.beginn, t) : '') + _lmNotrufVorschauText(w) + '</span>';   // ein Flex-Kind → Fließtext
 }
 async function lmVertragSpeichern(btn, recId) {
   if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
@@ -59138,6 +59425,16 @@ async function lmVertragSpeichern(btn, recId) {
   const fields = _lmVertragWerte();
   if (!_lmParseDate(fields.beginn)) return toast('Bitte den Vertragsbeginn angeben.', 'err');
   if (!fields.laufzeit_monate) return toast('Bitte die Erstlaufzeit in Monaten angeben.', 'err');
+  // v10.10: Startdatum Notruf (leer = Vertragsbeginn, nur später möglich)
+  const notrufAn = !!fields.notruf_inkl || /notruf/.test(String(fields.art || ''));
+  if (/notruf/.test(String(fields.art || ''))) fields.notruf_inkl = true;
+  let nrBeginn = notrufAn ? _lmDate(fields.notruf_beginn) : '';
+  if (notrufAn && fields.notruf_beginn && !nrBeginn) return toast('Bitte ein gültiges Startdatum für den Notruf angeben.', 'err');
+  if (nrBeginn && _lmDaysBetween(fields.beginn, nrBeginn) < 0) return toast('Der Notruf kann nicht vor dem Vertragsbeginn (' + _lmFmtDE(fields.beginn) + ') beginnen – leer lassen = ab Vertragsbeginn.', 'err');
+  if (nrBeginn === _lmDate(fields.beginn)) nrBeginn = '';
+  fields.notruf_beginn = nrBeginn;
+  const vorherVt = recId ? (_lmData.vertraege || []).find(r => r.id === recId) : null;
+  if (!nrBeginn && !(vorherVt && vorherVt.fields && vorherVt.fields.notruf_beginn)) delete fields.notruf_beginn;   // neues Feld nur mitsenden, wenn nötig
   const fileEl = document.getElementById('lm-f-v_datei'), file = fileEl && fileEl.files && fileEl.files[0];
   if (file && file.size > LM_MAX_BYTES && !_lmVerkleinerbar(file)) return toast('Datei zu groß (' + _lmSize(file.size) + ', max. 5 MB).', 'err');
   fields.updated = _lmNowIso();
@@ -59155,7 +59452,7 @@ async function lmVertragSpeichern(btn, recId) {
     }
     _lmUpsertLocal('vertrag', rec);
     _lmCloseModal('lm-v-modal');
-    toast('✅ Vertrag gespeichert', 'ok');
+    toast('✅ Vertrag gespeichert' + (nrBeginn ? ' · ☎ Notruf ab ' + _lmFmtDE(nrBeginn) + ' – Erinnerung ab ' + _lmFmtDE(_lmAddDays(nrBeginn, -LM_NOTRUF_BESTELLEN)) : ''), 'ok');
     _lmSoftRefresh();
     try { if (typeof anNachVertragGespeichert === 'function') anNachVertragGespeichert(rec, !recId); } catch(_){}   // v10.09
   } catch(e) {
@@ -59849,7 +60146,8 @@ function lmStatusDialog() {
   if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
   const it = _lmCurItem(); if (!it) return;
   const f = it.akte, cur = it.status;
-  const hatNotruf = !!(String(f.notruf || '').trim() || it.vertraege.some(v => v.f.notruf_inkl || /notruf/.test(v.f.art || '')) || it.maxiseWartung);
+  const hatNotruf = f.notruf_status !== 'ausgebaut' && !!(String(f.notruf || '').trim() || it.vertraege.some(v => _lmVtHatNotruf(v.f)) || (it.notrufLage && it.notrufLage.soll.length) ||
+    ['aktiv', 'nicht_aktiv', 'bestellt'].includes(f.notruf_status) || it.maxiseWartung);
   const laufend = it.vertraege.filter(v => LM_VT_LAUFEND.includes(v.info.status) && v.info.status !== 'gekuendigt');
   const opt = (v, icon, titel, text) => '<label class="lm-st-opt"><input type="radio" name="lm-st" value="' + v + '"' + (cur === v ? ' checked' : '') + ' onchange="_lmStatusDlgSync()">' +
     '<span class="i">' + icon + '</span><span><b>' + titel + '</b><br><span class="lm-muted">' + text + '</span></span></label>';
@@ -59928,12 +60226,79 @@ async function lmNotrufErledigt(anlageId) {
   const a = _lmFindAnlage(anlageId); if (!a) return;
   if (!confirm('Notruf an „' + (a.anzeigeAdresse || a.name || ('Anlage ' + anlageId)) + '" als ausgebaut vermerken?')) return;
   try {
-    await _lmSaveAkteFields(a, { notruf_ausgebaut_am: _lmToday() });
-    try { await _lmCreateEintrag(a, { typ: 'status', titel: '📵 Notruf ausgebaut', datum: _lmToday() }); } catch(_){}
+    const heute = _lmToday();
+    try { await _lmSaveAkteFields(a, { notruf_ausgebaut_am: heute, notruf_status: 'ausgebaut', notruf_status_am: heute, notruf_status_von: _lmUserName(), notruf_status_notiz: '' }); }
+    catch(e) { if (!/unknown field/i.test(String((e && e.message) || e))) throw e; await _lmSaveAkteFields(a, { notruf_ausgebaut_am: heute }); }   // v10.10-Felder fehlen noch
+    try { await _lmCreateEintrag(a, { typ: 'status', titel: '📵 Notruf ausgebaut', datum: heute }); } catch(_){}
     toast('✅ Notruf als ausgebaut vermerkt', 'ok');
     _lmAbrNachAenderung();
     if (_lmUi.akteId) _lmRender();
   } catch(e) { toast('❌ ' + ((e && e.message) || e), 'err'); }
+}
+/* v10.10: Stand des Notrufs je Anlage – „✓ aktiv" (ggf. montiert), „📦 Gerät bestellt", „🚨 nicht aktiv"; jeweils mit Eintrag im Verlauf */
+function lmNotrufDialog(anlageId, modus) {
+  if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
+  const a = _lmFindAnlage(anlageId); if (!a) return;
+  const it = _lmItem(a), f = it.akte, nl = it.notrufLage || {};
+  const s = nl.laufend || nl.naechster || (nl.soll || [])[0];
+  const kopf = '<div class="lm-sugg" style="margin:0 0 12px">☎ <span><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + anlageId)) + '</b>' +
+    (s ? '<br>' + escapeHtml(s.titel) + ' · Notruf ab ' + _lmFmtDE(s.beginn) : '') + '</span></div>';
+  let titel, body, info;
+  if (modus === 'bestellt') {
+    titel = '📦 Notrufgerät bestellt';
+    body = _lmIn('nr_datum', 'Bestellt am', _lmToday(), { type: 'date' }) +
+      _lmIn('nr_notiz', 'Notiz (optional)', '', { type: 'textarea', full: true, ph: 'z. B. Gerät, Lieferant, Bestell-Nr., Liefertermin' });
+    info = 'Die Erinnerung „Gerät bestellen" ist damit erledigt – 2 Wochen vor Notrufbeginn folgt „Montage fällig".';
+  } else if (modus === 'nicht_aktiv') {
+    titel = '🚨 Notruf nicht aktiv';
+    body = _lmIn('nr_datum', 'Festgestellt am', _lmToday(), { type: 'date' }) +
+      _lmIn('nr_notiz', 'Was ist los? *', '', { type: 'textarea', full: true, ph: 'z. B. Testanruf kommt nicht an, SIM-Karte gesperrt, Gerät defekt, noch nicht aufgeschaltet' });
+    info = 'Bis der Notruf wieder als aktiv bestätigt ist, steht „🚨 ACHTUNG Notruf nicht aktiv" unter „Zu erledigen", auf dem Dashboard und in der Akte.';
+  } else {
+    titel = nl.laufend ? '✓ Notruf ist aktiv' : '✓ Notruf montiert & aktiv';
+    body = _lmIn('nr_datum', nl.laufend ? 'Aktiv / geprüft am' : 'Montiert am', _lmToday(), { type: 'date' }) +
+      _lmIn('nr_montiert', 'Notrufgerät wurde von uns montiert', !nl.laufend || f.notruf_status === 'bestellt', { type: 'checkbox', full: true }) +
+      _lmIn('nr_system', 'Notrufsystem / Leitstelle', f.notruf || '', { ph: 'z. B. GSM-Notruf, Leitstelle …' }) +
+      _lmIn('nr_notiz', 'Notiz (optional)', '', { type: 'textarea', full: true, ph: 'z. B. Testanruf bei der Leitstelle erfolgreich' });
+    info = 'Wird in der Akte vermerkt („☎ Notruf aktiv") und im Verlauf eingetragen.';
+  }
+  _lmModal('lm-nr-modal', titel, kopf + '<div class="lm-form">' + body + '</div><div class="lm-muted" style="margin-top:8px">' + info + '</div>',
+    '<button class="btn" onclick="_lmCloseModal(' + _lmA('lm-nr-modal') + ')">Abbrechen</button><button class="btn prim" id="lm-nr-go" onclick="lmNotrufSpeichern(this,' + _lmA(anlageId) + ',' + _lmA(modus) + ')">💾 Speichern</button>');
+}
+async function lmNotrufSpeichern(btn, anlageId, modus) {
+  const a = _lmFindAnlage(anlageId); if (!a || !_lmCanEdit()) return;
+  const g = n => { const el = document.getElementById('lm-f-' + n); return el ? (el.type === 'checkbox' ? el.checked : String(el.value || '').trim()) : ''; };
+  const datum = g('nr_datum'), notiz = g('nr_notiz'), wer = _lmUserName(), f = _lmAkteOf(a.id);
+  if (!_lmParseDate(datum)) return toast('Bitte ein gültiges Datum angeben.', 'err');
+  if (_lmDaysBetween(_lmToday(), datum) > 0) return toast('Das Datum liegt in der Zukunft.', 'err');
+  if (modus === 'nicht_aktiv' && !notiz) return toast('Bitte kurz angeben, was los ist.', 'err');
+  let fields, eintrag;
+  if (modus === 'bestellt') {
+    fields = { notruf_bestellt_am: datum, notruf_status_notiz: notiz };
+    if (f.notruf_status !== 'aktiv') Object.assign(fields, { notruf_status: 'bestellt', notruf_status_am: datum, notruf_status_von: wer });
+    eintrag = { titel: '📦 Notrufgerät bestellt', text: notiz };
+  } else if (modus === 'nicht_aktiv') {
+    fields = { notruf_status: 'nicht_aktiv', notruf_status_am: datum, notruf_status_von: wer, notruf_status_notiz: notiz };
+    eintrag = { titel: '🚨 Notruf nicht aktiv', text: notiz };
+  } else {
+    const montiert = !!g('nr_montiert'), sys = g('nr_system');
+    fields = { notruf_status: 'aktiv', notruf_status_am: datum, notruf_status_von: wer, notruf_status_notiz: notiz };
+    if (montiert) fields.notruf_montiert_am = datum;
+    if (sys !== String(f.notruf || '').trim()) fields.notruf = sys;
+    eintrag = { titel: montiert ? '☎ Notruf montiert & aktiv' : '☎ Notruf aktiv', text: [sys ? 'Notrufsystem: ' + sys : '', notiz].filter(Boolean).join('\n') };
+  }
+  btn.disabled = true;
+  try {
+    await _lmSaveAkteFields(a, fields);
+    try { await _lmCreateEintrag(a, Object.assign({ typ: 'status', datum }, eintrag)); } catch(_){}
+    _lmCloseModal('lm-nr-modal');
+    toast('✅ ' + eintrag.titel.replace(/^\S+\s/, '') + ' – vermerkt', 'ok');
+    _lmAbrNachAenderung();
+  } catch(e) {
+    const m = String((e && e.message) || e);
+    toast('❌ Nicht gespeichert: ' + m + (/unknown field/i.test(m) ? ' – neue Felder fehlen noch: bitte einmal als Admin das Liftmanagement öffnen' : ''), 'err');
+    btn.disabled = false;
+  }
 }
 
 /* ── Benachrichtigung: Hinweis auf dem Dashboard + Zähler am Menüknopf ── */
@@ -59955,6 +60320,7 @@ async function _lmDashAbr(force) {
   if (!el) return;
   const darf = hasPermission('tool_liftmgmt') && !(typeof isTechnikerOnly === 'function' && isTechnikerOnly());
   if (!darf) { el.style.display = 'none'; _lmNavBadge(null); return; }
+  if (typeof _anHintergrund === 'function') setTimeout(() => { _anHintergrund().catch(() => {}); }, 3000);   // v10.11: Kundenantworten auf Anfragen
   const firmen = isFirmaAll() ? _lmFirmenSlugs() : [getCurrentFirmaSlug()];
   const key = firmen.join(',');
   if (!key) return;
@@ -59977,7 +60343,7 @@ async function _lmDashAbr(force) {
       try { const r = await _lmTodosLaden(f); rows = rows.concat(r.rows); wart = wart.concat(r.wart); }
       catch(e) { console.warn('[LM] Erinnerungen ' + f + ':', e && e.message); }
     }
-    rows.sort((a, b) => a.faellig.localeCompare(b.faellig));
+    _lmTodoSort(rows);
     wart.sort((x, y) => (x.status === y.status ? 0 : (x.status === 'ueberfaellig' ? -1 : 1)) || String(x.frist).localeCompare(String(y.frist)));
     _lmAbrSum[key] = { rows, wart, loadedAt: Date.now() };
     try { _bigCacheSet('lm_todo', key, rows); _bigCacheSet('lm_wart', key, wart); } catch(_){}
@@ -59990,24 +60356,29 @@ function _lmDashAbrRender(el, rows, wart) {
   rows = (rows || []).filter(_lmImFenster);
   wart = wart || [];
   if (!rows.length && !wart.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
-  const rot = rows.filter(_lmTodoDringend).length, gelb = rows.length - rot;
+  const rest = rows.filter(r => r.typ !== 'anfrage'), nAnfr = rows.length - rest.length;   // v10.11: Antworten eigens zählen
+  const rot = rest.filter(_lmTodoDringend).length, gelb = rest.length - rot;
   const wRot = wart.filter(r => r.status === 'ueberfaellig').length, wGelb = wart.length - wRot;   // gelb = laufendes Fenster offen
   const mehrereFirmen = new Set(rows.concat(wart).map(r => r.firma)).size > 1;
   const erste = (rows[0] || wart[0]).firma;
-  const nNotruf = rows.filter(r => r.typ === 'notruf').length, nRech = rows.length - nNotruf;
-  const titel = nRech && nNotruf ? '💶 <b>Wartungsrechnungen</b> &amp; 📵 <b>Notruf</b>' : (nNotruf ? '📵 <b>Notruf ausbauen</b>' : '💶 <b>Wartungsrechnungen</b>');
+  const nNotruf = rows.filter(_lmIstNotruf).length, nRech = rest.length - nNotruf, nAchtung = rows.filter(r => r.typ === 'notruf_aktiv').length;
+  const teile = [nRech ? '💶 <b>Wartungsrechnungen</b>' : '', nNotruf ? '☎ <b>Notruf</b>' : '', nAnfr ? '📬 <b>Antworten auf Anfragen</b>' : ''].filter(Boolean);
+  const titel = teile.length > 1 ? teile.slice(0, -1).join(', ') + ' &amp; ' + teile[teile.length - 1]
+    : ((nNotruf && rows.filter(_lmIstNotruf).every(r => r.typ === 'notruf')) ? '📵 <b>Notruf ausbauen</b>' : (teile[0] || ''));
   el.style.display = '';
   el.innerHTML = '<div class="lm-dash-abr' + (rot || wRot ? ' rot' : '') + '">' +
     '<div class="lm-dash-abr-h"><span class="t">🔔 Liftmanagement – zu erledigen</span>' +
       '<button class="btn prim" onclick="_lmGoTodo(' + _lmA(erste) + ')">Öffnen →</button></div>' +
     (rows.length ? '<div class="lm-dash-sek lm-auf' + (_lmDashAuf.abr ? ' auf' : '') + '">' +
-      _lmAufBtn('dAbr', _lmDashAuf.abr, titel + (rot ? '<span class="lm-pill rot">' + rot + ' fällig</span>' : '') + (gelb ? '<span class="lm-pill gelb">' + gelb + ' in ≤ 30 Tagen</span>' : ''), 'lm-dash-sek-h') +
+      _lmAufBtn('dAbr', _lmDashAuf.abr, titel + (rot ? '<span class="lm-pill rot">' + rot + ' fällig</span>' : '') + (gelb ? '<span class="lm-pill gelb">' + gelb + ' in ≤ 30 Tagen</span>' : '') +
+        (nAchtung ? '<span class="lm-pill rot">🚨 ' + nAchtung + '× Notruf nicht aktiv</span>' : '') +
+        (nAnfr ? '<span class="lm-pill gelb">📬 ' + nAnfr + (nAnfr === 1 ? ' Antwort' : ' Antworten') + ' vom Kunden</span>' : ''), 'lm-dash-sek-h') +
       '<div class="lm-auf-body">' +
-      rows.slice(0, 6).map(r => '<div class="lm-dash-abr-r" onclick="_lmGoTodo(' + _lmA(r.firma) + ',' + _lmA(r.anlageId) + ',' + _lmA(r.typ === 'notruf' ? 'uebersicht' : 'vertraege') + ')">' +
-        '<span class="lm-dot ' + (_lmTodoDringend(r) ? 'rot' : 'gelb') + '"></span>' +
-        '<span class="a">' + (r.typ === 'notruf' ? '📵 ' : '💶 ') + '<b>' + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</b>' + (r.kunde ? ' <span class="lm-muted">· ' + escapeHtml(r.kunde) + '</span>' : '') +
+      rows.slice(0, 6).map(r => { const n = _lmIstNotruf(r) || r.typ === 'anfrage'; return '<div class="lm-dash-abr-r" onclick="_lmGoTodo(' + _lmA(r.firma) + ',' + _lmA(r.anlageId) + ',' + _lmA(r.typ === 'anfrage' ? 'anfragen' : (n ? 'uebersicht' : 'vertraege')) + ')">' +
+        '<span class="lm-dot ' + (_lmTodoDringend(r) ? 'rot' : (r.typ === 'anfrage' ? 'blau' : 'gelb')) + '"></span>' +
+        '<span class="a">' + _lmTodoIcon(r) + ' <b>' + escapeHtml(r.adresse || ('Anlage ' + r.anlageId)) + '</b>' + (r.kunde ? ' <span class="lm-muted">· ' + escapeHtml(r.kunde) + '</span>' : '') +
           (mehrereFirmen ? ' <span class="lm-pill grau">' + escapeHtml(r.firma) + '</span>' : '') + '</span>' +
-        '<span class="f">' + (r.typ === 'notruf' ? 'Notruf ' : 'Wartungsrechnung ') + escapeHtml(_lmTodoText(r)) + (r.typ !== 'notruf' && r.preis ? ' · ' + _lmMoney(r.preis) : '') + (r.typ !== 'notruf' && r.anteil < 1 ? ' (anteilig)' : '') + '</span></div>').join('') +
+        '<span class="f">' + escapeHtml(_lmTodoKurz(r)) + (!n && r.preis ? ' · ' + _lmMoney(r.preis) : '') + (!n && r.anteil < 1 ? ' (anteilig)' : '') + '</span></div>'; }).join('') +
       (rows.length > 6 ? '<div class="lm-dash-mehr"><button type="button" onclick="_lmGoTodo(' + _lmA(erste) + ')">… und ' + (rows.length - 6) + ' weitere ansehen →</button></div>' : '') +
       '</div></div>' : '') +
     (wart.length ? '<div class="lm-dash-sek lm-dash-wart lm-auf' + (_lmDashAuf.wart ? ' auf' : '') + '">' +
@@ -61320,6 +61691,10 @@ const AN_FORMULARE = {
  *   Werte, lässt sich die Anfrage nicht senden. Wird direkt nach dem Anlegen eines Vertrags angeboten.
  *   Versand als E-Mail über Freshdesk (Ticket „wartet auf Kunde"), Erinnerung im selben Ticket,
  *   Antwort des Kunden wird im Ticket erkannt, ausgefülltes Formular einlesen → Akte.
+ * v10.11: Senden braucht nur Freshdesk-Domain + API-Key (die „Requester"-Adresse ist nur für interne Tickets nötig);
+ *   der Grund einer Sperre steht direkt neben dem Knopf. Kundenantworten werden auch im Hintergrund erkannt
+ *   (beim Dashboard, im Liftmanagement und alle 10 Minuten) → „📬 Kunde hat geantwortet" unter „Zu erledigen",
+ *   auf dem Dashboard und am Zähler; Abwesenheitsnotizen zählen nicht als Antwort.
  * ════════════════════════════════════════════════════════════════════ */
 const LM_T_ANFRAGE = 'LM_Anfragen';
 const LM_ANFRAGE_FIELDS = [
@@ -61427,7 +61802,12 @@ function _anTitel(typ, vertragsnummer) { return _anTyp(typ).label + (vertragsnum
 function _anVerlauf(f) { try { const v = JSON.parse((f && f.verlauf_json) || '[]'); return Array.isArray(v) ? v : []; } catch(_) { return []; } }
 function _anVerlaufPlus(f, aktion, text) { const v = _anVerlauf(f); v.push({ ts: _lmNowIso(), by: _lmUserName(), aktion, text: text || '' }); return JSON.stringify(v.slice(-60)); }
 function _anTicketUrl(firma, id) { const dom = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma]; return id && dom ? 'https://' + dom + '.freshdesk.com/a/tickets/' + encodeURIComponent(id) : ''; }
-function _anFdBereit(firma) { return typeof freshdeskIsConfigured === 'function' && freshdeskIsConfigured(firma) && !!APP_KEYS.valtownProxyUrl; }
+/* Versand an Kunden: Freshdesk-Domain + API-Key (auf dem Server bzw. im Browser) + Proxy genügen. Die „Requester"-Adresse
+   (FRESHDESK_REQUESTER_<FIRMA>) brauchen nur interne Tickets – fehlte sie, war der Versand gesperrt (v10.11). */
+function _anFdBereit(firma) {
+  const K = (typeof APP_KEYS !== 'undefined' && APP_KEYS) || {};
+  return !!(K.valtownProxyUrl && K.freshdeskDomains && K.freshdeskDomains[firma] && K.freshdeskApiKeys && K.freshdeskApiKeys[firma]);
+}
 function _anFirmaName(firma) { const r = (_firmenCache || []).find(x => x && x.fields && x.fields.slug === firma); return (r && r.fields && r.fields.name) || firma; }
 function _anTextHtml(t) {
   return String(t || '').replace(/\r/g, '').split(/\n{2,}/).map(p => p.trim() ? '<p>' + escapeHtml(p).replace(/\n/g, '<br>') + '</p>' : '').join('');
@@ -61657,6 +62037,7 @@ async function _anPatch(id, fields) {
   let rec = await _lmUpdate(LM_T_ANFRAGE, id, Object.assign({ updated: _lmNowIso() }, fields));
   if (!rec || !rec.fields) { const alt = _anFind(id); rec = { id, fields: Object.assign({}, alt && alt.fields, fields) }; }
   _lmUpsertLocal('anfrage', rec);
+  try { if (typeof _lmAbrNachAenderung === 'function') _lmAbrNachAenderung(); } catch(_) {}   // v10.11: „Zu erledigen", Zähler, Dashboard
   return rec;
 }
 function _anTabelleFehltHtml() {
@@ -61914,7 +62295,7 @@ function _anDlgStand() {
   const sperre = [];
   fehlt.forEach(p => sperre.push(AN_PFLICHT_LABEL[p] + ' fehlt'));
   if (!_anEmailOk(d.empf)) sperre.push('Empfänger-E-Mail fehlt');
-  if (!_anFdBereit(_lmData.firma)) sperre.push('Freshdesk ist für ' + _anFirmaName(_lmData.firma) + ' nicht eingerichtet');
+  if (!_anFdBereit(_lmData.firma)) sperre.push('Freshdesk ist für ' + _anFirmaName(_lmData.firma) + ' nicht eingerichtet (Domain bzw. API-Key fehlt)');
   return { a, it, ctx, fehlt, sperre };
 }
 function _anDlgRender() {
@@ -61972,6 +62353,7 @@ function _anDlgRender() {
     '<div class="lm-muted" style="margin-top:6px">Die E-Mail geht über Freshdesk an den Kunden (Ticket „wartet auf Kunde“). Antwortet der Kunde, erscheint das hier als „📬 Antwort eingegangen“.</div>';
   const titel = (d.id ? '📨 Anfrage #' + escapeHtml(String((_anFind(d.id) || { fields: {} }).fields.nr || '')) + ' senden' : '📨 Neue Anfrage') + ' · ' + t.icon + ' ' + escapeHtml(t.label);
   _lmModal('an-modal', titel, body,
+    '<span class="an-fuss-sperre" id="an-sperre-fuss"></span>' +   // v10.11: Grund einer Sperre direkt neben dem Knopf
     '<button class="btn" onclick="_anDlgSchliessen()">Abbrechen</button>' +
     '<button class="btn" id="an-merken" onclick="anDlgMerken(this)" title="Als offene Anfrage speichern und später senden">💾 Als offen merken</button>' +
     '<button class="btn prim" id="an-senden" onclick="anDlgSenden(this)">📨 Über Freshdesk senden</button>', { wide: true });
@@ -61985,6 +62367,7 @@ function _anDlgPruefen() {
   const el = document.getElementById('an-sperre'), btn = document.getElementById('an-senden');
   if (el) { el.innerHTML = s.sperre.length ? '⛔ <b>Senden nicht möglich:</b> ' + escapeHtml(s.sperre.join(' · ')) : ''; el.style.display = s.sperre.length ? '' : 'none'; }
   if (btn) { btn.disabled = !!s.sperre.length; btn.title = s.sperre.length ? 'Senden nicht möglich: ' + s.sperre.join(' · ') : ''; }
+  const fu = document.getElementById('an-sperre-fuss'); if (fu) fu.textContent = s.sperre.length ? '⛔ ' + s.sperre.join(' · ') : '';
 }
 function anDlgTyp(k) { if (!_anDlg || !AN_TYPEN[k]) return; _anDlgLesen(); _anDlg.typ = k; _anDlg.textDirty = false; _anDlg.betreffDirty = false;
   if (_anTyp(k).vertrag && !_anDlg.vref) { const a = _lmFindAnlage(_anDlg.anlageId); const vs = a ? _anVertraege(_lmItem(a)) : []; _anDlg.vref = (vs.find(v => v.laufend && v.wartung) || vs.find(v => v.wartung) || {}).ref || ''; }
@@ -62251,34 +62634,94 @@ async function anAntwortenPruefen(btn) {
   try { const n = await _anAntwortenPruefen(true); if (!n) toast('Keine neuen Antworten in den Tickets.', ''); }
   finally { if (btn) { btn.disabled = false; btn.textContent = '↻ Antworten prüfen'; } }
 }
-async function _anAntwortenPruefen(force) {
-  if (_anPruefLaeuft || !_lmData.firma || !_anFdBereit(_lmData.firma)) return 0;
-  const firma = _lmData.firma, jetzt = Date.now();
-  const kandidaten = _anAlle().filter(r => { const f = r.fields || {}; return f.status === 'gesendet' && f.fd_ticket && (force || !_anGeprueft[r.id] || jetzt - _anGeprueft[r.id] > AN_PRUEF_MIN * 60000); }).slice(0, 25);
-  if (!kandidaten.length) return 0;
-  _anPruefLaeuft = true;
-  let neu = 0;
-  try {
-    for (const r of kandidaten) {
-      if (_lmData.firma !== firma) break;
-      _anGeprueft[r.id] = Date.now();
-      try {
-        const conv = await _anFd(firma, '/tickets/' + encodeURIComponent(r.fields.fd_ticket) + '/conversations?per_page=100');
-        const seit = (Date.parse(r.fields.gesendet_am || '') || 0) - 60000;
-        const ein = (Array.isArray(conv) ? conv : []).filter(c => c && c.incoming && !c.private && (Date.parse(c.created_at) || 0) >= seit)
-          .sort((x, y) => String(x.created_at).localeCompare(String(y.created_at)));
-        if (!ein.length) continue;
-        const erste = ein[0], anh = ein.reduce((n, c) => n + ((c.attachments || []).length), 0);
-        const am = String(erste.created_at || _lmNowIso()), von = String(erste.from_email || '').replace(/^.*<([^>]+)>.*$/, '$1');
-        const cur = _anFind(r.id); if (!cur || cur.fields.status !== 'gesendet') continue;
-        if (_lmCanEdit()) await _anPatch(r.id, { status: 'antwort', antwort_am: am, antwort_von: von, verlauf_json: _anVerlaufPlus(cur.fields, 'antwort', (von ? 'von ' + von : 'Kunde hat geantwortet') + (anh ? ' · ' + anh + (anh === 1 ? ' Anhang' : ' Anhänge') : '')) });
-        else cur.fields = Object.assign({}, cur.fields, { status: 'antwort', antwort_am: am, antwort_von: von });   // Nur-Lesen: nur anzeigen
-        neu++;
-      } catch(e) { console.warn('[Anfragen] Ticket ' + r.fields.fd_ticket + ':', e && e.message); }
-    }
-  } finally { _anPruefLaeuft = false; }
-  if (neu) { toast('📬 ' + (neu === 1 ? 'Eine Antwort' : neu + ' Antworten') + ' auf Anfragen eingegangen', 'ok'); _lmSoftRefresh(); }
+/* v10.11: Abwesenheitsnotizen (ohne Anhang) zählen nicht als Antwort */
+const AN_AUTO_ANTWORT = /abwesenheitsnotiz|abwesenheit|out of office|automatische antwort|automatic reply|auto-?reply|außer haus|bin (?:ab|bis|vom|derzeit|zurzeit|momentan)[^.\n]{0,60}(?:nicht im büro|nicht erreichbar|im urlaub|abwesend)/i;
+const AN_HG_FELDER = ['firma','nr','titel','typ','status','fd_ticket','gesendet_am','anlage_id','adresse','kunde_name','empfaenger_email'];
+let _anHgLaeuft = false, _anHgZuletzt = 0;
+/* Hat der Kunde im Ticket geantwortet? Eingehende, öffentliche Nachricht nach dem Senden → { am, von, anh, auszug } | null */
+async function _anTicketAntwort(firma, f) {
+  const conv = await _anFd(firma, '/tickets/' + encodeURIComponent(f.fd_ticket) + '/conversations?per_page=100');
+  const seit = (Date.parse(f.gesendet_am || '') || 0) - 60000;
+  const ein = (Array.isArray(conv) ? conv : []).filter(c => c && c.incoming && !c.private && (Date.parse(c.created_at) || 0) >= seit)
+    .filter(c => (c.attachments || []).length || !AN_AUTO_ANTWORT.test(String(c.body_text || c.body || '').slice(0, 3000)))
+    .sort((x, y) => String(x.created_at).localeCompare(String(y.created_at)));
+  if (!ein.length) return null;
+  const e = ein[0];
+  return { am: String(e.created_at || _lmNowIso()), von: String(e.from_email || '').replace(/^.*<([^>]+)>.*$/, '$1').trim(),
+    anh: ein.reduce((n, c) => n + ((c.attachments || []).length), 0), auszug: _lmShort(String(e.body_text || '').replace(/\s+/g, ' ').trim(), 140) };
+}
+/* Gesendete Anfragen einer Firma prüfen – höchstens 25 je Lauf, je Anfrage höchstens alle 10 Minuten (außer force) */
+async function _anAntwortenFirma(firma, list, force) {
+  if (!_anFdBereit(firma)) return [];
+  const jetzt = Date.now(), neu = [];
+  const kand = (list || []).filter(r => { const f = (r && r.fields) || {}; return f.status === 'gesendet' && f.fd_ticket && (force || !_anGeprueft[r.id] || jetzt - _anGeprueft[r.id] > AN_PRUEF_MIN * 60000); }).slice(0, 25);
+  for (const r of kand) {
+    _anGeprueft[r.id] = Date.now();
+    try { const x = await _anTicketAntwort(firma, r.fields); if (x) neu.push({ r, x }); }
+    catch(e) { console.warn('[Anfragen] Ticket ' + r.fields.fd_ticket + ':', e && e.message); }
+  }
   return neu;
+}
+/* Antwort vermerken – frisch gelesen: hat sie schon jemand (anderer Rechner) vermerkt, nichts doppelt → true, wenn neu */
+async function _anAntwortVermerken(firma, r, x) {
+  const felder = f => ({ status: 'antwort', antwort_am: x.am, antwort_von: x.von,
+    verlauf_json: _anVerlaufPlus(f, 'antwort', (x.von ? 'von ' + x.von : 'Kunde hat geantwortet') + (x.anh ? ' · ' + x.anh + (x.anh === 1 ? ' Anhang' : ' Anhänge') : '') + (x.auszug ? ' · „' + x.auszug + '"' : '')) });
+  if (!_lmCanEdit()) { r.fields = Object.assign({}, r.fields, { status: 'antwort', antwort_am: x.am, antwort_von: x.von }); return true; }   // Nur-Lesen: nur anzeigen
+  let akt = null; try { akt = await _lmFetchRec(LM_T_ANFRAGE, r.id); } catch(_) {}
+  const f = (akt && akt.fields) || r.fields || {}, hier = _lmData.firma === firma && !!_anFind(r.id);
+  if (f.status !== 'gesendet') { if (akt) { r.fields = akt.fields; if (hier) _lmUpsertLocal('anfrage', akt); } return false; }
+  if (hier) { const rec = await _anPatch(r.id, felder(f)); r.fields = rec.fields; }
+  else { const neu = Object.assign({ updated: _lmNowIso() }, felder(f)); await _lmUpdate(LM_T_ANFRAGE, r.id, neu); r.fields = Object.assign({}, f, neu); }
+  return true;
+}
+/* Meldung + „Zu erledigen", Zähler und Dashboard neu */
+function _anAntwortMeldung(firma, liste) {
+  if (!liste || !liste.length) return;
+  const f = liste[0].r.fields || {};
+  toast(liste.length === 1 ? '📬 Kunde hat geantwortet: ' + (f.adresse || f.kunde_name || 'Anfrage') + ' – Anfrage #' + (f.nr || '') + ' (' + _anTyp(f.typ).label + ')'
+    : '📬 ' + liste.length + ' Kunden haben auf Anfragen geantwortet', 'ok');
+  try { Object.keys(_lmAbrSum).forEach(k => { if (k.split(',').includes(firma)) delete _lmAbrSum[k]; }); } catch(_) {}
+  if (_lmData.firma === firma) { _lmLocalVer++; try { _lmAbrNachAenderung(); } catch(_) {} }
+  const dash = typeof document !== 'undefined' && document.getElementById('dash-view');
+  if (dash && dash.classList && dash.classList.contains('show') && typeof _lmDashAbr === 'function') { try { _lmDashAbr(); } catch(_) {} }
+}
+/* Liftmanagement offen: gesendete Anfragen der Firma (Knopf „↻ Antworten prüfen" = sofort) */
+async function _anAntwortenPruefen(force) {
+  if (_anPruefLaeuft || !_lmData.firma || _lmData.anfragenFehlt || !_anFdBereit(_lmData.firma)) return 0;
+  const firma = _lmData.firma, ok = [];
+  _anPruefLaeuft = true;
+  try {
+    for (let i = 0; _anHgLaeuft && i < 50; i++) await new Promise(r => setTimeout(r, 200));   // laufende Hintergrund-Prüfung abwarten
+    const neu = await _anAntwortenFirma(firma, _anAlle(), force);
+    for (const n of neu) { if (_lmData.firma !== firma) break; try { if (await _anAntwortVermerken(firma, n.r, n.x)) ok.push(n); } catch(e) { console.warn('[Anfragen] Antwort vermerken:', e && e.message); } }
+  } finally { _anPruefLaeuft = false; }
+  _anAntwortMeldung(firma, ok);
+  return ok.length;
+}
+/* Hintergrund: alle gewählten Firmen – beim Dashboard, wenn der Tab wieder sichtbar wird und alle 10 Minuten (wer bearbeiten darf) */
+async function _anHintergrund(force) {
+  if (_anHgLaeuft || _anPruefLaeuft || (!force && Date.now() - _anHgZuletzt < 60000)) return 0;
+  try { if (typeof APP_KEYS === 'undefined' || !APP_KEYS || !APP_KEYS.user || !hasPermission('tool_liftmgmt') || (typeof isTechnikerOnly === 'function' && isTechnikerOnly()) || !_lmCanEdit()) return 0; } catch(_) { return 0; }
+  if (!force && typeof document !== 'undefined' && document.hidden) return 0;
+  const firmen = ((typeof isFirmaAll === 'function' && isFirmaAll()) ? _lmFirmenSlugs() : [getCurrentFirmaSlug()]).filter(Boolean);
+  _anHgLaeuft = true; _anHgZuletzt = Date.now();
+  let n = 0;
+  try {
+    for (const firma of firmen) {
+      if (!_anFdBereit(firma)) continue;
+      let list;
+      if (_lmData.firma === firma && Array.isArray(_lmData.anfragen) && !_lmData.anfragenFehlt && !_lmData.loading) list = _anAlle();
+      else { try { list = await _lmAtList(LM_T_ANFRAGE, 'AND({firma}=' + _lmQ(firma) + ",{status}='gesendet')", AN_HG_FELDER); } catch(_) { continue; } }
+      const neu = await _anAntwortenFirma(firma, list, !!force), ok = [];
+      for (const x of neu) { try { if (await _anAntwortVermerken(firma, x.r, x.x)) ok.push(x); } catch(e) { console.warn('[Anfragen] Antwort vermerken:', e && e.message); } }
+      if (ok.length) { n += ok.length; _anAntwortMeldung(firma, ok); }
+    }
+  } finally { _anHgLaeuft = false; }
+  return n;
+}
+if (typeof setInterval === 'function' && typeof window !== 'undefined' && window && !window.__anHgTimer) {
+  window.__anHgTimer = setInterval(() => { _anHintergrund().catch(() => {}); }, AN_PRUEF_MIN * 60000);
+  if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('visibilitychange', () => { if (!document.hidden) _anHintergrund().catch(() => {}); });
 }
 
 /* ═══ Ausgefülltes Formular einlesen → Akte ═══ */
