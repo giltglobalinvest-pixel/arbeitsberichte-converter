@@ -2329,6 +2329,20 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
   .tv-row-act{flex-basis:100%}
   .lm-ansicht .tv-lang{display:none}
 }
+/* ═══ v10.25: 🤖 KI liest den TÜV-Bericht – Mängel · 🎫 Ticket für das Angebot ═══ */
+.tk-status{font-size:12px;line-height:1.45;color:var(--txt3);background:#F8FAFC;border:1px dashed var(--bdr);border-radius:8px;padding:7px 10px;font-weight:500}
+.tk-status.laeuft{color:#5B21B6;background:#F5F3FF;border:1px solid #DDD6FE}
+.tk-status.ok{color:#14532D;background:#F0FDF4;border:1px solid #BBF7D0}
+.tk-status.warn{color:#92400E;background:#FFFBEB;border:1px solid #FDE68A}
+.tk-status .wk-link{background:none;border:0;padding:0;margin-left:6px;font:inherit;font-weight:700;color:inherit;text-decoration:underline;cursor:pointer}
+.lm-form select.wk-ki,.lm-form textarea.wk-ki{background:#F5F3FF;border-color:#A78BFA;box-shadow:inset 0 0 0 1px #A78BFA}
+.lm-tv-mg{display:flex;flex-direction:column;gap:8px;background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;padding:10px 12px}
+.lm-tv-mg textarea{min-height:92px}
+.tk-liste{margin:2px 0 0;padding-left:20px;font-weight:500}
+.tk-liste li{margin:1px 0}
+.tk-box-z{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px}
+.tk-box-z a{font-weight:700}
+.lm-zg-grid .tk-zg-voll{grid-column:1/-1}
 </style>
 </head>
 <body>
@@ -3885,7 +3899,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.24';
+const APP_VERSION = 'v10.25';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -9852,21 +9866,21 @@ function _fdResolveTicketType(firmaSlug, angebotTyp) {
   return null; // unbekannte Firma → kein type-Feld
 }
 
-// v5.29: Folge-Tickets werden in Freshdesk auf eine feste Gruppe + Bearbeiter
-// gerouted. IDs werden beim ersten Submit per FD-API-Lookup ermittelt und gecacht.
+// v5.29: Folge-Tickets gehen in Freshdesk an die Gruppe „Sales" (ID per FD-API-Lookup, gecacht).
+// v10.25: niemandem zugewiesen – eine Person nur, wenn sie im Dialog gewählt ist (beide Firmen; bisher automatisch Patrizio Fontanarosa)
 const FOLGETICKET_GROUP_NAME     = 'Sales';
-const FOLGETICKET_RESPONDER_NAME = 'Patrizio Fontanarosa';
-let _ftAssignmentCache = {}; // { firmaSlug → { group_id, responder_id, loadedAt } }
+const FOLGETICKET_BEARBEITER     = ['Patrizio', 'Mergim', 'Niklas'];   // Auswahl „👤 Zuweisen an" – Vorname im Freshdesk der Firma
+let _ftAssignmentCache = {}; // { firmaSlug → { group_id, agenten:[{ id, name }], loadedAt } }
 
 async function _ftResolveAssignment(firmaSlug) {
   const cached = _ftAssignmentCache[firmaSlug];
   if (cached && (Date.now() - cached.loadedAt) < 60*60*1000) return cached;
   const proxy = APP_KEYS.valtownProxyUrl;
-  if (!proxy) return { group_id:null, responder_id:null, loadedAt:Date.now() };
+  if (!proxy) return { group_id:null, agenten:[], loadedAt:Date.now() };
   await erpEnsureSession();
   const token = erpGetSessionToken();
   const headers = { 'Authorization':'Bearer '+token };
-  let group_id = null, responder_id = null;
+  let group_id = null, agenten = [];
   // Gruppe
   try {
     const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/admin/groups', { headers });
@@ -9885,22 +9899,20 @@ async function _ftResolveAssignment(firmaSlug) {
     const r = await fetch(proxy+'/freshdesk/'+firmaSlug+'/api/v2/agents?per_page=100', { headers });
     if (r.ok) {
       const arr = await r.json();
-      if (Array.isArray(arr)) {
-        const wantedLower = FOLGETICKET_RESPONDER_NAME.toLowerCase();
-        const a = arr.find(x => {
-          const n = String(x.contact?.name || x.name || '').toLowerCase();
-          return n === wantedLower || n.includes(wantedLower);
-        });
-        if (a) responder_id = a.id;
-      }
+      if (Array.isArray(arr)) agenten = arr.map(x => ({ id: x.id, name: String(x.contact?.name || x.name || '').trim() })).filter(x => x.id && x.name);   // v10.25: für die Auswahl
     } else {
       console.warn('[FD-Lookup] agents HTTP '+r.status);
     }
   } catch(e) { console.warn('[FD-Lookup] agents:', e.message); }
-  const res = { group_id, responder_id, loadedAt: Date.now() };
+  const res = { group_id, agenten, loadedAt: Date.now() };
   _ftAssignmentCache[firmaSlug] = res;
-  console.log('[FD-Lookup] '+firmaSlug+' → Group "'+FOLGETICKET_GROUP_NAME+'"='+group_id+', Responder "'+FOLGETICKET_RESPONDER_NAME+'"='+responder_id);
+  console.log('[FD-Lookup] '+firmaSlug+' → Group "'+FOLGETICKET_GROUP_NAME+'"='+group_id+', '+agenten.length+' Bearbeiter');
   return res;
+}
+// v10.25: Bearbeiter zum gewählten Vornamen („Patrizio" → „Patrizio Fontanarosa") – null, wenn es ihn im Freshdesk der Firma nicht gibt
+function _ftBearbeiter(assignment, vorname) {
+  const v = String(vorname || '').trim().toLowerCase();
+  return v ? ((assignment && assignment.agenten) || []).find(x => x.name.split(/\s+/)[0].toLowerCase() === v) || null : null;
 }
 
 async function openFolgeTicketModal(auftragRecId, berichtRecId) {
@@ -10055,6 +10067,14 @@ function _ftRenderBody() {
           '<option value="2" selected>Hoch</option>'+
           '<option value="3">Dringend</option>'+
           '<option value="4">Sehr dringend</option>'+
+        '</select>'+
+      '</div>'+
+      // v10.25: Zuweisen – sonst nur die Gruppe Sales
+      '<div>'+
+        '<label for="ft-zuweisen" style="font-size:11px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px">👤 Zuweisen an</label>'+
+        '<select id="ft-zuweisen" style="width:100%;padding:9px 12px;border:1px solid var(--bdr);border-radius:6px;font-size:13px;background:#fff;color:#222">'+
+          '<option value="" selected>– niemand, nur Gruppe '+escapeHtml(FOLGETICKET_GROUP_NAME)+' –</option>'+
+          FOLGETICKET_BEARBEITER.map(n => '<option value="'+escapeHtml(n)+'">'+escapeHtml(n)+'</option>').join('')+
         '</select>'+
       '</div>'+
     '</div>'+
@@ -10351,10 +10371,12 @@ async function _ftSubmit(btn) {
     fd.append('priority', String(document.getElementById('ft-prio')?.value || '2'));
     fd.append('status', '2');
     fd.append('source', '2');
-    // v5.29: Assignment auf Gruppe "Sales" + Bearbeiter "Patrizio Fontanarosa"
+    // v5.29: Gruppe „Sales" · v10.25: eine Person nur, wenn sie im Dialog gewählt ist (Patrizio, Mergim oder Niklas)
     const assignment = await _ftResolveAssignment(firmaSlug);
     if (assignment.group_id)     fd.append('group_id',     String(assignment.group_id));
-    if (assignment.responder_id) fd.append('responder_id', String(assignment.responder_id));
+    const ftWahl = String(document.getElementById('ft-zuweisen')?.value || '').trim();
+    const ftWer = _ftBearbeiter(assignment, ftWahl);
+    if (ftWer) fd.append('responder_id', String(ftWer.id));
     for (const img of _ftState.images) fd.append('attachments[]', img.blob, img.name);
     for (const aud of _ftState.audios) fd.append('attachments[]', aud.blob, aud.name);
     for (const vid of _ftState.videos) fd.append('attachments[]', vid.blob, vid.name);
@@ -10387,7 +10409,7 @@ async function _ftSubmit(btn) {
       // Diagnose-Hilfen anhängen wenn Group/Responder nicht gefunden wurden
       const hints = [];
       if (!assignment.group_id)     hints.push('Gruppe „'+FOLGETICKET_GROUP_NAME+'" nicht in Freshdesk gefunden');
-      if (!assignment.responder_id) hints.push('Bearbeiter „'+FOLGETICKET_RESPONDER_NAME+'" nicht gefunden');
+      if (ftWahl && !ftWer)         hints.push('Bearbeiter „'+ftWahl+'" nicht gefunden');
       if (hints.length) errMsg += ' — Hinweis: '+hints.join(' · ')+' (in FD-Admin anlegen oder Namen prüfen)';
       console.error('[Folge-Ticket] FD POST /tickets fehlgeschlagen:', { status:res.status, data, assignment, firma:firmaSlug });
       throw new Error(errMsg);
@@ -10429,7 +10451,9 @@ async function _ftSubmit(btn) {
       console.warn('[FT-Persist] failed:', persistErr.message);
     }
 
-    toast('🎫 Ticket #'+ticketId+' erstellt'+(assignment.group_id||assignment.responder_id?' (Sales · Patrizio)':''),'ok');
+    toast('🎫 Ticket #'+ticketId+' erstellt ('+[assignment.group_id ? FOLGETICKET_GROUP_NAME : 'ohne Gruppe', ftWer ? ftWer.name : ''].filter(Boolean).join(' · ')+')','ok');
+    if (!assignment.group_id) toast('⚠ Gruppe „'+FOLGETICKET_GROUP_NAME+'“ im Freshdesk nicht gefunden – Ticket #'+ticketId+' hat keine Gruppe, bitte in Freshdesk zuordnen.','err');
+    if (ftWahl && !ftWer) toast('⚠ '+ftWahl+' ist im Freshdesk dieser Firma nicht als Bearbeiter angelegt – Ticket #'+ticketId+' ist niemandem zugewiesen.','err');
 
     // Form zurücksetzen, Modal bleibt offen für weiteres Ticket
     _ftState.images = []; _ftState.audios = []; _ftState.videos = [];
@@ -57080,6 +57104,8 @@ function _bbPdfFooter(doc, ml, mr, BR, GREY_L, GREY_X, page, total, f) {
  * v10.24: 🛡 TÜV-Management (beide Firmen, tv/tv-module.js): jede aktive Anlage jedes Jahr, abwechselnd Haupt- und Zwischenprüfung.
  *   Gelb ab 60 Tagen vor der Fälligkeit, rot wenn überfällig – bis „✓ TÜV erledigt" vermerkt ist, und das geht nur mit dem TÜV-Bericht
  *   der Prüfstelle. Die TÜV-Termine sind im Akte-Formular nicht mehr frei änderbar (Kasten „🛡 TÜV-Prüfung", ✏ Termin mit Verlauf).
+ * v10.25: Jeder hochgeladene TÜV-Bericht wird von der KI gelesen (tk/tk-module.js) – die Mängel stehen am Bericht (maengel),
+ *   bei Mängeln geht ein Ticket an Freshdesk (Sales) für das Angebot zur Mängelbeseitigung (Ticket-Nr. in fd_ticket).
  * ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Rechenlogik (rein, ohne DOM/Netz). Datumswerte als 'YYYY-MM-DD' (lokale Kalendertage). ── */
@@ -57391,6 +57417,8 @@ const LM_EINTRAG_FIELDS = [
   { name:'created_by',  type:'singleLineText' },
   { name:'eingewiesene_firma', type:'singleLineText' },   // v10.23 Befreiereinweisung: an welche Firma (sonst nichts, keine Namen)
   { name:'pruefstelle', type:'singleLineText' },   // v10.24 TÜV-Bericht: Prüfstelle (steht auch im Titel „TÜV-Bericht … · Prüfstelle")
+  { name:'maengel',     type:'multilineText'  },   // v10.25 TÜV-Bericht: Mängel laut Bericht, je Zeile einer (von der KI gelesen, geprüft)
+  { name:'fd_ticket',   type:'singleLineText' },   // v10.25 TÜV-Bericht: Freshdesk-Ticket „Angebot Mängelbeseitigung"
 ];
 const LM_VERTRAG_ARTEN = [
   { value:'vollwartung',    label:'Vollwartung' },
@@ -60364,6 +60392,7 @@ function lmUploadDialog(fileList, katVorgabe) {
         _lmIn('up_pruefstelle', 'Prüfstelle', _lmAkteOf(_lmUi.akteId).pruefstelle || '', { list: 'lm-dl-pruef2' }) +
         _lmIn('up_tuev_akte', 'Als erledigt vermerken – TÜV-Termine fortschreiben (nächste Prüfung 12 Monate nach dem Prüfdatum, Monatsende)', true, { type: 'checkbox', full: true }) +
         _lmIn('up_tuev_maengel', 'Bei Mängeln eine offene Störung/Aufgabe anlegen', true, { type: 'checkbox', full: true }) +
+        (typeof _tkVerfuegbar === 'function' && _tkVerfuegbar() ? '<div class="full lm-muted">🤖 Nach dem Hochladen liest die KI den Bericht und schreibt die Mängel heraus – bei Mängeln: 🎫 Ticket an Freshdesk für das Angebot zur Mängelbeseitigung.</div>' : '') +
         '<datalist id="lm-dl-pruef2">' + LM_PRUEFSTELLEN.map(v => '<option value="' + escapeHtml(v) + '">').join('') + '</datalist>' +
       '</div></div>' +
       '<div class="full lm-sugg" id="lm-up-wartung" style="display:' + (kat === 'wartung' ? 'flex' : 'none') + ';margin:0">🔧 <span>Zählt als durchgeführte Wartung am angegebenen Datum (Wartungsfenster) – alle Dateien kommen in <b>einen</b> Wartungsbericht. Er steht dann unter „🔧 Wartungsberichte".</span></div>' +
@@ -60614,7 +60643,7 @@ async function lmUploadStart(btn) {
   if (kat === 'wartung') return _lmUploadAlsWartung(btn, a, st.files, { datum, text, titel: st.files.length === 1 ? titel1 : '' });   // v10.08
   btn.disabled = true;
   const prog = document.getElementById('lm-up-prog');
-  let ok = 0; const fehler = [], verkleinert = [];
+  let ok = 0; const fehler = [], verkleinert = [], tuevOk = [];
   for (let i = 0; i < st.files.length; i++) {
     const file = st.files[i];
     const stand = t => { if (prog) prog.textContent = '⏳ ' + (i + 1) + ' / ' + st.files.length + ': ' + file.name + (t ? ' – ' + t : ''); };
@@ -60630,6 +60659,7 @@ async function lmUploadStart(btn) {
       await atBlobUpload(rec.id, 'datei', blob, name, type);
       let full = rec; try { full = await _lmFetchRec(LM_T_EINTRAG, rec.id); } catch(_){}
       _lmUpsertLocal('eintrag', full);
+      if (tuev) tuevOk.push({ id: rec.id, file });
       ok++;
     } catch(e) { fehler.push(file.name + ': ' + ((e && e.message) || e)); }
   }
@@ -60646,6 +60676,8 @@ async function lmUploadStart(btn) {
   if (fehler.length) _mxTextModal('⚠ ' + ok + ' von ' + st.files.length + ' Dateien hochgeladen', 'Nicht übernommen:\n\n' + fehler.join('\n') + (kleinTxt ? '\n\n' + kleinTxt : ''));
   else toast('✅ ' + ok + ' Datei' + (ok === 1 ? '' : 'en') + ' in der Akte gespeichert' + (kleinTxt ? ' · ' + kleinTxt : ''), 'ok');
   if (_lmUi.akteId === id && _lmData.firma === firma) { _lmRefreshAkteHead(); _lmRefreshDyn(); }
+  // v10.25: die KI liest den TÜV-Bericht gleich – Mängel prüfen, Ticket für das Angebot (bei Fehlern über „🎫 Mängel → Angebot" im Kasten)
+  if (tuevOk.length && !fehler.length && typeof tkNachUpload === 'function') tkNachUpload(id, tuevOk.map(x => x.id), tuevOk.map(x => x.file));
 }
 /* v10.24: Nach einer Prüfung mit Bericht die Termine fortschreiben – im Jahrestakt abwechselnd HP und ZP.
    naechste = Fälligkeit der nächsten Prüfung laut Bericht/Plakette (leer: 12 Monate nach der Prüfung, zum Monatsende);
@@ -61361,7 +61393,8 @@ function _lmCloseModal(id) { const m = document.getElementById(id); if (m) m.rem
      (z. B. 6 oder 8 Wochen nach Versand) nachgefasst wird, stellen nur Admins je Firma ein.
    - Was sagt der Kunde?  🎉 beauftragt · 🔔 später nochmal (Erinnerung: verschwindet bis zum Tag und taucht
      dann mit Kommentar, Ansprechpartner und Nummer wieder auf) · 💬 will mit Sales sprechen (Freshdesk-Ticket
-     an Sales) · ✖ abgelehnt (Grund → Auswertung) · 👍 entscheidet noch · 📵 nicht erreicht (in 2 Tagen erneut).
+     an die Gruppe Sales – v10.25: niemandem zugewiesen, außer man wählt Patrizio, Mergim oder Niklas) · ✖ abgelehnt
+     (Grund → Auswertung) · 👍 entscheidet noch · 📵 nicht erreicht (in 2 Tagen erneut).
    - Nachfass-Mail im Freshdesk-Ticket des Angebots oder per Mail-Programm, auf Wunsch von der KI formuliert.
    - Auswertung: Abschlussquote, wie die Kunden reagieren, Ablehnungsgründe, Themen für Sales.
    - Dashboard-Hinweis (zugeklappt) + Zähler am Menüknopf.
@@ -61370,8 +61403,8 @@ function _lmCloseModal(id) { const m = document.getElementById(id); if (m) m.rem
    ════════════════════════════════════════════════════════════════════════════ */
 const OB_ERST_STANDARD = 4;                  // Tage nach Versand bis „Jetzt nachfassen" (vorher taucht ein Angebot nicht auf)
 const OB_WOCHEN_STANDARD = 6;                // so viele Wochen nach Versand wird nachgefasst, danach „Abschließen"
-const OB_SALES_STANDARD = 'Niklas Langer';   // Freshdesk-Bearbeiter für Sales-Tickets
-const OB_SALES_GRUPPE = 'Sales';             // Freshdesk-Gruppe für Sales-Tickets
+const OB_SALES_GRUPPE = 'Sales';             // Freshdesk-Gruppe für Sales-Tickets – v10.25: niemandem zugewiesen, außer man wählt jemanden
+const OB_SALES_BEARBEITER = (typeof FOLGETICKET_BEARBEITER !== 'undefined' && FOLGETICKET_BEARBEITER) || ['Patrizio', 'Mergim', 'Niklas'];   // Auswahl wie bei den Folge-Tickets
 const OB_NICHT_ERREICHT_TAGE = 2;            // „nicht erreicht" → in 2 Tagen wieder vorlegen
 const OB_ALT = 180;                          // ältere offene Angebote werden nicht mehr angezeigt
 const OB_UNVERSENDET_TAGE = 60;              // „fertig, aber nicht versendet" nur für Angebote der letzten 60 Tage
@@ -61386,7 +61419,7 @@ const OB_NEUE_FELDER = [['nachgefasst_json','multilineText'],['nachgefasst_at','
   ['nf_wv_name','singleLineText'],['nf_wv_tel','singleLineText'],['nf_ergebnis','singleLineText'],['nf_grund','singleLineText'],['nf_abgeschlossen_am','singleLineText'],
   ['nf_versendet_am','singleLineText'],['nf_sales_ticket','singleLineText'],['nf_sales_am','singleLineText'],['nf_sales_thema','singleLineText'],
   ['kontakt_telefon','singleLineText'],['kontakt_email','singleLineText'],['kontakt_name','singleLineText'],['kontakt_id','singleLineText']];
-const OB_FIRMEN_FELDER = [['nf_erst_tage','number'],['nf_fenster_wochen','number'],['nf_sales_bearbeiter','singleLineText']];
+const OB_FIRMEN_FELDER = [['nf_erst_tage','number'],['nf_fenster_wochen','number']];   // v10.25: nf_sales_bearbeiter wird nicht mehr genutzt
 const OB_KANAL = {
   anruf:  { icon:'📞', label:'Anruf' },
   mail:   { icon:'✉️', label:'E-Mail' },
@@ -61417,7 +61450,7 @@ let _obData = { key: '', firmen: {}, loading: null, loadedAt: 0, errors: [] };  
 let _obFelderOk = false;
 let _obDashBusy = false;
 let _obDlgId = '';
-let _obSalesCache = {};   // firma → { group_id, responder_id, name, loadedAt }
+let _obSalesCache = {};   // firma → { group_id, agenten:[{ id, name }], loadedAt }
 const _obDashAuf = { liste: false };
 let _obDashSum = {};      // key → { rows, n, ueber, erinnerungen, loadedAt }
 
@@ -61452,13 +61485,13 @@ function _obUser() { return (typeof APP_KEYS !== 'undefined' && APP_KEYS.user &&
 function _obTageText(t) { return t === 0 ? 'heute' : (t === 1 ? 'morgen' : (t === -1 ? 'gestern' : (t < 0 ? 'vor ' + (-t) + ' Tagen' : 'in ' + t + ' Tagen'))); }
 function _obIstAdmin() { return typeof isAdmin === 'function' && !!isAdmin(); }
 
-/* ── Einstellungen je Firma (nur Admins ändern sie): ab wann / wie lange nachfassen, Sales-Bearbeiter ── */
+/* ── Einstellungen je Firma (nur Admins ändern sie): ab wann / wie lange nachfassen ── */
 function _obCfgAus(f) {
   f = f || {};
   const e = Math.round(Number(f.nf_erst_tage)), w = Math.round(Number(f.nf_fenster_wochen));
   const erst = (e >= 1 && e <= 60) ? e : OB_ERST_STANDARD;
   const wochen = (w >= 1 && w <= 52) ? w : OB_WOCHEN_STANDARD;
-  return { erst, wochen, fenster: wochen * 7, sales: String(f.nf_sales_bearbeiter || '').trim() || OB_SALES_STANDARD };
+  return { erst, wochen, fenster: wochen * 7 };
 }
 function _obFirmaRec(slug) { return ((typeof _firmenCache !== 'undefined' && _firmenCache) || []).find(r => r && r.fields && r.fields.slug === slug) || null; }
 function _obCfg(slug) { const r = _obFirmaRec(slug); return _obCfgAus(r && r.fields); }
@@ -62130,7 +62163,9 @@ function obNachfassDialog(id, vorwahl) {
       '<input type="date" id="ob-k-wv" class="lm-select" min="' + _obAddDays(heute, 1) + '" value="' + escapeHtml(vorWv) + '">' +
       '<div class="lm-muted">Bis dahin verschwindet das Angebot aus „Jetzt nachfassen" und taucht an dem Tag mit Kommentar, Name und Nummer wieder auf.</div></div>' +
     '<div id="ob-k-sales-box" class="ob-feld" style="display:none"><label>Worüber möchte der Kunde sprechen?</label>' + _obChips('ob-thema', OB_THEMEN.map(([t, i]) => [t, i + ' ' + t]), 'Preis') +
-      '<div class="lm-muted">🎫 Es wird ein Freshdesk-Ticket für Sales erstellt (Gruppe „' + OB_SALES_GRUPPE + '" · ' + escapeHtml(o.cfg.sales) + ') – mit Angebot, Ansprechpartner, Nummer und Kommentar.</div></div>' +
+      '<label for="ob-k-zuweisen">👤 Zuweisen an</label><select id="ob-k-zuweisen" class="lm-select"><option value="" selected>– niemand, nur Gruppe ' + escapeHtml(OB_SALES_GRUPPE) + ' –</option>' +
+        OB_SALES_BEARBEITER.map(n => '<option value="' + escapeHtml(n) + '">' + escapeHtml(n) + '</option>').join('') + '</select>' +
+      '<div class="lm-muted">🎫 Es wird ein Freshdesk-Ticket für die Gruppe „' + OB_SALES_GRUPPE + '" erstellt – mit Angebot, Ansprechpartner, Nummer und Kommentar.</div></div>' +
     '<div id="ob-k-grund-box" class="ob-feld" style="display:none"><label>Grund der Ablehnung (Pflicht – für die Auswertung)</label>' + _obChips('ob-grund', OB_GRUENDE.map(g => [g, escapeHtml(g)]), '') + '</div>' +
     '<div id="ob-k-ok-box" class="ob-feld" style="display:none"><label class="ob-check"><input type="checkbox" id="ob-k-ab" checked> Danach das Angebot öffnen (Auftragsbestätigung / Maxise-Auftrag anlegen)</label></div>' +
     '<div id="ob-k-hinweis" class="ob-hinweis" style="display:none"></div>' +
@@ -62188,9 +62223,9 @@ async function obNachfassSpeichern(id) {
       await _obEintragSpeichern(id, { kanal, ergebnis: 'erinnerung', wv, notiz, name, tel }, Object.assign({ nf_wiedervorlage: wv, nf_wv_notiz: notiz, nf_wv_name: name, nf_wv_tel: tel }, ausSales, kontaktNeu));
       toast('🔔 Erinnerung am ' + _obFmtDE(wv) + ' – bis dahin ist das Angebot aus der Liste.', 'ok');
     } else if (erg === 'sales') {
-      const t = await _obSalesTicket(o, { thema, notiz, name, tel, kanal });
+      const t = await _obSalesTicket(o, { thema, notiz, name, tel, kanal, zuweisen: _obFeldWert('ob-k-zuweisen') });
       await _obEintragSpeichern(id, { kanal, ergebnis: 'sales', thema, notiz, ticket: t.id, name, tel }, Object.assign({ nf_ergebnis: 'sales', nf_sales_ticket: t.id, nf_sales_am: heute, nf_sales_thema: thema, nf_wiedervorlage: '' }, kontaktNeu));
-      toast('🎫 Ticket #' + t.id + ' für Sales erstellt' + (t.hinweis ? ' – ' + t.hinweis : ''), t.hinweis ? 'warn' : 'ok');
+      toast('🎫 Ticket #' + t.id + ' für Sales erstellt' + (t.bearbeiter ? ' (' + t.bearbeiter + ')' : '') + (t.hinweis ? ' – ' + t.hinweis : ''), t.hinweis ? 'warn' : 'ok');
     } else if (erg === 'nicht_erreicht') {
       const extra = Object.assign({}, ausSales, kontaktNeu);
       if (o.wv) extra.nf_wiedervorlage = _obAddDays(heute, OB_NICHT_ERREICHT_TAGE);   // Erinnerung bleibt bestehen, 2 Tage später
@@ -62253,7 +62288,7 @@ function _obNachAenderung() {
   try { if (typeof _renderAngeboteList === 'function' && document.getElementById('angebote-list')) _renderAngeboteList(); } catch(_){}
 }
 
-/* ── Admin: ab wann / wie lange nachgefasst wird + Sales-Bearbeiter (je Firma, Tabelle Firmen) ── */
+/* ── Admin: ab wann / wie lange nachgefasst wird (je Firma, Tabelle Firmen) ── */
 function _obEinstFirmen() { return (_firmenCache || []).filter(r => r && r.fields && r.fields.slug && r.fields.aktiv !== false); }
 function obEinstellungenDialog() {
   if (!_obIstAdmin()) return toast('🔒 Nur Admins können die Nachfass-Einstellungen ändern.', 'err');
@@ -62264,7 +62299,6 @@ function obEinstellungenDialog() {
       return '<div class="ob-einst"><div class="ob-einst-name">' + escapeHtml((r.fields.icon ? r.fields.icon + ' ' : '🏢 ') + (r.fields.name || s)) + '</div><div class="ob-einst-grid">' +
         '<label>Nachfassen ab<select class="lm-select" id="ob-e-erst-' + sid + '">' + opt(OB_ERST_OPTIONEN, c.erst, 'Tagen') + '</select><span class="lm-muted">nach Versand</span></label>' +
         '<label>Nachfassen bis<select class="lm-select" id="ob-e-wochen-' + sid + '">' + opt(OB_WOCHEN_OPTIONEN, c.wochen, 'Wochen') + '</select><span class="lm-muted">nach Versand</span></label>' +
-        '<label>Sales-Tickets an<input class="lm-select" id="ob-e-sales-' + sid + '" value="' + escapeHtml(c.sales) + '" placeholder="' + escapeHtml(OB_SALES_STANDARD) + '"><span class="lm-muted">Freshdesk-Bearbeiter, Gruppe „' + OB_SALES_GRUPPE + '"</span></label>' +
       '</div></div>';
     }).join('');
   _obModal('ob-e-modal', '⚙ Nachfass-Einstellungen (nur Admins)', body, '<button class="btn" onclick="_obClose(\'ob-e-modal\')">Abbrechen</button><button class="btn prim" id="ob-e-go" onclick="obEinstellungenSpeichern()">💾 Speichern</button>');
@@ -62275,10 +62309,9 @@ async function obEinstellungenSpeichern() {
   for (const r of _obEinstFirmen()) {
     const s = r.fields.slug, name = r.fields.name || s;
     const erst = Math.round(+_obFeldWert('ob-e-erst-' + s)) || OB_ERST_STANDARD, wochen = Math.round(+_obFeldWert('ob-e-wochen-' + s)) || OB_WOCHEN_STANDARD;
-    const sales = _obFeldWert('ob-e-sales-' + s) || OB_SALES_STANDARD;
     if (erst >= wochen * 7) return toast(name + ': „Nachfassen ab" muss vor dem Ende des Zeitraums liegen.', 'err');
     if (String(r.id || '').startsWith('_default_')) return toast(name + ' ist noch nicht in Airtable angelegt (Admin → Firmen-Verwaltung).', 'err');
-    neu.push({ r, fields: { nf_erst_tage: erst, nf_fenster_wochen: wochen, nf_sales_bearbeiter: sales } });
+    neu.push({ r, fields: { nf_erst_tage: erst, nf_fenster_wochen: wochen } });
   }
   const btn = document.getElementById('ob-e-go'); if (btn) { btn.disabled = true; btn.textContent = '⏳ speichere …'; }
   try {
@@ -62288,27 +62321,29 @@ async function obEinstellungenSpeichern() {
       if (!d || d.error) throw new Error((d && d.error && (d.error.message || d.error.type)) || 'Airtable-Fehler');
       x.r.fields = Object.assign(x.r.fields || {}, x.fields);
     }
-    _obSalesCache = {};
     toast('✅ Nachfass-Einstellungen gespeichert', 'ok');
     _obClose('ob-e-modal'); _obNachAenderung();
   } catch(e) { toast('❌ ' + ((e && e.message) || e), 'err'); if (btn) { btn.disabled = false; btn.textContent = '💾 Speichern'; } }
 }
 
-/* ── Sales-Ticket in Freshdesk (Gruppe „Sales", Bearbeiter laut Einstellung – Standard Niklas Langer) ── */
+/* ── Sales-Ticket in Freshdesk: Gruppe „Sales", niemandem zugewiesen – außer im Dialog ist Patrizio, Mergim oder Niklas gewählt (v10.25) ── */
 async function _obSalesZuordnung(firma) {
-  const name = _obCfg(firma).sales;
   const c = _obSalesCache[firma];
-  if (c && c.name === name && Date.now() - c.loadedAt < 60 * 60 * 1000) return c;
+  if (c && Date.now() - c.loadedAt < 60 * 60 * 1000) return c;
   const base = APP_KEYS.valtownProxyUrl + '/freshdesk/' + firma + '/api/v2';
   try { if (typeof erpEnsureSession === 'function') await erpEnsureSession(); } catch(_){}
   const headers = { 'Authorization': 'Bearer ' + (typeof erpGetSessionToken === 'function' ? erpGetSessionToken() : '') };
   const liste = async (pfade) => { for (const p of pfade) { try { const r = await fetch(base + p, { headers }); if (r.ok) { const d = await r.json(); if (Array.isArray(d)) return d; } } catch(_){} } return []; };
   const g = (await liste(['/admin/groups', '/groups'])).find(x => String(x.name || '').trim().toLowerCase() === OB_SALES_GRUPPE.toLowerCase());
-  const w = name.toLowerCase();
-  const a = (await liste(['/agents?per_page=100'])).find(x => { const n = String((x.contact && x.contact.name) || x.name || '').trim().toLowerCase(); return !!n && (n === w || n.includes(w)); });
-  const res = { group_id: g ? g.id : null, responder_id: a ? a.id : null, name, loadedAt: Date.now() };
-  _obSalesCache[firma] = res;
+  const agenten = (await liste(['/agents?per_page=100'])).map(x => ({ id: x.id, name: String((x.contact && x.contact.name) || x.name || '').trim() })).filter(x => x.id && x.name);
+  const res = { group_id: g ? g.id : null, agenten, loadedAt: Date.now() };
+  if (g && agenten.length) _obSalesCache[firma] = res;   // nur Vollständiges zwischenspeichern – sonst beim nächsten Ticket neu fragen
   return res;
+}
+/* Bearbeiter zum gewählten Vornamen („Niklas" → „Niklas Langer") – null, wenn es ihn im Freshdesk der Firma nicht gibt */
+function _obSalesBearbeiter(zu, vorname) {
+  const v = String(vorname || '').trim().toLowerCase();
+  return v ? ((zu && zu.agenten) || []).find(x => x.name.split(/\s+/)[0].toLowerCase() === v) || null : null;
 }
 async function _obSalesTicket(o, d) {
   const firma = o.firma;
@@ -62331,7 +62366,8 @@ async function _obSalesTicket(o, d) {
   fd.append('description', zeilen.filter(Boolean).join(''));
   fd.append('priority', '2'); fd.append('status', '2'); fd.append('source', '2');
   if (zu.group_id) fd.append('group_id', String(zu.group_id));
-  if (zu.responder_id) fd.append('responder_id', String(zu.responder_id));
+  const wer = _obSalesBearbeiter(zu, d.zuweisen);
+  if (wer) fd.append('responder_id', String(wer.id));
   try { if (typeof erpEnsureSession === 'function') await erpEnsureSession(); } catch(_){}
   const r = await fetch(APP_KEYS.valtownProxyUrl + '/freshdesk/' + firma + '/api/v2/tickets', { method: 'POST', headers: { 'Authorization': 'Bearer ' + (typeof erpGetSessionToken === 'function' ? erpGetSessionToken() : '') }, body: fd });
   const txt = await r.text().catch(() => '');
@@ -62345,8 +62381,9 @@ async function _obSalesTicket(o, d) {
     } catch(_) { if (data && data.upstream_body_excerpt) msg = String(data.upstream_body_excerpt).slice(0, 200); }
     throw new Error('Freshdesk: Sales-Ticket nicht erstellt (' + msg + ')');
   }
-  const hinweis = !zu.group_id ? 'Gruppe „' + OB_SALES_GRUPPE + '" in Freshdesk nicht gefunden – bitte zuweisen' : (!zu.responder_id ? 'Bearbeiter „' + zu.name + '" in Freshdesk nicht gefunden – liegt in der Gruppe ' + OB_SALES_GRUPPE : '');
-  return { id: String(data.id), hinweis };
+  const hinweis = !zu.group_id ? 'Gruppe „' + OB_SALES_GRUPPE + '" in Freshdesk nicht gefunden – bitte zuweisen'
+    : (d.zuweisen && !wer ? d.zuweisen + ' ist im Freshdesk nicht als Bearbeiter angelegt – das Ticket liegt nur in der Gruppe ' + OB_SALES_GRUPPE : '');
+  return { id: String(data.id), hinweis, bearbeiter: wer ? wer.name : '' };
 }
 
 /* ── Ansprechpartner (Telefon/E-Mail) aus Maxise lesen und am Angebot merken ── */
@@ -67547,6 +67584,8 @@ if (typeof _ensureRahmenTable === 'function' && !_ensureRahmenTable._rk) {
    Anzeige: Bereich „🛡 TÜV" (TÜV-Plan nach Monaten, Kacheln, Suche, CSV), Kachel + Feld „🛡 TÜV fällig" über der
    Anlagenliste, Pill an der Karte, Kasten „🛡 TÜV-Prüfung" in der Akte, Dashboard, Verlauf, CSV der Anlagenliste.
    Die Rechenlogik (_lmTuevInfo, _lmTuevNachBericht) steht in lm/lm-module.js.
+   v10.25: Im Dialog kommt der Bericht zuerst – die KI liest ihn und schreibt die Mängel heraus; bei Mängeln geht ein Ticket an
+   Freshdesk (Sales) für das Angebot zur Mängelbeseitigung (tk/tk-module.js). Mängel und Ticket stehen am Bericht und im Kasten.
    ═══════════════════════════════════════════════════════════════════════ */
 const LM_TV_HP = 'Hauptprüfung', LM_TV_ZP = 'Zwischenprüfung', LM_TV_IB = 'Prüfung vor Inbetriebnahme';
 const LM_TV_ARTEN = [LM_TV_HP, LM_TV_ZP, LM_TV_IB];   // „✓ TÜV erledigt": nur Prüfungen, die die Fristen weiterschieben
@@ -67580,7 +67619,8 @@ function _lmTvBerichte(it, c) {
   return src.filter(r => { const f = (r && r.fields) || {}; return f.typ === 'dokument' && f.kategorie === 'tuev'; })
     .map(r => { const f = r.fields || {};
       return { id: r.id, datum: _lmDate(f.datum) || _lmDate(f.created) || '', art: String(f.pruefart || ''), ergebnis: String(f.ergebnis || ''), stelle: _lmTvStelle(f),
-        dateien: Array.isArray(f.datei) ? f.datei.filter(d => d && d.url) : null, titel: String(f.titel || '') }; })
+        dateien: Array.isArray(f.datei) ? f.datei.filter(d => d && d.url) : null, titel: String(f.titel || ''),
+        maengel: String(f.maengel || '').trim(), ticket: String(f.fd_ticket || '').trim() || ((/🎫 Freshdesk-Ticket #(\d+)/.exec(String(f.text || '')) || [])[1] || '') }; })
     .sort((x, y) => y.datum.localeCompare(x.datum) || String(y.id).localeCompare(String(x.id)));
 }
 /* Letzte wiederkehrende Prüfung: der neueste Bericht einer HP/ZP – ist die Akte neuer (z. B. Datum aus dem Kundenformular), das Datum laut Akte (ohne Bericht) */
@@ -67726,6 +67766,7 @@ function _lmTvBoxHtml(it) {
       (nachtragen ? ' <button type="button" class="lm-zg-b" onclick="lmTvAusBericht(' + A + ')" title="Der Bericht ist neuer als die eingetragenen Termine (z. B. ohne „fortschreiben“ hochgeladen)">↻ Termine aus dem Bericht übernehmen</button>' : '') +
       (l.quelle === 'akte' ? ' <span class="lm-muted">(laut Akte – Bericht fehlt)</span>' + (ed && it.status ? ' <button type="button" class="lm-zg-b" onclick="lmTvErledigtDialog(' + A + ',' + _lmA(l.art) + ',' + _lmA(l.datum) + ')">📎 Bericht nachreichen</button>' : '') : ''));
   else add('✅', 'Letzte Prüfung', '<span class="lm-muted">noch kein TÜV-Bericht in der Akte</span>');
+  if (lb) { const mg = _lmTvMaengelHtml(it, lb, ed && !!it.status); if (mg) z.push('<div class="lm-zg-z tk-zg-voll"><span class="k">🔧 Mängel</span><span class="v">' + mg + '</span></div>'); }   // volle Breite
   if (o.stelle) add('🏢', 'Prüfstelle', escapeHtml(o.stelle));
   const frueher = ber.filter(b => !lb || b.id !== lb.id);
   if (frueher.length) add('🕘', 'Weitere Berichte', frueher.slice(0, 4).map(b => {
@@ -67740,6 +67781,21 @@ function _lmTvBoxHtml(it) {
   }
   return '<div class="lm-notruf lm-tv-box ' + cls + '" id="lm-tuev"><div class="lm-zg-h"><span>🛡 TÜV-Prüfung</span><span class="lm-pill ' + cls + '">' + escapeHtml(chip) + '</span>' +
     (k.length ? '<span class="lm-zg-act">' + k.join('') + '</span>' : '') + '</div><div class="lm-zg-grid">' + z.join('') + '</div></div>';
+}
+/* v10.25: Mängel des letzten Berichts, Ticket für das Angebot – oder „🎫 Mängel → Angebot" (KI liest den Bericht, Ticket an Freshdesk) */
+function _lmTvMaengelHtml(it, b, ed) {
+  const zeilen = String(b.maengel || '').split(/\n+/).map(x => x.trim()).filter(Boolean);
+  const offen = !zeilen.length && !/ohne/i.test(b.ergebnis);   // Mängel laut Ergebnis (oder Ergebnis unbekannt), aber nicht herausgeschrieben
+  const tkUrl = b.ticket && typeof _tkTicketUrl === 'function' ? _tkTicketUrl(_lmData.firma, b.ticket) : '';
+  const ticket = b.ticket ? (tkUrl ? '<a href="' + escapeHtml(tkUrl) + '" target="_blank" rel="noopener" title="Freshdesk-Ticket für das Angebot zur Mängelbeseitigung">🎫 Ticket #' + escapeHtml(b.ticket) + '</a>'
+    : '<span title="Freshdesk-Ticket für das Angebot zur Mängelbeseitigung">🎫 Ticket #' + escapeHtml(b.ticket) + '</span>') + ' <span class="lm-muted">Angebot Mängelbeseitigung</span>' : '';
+  const knopf = ed && !b.ticket && (zeilen.length || offen) && typeof tkMaengelDialog === 'function'
+    ? ' <button type="button" class="lm-zg-b prim" onclick="tkMaengelDialog(' + _lmA(it.id) + ',' + _lmA(b.id) + ')" title="Die KI liest den Bericht und schreibt die Mängel heraus – Ticket an Freshdesk (Sales) für das Angebot">🎫 Mängel → Angebot</button>' : '';
+  if (!zeilen.length && !b.ticket && !knopf) return '';
+  const liste = zeilen.length ? '<ol class="tk-liste">' + zeilen.slice(0, 8).map(z => '<li>' + escapeHtml(z) + '</li>').join('') + '</ol>' +
+    (zeilen.length > 8 ? '<span class="lm-muted">… und ' + (zeilen.length - 8) + ' weitere (im Ticket bzw. am Bericht)</span>' : '') : '';
+  return (liste || (offen ? '<span class="lm-muted">' + (b.ergebnis ? escapeHtml(b.ergebnis) + ' laut Bericht – noch nicht herausgeschrieben' : 'Ergebnis unbekannt – Bericht noch nicht ausgewertet') + '</span>' : '')) +
+    (ticket || knopf ? '<div class="tk-box-z">' + ticket + knopf + '</div>' : '');
 }
 /* Bericht (HP/ZP) in der Akte neuer als die letzte Prüfung laut Akte – z. B. über „📂 Dokumente" ohne „fortschreiben" hochgeladen */
 function _lmTvBerichtNeuer(f, l) {
@@ -67777,19 +67833,26 @@ function lmTvErledigtDialog(anlageId, artVorgabe, datumVorgabe) {
   const art = LM_TV_ARTEN.includes(artVorgabe) ? artVorgabe : (_lmTvIstZp(t.art) ? LM_TV_ZP : LM_TV_HP);
   const termin = _lmDate(f.tuev_termin), datum = _lmParseDate(datumVorgabe) ? datumVorgabe : ((termin && termin <= heute) ? termin : heute);
   _lmTvDlg = { anlageId: String(a.id), naechsteDirty: false };
+  const ki = typeof _tkVerfuegbar === 'function' && _tkVerfuegbar(), fd = typeof _tkTicketMoeglich === 'function' && _tkTicketMoeglich(_lmData.firma);
   const nLbl = '<span id="lm-tv-naechste-l">' + escapeHtml('Nächste ' + (_lmTvIstZp(art) ? LM_TV_HP : LM_TV_ZP) + ' fällig bis *') + '</span>';
   const body = '<div class="lm-sugg" style="margin:0 0 12px">🛡 <span><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)) + '</b><br>' +
       escapeHtml(t.faellig ? 'Stand: ' + t.label : 'Noch kein TÜV-Termin – mit dem letzten TÜV-Bericht ist die Anlage gleich eingerichtet.') + '</span></div>' +
     '<div class="lm-form">' +
+      '<label class="full lm-tv-datei">📎 TÜV-Bericht der Prüfstelle (PDF oder Foto) *<input type="file" id="lm-f-tv_datei" accept="application/pdf,image/*" multiple>' +
+        '<span class="lm-hint">Pflicht – ohne Bericht kein „erledigt“.' + (ki ? ' Die KI liest daraus Prüfart, Datum, Ergebnis und alle Mängel.' : '') + ' Mehrere Seiten/Fotos möglich, große Dateien werden automatisch verkleinert.</span></label>' +
       _lmIn('tv_art', 'Prüfart *', art, { type: 'select', options: LM_TV_ARTEN.map(x => [x, x === LM_TV_IB ? x + ' (zählt wie eine HP)' : x]) }) +
       _lmIn('tv_datum', 'Geprüft am *', datum, { type: 'date' }) +
       _lmIn('tv_stelle', 'Prüfstelle *', f.pruefstelle || '', { list: 'lm-dl-tvst', ph: 'z. B. TÜV SÜD' }) +
       _lmIn('tv_ergebnis', 'Ergebnis laut Bericht *', '', { type: 'select', options: [['', '– bitte wählen –']].concat(LM_ERGEBNISSE) }) +
       _lmIn('tv_naechste', nLbl, _lmTuevVorschlag(datum), { type: 'date', full: true, hint: 'laut Prüfbericht bzw. Prüfplakette – vorgeschlagen: 12 Monate nach der Prüfung, zum Monatsende. Danach geht es im Jahrestakt abwechselnd weiter.' }) +
-      '<label class="full lm-tv-datei">📎 TÜV-Bericht der Prüfstelle (PDF oder Foto) *<input type="file" id="lm-f-tv_datei" accept="application/pdf,image/*" multiple>' +
-        '<span class="lm-hint">Pflicht – ohne Bericht kein „erledigt“. Mehrere Seiten/Fotos möglich, große Dateien werden automatisch verkleinert.</span></label>' +
-      '<div class="full" id="lm-tv-maengel" style="display:none">' + _lmIn('tv_maengel', '🚨 Offene Aufgabe „TÜV-Mängel beseitigen“ anlegen', true, { type: 'checkbox', full: true }) + '</div>' +
-      _lmIn('tv_text', 'Bemerkung / Mängel laut Bericht (optional)', '', { type: 'textarea', full: true, ph: 'z. B. festgestellte Mängel, Hinweise des Prüfers' }) +
+      '<div class="full lm-tv-mg" id="lm-tv-maengel" style="display:none">' +
+        _lmIn('tv_maengel_liste', '🔧 Mängel laut Bericht – je Zeile ein Mangel', '', { type: 'textarea', full: true, rows: 4, ph: 'z. B. Schachtbeleuchtung im Schachtkopf defekt (Mangel, bis 30.11.2026)' }) +
+        (fd ? _lmIn('tv_ticket', '🎫 Ticket an Freshdesk (Sales): Angebot zur Mängelbeseitigung an den Kunden – mit Mängelliste und Bericht', true, { type: 'checkbox', full: true }) +
+            (typeof _tkZuweisenHtml === 'function' ? _tkZuweisenHtml('tv_zuweisen') : '')
+          : '<div class="lm-muted">🎫 Kein Freshdesk-Ticket möglich: für diese Firma ist kein interner Freshdesk-Absender hinterlegt (Admin → Integrationen).</div>') +
+        _lmIn('tv_maengel', '🚨 Offene Aufgabe „TÜV-Mängel beseitigen“ anlegen', true, { type: 'checkbox', full: true }) +
+      '</div>' +
+      _lmIn('tv_text', 'Bemerkung (optional)', '', { type: 'textarea', full: true, ph: 'z. B. Hinweise des Prüfers, Absprachen' }) +
       '<datalist id="lm-dl-tvst">' + LM_PRUEFSTELLEN.map(v => '<option value="' + escapeHtml(v) + '">').join('') + '</datalist>' +
     '</div><div class="lm-muted" id="lm-tv-prog" style="margin-top:8px">Der Bericht kommt in die Akte unter „📂 Dokumente → TÜV-/ZÜS-Prüfberichte“ – erst dann rücken die Termine weiter.</div>';
   _lmModal('lm-tv-modal', '✓ TÜV erledigt', body,
@@ -67800,20 +67863,24 @@ function lmTvErledigtDialog(anlageId, artVorgabe, datumVorgabe) {
   on('lm-f-tv_datum', 'input', _lmTvDlgSync);
   on('lm-f-tv_ergebnis', 'change', _lmTvDlgSync);
   on('lm-f-tv_naechste', 'input', () => { if (_lmTvDlg) _lmTvDlg.naechsteDirty = true; });
+  on('lm-f-tv_maengel_liste', 'input', _lmTvDlgSync);
   _lmTvDlgSync();
+  if (typeof _tkDialogBereit === 'function') _tkDialogBereit();   // v10.25: die KI liest den gewählten Bericht
 }
-/* Prüfart/Datum geändert → Beschriftung und Vorschlag der nächsten Prüfung; Mängel → Aufgabe anbieten */
+/* Prüfart/Datum geändert → Beschriftung und Vorschlag der nächsten Prüfung; Mängel → Mängelliste, Ticket, Aufgabe */
 function _lmTvDlgSync() {
   if (!_lmTvDlg) return;
   const g = n => document.getElementById('lm-f-' + n);
   const art = (g('tv_art') || {}).value || LM_TV_HP, datum = (g('tv_datum') || {}).value || '', erg = (g('tv_ergebnis') || {}).value || '';
   const l = document.getElementById('lm-tv-naechste-l'); if (l) l.textContent = 'Nächste ' + (_lmTvIstZp(art) ? LM_TV_HP : LM_TV_ZP) + ' fällig bis *';
   const n = g('tv_naechste'); if (n && !_lmTvDlg.naechsteDirty && _lmParseDate(datum)) n.value = _lmTuevVorschlag(datum);
-  const m = document.getElementById('lm-tv-maengel'); if (m) m.style.display = (erg && !/ohne/i.test(erg)) ? '' : 'none';
+  const liste = String((g('tv_maengel_liste') || {}).value || '').trim();
+  const m = document.getElementById('lm-tv-maengel'); if (m) m.style.display = ((erg && !/ohne/i.test(erg)) || liste) ? '' : 'none';
 }
-function _lmTvDlgZu() { _lmTvDlg = null; _lmCloseModal('lm-tv-modal'); }
+function _lmTvDlgZu() { _lmTvDlg = null; if (typeof _tkStop === 'function') _tkStop(); _lmCloseModal('lm-tv-modal'); }
 async function lmTvErledigtSpeichern(btn, anlageId) {
   const a = _lmFindAnlage(anlageId); if (!a || !_lmCanEdit()) return;
+  if (typeof _tkLaeuft === 'function' && _tkLaeuft()) return toast('⏳ Die KI liest den Bericht noch – bitte kurz warten (oder „ohne KI weiter“).', '');
   const g = n => { const el = document.getElementById('lm-f-' + n); return el ? (el.type === 'checkbox' ? el.checked : String(el.value || '').trim()) : ''; };
   const art = g('tv_art'), datum = g('tv_datum'), stelle = String(g('tv_stelle')).replace(/\s+/g, ' '), ergebnis = g('tv_ergebnis'), naechste = g('tv_naechste'), text = g('tv_text');
   const fileEl = document.getElementById('lm-f-tv_datei'), files = Array.from((fileEl && fileEl.files) || []);
@@ -67826,6 +67893,13 @@ async function lmTvErledigtSpeichern(btn, anlageId) {
   if (!files.length) return toast('Bitte den TÜV-Bericht der Prüfstelle hochladen – ohne Bericht kein „erledigt“.', 'err');
   const zuGross = files.find(x => x.size > LM_MAX_BYTES && !_lmVerkleinerbar(x));
   if (zuGross) return toast(zuGross.name + ' ist zu groß (' + _lmSize(zuGross.size) + ', max. 5 MB).', 'err');
+  // v10.25: Mängelliste (je Zeile ein Mangel) → am Bericht, in der Aufgabe und im Ticket für das Angebot
+  const mitMaengel = !/ohne/i.test(ergebnis), zeilen = typeof _tkZeilen === 'function' ? _tkZeilen(g('tv_maengel_liste')) : [];
+  const ticket = mitMaengel && !!g('tv_ticket'), aufgabe = mitMaengel && !!g('tv_maengel');
+  if (!mitMaengel && zeilen.length) return toast('Ergebnis „ohne Mängel“, aber Mängel eingetragen – bitte das Ergebnis oder die Mängelliste korrigieren.', 'err');
+  if (ticket && !zeilen.length) return toast('Bitte die Mängel laut Bericht eintragen (je Zeile einer) – sie gehen ins Ticket für das Angebot. Kein Ticket? Dann den Haken „🎫 Ticket an Freshdesk“ entfernen.', 'err');
+  const ki = typeof _tkDlgErgebnis === 'function' ? _tkDlgErgebnis() : null;   // Nachprüfung, Stilllegung, Hinweise laut KI (fürs Ticket)
+  const nummeriert = zeilen.map((z, i) => (i + 1) + '. ' + z).join('\n');
   const firma = _lmData.firma, id = String(a.id), txt0 = btn.textContent;
   const prog = document.getElementById('lm-tv-prog'), stand = t => { btn.textContent = '⏳ ' + t; if (prog) prog.textContent = '⏳ ' + t; };
   btn.disabled = true;
@@ -67833,8 +67907,11 @@ async function lmTvErledigtSpeichern(btn, anlageId) {
     stand('Bericht wird angelegt …');
     const felder = { typ: 'dokument', kategorie: 'tuev', titel: 'TÜV-Bericht ' + art + ' · ' + stelle, datum, pruefart: art, ergebnis, text };
     let rec;
-    try { rec = await _lmCreateEintrag(a, Object.assign({ pruefstelle: stelle }, felder)); }
-    catch(e) { if (!/unknown field/i.test(String((e && e.message) || e))) throw e; rec = await _lmCreateEintrag(a, felder); }   // Feld fehlt noch → Prüfstelle steht im Titel
+    try { rec = await _lmCreateEintrag(a, Object.assign({ pruefstelle: stelle }, zeilen.length ? { maengel: zeilen.join('\n') } : {}, felder)); }
+    catch(e) {   // Felder fehlen noch (legt ein Admin beim Öffnen an) → Prüfstelle steht im Titel, die Mängel im Text
+      if (!/unknown field/i.test(String((e && e.message) || e))) throw e;
+      rec = await _lmCreateEintrag(a, Object.assign({}, felder, zeilen.length ? { text: [text, 'Mängel laut Bericht:\n' + nummeriert].filter(Boolean).join('\n\n') } : {}));
+    }
     let info = '';
     try { info = await _lmDateienAnhaengen(rec.id, files, stand); }
     catch(e) {   // ohne Bericht kein „erledigt": Eintrag wieder entfernen, die Termine bleiben
@@ -67848,13 +67925,25 @@ async function lmTvErledigtSpeichern(btn, anlageId) {
     try { neu = await _lmTuevNachBericht(a, art, datum, stelle, naechste); }
     catch(e) { hinweise.push('⚠ TÜV-Termine nicht fortgeschrieben: ' + ((e && e.message) || e) + ' – bitte über „✏ Termin“ nachtragen.'); }
     if (!neu && !hinweise.length) hinweise.push('Älterer Bericht abgelegt – die Termine bleiben (es gibt schon eine neuere Prüfung).');
-    if (!/ohne/i.test(ergebnis) && g('tv_maengel')) {
-      try { await _lmCreateEintrag(a, { typ: 'stoerung', titel: 'TÜV-Mängel beseitigen (' + art + ' vom ' + _lmFmtDE(datum) + ')', text: ergebnis + (text ? '\n' + text : ''), datum, status: 'offen', wichtig: true }); hinweise.push('🚨 Aufgabe „TÜV-Mängel beseitigen“ angelegt'); }
+    if (aufgabe) {
+      try { await _lmCreateEintrag(a, { typ: 'stoerung', titel: 'TÜV-Mängel beseitigen (' + art + ' vom ' + _lmFmtDE(datum) + ')', text: ergebnis + (zeilen.length ? '\nMängel laut TÜV-Bericht:\n' + nummeriert : '') + (text ? '\n\n' + text : ''), datum, status: 'offen', wichtig: true }); hinweise.push('🚨 Aufgabe „TÜV-Mängel beseitigen“ angelegt'); }
       catch(e) { hinweise.push('⚠ Mängel-Aufgabe nicht angelegt: ' + ((e && e.message) || e)); }
+    }
+    let tk = null;
+    if (ticket) {   // v10.25: Ticket an Freshdesk (Sales) – Angebot zur Mängelbeseitigung an den Kunden
+      stand('Ticket an Freshdesk (Angebot Mängelbeseitigung) …');
+      try {
+        tk = await _tkTicketAnlegen({ firma, a, akte: _lmAkteOf(id), art, datum, stelle, ergebnis, maengel: zeilen, nachpruefung: !!(ki && ki.nachpruefung), stillgelegt: !!(ki && ki.stillgelegt),
+          hinweise: (ki && ki.hinweise) || '', bemerkung: text, files, recId: rec.id, zuweisen: g('tv_zuweisen'), vonKi: !!ki });
+        hinweise.push(..._tkTicketHinweise(tk, firma));   // Gruppe Sales bzw. gewählte Person im Freshdesk der Firma nicht gefunden
+        try { await _tkAmBericht(rec.id, { fd_ticket: String(tk.id) }); }
+        catch(e) { hinweise.push('⚠ Ticket #' + tk.id + ' angelegt, aber nicht am Bericht vermerkt: ' + ((e && e.message) || e)); }
+      } catch(e) { hinweise.push('⚠ Freshdesk-Ticket für das Angebot NICHT angelegt: ' + ((e && e.message) || e) + ' – bitte im Kasten „🛡 TÜV-Prüfung“ über „🎫 Mängel → Angebot“ erneut versuchen.'); }
     }
     _lmTvDlgZu();
     const t = _lmTuevInfo(_lmAkteOf(id));
-    toast('✅ TÜV erledigt – ' + art + ' vom ' + _lmFmtDE(datum) + ', Bericht in der Akte' + (neu && t.faellig ? ' · nächste ' + t.art + ' bis ' + _lmFmtDE(t.faellig) : '') + (info ? ' · ' + info : ''), 'ok');
+    toast('✅ TÜV erledigt – ' + art + ' vom ' + _lmFmtDE(datum) + ', Bericht in der Akte' + (neu && t.faellig ? ' · nächste ' + t.art + ' bis ' + _lmFmtDE(t.faellig) : '') +
+      (zeilen.length ? ' · ' + zeilen.length + (zeilen.length === 1 ? ' Mangel' : ' Mängel') : '') + (tk ? ' · ' + _tkTicketText(tk) : '') + (info ? ' · ' + info : ''), 'ok');
     if (hinweise.some(h => /^⚠/.test(h)) && typeof _mxTextModal === 'function') _mxTextModal('⚠ TÜV-Bericht gespeichert', hinweise.join('\n\n'));
     else if (hinweise.length) toast(hinweise.join(' · '), '');
     _lmAbrNachAenderung();
@@ -68065,6 +68154,546 @@ function _lmGoTuev(firma) {   // Dashboard → Bereich „🛡 TÜV", Kachel „
   _lmTvUi.filter = 'offen'; _lmTvUi.q = '';
   switchView('liftmgmt');
   const b = document.getElementById('liftmgmt-body'); if (b) b.scrollTop = 0;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v10.25: 🤖 KI liest den TÜV-Bericht – Mängel heraus · 🎫 Ticket an Freshdesk für das Angebot zur Mängelbeseitigung
+   · Dialog „✓ TÜV erledigt": sobald der TÜV-Bericht (PDF/Foto) gewählt ist, liest die KI Prüfart, Prüfdatum, Prüfstelle,
+     Ergebnis, nächste Prüfung und JEDEN Mangel (mit Einstufung und Frist) und trägt alles ein – je Zeile ein Mangel,
+     alles änderbar. Was schon von Hand eingetragen ist, bleibt stehen.
+   · Bei Mängeln: „🎫 Ticket an Freshdesk" (angehakt) – internes Ticket (Absender = interner Freshdesk-Absender der Firma wie bei den
+     Folge-Tickets), immer an die Gruppe „Sales" und niemandem zugewiesen – außer man wählt Patrizio, Mergim oder Niklas; Inhalt: Anlage,
+     Kunde, Ansprechpartner, Rahmenvereinbarung, Prüfung, Mängelliste, Fristen, Nachprüfung – der TÜV-Bericht hängt an.
+     Damit kann der Kunde das Angebot zur Mängelbeseitigung bekommen. Die Ticket-Nr. steht danach am Bericht (fd_ticket).
+   · „🎫 Mängel → Angebot" im Kasten „🛡 TÜV-Prüfung" (Bericht schon in der Akte, z. B. ohne Ticket oder vor v10.25) und nach
+     dem Hochladen eines TÜV-Berichts über „📂 Dokumente": die KI liest den Bericht, Mängel prüfen, Ticket anlegen.
+   Läuft über den eigenen Server wie die übrigen KI-Funktionen (der Schlüssel bleibt dort). Ohne KI: Mängel von Hand eintragen.
+   ═══════════════════════════════════════════════════════════════════════ */
+const TK_TIMEOUT = 180000;
+const TK_EINSTUFUNG = ['geringfügig', 'Mangel', 'gefährlich'];
+const TK_MAX_ANHANG = 18 * 1024 * 1024;   // Freshdesk nimmt je Ticket etwa 20 MB an Anhängen
+const TK_HINWEIS = '✨ Prüfart, Datum, Prüfstelle, Ergebnis, nächste Prüfung und alle Mängel liest die KI aus dem Bericht.';
+// TÜV-Mängel-Tickets gehen in beiden Firmen immer an die Freshdesk-Gruppe „Sales" – eine Person nur auf Wunsch (Vorname im Freshdesk
+// der Firma), sonst niemandem. Gruppe und Auswahl wie bei den Folge-Tickets (FOLGETICKET_GROUP_NAME / FOLGETICKET_BEARBEITER).
+const TK_GRUPPE = (typeof FOLGETICKET_GROUP_NAME !== 'undefined' && FOLGETICKET_GROUP_NAME) || 'Sales';
+const TK_BEARBEITER = (typeof FOLGETICKET_BEARBEITER !== 'undefined' && FOLGETICKET_BEARBEITER) || ['Patrizio', 'Mergim', 'Niklas'];
+const TK_SCHEMA = { type: 'object', properties: {
+  pruefart:          { type: 'string', enum: ['Hauptprüfung', 'Zwischenprüfung', 'Prüfung vor Inbetriebnahme', 'Nachprüfung', 'Sonderprüfung', ''], description: 'Art der Prüfung laut Bericht, leer wenn nicht erkennbar' },
+  pruefdatum:        { type: 'string', description: 'Tag der Prüfung als JJJJ-MM-TT, leer wenn nicht sicher erkennbar' },
+  pruefstelle:       { type: 'string', description: 'Name der Prüfstelle (ZÜS), z. B. TÜV SÜD oder DEKRA, ohne Abteilung und Anschrift' },
+  ergebnis:          { type: 'string', enum: ['ohne Mängel', 'geringfügige Mängel', 'Mängel', 'gefährliche Mängel', ''], description: 'Gesamtergebnis laut Bericht (schwerste Einstufung)' },
+  naechste_pruefung: { type: 'string', description: 'Fälligkeit der nächsten wiederkehrenden Prüfung als JJJJ-MM-TT, leer wenn nicht genannt' },
+  naechste_art:      { type: 'string', enum: ['Hauptprüfung', 'Zwischenprüfung', ''], description: 'Art der nächsten wiederkehrenden Prüfung' },
+  maengel: { type: 'array', description: 'jeder festgestellte Mangel als eigener Eintrag', items: { type: 'object', properties: {
+    text:       { type: 'string', description: 'der Mangel in einem kurzen Satz mit dem betroffenen Bauteil, nah am Wortlaut des Berichts' },
+    einstufung: { type: 'string', enum: ['geringfügig', 'Mangel', 'gefährlich', ''], description: 'Einstufung laut Bericht, leer wenn nicht angegeben' },
+    frist:      { type: 'string', description: 'Frist zur Beseitigung als JJJJ-MM-TT, leer wenn keine genannt' },
+  }, required: ['text', 'einstufung', 'frist'], additionalProperties: false } },
+  nachpruefung: { type: 'boolean', description: 'true, wenn der Bericht eine Nachprüfung verlangt' },
+  stillgelegt:  { type: 'boolean', description: 'true, wenn die Anlage stillgelegt wurde oder nicht weiter betrieben werden darf' },
+  hinweise:     { type: 'string', description: 'weitere wichtige Hinweise des Prüfers in einem Satz, sonst leer' },
+}, required: ['pruefart', 'pruefdatum', 'pruefstelle', 'ergebnis', 'naechste_pruefung', 'naechste_art', 'maengel', 'nachpruefung', 'stillgelegt', 'hinweise'], additionalProperties: false };
+let _tkLauf = null, _tkNr = 0, _tkDlgNr = 0;   // laufende Auswertung { nr, ac, dlg }
+let _tkErg = null;                             // letztes Ergebnis im Dialog „✓ TÜV erledigt": { dlg, e }
+let _tkMd = null;                              // offener Dialog „🎫 Mängel → Angebot"
+const _tkTeamCache = {};                       // firma → { at, gruppe, agenten:[{ id, name }] } (Freshdesk, 1 Stunde)
+
+/* ── rein (ohne DOM/Netz) ── */
+function _tkPrompt(heute) {
+  return 'Du liest den Prüfbericht einer zugelassenen Überwachungsstelle (ZÜS: TÜV, DEKRA, GTÜ, KÜS o. a.) über die Prüfung einer ' +
+    'Aufzugsanlage nach der Betriebssicherheitsverordnung – PDF, Scan oder Foto. Gib zurück:\n' +
+    '- pruefart: Hauptprüfung, Zwischenprüfung, Prüfung vor Inbetriebnahme (auch „nach prüfpflichtiger Änderung"), Nachprüfung oder Sonderprüfung, so wie im Bericht angegeben.\n' +
+    '- pruefdatum: Tag der Prüfung als JJJJ-MM-TT – nicht das Ausstellungs- oder Druckdatum.\n' +
+    '- pruefstelle: Name der Prüfstelle, z. B. „TÜV SÜD" oder „DEKRA", ohne Abteilung und Anschrift.\n' +
+    '- ergebnis: Gesamtergebnis laut Bericht: „ohne Mängel", „geringfügige Mängel", „Mängel" oder „gefährliche Mängel" (die schwerste Einstufung).\n' +
+    '- naechste_pruefung und naechste_art: die nächste wiederkehrende Prüfung laut Bericht bzw. Prüfplakette (Haupt- oder Zwischenprüfung) und bis wann ' +
+    'sie fällig ist, als JJJJ-MM-TT. Steht nur Monat und Jahr da, nimm den letzten Tag dieses Monats.\n' +
+    '- maengel: jeden festgestellten Mangel als eigenen Eintrag – kurz und sachlich, nah am Wortlaut des Berichts, mit dem betroffenen Bauteil ' +
+    '(z. B. „Schachtbeleuchtung im Schachtkopf defekt"). einstufung: geringfügig, Mangel oder gefährlich laut Bericht (leer, wenn nicht angegeben). ' +
+    'frist: Frist zur Beseitigung als JJJJ-MM-TT, wenn für den Mangel oder für alle Mängel genannt. Keine allgemeinen Hinweise, keine Empfehlungen ' +
+    'und keine Mängel, die laut Bericht schon behoben sind.\n' +
+    '- nachpruefung: true, wenn der Bericht eine Nachprüfung verlangt.\n' +
+    '- stillgelegt: true, wenn die Anlage stillgelegt wurde oder nicht weiter betrieben werden darf.\n' +
+    '- hinweise: weitere wichtige Hinweise des Prüfers in einem Satz, sonst leer.\n' +
+    'Heute ist der ' + _lmFmtDE(heute) + '. Rate nicht – was nicht im Bericht steht, gibst du leer zurück ("", leere Liste, false).';
+}
+function _tkAnfrage(bloecke, heute) {
+  return {
+    model: 'claude-opus-5-5', max_tokens: 16000, fallbacks: 'default',
+    output_config: { effort: 'medium', format: { type: 'json_schema', schema: TK_SCHEMA } },
+    messages: [{ role: 'user', content: (bloecke || []).concat([{ type: 'text', text: _tkPrompt(heute) }]) }],
+  };
+}
+const TK_LEER = /^(unbekannt|keine?( angaben?)?|keine (festgestellten )?m(ä|ae)ngel( festgestellt)?\.?|ohne m(ä|ae)ngel\.?|m(ä|ae)ngelfrei\.?|n\s*[./]?\s*a\.?|nicht (erkennbar|lesbar|angegeben|genannt|vorhanden)|-+|–|\?+|null|none)$/i;
+function _tkText(s, max) {
+  const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
+  return TK_LEER.test(t) ? '' : t.slice(0, max || 200);
+}
+/* Datum aus der KI → { iso, grund: '' | 'ungueltig' } – JJJJ-MM-TT, TT.MM.JJJJ, MM/JJJJ bzw. MM.JJJJ (→ Monatsende) */
+function _tkDatum(s) {
+  const t = String(s == null ? '' : s).trim();
+  if (!t) return { iso: '', grund: '' };
+  let m, iso = '';
+  if ((m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(t))) iso = m[1] + '-' + m[2].padStart(2, '0') + '-' + m[3].padStart(2, '0');
+  else if ((m = /^(\d{1,2})\.(\d{1,2})\.(\d{2}|\d{4})$/.exec(t))) iso = (m[3].length === 2 ? '20' + m[3] : m[3]) + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');
+  else {   // nur Monat und Jahr (wie auf der Prüfplakette) → Monatsende
+    let mo = 0, y = 0;
+    if ((m = /^(\d{1,2})[./](\d{4})$/.exec(t))) { mo = +m[1]; y = +m[2]; }
+    else if ((m = /^(\d{4})-(\d{1,2})$/.exec(t))) { mo = +m[2]; y = +m[1]; }
+    if (mo >= 1 && mo <= 12) iso = _lmTuevMonatsende(y + '-' + String(mo).padStart(2, '0') + '-01');
+  }
+  const p = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
+  const d = p && new Date(Date.UTC(+p[1], +p[2] - 1, +p[3]));
+  if (!p || +p[1] < 2000 || +p[1] > 2100 || d.getUTCMonth() !== +p[2] - 1 || d.getUTCDate() !== +p[3]) return { iso: '', grund: 'ungueltig' };
+  return { iso, grund: '' };
+}
+/* Prüfstelle auf die bekannte Schreibweise bringen („TÜV SÜD Industrie Service GmbH" → „TÜV SÜD") */
+function _tkStelle(s) {
+  let t = _tkText(s, 80).replace(/\bT(?:UE|Ü|U)V\b/gi, 'TÜV');
+  if (!t) return '';
+  const n = x => x.toLowerCase().replace(/ü/g, 'u').replace(/[^a-z]/g, '');
+  const k = (typeof LM_PRUEFSTELLEN !== 'undefined' ? LM_PRUEFSTELLEN : []).slice().sort((x, y) => y.length - x.length).find(x => n(t).includes(n(x)));
+  return k || t;
+}
+function _tkErgebnisAusMaengel(maengel) {
+  const st = (maengel || []).map(m => m.einstufung);
+  if (!maengel || !maengel.length) return '';
+  return st.includes('gefährlich') ? 'gefährliche Mängel' : (st.includes('Mangel') || st.includes('') ? 'Mängel' : 'geringfügige Mängel');
+}
+/* Antwort der KI prüfen und aufbereiten */
+function _tkAuswerten(out, heute) {
+  out = out || {};
+  heute = heute || _lmToday();
+  const arten = typeof LM_PRUEFARTEN !== 'undefined' ? LM_PRUEFARTEN : [];
+  const r = { pruefart: arten.includes(out.pruefart) ? out.pruefart : '', datum: '', datumGrund: '', stelle: _tkStelle(out.pruefstelle),
+    ergebnis: (typeof LM_ERGEBNISSE !== 'undefined' ? LM_ERGEBNISSE : []).includes(out.ergebnis) ? out.ergebnis : '',
+    naechste: '', naechsteArt: (out.naechste_art === 'Hauptprüfung' || out.naechste_art === 'Zwischenprüfung') ? out.naechste_art : '',
+    maengel: [], nachpruefung: out.nachpruefung === true, stillgelegt: out.stillgelegt === true, hinweise: _tkText(out.hinweise, 300), widerspruch: false };
+  const d = _tkDatum(out.pruefdatum);
+  if (d.iso && d.iso > heute) r.datumGrund = 'zukunft';
+  else if (d.iso) r.datum = d.iso;
+  else r.datumGrund = d.grund;
+  const n = _tkDatum(out.naechste_pruefung);
+  if (n.iso && (!r.datum || n.iso > r.datum)) r.naechste = n.iso;
+  const gesehen = new Set();
+  (Array.isArray(out.maengel) ? out.maengel : []).forEach(m => {
+    const text = _tkText(m && m.text, 300).replace(/^\d+[.)]\s*/, '');
+    const k = text.toLowerCase();
+    if (!text || gesehen.has(k)) return;
+    gesehen.add(k);
+    r.maengel.push({ text, einstufung: TK_EINSTUFUNG.includes(m.einstufung) ? m.einstufung : '', frist: _tkDatum(m && m.frist).iso });
+  });
+  r.maengel = r.maengel.slice(0, 40);
+  if (!r.ergebnis) r.ergebnis = _tkErgebnisAusMaengel(r.maengel);
+  else if (r.ergebnis === 'ohne Mängel' && r.maengel.length) r.widerspruch = true;
+  return r;
+}
+/* Ein Mangel als Zeile („Text (Mangel, bis 30.11.2026)") – und zurück aus dem Textfeld */
+function _tkZeile(m) {
+  const z = [m.einstufung, m.frist ? 'bis ' + _lmFmtDE(m.frist) : ''].filter(Boolean).join(', ');
+  return m.text + (z ? ' (' + z + ')' : '');
+}
+function _tkZeilen(text) {
+  return String(text == null ? '' : text).split(/\n+/).map(x => x.replace(/^\s*(\d+[.)]|[-–•*])\s*/, '').replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 60);
+}
+function _tkDringend(zeilen, ergebnis, stillgelegt) {
+  return !!stillgelegt || /gefähr/i.test(ergebnis || '') || (zeilen || []).some(z => /\(gefährlich/i.test(z));
+}
+/* Ticket: Betreff und Text (HTML) – alles Eingetragene ist escaped */
+function _tkTicketBetreff(c) {
+  const a = c.a || {}, k = a.kunde || {};
+  const teile = ['TÜV-Mängel (' + (typeof _lmTuevArtKurz === 'function' ? _lmTuevArtKurz(c.art) : c.art) + ' ' + _lmFmtDE(c.datum) + ')', 'Angebot Mängelbeseitigung',
+    String(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)).split(',')[0].trim().slice(0, 60), String(k.firmenname || '').slice(0, 40)].filter(Boolean);
+  return teile.join(' · ').slice(0, 250);
+}
+function _tkTicketHtml(c) {
+  const a = c.a || {}, k = a.kunde || {}, f = c.akte || {}, e = escapeHtml;
+  const ap = a.ansprechpartner || {}, apName = String(f.ap_name || '').trim() || (typeof _lmApName === 'function' ? _lmApName(ap) : '');
+  const apKontakt = [apName, f.ap_tel || ap.mobile || ap.telefon || '', f.ap_email || ap.email || ''].filter(Boolean).join(' · ');
+  const zeilen = c.maengel || [], l = [];
+  l.push('<p><strong>TÜV-Mängel – bitte Angebot zur Mängelbeseitigung an den Kunden senden</strong></p>');
+  l.push('<p><strong>🛗 Anlage:</strong> ' + e(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)) + '</p>');
+  const nr = [a.fabriknummer ? 'Fabrik-Nr. ' + a.fabriknummer : '', f.eq_nummer ? 'KONE EQ ' + f.eq_nummer : '', 'Maxise-Anlage ' + a.id].filter(Boolean).join(' · ');
+  l.push('<p><strong>🔧 Nummern:</strong> ' + e(nr) + '</p>');
+  if (k.firmenname) l.push('<p><strong>👤 Kunde:</strong> ' + e(k.firmenname) + (k.kundennummer ? ' (Kd-Nr. ' + e(String(k.kundennummer)) + ')' : '') +
+    [k.email, k.telefon].filter(Boolean).map(x => ' · ' + e(x)).join('') + '</p>');
+  if (apKontakt) l.push('<p><strong>📞 Ansprechpartner:</strong> ' + e(apKontakt) + '</p>');
+  if (c.rv) l.push('<p><strong>📜 Rahmenvereinbarung:</strong> ' + e(c.rv) + ' – Konditionen beachten</p>');
+  l.push('<hr>');
+  l.push('<p><strong>🛡 Prüfung:</strong> ' + e(c.art + ' am ' + _lmFmtDE(c.datum) + (c.stelle ? ' · ' + c.stelle : '') + (c.ergebnis ? ' · Ergebnis: ' + c.ergebnis : '')) + '</p>');
+  if (c.stillgelegt) l.push('<p style="color:#B91C1C"><strong>⛔ Laut Bericht stillgelegt bzw. nicht weiter betreiben!</strong></p>');
+  if (c.nachpruefung) l.push('<p><strong>🔁 Nachprüfung verlangt</strong> – nach der Mängelbeseitigung</p>');
+  l.push('<p><strong>Mängel laut TÜV-Bericht (' + zeilen.length + '):</strong></p>');
+  l.push('<ol>' + zeilen.map(z => '<li>' + e(z) + '</li>').join('') + '</ol>');
+  if (c.hinweise) l.push('<p><strong>Hinweis des Prüfers:</strong> ' + e(c.hinweise) + '</p>');
+  if (c.bemerkung) l.push('<p><strong>Bemerkung:</strong> ' + e(c.bemerkung).replace(/\n/g, '<br>') + '</p>');
+  l.push('<p style="color:#888;font-size:12px">' + e((c.anhang ? 'TÜV-Bericht im Anhang' : 'TÜV-Bericht in der Anlagenakte (Liftmanagement)') + ' · erfasst von ' + (c.von || '–') +
+    (c.vonKi ? ' · Mängel von der KI aus dem Bericht gelesen und geprüft' : '')) + '</p>');
+  return l.join('');
+}
+
+/* ── KI ── */
+function _tkVerfuegbar() { return typeof APP_KEYS !== 'undefined' && !!(APP_KEYS && APP_KEYS.anthropicKey) && typeof _wkBloecke === 'function'; }
+async function _tkFrage(bloecke, signal) {
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST', signal,
+    headers: { 'Content-Type': 'application/json', 'x-api-key': APP_KEYS.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+    body: JSON.stringify(_tkAnfrage(bloecke, _lmToday())),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error((d && d.error && d.error.message) || ('HTTP ' + r.status));
+  if (d.stop_reason === 'refusal') throw new Error('die KI hat den Bericht nicht ausgewertet');
+  if (d.stop_reason === 'max_tokens') throw new Error('Antwort unvollständig');
+  const roh = (d.content || []).filter(b => b && b.type === 'text').map(b => b.text).join('');
+  try { return JSON.parse(roh); } catch(_) { throw new Error('Antwort nicht lesbar'); }
+}
+/* Dateien → KI → aufbereitetes Ergebnis { e, uebersprungen } */
+async function _tkLesen(files, signal) {
+  const { bloecke, uebersprungen } = await _wkBloecke(files);
+  if (!bloecke.length) { const e = new Error(uebersprungen[0] || 'die KI kann diese Datei nicht lesen'); e.datei = true; throw e; }
+  return { e: _tkAuswerten(await _tkFrage(bloecke, signal), _lmToday()), uebersprungen };
+}
+
+/* ── Dialog „✓ TÜV erledigt": die KI liest den gewählten Bericht und füllt aus ── */
+/* Auswahl „👤 Zuweisen an" – leer = niemand, nur die Gruppe Sales; nur aktiv, solange das Ticket angehakt ist */
+function _tkZuweisenHtml(name) {
+  return _lmIn(name, '👤 Zuweisen an', '', { type: 'select', full: true, options: [['', '– niemand, nur Gruppe ' + TK_GRUPPE + ' –']].concat(TK_BEARBEITER.map(n => [n, n])) });
+}
+function _tkZuweisenSync(ticketId, auswahlId) { const t = document.getElementById(ticketId), z = document.getElementById(auswahlId); if (t && z) z.disabled = !t.checked; }
+function _tkLaeuft() { return !!_tkLauf; }
+/* Dialog geschlossen: laufende Auswertung abbrechen, Ergebnis verwerfen */
+function _tkStop() { if (_tkLauf) { try { _tkLauf.ac.abort(); } catch(_){} } _tkLauf = null; _tkErg = null; }
+function _tkDlgAktuell(nr, dlg) { const m = document.getElementById('lm-tv-modal'); return !!(_tkLauf && _tkLauf.nr === nr && m && m.dataset.tk === dlg); }
+function _tkStatus(cls, html) { const el = document.getElementById('lm-tv-ki'); if (el) { el.className = 'full tk-status' + (cls ? ' ' + cls : ''); el.innerHTML = html; } }
+function _tkKnopf(liest) { const b = document.getElementById('lm-tv-go'); if (!b) return; b.disabled = !!liest; b.textContent = liest ? '⏳ KI liest …' : '✓ TÜV erledigt'; }
+/* Aufruf am Ende von lmTvErledigtDialog: Hinweis, Datei-Auswahl beobachten, Eingaben von Hand merken */
+function _tkDialogBereit() {
+  const m = document.getElementById('lm-tv-modal'), f = document.getElementById('lm-f-tv_datei');
+  if (_tkLauf) { try { _tkLauf.ac.abort(); } catch(_){} _tkLauf = null; }
+  _tkErg = null;
+  if (!m || !f) return;
+  m.dataset.tk = String(++_tkDlgNr);
+  const t = document.getElementById('lm-f-tv_ticket');
+  if (t) { t.addEventListener('change', () => _tkZuweisenSync('lm-f-tv_ticket', 'lm-f-tv_zuweisen')); _tkZuweisenSync('lm-f-tv_ticket', 'lm-f-tv_zuweisen'); }
+  if (!_tkVerfuegbar()) return;
+  ['tv_art', 'tv_datum', 'tv_stelle', 'tv_ergebnis', 'tv_naechste', 'tv_maengel_liste'].forEach(n => {
+    const el = document.getElementById('lm-f-' + n); if (!el) return;
+    const hand = () => { el.dataset.tkHand = '1'; el.classList.remove('wk-ki'); };
+    el.addEventListener('input', hand); el.addEventListener('change', hand);
+  });
+  const lbl = f.closest ? f.closest('label') : null;
+  if (lbl) lbl.insertAdjacentHTML('afterend', '<div class="full tk-status" id="lm-tv-ki" role="status" aria-live="polite">' + TK_HINWEIS + '</div>');
+  f.addEventListener('change', () => lmTvKiLesen(f));
+}
+function lmTvKiAbbrechen() {
+  if (!_tkLauf) return;
+  const l = _tkLauf; _tkLauf = null;
+  try { l.ac.abort(); } catch(_){}
+  _tkKnopf(false);
+  _tkStatus('warn', 'KI abgebrochen – bitte die Angaben und Mängel selbst aus dem Bericht eintragen.');
+}
+async function lmTvKiLesen(input) {
+  const m = document.getElementById('lm-tv-modal'); if (!m || !input || !_tkVerfuegbar()) return;
+  if (_tkLauf) { try { _tkLauf.ac.abort(); } catch(_){} }
+  const dlg = m.dataset.tk, nr = ++_tkNr, ac = new AbortController(), files = Array.from(input.files || []);
+  _tkLauf = { nr, ac, dlg };
+  _tkErg = null;
+  if (!files.length) { _tkLauf = null; _tkKnopf(false); return _tkStatus('', TK_HINWEIS); }
+  _tkKnopf(true);
+  _tkStatus('laeuft', '⏳ Die KI liest den TÜV-Bericht und schreibt die Mängel heraus … <span>(meist unter einer Minute)</span> <button type="button" class="wk-link" onclick="lmTvKiAbbrechen()">ohne KI weiter</button>');
+  const timer = setTimeout(() => { try { ac.abort(); } catch(_){} }, TK_TIMEOUT);
+  try {
+    const { e, uebersprungen } = await _tkLesen(files, ac.signal);
+    if (!_tkDlgAktuell(nr, dlg)) return;
+    _tkErg = { dlg, e };
+    _tkEintragen(e, uebersprungen);
+  } catch (err) {
+    if (!_tkDlgAktuell(nr, dlg)) return;
+    const grund = (err && err.name === 'AbortError') ? 'Die KI hat zu lange gebraucht' : (err && err.datei ? String(err.message) : 'KI nicht erreichbar: ' + String((err && err.message) || err).slice(0, 160));
+    _tkStatus('warn', '⚠ ' + escapeHtml(grund) + ' – bitte die Angaben und Mängel selbst aus dem Bericht eintragen.');
+  } finally {
+    clearTimeout(timer);
+    if (_tkDlgAktuell(nr, dlg)) _tkKnopf(false);
+    if (_tkLauf && _tkLauf.nr === nr) _tkLauf = null;
+  }
+}
+/* Ergebnis eintragen – nur in Felder, die nicht schon von Hand ausgefüllt wurden */
+function _tkEintragen(e, uebersprungen) {
+  const g = n => document.getElementById('lm-f-' + n);
+  const frei = el => !!el && !el.dataset.tkHand;
+  const setze = (el, v) => { el.value = v; el.classList.add('wk-ki'); };
+  const teile = [], hinweise = [];
+  const art = g('tv_art'), datum = g('tv_datum'), stelle = g('tv_stelle'), erg = g('tv_ergebnis'), naechste = g('tv_naechste'), liste = g('tv_maengel_liste');
+  if (e.pruefart && LM_TV_ARTEN.includes(e.pruefart)) { if (frei(art)) { setze(art, e.pruefart); teile.push('<b>' + escapeHtml(e.pruefart) + '</b>'); } }
+  else if (e.pruefart) hinweise.push('Laut Bericht eine <b>' + escapeHtml(e.pruefart) + '</b> – „✓ TÜV erledigt“ gilt nur für Haupt- und Zwischenprüfungen; den Bericht dann über 📂 Dokumente ablegen');
+  if (e.datum) { if (frei(datum)) { setze(datum, e.datum); teile.push('am <b>' + _lmFmtDE(e.datum) + '</b>'); } }
+  else if (e.datumGrund === 'zukunft') hinweise.push('Das Prüfdatum im Bericht liegt in der Zukunft – nicht übernommen');
+  else hinweise.push('Kein Prüfdatum im Bericht gefunden – bitte prüfen');
+  if (e.stelle && frei(stelle) && stelle.value.trim() !== e.stelle) { setze(stelle, e.stelle); teile.push(escapeHtml(e.stelle)); }
+  if (e.ergebnis && frei(erg)) { setze(erg, e.ergebnis); teile.push('Ergebnis <b>' + escapeHtml(e.ergebnis) + '</b>'); }
+  if (typeof _lmTvDlgSync === 'function') _lmTvDlgSync();   // Vorschlag der nächsten Prüfung zum (neuen) Datum
+  if (e.naechste && frei(naechste)) {
+    setze(naechste, e.naechste); if (_lmTvDlg) _lmTvDlg.naechsteDirty = true;
+    teile.push('nächste ' + (e.naechsteArt ? escapeHtml(e.naechsteArt) + ' ' : '') + 'bis <b>' + _lmFmtDE(e.naechste) + '</b>');
+  }
+  if (frei(liste)) setze(liste, e.maengel.map(_tkZeile).join('\n'));
+  const gef = e.maengel.filter(m => m.einstufung === 'gefährlich').length;
+  const mg = e.maengel.length ? '<b>' + e.maengel.length + (e.maengel.length === 1 ? ' Mangel' : ' Mängel') + '</b> herausgeschrieben' + (gef ? ' (' + gef + ' gefährlich)' : '') : 'keine Mängel im Bericht';
+  if (e.widerspruch) hinweise.push('Laut Bericht ohne Mängel – die KI hat trotzdem ' + e.maengel.length + ' Punkt(e) gefunden, bitte prüfen');
+  if (e.stillgelegt) hinweise.unshift('<b style="color:#B91C1C">⛔ Laut Bericht stillgelegt bzw. nicht weiter betreiben!</b>');
+  if (e.nachpruefung) hinweise.push('Nachprüfung verlangt');
+  if (e.hinweise) hinweise.push('Hinweis des Prüfers: ' + escapeHtml(e.hinweise));
+  if (uebersprungen && uebersprungen.length) hinweise.push(escapeHtml(uebersprungen.join(' · ')));
+  const tk = document.getElementById('lm-f-tv_ticket'); if (tk) { tk.checked = e.maengel.length > 0 && !e.widerspruch; _tkZuweisenSync('lm-f-tv_ticket', 'lm-f-tv_zuweisen'); }
+  if (typeof _lmTvDlgSync === 'function') _lmTvDlgSync();
+  _tkStatus(teile.length || e.maengel.length ? 'ok' : 'warn', '✨ Aus dem Bericht: ' + (teile.length ? teile.join(' · ') + ' · ' : '') + mg + ' – bitte kurz prüfen.' + (hinweise.length ? '<br>' + hinweise.join(' · ') + '.' : ''));
+}
+/* KI-Zusatzinfos (Nachprüfung, Stilllegung, Hinweise) fürs Ticket – nur aus der Auswertung des offenen Dialogs */
+function _tkDlgErgebnis() {
+  const m = document.getElementById('lm-tv-modal');
+  return (_tkErg && m && m.dataset.tk === _tkErg.dlg) ? _tkErg.e : null;
+}
+
+/* ── Freshdesk: internes Ticket „Angebot zur Mängelbeseitigung" (wie die Folge-Tickets, Gruppe Sales) ── */
+function _tkTicketMoeglich(firma) { return typeof freshdeskIsConfigured === 'function' && !!freshdeskIsConfigured(firma); }
+/* Link zum Ticket: hinterlegte Ticket-Adresse, sonst wie im übrigen Programm aus der Freshdesk-Domain der Firma */
+function _tkTicketUrl(firma, id) {
+  const t = APP_KEYS.freshdeskTicketUrls && APP_KEYS.freshdeskTicketUrls[firma];
+  if (t) return String(t).replace('{id}', String(id || ''));
+  const d = APP_KEYS.freshdeskDomains && APP_KEYS.freshdeskDomains[firma];
+  return d && id ? 'https://' + String(d).replace(/\.freshdesk\.com$/i, '') + '.freshdesk.com/a/tickets/' + id : '';
+}
+/* Gruppe „Sales" und die Bearbeiter im Freshdesk der Firma (je Firma eigene IDs) – 1 Stunde zwischengespeichert, Fehler nicht */
+async function _tkTeam(firma) {
+  const c = _tkTeamCache[firma];
+  if (c && Date.now() - c.at < 60 * 60 * 1000) return c;
+  if (typeof erpEnsureSession === 'function') await erpEnsureSession();
+  const headers = { 'Authorization': 'Bearer ' + (typeof erpGetSessionToken === 'function' ? erpGetSessionToken() : '') };
+  const holen = async pfad => { const r = await fetch(APP_KEYS.valtownProxyUrl + '/freshdesk/' + firma + '/api/v2/' + pfad, { headers }); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); };
+  const out = { at: Date.now(), gruppe: null, agenten: [] };
+  let ok = true;
+  try { const g = (await holen('admin/groups')) || []; const s = (Array.isArray(g) ? g : []).find(x => String(x.name || '').trim().toLowerCase() === TK_GRUPPE.toLowerCase()); out.gruppe = s ? s.id : null; } catch(_) { ok = false; }
+  try { const a = (await holen('agents?per_page=100')) || []; out.agenten = (Array.isArray(a) ? a : []).map(x => ({ id: x.id, name: String((x.contact && x.contact.name) || x.name || '').trim() })).filter(x => x.id && x.name); } catch(_) { ok = false; }
+  if (ok) _tkTeamCache[firma] = out;
+  return out;
+}
+/* Bearbeiter zum gewählten Vornamen („Patrizio" → „Patrizio Fontanarosa") – null, wenn es ihn im Freshdesk der Firma nicht gibt */
+function _tkBearbeiter(team, vorname) {
+  const v = String(vorname || '').trim().toLowerCase();
+  return v ? ((team && team.agenten) || []).find(x => x.name.split(/\s+/)[0].toLowerCase() === v) || null : null;
+}
+function _tkTicketText(tk) { return '🎫 Ticket #' + tk.id + ' an Freshdesk (' + [tk.gruppe ? TK_GRUPPE : 'ohne Gruppe', tk.bearbeiter].filter(Boolean).join(' · ') + ')'; }
+/* Warnungen nach dem Anlegen: Gruppe bzw. gewählte Person im Freshdesk der Firma nicht gefunden */
+function _tkTicketHinweise(tk, firma) {
+  const fn = typeof _anFirmaName === 'function' ? _anFirmaName(firma) : firma, h = [];
+  if (!tk.gruppe) h.push('⚠ Gruppe „' + TK_GRUPPE + '“ im Freshdesk von ' + fn + ' nicht gefunden – Ticket #' + tk.id + ' hat keine Gruppe, bitte in Freshdesk zuordnen.');
+  if (tk.fehlt) h.push('⚠ ' + tk.fehlt + ' ist im Freshdesk von ' + fn + ' nicht als Bearbeiter angelegt – Ticket #' + tk.id + ' ist niemandem zugewiesen.');
+  return h;
+}
+/* c: { firma, a, akte, art, datum, stelle, ergebnis, maengel:[Zeilen], nachpruefung, stillgelegt, hinweise, bemerkung, files, recId, zuweisen, vonKi }
+   → { id, url, anhang, gruppe, bearbeiter, fehlt } */
+async function _tkTicketAnlegen(c) {
+  if (!_tkTicketMoeglich(c.firma)) throw new Error('Freshdesk für „' + c.firma + '“ nicht eingerichtet (interner Absender fehlt)');
+  const groesse = l => l.reduce((s, x) => s + (+x.size || 0), 0);
+  let dateien = (c.files || []).filter(Boolean);
+  if (groesse(dateien) > TK_MAX_ANHANG && c.recId) {   // zu groß (z. B. Fotos) → die verkleinerten Dateien aus der Akte
+    try { const klein = await _tkBerichtDateien(c.recId); if (groesse(klein) <= TK_MAX_ANHANG) dateien = klein; } catch(_) {}
+  }
+  c.anhang = dateien.length > 0 && groesse(dateien) <= TK_MAX_ANHANG;
+  if (!c.rv && typeof _lmRvFuerAnlage === 'function') {
+    try { const rv = _lmRvFuerAnlage(c.a, c.akte)[0]; if (rv) c.rv = _lmRvTitel(rv.rec.fields) + (rv.rec.fields.status ? ' (' + rv.rec.fields.status + ')' : ''); } catch(_) {}
+  }
+  if (!c.von) c.von = _lmUserName();
+  const fd = new FormData();
+  fd.append('email', APP_KEYS.freshdeskRequesterEmails[c.firma]);
+  fd.append('subject', _tkTicketBetreff(c));
+  fd.append('description', _tkTicketHtml(c));
+  fd.append('priority', _tkDringend(c.maengel, c.ergebnis, c.stillgelegt) ? '4' : (/geringfügig/i.test(c.ergebnis || '') ? '2' : '3'));
+  fd.append('status', '2');
+  fd.append('source', '2');
+  const team = await _tkTeam(c.firma).catch(() => ({ gruppe: null, agenten: [] }));
+  if (team.gruppe) fd.append('group_id', String(team.gruppe));   // immer die Gruppe Sales …
+  const wer = c.zuweisen ? _tkBearbeiter(team, c.zuweisen) : null;
+  if (wer) fd.append('responder_id', String(wer.id));            // … eine Person nur, wenn sie ausgewählt ist
+  if (c.anhang) dateien.forEach(x => fd.append('attachments[]', x, x.name || 'TUEV-Bericht.pdf'));
+  if (typeof erpEnsureSession === 'function') await erpEnsureSession();
+  const res = await fetch(APP_KEYS.valtownProxyUrl + '/freshdesk/' + c.firma + '/api/v2/tickets', {
+    method: 'POST', headers: { 'Authorization': 'Bearer ' + (typeof erpGetSessionToken === 'function' ? erpGetSessionToken() : '') }, body: fd });
+  const roh = await res.text();
+  let d = null; try { d = roh ? JSON.parse(roh) : null; } catch(_) { d = { _raw: roh }; }
+  if (!res.ok || !d || !d.id) {
+    let msg = 'HTTP ' + res.status;
+    const fehlerListe = x => (Array.isArray(x && x.errors) ? x.errors.map(er => '[' + (er.field || '?') + '] ' + (er.message || er.code || '?')).join('; ') : '');
+    if (fehlerListe(d)) msg = fehlerListe(d);
+    else if (d && d.upstream_body_excerpt) { try { const u = JSON.parse(d.upstream_body_excerpt); msg = fehlerListe(u) || u.description || msg; } catch(_) { msg = String(d.upstream_body_excerpt).slice(0, 200); } }
+    else if (d && d.error) msg = String(d.error.message || d.error);
+    throw new Error(msg);
+  }
+  return { id: d.id, url: _tkTicketUrl(c.firma, d.id), anhang: c.anhang, gruppe: !!team.gruppe, bearbeiter: wer ? wer.name : '', fehlt: c.zuweisen && !wer ? c.zuweisen : '' };
+}
+/* Mängel, Ergebnis, Ticket-Nr. am TÜV-Bericht festhalten – fehlen die Felder maengel/fd_ticket noch (legt ein Admin beim Öffnen an):
+   Mängel und Ticket in den Text (vorhandene Blöcke werden ersetzt, die Bemerkung bleibt) */
+async function _tkAmBericht(recId, felder) {
+  try { _lmUpsertLocal('eintrag', await _lmUpdate(LM_T_EINTRAG, recId, felder)); }
+  catch(e) {
+    if (!/unknown field/i.test(String((e && e.message) || e))) throw e;
+    const rest = Object.assign({}, felder); delete rest.maengel; delete rest.fd_ticket;
+    if ('maengel' in felder || felder.fd_ticket) {
+      const voll = await _lmFetchRec(LM_T_EINTRAG, recId), f = (voll && voll.fields) || {};
+      const teile = String(f.text || '').split(/\n{2,}/).map(x => x.trim()).filter(Boolean)
+        .filter(x => !('maengel' in felder && /^Mängel laut Bericht:/.test(x)) && !(felder.fd_ticket && /^🎫 Freshdesk-Ticket #/.test(x)));
+      const zeilen = _tkZeilen(felder.maengel);
+      if (zeilen.length) teile.push('Mängel laut Bericht:\n' + zeilen.map((z, i) => (i + 1) + '. ' + z).join('\n'));
+      if (felder.fd_ticket) teile.push('🎫 Freshdesk-Ticket #' + felder.fd_ticket + ' (Angebot Mängelbeseitigung)');
+      rest.text = teile.join('\n\n');
+    }
+    if (Object.keys(rest).length) _lmUpsertLocal('eintrag', await _lmUpdate(LM_T_EINTRAG, recId, rest));
+  }
+}
+
+/* ── Dialog „🎫 Mängel → Angebot": Bericht in der Akte (bzw. gerade über 📂 Dokumente hochgeladen) → KI → Mängel → Ticket ── */
+function _tkBericht(recId) {
+  return (typeof _lmFindEintrag === 'function' && _lmFindEintrag(recId)) || (_lmData.eintraege || []).find(x => x.id === recId) || null;
+}
+/* Dateien des Berichts aus der Akte laden (für die KI und als Anhang im Ticket) */
+async function _tkBerichtDateien(recId, signal) {
+  const r = _tkBericht(recId);
+  let d = r && Array.isArray(r.fields.datei) ? r.fields.datei.filter(x => x && x.url) : [];
+  if (!d.length) { const voll = await _lmFetchRec(LM_T_EINTRAG, recId); d = voll && Array.isArray(voll.fields.datei) ? voll.fields.datei.filter(x => x && x.url) : []; }
+  if (!d.length) throw new Error('am Bericht hängt keine Datei');
+  const files = [];
+  for (const x of d.slice(0, WK_MAX_DATEIEN)) {
+    const res = await fetch(x.url, { signal }); if (!res.ok) throw new Error('Bericht nicht ladbar (HTTP ' + res.status + ')');
+    const b = await res.blob();
+    files.push(new File([b], x.filename || 'TUEV-Bericht.pdf', { type: /pdf|image/i.test(b.type || '') ? b.type : (x.type || 'application/pdf') }));
+  }
+  return files;
+}
+function _tkMdKnopfText() {
+  const b = document.getElementById('tk-md-go'), t = document.getElementById('lm-f-tk_ticket');
+  if (b) b.textContent = (t && t.checked) ? '🎫 Ticket anlegen' : '💾 Speichern';
+  _tkZuweisenSync('lm-f-tk_ticket', 'lm-f-tk_zuweisen');
+}
+function tkMaengelDialog(anlageId, recId, files) {
+  if (!_lmCanEdit()) return toast('🔒 Keine Berechtigung.', 'err');
+  const a = _lmFindAnlage(anlageId), r = _tkBericht(recId);
+  if (!a || !r) return toast('TÜV-Bericht nicht gefunden – bitte neu laden.', 'err');
+  const f = r.fields || {}, firma = _lmData.firma, ki = _tkVerfuegbar(), fd = _tkTicketMoeglich(firma);
+  const vorhanden = _tkZeilen(f.maengel || '');
+  const offen = (_lmData.eintraege || []).some(x => { const y = x.fields || {}; return y.anlage_id === String(a.id) && y.typ === 'stoerung' && y.status !== 'erledigt' && /^TÜV-Mängel/.test(String(y.titel || '')); });
+  if (_tkMd && _tkMd.ac) { try { _tkMd.ac.abort(); } catch(_){} }
+  _tkMd = { anlageId: String(a.id), recId, files: files || null, nr: 0, e: null, vorhanden, ergebnis: String(f.ergebnis || '') };
+  const body = '<div class="lm-sugg" style="margin:0 0 12px">🛡 <span><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)) + '</b><br>' +
+      escapeHtml([f.pruefart || 'TÜV-Bericht', _lmDate(f.datum) ? 'vom ' + _lmFmtDE(_lmDate(f.datum)) : '', typeof _lmTvStelle === 'function' ? _lmTvStelle(f) : '', f.ergebnis || '', f.fd_ticket ? '🎫 Ticket #' + f.fd_ticket + ' gibt es schon' : ''].filter(Boolean).join(' · ')) + '</span></div>' +
+    '<div class="full tk-status" id="tk-md-ki" role="status" aria-live="polite">' + (ki ? '⏳ Die KI liest den TÜV-Bericht …' : 'Ohne KI: die Mängel bitte aus dem Bericht abschreiben (je Zeile einer).') + '</div>' +
+    '<div class="lm-form" style="margin-top:10px">' +
+      _lmIn('tk_ergebnis', 'Ergebnis laut Bericht', f.ergebnis || '', { type: 'select', options: [['', '– unbekannt –']].concat(LM_ERGEBNISSE) }) +
+      _lmIn('tk_liste', '🔧 Mängel laut Bericht – je Zeile ein Mangel', vorhanden.join('\n'), { type: 'textarea', full: true, rows: 6, ph: 'z. B. Schachtbeleuchtung im Schachtkopf defekt (Mangel, bis 30.11.2026)' }) +
+      (fd ? _lmIn('tk_ticket', '🎫 Ticket an Freshdesk (Sales): Angebot zur Mängelbeseitigung an den Kunden – mit Mängelliste und Bericht', !f.fd_ticket && !!vorhanden.length, { type: 'checkbox', full: true }) + _tkZuweisenHtml('tk_zuweisen')
+        : '<div class="full lm-muted">🎫 Kein Freshdesk-Ticket möglich: für diese Firma ist kein interner Freshdesk-Absender hinterlegt (Admin → Integrationen).</div>') +
+      _lmIn('tk_aufgabe', '🚨 Offene Aufgabe „TÜV-Mängel beseitigen“ anlegen' + (offen ? ' <span class="lm-muted">(es gibt schon eine offene)</span>' : ''), false, { type: 'checkbox', full: true }) +
+    '</div>';
+  _lmModal('tk-md-modal', '🎫 TÜV-Mängel → Angebot', body,
+    '<button class="btn" onclick="tkMaengelZu()">Abbrechen</button><button class="btn prim" id="tk-md-go" onclick="tkMaengelSpeichern(this)"' + (ki ? ' disabled' : '') + '>💾 Speichern</button>', { wide: true });
+  _tkMd.aufgabeOffen = offen;
+  ['tk_liste', 'tk_ergebnis'].forEach(n => { const el = document.getElementById('lm-f-' + n); if (el) { const hand = () => { el.dataset.tkHand = '1'; el.classList.remove('wk-ki'); }; el.addEventListener('input', hand); el.addEventListener('change', hand); } });
+  const t = document.getElementById('lm-f-tk_ticket'); if (t) t.addEventListener('change', _tkMdKnopfText);
+  _tkMdKnopfText();
+  if (ki) _tkMdLesen();
+}
+function tkMaengelZu() { if (_tkMd && _tkMd.ac) { try { _tkMd.ac.abort(); } catch(_){} } _tkMd = null; _lmCloseModal('tk-md-modal'); }
+/* Nach dem Hochladen eines TÜV-Berichts über „📂 Dokumente" (Aufruf aus lmUploadStart): die KI liest ihn gleich */
+function tkNachUpload(anlageId, recIds, files) {
+  if (!_tkVerfuegbar() || !_lmCanEdit() || !recIds || !recIds.length) return;
+  tkMaengelDialog(anlageId, recIds[0], files);
+}
+async function _tkMdLesen() {
+  const md = _tkMd; if (!md) return;
+  const nr = md.nr = ++_tkNr, ac = md.ac = new AbortController();
+  const aktuell = () => _tkMd === md && md.nr === nr && !!document.getElementById('tk-md-modal');
+  const status = (cls, html) => { const s = document.getElementById('tk-md-ki'); if (s) { s.className = 'full tk-status' + (cls ? ' ' + cls : ''); s.innerHTML = html; } };
+  const timer = setTimeout(() => { try { ac.abort(); } catch(_){} }, TK_TIMEOUT);
+  status('laeuft', '⏳ Die KI liest den TÜV-Bericht und schreibt die Mängel heraus … <span>(meist unter einer Minute)</span> <button type="button" class="wk-link" onclick="tkMaengelOhneKi()">ohne KI weiter</button>');
+  try {
+    let files = md.files;
+    if (!files || !files.length) {   // Bericht aus der Akte laden
+      files = await _tkBerichtDateien(md.recId, ac.signal);
+      if (aktuell()) md.files = files;
+    }
+    const { e, uebersprungen } = await _tkLesen(files, ac.signal);
+    if (!aktuell()) return;
+    md.e = e;
+    const el = document.getElementById('lm-f-tk_liste');
+    if (el && !el.dataset.tkHand) { el.value = e.maengel.map(_tkZeile).join('\n'); el.classList.add('wk-ki'); }
+    const er = document.getElementById('lm-f-tk_ergebnis');
+    if (er && !er.dataset.tkHand && e.ergebnis) { er.value = e.ergebnis; er.classList.add('wk-ki'); }
+    const r = _tkBericht(md.recId), schon = !!(r && r.fields && r.fields.fd_ticket);
+    const tk = document.getElementById('lm-f-tk_ticket'); if (tk) tk.checked = e.maengel.length > 0 && !e.widerspruch && !schon;
+    const ag = document.getElementById('lm-f-tk_aufgabe'); if (ag) ag.checked = e.maengel.length > 0 && !md.aufgabeOffen;
+    _tkMdKnopfText();
+    const gef = e.maengel.filter(m => m.einstufung === 'gefährlich').length;
+    status(e.maengel.length ? 'ok' : 'warn', (e.maengel.length ? '✨ <b>' + e.maengel.length + (e.maengel.length === 1 ? ' Mangel' : ' Mängel') + '</b> aus dem Bericht herausgeschrieben' + (gef ? ' (' + gef + ' gefährlich)' : '') + ' – bitte kurz prüfen.'
+      : '✅ Die KI hat im Bericht keine Mängel gefunden.') + [e.stillgelegt ? '<b style="color:#B91C1C">⛔ Laut Bericht stillgelegt bzw. nicht weiter betreiben!</b>' : '', e.nachpruefung ? 'Nachprüfung verlangt' : '',
+      e.widerspruch ? 'Laut Bericht ohne Mängel – die KI hat trotzdem ' + e.maengel.length + ' Punkt(e) gefunden, bitte prüfen' : '', schon ? '🎫 Für diesen Bericht gibt es schon ein Ticket' : '',
+      e.hinweise ? 'Hinweis des Prüfers: ' + escapeHtml(e.hinweise) : '', (uebersprungen || []).length ? escapeHtml(uebersprungen.join(' · ')) : ''].filter(Boolean).map(x => '<br>' + x).join(''));
+  } catch (err) {
+    if (!aktuell()) return;
+    status('warn', '⚠ ' + escapeHtml(err && err.name === 'AbortError' ? 'Die KI hat zu lange gebraucht' : 'KI: ' + String((err && err.message) || err).slice(0, 160)) + ' – bitte die Mängel selbst aus dem Bericht eintragen.');
+  } finally {
+    clearTimeout(timer);
+    if (aktuell()) { const b = document.getElementById('tk-md-go'); if (b) b.disabled = false; }
+  }
+}
+function tkMaengelOhneKi() {
+  const md = _tkMd; if (!md) return;
+  try { md.ac && md.ac.abort(); } catch(_){}
+  md.nr = ++_tkNr;
+  const s = document.getElementById('tk-md-ki'); if (s) { s.className = 'full tk-status warn'; s.innerHTML = 'KI abgebrochen – bitte die Mängel selbst aus dem Bericht eintragen.'; }
+  const b = document.getElementById('tk-md-go'); if (b) b.disabled = false;
+}
+async function tkMaengelSpeichern(btn) {
+  const md = _tkMd; if (!md || !_lmCanEdit()) return;
+  const a = _lmFindAnlage(md.anlageId), r = _tkBericht(md.recId); if (!a || !r) return toast('TÜV-Bericht nicht gefunden – bitte neu laden.', 'err');
+  const g = n => { const el = document.getElementById('lm-f-' + n); return el ? (el.type === 'checkbox' ? el.checked : String(el.value || '')) : ''; };
+  const zeilen = _tkZeilen(g('tk_liste')), ergebnis = String(g('tk_ergebnis')).trim(), ticket = !!g('tk_ticket'), aufgabe = !!g('tk_aufgabe');
+  const f = r.fields || {}, firma = _lmData.firma, e = md.e || {};
+  if (/ohne/i.test(ergebnis) && zeilen.length) return toast('Ergebnis „ohne Mängel“, aber Mängel eingetragen – bitte das Ergebnis oder die Mängelliste korrigieren.', 'err');
+  if (!zeilen.length && (ticket || aufgabe)) return toast('Bitte die Mängel eintragen (je Zeile einer) – oder die Haken bei Ticket und Aufgabe entfernen.', 'err');
+  const felder = {};
+  if (zeilen.join('\n') !== md.vorhanden.join('\n')) felder.maengel = zeilen.join('\n');
+  if (ergebnis !== md.ergebnis) felder.ergebnis = ergebnis;
+  if (!Object.keys(felder).length && !ticket && !aufgabe) { tkMaengelZu(); return toast(zeilen.length ? 'Nichts geändert.' : 'Keine Mängel – nichts weiter zu tun.', ''); }
+  const txt0 = btn.textContent; btn.disabled = true;
+  const datum = _lmDate(f.datum) || _lmToday(), art = f.pruefart || 'TÜV-Prüfung', hinweise = [];
+  try {
+    btn.textContent = '⏳ speichere …';
+    if (Object.keys(felder).length) await _tkAmBericht(md.recId, felder);
+    if (aufgabe) {
+      try { await _lmCreateEintrag(a, { typ: 'stoerung', titel: 'TÜV-Mängel beseitigen (' + art + ' vom ' + _lmFmtDE(datum) + ')', text: (ergebnis || 'Mängel') + '\nMängel laut TÜV-Bericht:\n' + zeilen.map((z, i) => (i + 1) + '. ' + z).join('\n'), datum, status: 'offen', wichtig: true }); hinweise.push('🚨 Aufgabe angelegt'); }
+      catch(err) { hinweise.push('⚠ Aufgabe nicht angelegt: ' + ((err && err.message) || err)); }
+    }
+    let tk = null;
+    if (ticket) {
+      btn.textContent = '⏳ Ticket an Freshdesk …';
+      if (!(md.files && md.files.length)) { try { md.files = await _tkBerichtDateien(md.recId); } catch(_) { md.files = []; } }   // ohne KI: der Bericht kommt trotzdem in den Anhang
+      tk = await _tkTicketAnlegen({ firma, a, akte: _lmAkteOf(a.id), art, datum, stelle: typeof _lmTvStelle === 'function' ? _lmTvStelle(f) : '', ergebnis: ergebnis || e.ergebnis || '',
+        maengel: zeilen, nachpruefung: !!e.nachpruefung, stillgelegt: !!e.stillgelegt, hinweise: e.hinweise || '', files: md.files || [], recId: md.recId, zuweisen: g('tk_zuweisen'), vonKi: !!md.e });
+      hinweise.push(..._tkTicketHinweise(tk, firma));
+      try { await _tkAmBericht(md.recId, { fd_ticket: String(tk.id) }); }
+      catch(err) { hinweise.push('⚠ Ticket-Nr. nicht am Bericht vermerkt: ' + ((err && err.message) || err)); }
+    }
+    tkMaengelZu();
+    const warn = hinweise.filter(h => /^⚠/.test(h)), info = hinweise.filter(h => !/^⚠/.test(h));
+    toast('✅ ' + [tk ? _tkTicketText(tk) + ' – Angebot zur Mängelbeseitigung' + (tk.anhang ? ', Bericht im Anhang' : '') : '',
+      zeilen.length ? zeilen.length + (zeilen.length === 1 ? ' Mangel' : ' Mängel') + ' am Bericht' : (Object.keys(felder).length ? 'Bericht aktualisiert' : '')].filter(Boolean).join(' · ') + (info.length ? ' · ' + info.join(' · ') : ''), 'ok');
+    if (warn.length) { if (typeof _mxTextModal === 'function') _mxTextModal('⚠ Bitte prüfen', warn.join('\n\n')); else toast(warn.join(' · '), 'err'); }
+    _lmAbrNachAenderung();
+    if (_lmUi.akteId === md.anlageId && _lmData.firma === firma) { _lmRefreshAkteHead(); _lmRefreshDyn(); }
+  } catch(err) {
+    toast('❌ ' + ((err && err.message) || err), 'err');
+    btn.disabled = false; btn.textContent = txt0;
+  }
 }
 
 </script>
