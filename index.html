@@ -2828,21 +2828,16 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 .li-kand{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;padding:4px 6px;border-radius:6px;cursor:pointer}
 .li-kand:hover{background:var(--bg)}
 .li-suche{margin-top:8px}
-.li-suche input,.li-kunde input{width:100%;font-size:13px}
+.li-suche input{width:100%;font-size:13px}
 .li-treffer{margin-top:4px}
 .li-neu{margin-top:10px;font-size:12.5px;background:#F8FAFC;border:1px dashed var(--bdr);border-radius:8px;padding:8px 10px;line-height:1.5}
-.li-kunde{margin-top:6px}
-.li-ku-tr{display:flex;flex-direction:column;gap:2px;margin-top:4px}
-.li-ku{text-align:left;background:var(--surf);border:1px solid var(--bdr);border-radius:6px;padding:4px 8px;cursor:pointer;font-family:inherit;font-size:12.5px}
-.li-ku:hover{border-color:#2152A9}
-.li-ku-gew{font-size:12.5px}
 .li-mehr{text-align:center;margin:10px 0}
 @media (max-width:760px){
   .lm-modal-box.li-box{height:100%}
   .li-a,.li-a.info{grid-template-columns:20px 1fr}
   .li-a .li-a-w{grid-column:2}
   .li-spalten td:last-child{width:auto}
-  .li-ziel,.li-suche input,.li-kunde input,.li-hinweis-l textarea{font-size:16px}
+  .li-ziel,.li-suche input,.li-hinweis-l textarea{font-size:16px}
 }
 </style>
 </head>
@@ -4404,7 +4399,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.34';
+const APP_VERSION = 'v10.35';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -73714,16 +73709,23 @@ async function lpLoeschen(recId) {
    2. 🧭 Lesehilfe: die KI sieht sich den Aufbau an (Überschriften, ab welcher Zeile Daten kommen, eine oder mehrere Zeilen
       je Anlage, was jede Spalte bedeutet). Du prüfst, korrigierst die Spalten und kannst der KI Hinweise geben.
    3. Die KI liest alle Zeilen in Blöcken aus – Werte wörtlich, nichts wird erfunden.
-   4. Zuordnung zu den Maxise-Anlagen über Anlagen-Nr., Fabrik-Nr. oder Adresse. Mehrere Aufzüge an einer Adresse oder
-      ähnliche Schreibweise: du wählst. Nicht in Maxise: ähnliche Anlagen + Suche – oder „🚀 In Maxise anlegen"
-      (der bekannte Maxise-Dialog, vorbelegt mit Adresse und Fabrik-Nr.).
+   4. Zuordnung über Anlagen-Nr., Fabrik-Nr. oder Adresse – nur zu Anlagen, die schon im Liftmanager sind oder die
+      „+ Anlage hinzufügen" vorschlägt (Maxise, nicht archiviert). Mehrere Aufzüge an einer Adresse oder ähnliche
+      Schreibweise: du wählst. Nichts gefunden: Vorschläge + Suche oder überspringen – neue Anlagen legt der Import nicht an.
    5. Je Anlage jede Tätigkeit einzeln zum Anhaken: ins Liftmanagement aufnehmen, jedes Feld (neu / ersetzen / ergänzen),
       TÜV-Termin, Notiz mit allem Übrigen. Übernommen wird erst mit „✓ OK" für diese Anlage; „↩ Rückgängig" je Anlage.
    Vorhandene Werte werden nie stillschweigend überschrieben – abweichende nur, wenn angehakt. TÜV-Termine nur, wenn die Akte
-   noch keine hat (sonst über „✏ TÜV-Termine"). In Maxise ändert sich nichts, außer du legst dort ausdrücklich eine Anlage an.
+   noch keine hat (sonst über „✏ TÜV-Termine"). In Maxise ändert sich nichts.
+   v10.35: an den echten Listen justiert – breite Blätter bis 160 Spalten (Anlagen nebeneinander, je Anlage eine Spaltengruppe),
+   die Lesehilfe darf weitere Gruppen als Spaltenbereich („K–CE") beschreiben, Fabrik-Nr. ohne führende Nullen, „Pl." = „Platz",
+   eine Anlagen-Nr. ordnet nur zu, wenn die Adresse passt (Nummern aus anderen Programmen sehen genauso aus) – sonst Vorschlag.
+   Keine neuen Anlagen: „🚀 In Maxise anlegen" ist wieder weg – zugeordnet wird nur zu Anlagen im Liftmanager oder aus „+ Anlage hinzufügen".
+   🆘 Befreiereinweisung: steht in der Liste, dass sie erledigt ist (z. B. „BE: ja"), gibt es die Tätigkeit „Befreiereinweisung erledigt –
+   an <Firma>" (wie „✓ Einweisung erledigt" in der Akte; Firma aus der Liste, sonst der Kunde in Maxise) – nur wenn noch keine eingetragen ist.
+   Die KI kennt die Abkürzungen bei Aufzugshandwerk (S, T, AP, BE, NR, MR, HM, HV, TG).
    ═══════════════════════════════════════════════════════════════════════ */
 const LI_FIRMEN = ['aufzug'];
-const LI_MAX_ZEILEN = 6000, LI_MAX_SPALTEN = 80, LI_ZELLE_MAX = 400, LI_ZEILE_MAX = 2500, LI_MAX_MB = 25;
+const LI_MAX_ZEILEN = 6000, LI_MAX_SPALTEN = 160, LI_ZELLE_MAX = 400, LI_ZEILE_MAX = 2500, LI_MAX_MB = 25;
 const LI_TIMEOUT = 240000, LI_PARALLEL = 3, LI_VERSUCHE = 2;
 const LI_LH_ZEILEN = 60, LI_LH_BLAETTER = 6;                 // Lesehilfe: so viele Zeilen je Blatt, höchstens so viele Blätter
 const LI_BLOCK_ZEILEN = 30, LI_BLOCK_ZEILEN_EINZEL = 40, LI_BLOCK_ZEICHEN = 8000, LI_VOR = 6, LI_NACH = 10;
@@ -73768,21 +73770,23 @@ const LI_ZIEL_GRUPPEN = [
   ['🔑 Zugang', ['zugang_gebaeude', 'zugang_schluessel', 'zugang_code', 'mr_lage', 'mr_zugang', 'zugang_kontakt', 'zugang_tel', 'zugang']],
   ['🛗 Anlage & Technik', ['eq_nummer', 'hersteller', 'baujahr', 'antrieb', 'haltestellen', 'tragkraft_kg', 'personen', 'notruf']],
   ['🛡 TÜV', ['pruefstelle', 'tuev_naechste_hp', 'tuev_naechste_zp', 'tuev_letzte_hp', 'tuev_letzte_zp', 'tuev_naechste', 'tuev_letzte', 'maengel']],
+  ['🆘 Befreiereinweisung', ['befreiereinweisung']],
   ['🧾 Rechnung', ['rechnung_an', 'rechnung_email', 'rechnung_referenz']],
   ['Sonst', ['hinweis', 'gemischt', 'sonstiges', 'ignorieren']],
 ];
 const LI_ZIELE = LI_ZIEL_GRUPPEN.reduce((a, g) => a.concat(g[1]), []);
-const LI_AUSGABE_FELDER = LI_FELDER.map(f => f[0]).concat(['tuev_naechste', 'tuev_letzte']);
+const LI_AUSGABE_FELDER = LI_FELDER.map(f => f[0]).concat(['tuev_naechste', 'tuev_letzte', 'befreiereinweisung']);
 const LI_ZIEL_LABEL = Object.assign({
   adresse: 'Adresse / Standort', plz_ort: 'PLZ / Ort', fabriknummer: 'Fabrik-Nr.', anlage_nr: 'Anlagen-Nr. (Maxise)', kunde: 'Kunde / Verwaltung',
   bezeichnung: 'Bezeichnung des Aufzugs', tuev_naechste: 'TÜV fällig – Art unklar (→ Notiz)', tuev_letzte: 'letzte TÜV-Prüfung – Art unklar (→ Notiz)',
+  befreiereinweisung: '🆘 Befreiereinweisung erledigt (an welche Firma)',
   gemischt: 'gemischt – die KI teilt auf', sonstiges: 'Sonstiges → Notiz', ignorieren: '– ignorieren –',
 }, LI_FELDER.reduce((o, f) => { o[f[0]] = f[1]; return o; }, {}));
 const LI_ERKLAERUNG = {
   adresse: 'Standort der Anlage (Straße, Hausnummer, ggf. PLZ und Ort) – zum Zuordnen',
   plz_ort: 'PLZ und/oder Ort des Standorts in eigener Spalte – zum Zuordnen',
   fabriknummer: 'Fabriknummer / Seriennummer des Aufzugs – zum Zuordnen',
-  anlage_nr: 'Anlagennummer aus Maxise – zum Zuordnen',
+  anlage_nr: 'Anlagennummer aus Maxise (ID der Anlage in Maxise) – zum Zuordnen. Nummern aus anderen Programmen (z. B. Liftmanager-Nr. „#12", Vertrags-, Ticket-, Notruf- oder Call-Nummern) sind keine Maxise-Nummern → sonstiges',
   kunde: 'Kunde, Eigentümer, Betreiber oder Hausverwaltung – nur zur Kontrolle',
   bezeichnung: 'Bezeichnung des Aufzugs im Gebäude (z. B. „Aufzug 2", „Haus B", „links") – unterscheidet mehrere Aufzüge an einer Adresse',
   zugang_gebaeude: 'wie man ins Gebäude bzw. zum Aufzug kommt (Eingang, Klingel, Tor, Hintereingang)',
@@ -73800,7 +73804,7 @@ const LI_ERKLAERUNG = {
   haltestellen: 'Anzahl der Haltestellen',
   tragkraft_kg: 'Tragkraft / Nennlast in kg',
   personen: 'zulässige Personenzahl',
-  notruf: 'Notrufsystem, Notrufleitstelle oder Notruf-Nummer der Anlage',
+  notruf: 'Notruf der Anlage: System, Leitstelle bzw. Anbieter, Notruf-Nummer, Vertrags- oder Call-Nummer beim Notruf-Anbieter, aufgeschaltet seit',
   pruefstelle: 'zugelassene Überwachungsstelle (TÜV SÜD, DEKRA …)',
   tuev_naechste_hp: 'nächste Hauptprüfung (Fälligkeit)',
   tuev_naechste_zp: 'nächste Zwischenprüfung (Fälligkeit)',
@@ -73809,16 +73813,19 @@ const LI_ERKLAERUNG = {
   tuev_naechste: 'nächste TÜV-Prüfung, aber nicht erkennbar, ob Haupt- oder Zwischenprüfung',
   tuev_letzte: 'letzte TÜV-Prüfung, aber nicht erkennbar, ob Haupt- oder Zwischenprüfung',
   maengel: 'offene Mängel aus der letzten Prüfung',
+  befreiereinweisung: 'Befreiereinweisung (Einweisung zum Befreien eingeschlossener Personen, Abkürzung BE) ist erledigt – Wert: an welche Firma eingewiesen wurde, steht keine Firma dabei „ja"; nur wenn die Liste sagt, dass sie erledigt ist (nicht bei nein, offen, geplant oder „muss geklärt werden")',
   rechnung_an: 'abweichende Rechnungsanschrift',
   rechnung_email: 'E-Mail-Adresse für Rechnungen',
   rechnung_referenz: 'Bestell-, Referenz- oder Kostenstellennummer für Rechnungen',
-  hinweis: 'wichtiger allgemeiner Hinweis zur Anlage, der immer oben stehen soll',
+  hinweis: 'wichtiger dauerhafter Hinweis zur Anlage, der immer oben in Akte und Liste stehen soll (z. B. „Achtung Hund", „nur nach Anmeldung") – offene Punkte zum Zugang (Schlüssel fehlt noch, Tresor wird montiert) gehören zu zugang',
   gemischt: 'mehrere Angaben durcheinander in einer Spalte – beim Auslesen auf die passenden Felder verteilen',
   sonstiges: 'wichtige Angaben ohne eigenes Feld (z. B. Wartungsintervall, Vertrag) – kommen als Notiz in die Akte',
   ignorieren: 'nicht übernehmen (z. B. laufende Nummer, interne Markierung)',
 };
+const LI_ABKUERZUNGEN = 'Abkürzungen bei Aufzugshandwerk (gelten, wenn die Liste nichts anderes sagt): S = Schlüssel, T = Tresor (Schlüsseltresor), AP = Ansprechpartner vor Ort, ' +
+  'BE = Befreiereinweisung, NR = Notruf, MR = Maschinenraum, HM = Hausmeister, HV = Hausverwaltung, TG = Tiefgarage. Stehen dazu nur ja/nein-Häkchen, sind das Stände (z. B. „Schlüssel: ja") – keine Werte für die Felder, außer BE → befreiereinweisung.';
 const LI_AUFBAU = { eine_zeile: 'eine Zeile je Anlage', mehrere_zeilen: 'mehrere Zeilen je Anlage', gemischt: 'gemischt', unklar: 'unklar' };
-const LI_FILTER = [['offen', '📋 Offen'], ['pruefen', '⚠ Bitte prüfen'], ['fehlt', '❓ Nicht in Maxise'], ['aufnehmen', '🛗 Noch nicht im Liftmanagement'],
+const LI_FILTER = [['offen', '📋 Offen'], ['pruefen', '⚠ Bitte prüfen'], ['fehlt', '❓ Nicht gefunden'], ['aufnehmen', '🛗 Noch nicht im Liftmanagement'],
   ['ok', '✓ Übernommen'], ['skip', '⏭ Übersprungen'], ['nichts', '＝ Nichts Neues'], ['alle', 'Alle']];
 const LI_LEER = /^(?:-+|–|—|\?+|\.+|\/+|k\.? ?a\.?|n\.? ?a\.?|n\/a|unbekannt|nicht bekannt|keine angaben?|fehlt|null|none|undefined)$/i;
 const LI_MONATE = { jan: 1, januar: 1, 'jän': 1, 'jänner': 1, feb: 2, februar: 2, 'mär': 3, 'märz': 3, maerz: 3, mrz: 3, apr: 4, april: 4, mai: 5, jun: 6, juni: 6,
@@ -74024,6 +74031,10 @@ function _liWert(feld, roh) {
   let t = String(roh == null ? '' : roh).replace(/\r\n?/g, '\n');
   t = lang ? t.split('\n').map(z => z.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n') : t.replace(/\s+/g, ' ').trim();
   if (!t || LI_LEER.test(t)) return { wert: '' };
+  if (feld === 'befreiereinweisung') {
+    if (/^(nein|no|false|0|offen|geplant|fehlt|nicht erledigt|needs_attention|pending\w*)$/i.test(t)) return { wert: '' };
+    return { wert: /^(ja|j|x|✓|✔|☑|erledigt|done|yes|true|1|ok|verified_ok)$/i.test(t) ? 'ja' : t.slice(0, 120) };
+  }
   if (feld === 'tuev_naechste' || feld === 'tuev_letzte')
     return { wert: '', notiz: (feld === 'tuev_naechste' ? 'TÜV fällig laut Excel: ' : 'Letzte TÜV-Prüfung laut Excel: ') + t + ' (ob Haupt- oder Zwischenprüfung, ist in der Liste nicht erkennbar)' };
   const art = _liArt(feld);
@@ -74080,18 +74091,26 @@ function _liLhAus(antwort, blaetter) {
     const nZ = b.zeilen.length ? b.zeilen[b.zeilen.length - 1].nr : 1;
     let datenAb = Math.round(+(x && x.daten_ab));
     if (!(datenAb >= 1 && datenAb <= nZ)) datenAb = (b.zeilen[0] || { nr: 1 }).nr;
-    const spalten = new Map();
+    const spalten = new Map(), bereich = new Map();   // bereich: Spalte → [von, bis] (Nummern ab 0)
     for (const s of (x && Array.isArray(x.spalten) ? x.spalten : [])) {
-      const sp = String((s && s.spalte) || '').toUpperCase().replace(/[^A-Z]/g, '');
-      if (!sp || spalten.has(sp) || _liSpaltenNr(sp) >= LI_MAX_SPALTEN) continue;
-      spalten.set(sp, { spalte: sp, ueberschrift: _liT(s.ueberschrift, 80), bedeutung: _liT(s.bedeutung, 220), ziel: LI_ZIELE.indexOf(s.ziel) >= 0 ? s.ziel : 'gemischt' });
+      const roh = String((s && s.spalte) || '').toUpperCase().trim(), m = /^([A-Z]{1,3})\s*(?:[-–—:]|BIS)\s*([A-Z]{1,3})$/.exec(roh);
+      let von, bis, sp;
+      if (m) { von = _liSpaltenNr(m[1]); bis = _liSpaltenNr(m[2]); if (bis < von) { const t = von; von = bis; bis = t; } }
+      else { sp = roh.replace(/[^A-Z]/g, ''); von = bis = sp ? _liSpaltenNr(sp) : -1; }
+      if (!(von >= 0) || von >= LI_MAX_SPALTEN) continue;
+      bis = Math.min(bis, LI_MAX_SPALTEN - 1);
+      sp = von === bis ? _liSpalte(von) : _liSpalte(von) + '–' + _liSpalte(bis);
+      if (spalten.has(sp)) continue;
+      spalten.set(sp, { spalte: sp, ueberschrift: _liT(s.ueberschrift, 120), bedeutung: _liT(s.bedeutung, 500), ziel: LI_ZIELE.indexOf(s.ziel) >= 0 ? s.ziel : 'gemischt' });
+      bereich.set(sp, [von, bis]);
     }
+    const gedeckt = c => [...bereich.values()].some(([v, w]) => c >= v && c <= w);
     const mitInhalt = new Set();
-    b.zeilen.filter(z => z.nr >= datenAb).forEach(z => z.zellen.forEach(c => mitInhalt.add(_liSpalte(c.c))));
-    mitInhalt.forEach(sp => { if (!spalten.has(sp)) spalten.set(sp, { spalte: sp, ueberschrift: '', bedeutung: 'von der KI nicht beschrieben', ziel: 'gemischt' }); });
-    return { blatt: lab, relevant: !!(x && x.relevant), beschreibung: _liT(x && x.beschreibung, 700) || (x ? '' : 'Zu diesem Blatt hat die KI nichts gesagt.'),
-      kopfzeilen: _liT(x && x.kopfzeilen, 40), daten_ab: datenAb, aufbau: x && LI_AUFBAU[x.aufbau] ? x.aufbau : 'unklar', erkennung: _liT(x && x.erkennung, 500),
-      spalten: [...spalten.values()].sort((p, q) => _liSpaltenNr(p.spalte) - _liSpaltenNr(q.spalte)), hinweise: _liT(x && x.hinweise, 700) };
+    b.zeilen.filter(z => z.nr >= datenAb).forEach(z => z.zellen.forEach(c => { if (!gedeckt(c.c)) mitInhalt.add(c.c); }));
+    mitInhalt.forEach(c => { const sp = _liSpalte(c); if (!spalten.has(sp)) { spalten.set(sp, { spalte: sp, ueberschrift: '', bedeutung: 'von der KI nicht beschrieben', ziel: 'gemischt' }); bereich.set(sp, [c, c]); } });
+    return { blatt: lab, relevant: !!(x && x.relevant), beschreibung: _liT(x && x.beschreibung, 1200) || (x ? '' : 'Zu diesem Blatt hat die KI nichts gesagt.'),
+      kopfzeilen: _liT(x && x.kopfzeilen, 40), daten_ab: datenAb, aufbau: x && LI_AUFBAU[x.aufbau] ? x.aufbau : 'unklar', erkennung: _liT(x && x.erkennung, 2000),
+      spalten: [...spalten.values()].sort((p, q) => bereich.get(p.spalte)[0] - bereich.get(q.spalte)[0] || bereich.get(p.spalte)[1] - bereich.get(q.spalte)[1]), hinweise: _liT(x && x.hinweise, 2000) };
   });
 }
 /* Kopfzeilen eines Blatts (Zeilennummern vor daten_ab) – aus „1-2", „1, 3" oder die letzten Zeilen davor */
@@ -74142,7 +74161,10 @@ function _liPromptLh(datei, blaetter, hinweis) {
     'und was Farben oder ausgeblendete Zeilen bedeuten, soweit erkennbar.\n' +
     '- spalten: jede Spalte mit Inhalt – ueberschrift, bedeutung (Abkürzungen erklären) und ziel, also wohin die Werte in der Anlagenakte gehören:\n' + _liZielListe(false) + '\n' +
     '  Steht in einer Spalte mehreres durcheinander (z. B. „Tresor li. Eingang, Code 4711, MR Dach"), nimm „gemischt". Ist eine Spalte unklar, nimm „sonstiges" und erkläre es. Rate nicht.\n' +
+    '  Stehen die Anlagen nebeneinander (je Anlage eine Gruppe aus mehreren Spalten, die sich nach rechts wiederholt), beschreibe die erste Gruppe Spalte für Spalte ' +
+    'und fasse alle weiteren Gruppen in EINEM Eintrag mit Spaltenbereich zusammen (spalte z. B. „K–CE", ziel meist „gemischt"); erkläre unter erkennung, wie eine Gruppe aufgebaut ist.\n' +
     '- hinweise: Besonderheiten fürs Auslesen (z. B. „Codes stehen teils in Klammern hinter dem Schlüsselort", „rot hinterlegte Zeilen sind gekündigte Anlagen").\n' +
+    LI_ABKUERZUNGEN + '\n' +
     (hinweis ? '\nHinweise des Nutzers (haben Vorrang): ' + hinweis + '\n' : '') +
     (blaetter.some(b => b.label && b.label !== b.name) ? 'Mehrere Dateien: die Blätter heißen „Datei › Blatt" – gib „blatt" genau so zurück.\n' : '') +
     '\n' + blaetter.map(b => 'Blatt „' + (b.label || b.name) + '" (' + b.zeilen.length + ' Zeilen mit Inhalt' + (b.zeilen.length > LI_LH_ZEILEN ? ', hier die ersten ' + LI_LH_ZEILEN : '') + '):\n' +
@@ -74172,7 +74194,7 @@ function _liPromptBlock(datei, b, lb, hinweis, bl) {
     '\nAufbau: ' + (LI_AUFBAU[lb.aufbau] || 'unklar') + (lb.erkennung ? '\nNeue Anlage / keine Anlage: ' + lb.erkennung : '') + (lb.hinweise ? '\nBesonderheiten: ' + lb.hinweise : '') +
     '\nSpalten (Spalte „Überschrift": Bedeutung → Ziel):\n' + sp + (ign.length ? '\nNicht übernehmen: Spalte ' + ign.join(', ') : '') +
     (hinweis ? '\nHinweise des Nutzers (haben Vorrang): ' + hinweis : '') +
-    '\n\nFelder der Anlagenakte (für „felder"):\n' + _liZielListe(true) +
+    '\n\nFelder der Anlagenakte (für „felder"):\n' + _liZielListe(true) + '\n' + LI_ABKUERZUNGEN +
     '\n\nFormat der Zeilen: „[Zeilennummer] Spalte: Inhalt | …" – nur gefüllte Zellen; „A–C" = verbundene Zelle über mehrere Spalten, „(bis Zeile 7)" = nach unten verbunden (gilt für alle diese Zeilen), ' +
     '„⏎" = Zeilenumbruch, [Kommentar: …] = Notiz an der Zelle, (ausgeblendet) = ausgeblendete Zeile, (gelb hinterlegt) / [rot] = Füllfarbe.\n\n' +
     (kopf.length ? 'Überschriften:\n' + txt(b.zeilen.filter(z => kopf.indexOf(z.nr) >= 0)) + '\n\n' : '') +
@@ -74205,7 +74227,7 @@ function _liPromptDok(dok, von, bis, hinweis) {
     'Es kann eine Liste, eine Tabelle, ein Formular, ein Objekt- oder Datenblatt, ein Scan oder eine handschriftliche Notiz sein.\n\n' +
     'Datei „' + dok.datei + '"' + (bild ? ' (Foto).' : (dok.seiten > 1 ? ', Seiten ' + von + ' bis ' + bis + ' von ' + dok.seiten + ' – im Anhang ist Seite 1 = Seite ' + von + ' der Datei.' : ', eine Seite.')) +
     (hinweis ? '\nHinweise des Nutzers (haben Vorrang): ' + hinweis : '') +
-    '\n\nFelder der Anlagenakte (für „felder"):\n' + _liZielListe(true) +
+    '\n\nFelder der Anlagenakte (für „felder"):\n' + _liZielListe(true) + '\n' + LI_ABKUERZUNGEN +
     '\n\nAufgabe: Gib jede Aufzugsanlage zurück, zu der im Anhang Angaben stehen.\nRegeln:\n' +
     '- seite_von / seite_bis: auf welchen Seiten des Anhangs (1 = erste angehängte Seite) die Angaben zu dieser Anlage stehen' + (bild ? ' – beim Foto immer 1' : '') + '.\n' + _liRegeln('Seite');
 }
@@ -74213,12 +74235,12 @@ function _liPromptDok(dok, von, bis, hinweis) {
 /* ── Zuordnung zu den Maxise-Anlagen ── */
 function _liAdrTeile(s) {
   let t = String(s == null ? '' : s).toLowerCase().replace(/ß/g, 'ss').replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/[éèê]/g, 'e');
-  t = t.replace(/strasse\b/g, 'str').replace(/str\./g, 'str ');
+  t = t.replace(/strasse\b/g, 'str').replace(/str\./g, 'str ').replace(/platz\b/g, 'pl').replace(/pl\.(?=[\s\d,]|$)/g, 'pl ');
   const plz = (/(^|\D)(\d{5})(?!\d)/.exec(t) || [])[2] || '';
   const ohne = plz ? t.replace(plz, ' ') : t;
-  const m = /([a-z][a-z .'-]*?)[\s.,-]*(\d{1,4})(?: ?([a-z]))?(?![a-z0-9])/.exec(ohne);
+  const m = /([a-z][a-z .'-]*?)[\s.,-]*(\d{1,4})(?: ?([a-z]))?(?: ?\/ ?(\d{1,3}[a-z]?))?(?![a-z0-9])/.exec(ohne);
   if (!m) { const seg = (ohne.split(',')[0] || '').replace(/[^a-z]/g, ''); return { str: seg.length >= 4 ? seg : '', nr: '', nrZahl: '', plz }; }   // Straße ohne Hausnummer
-  return { str: m[1].replace(/[^a-z]/g, ''), nr: m[2] + (m[3] || ''), nrZahl: m[2], plz };
+  return { str: m[1].replace(/[^a-z]/g, ''), nr: m[2] + (m[3] || '') + (m[4] ? '/' + m[4] : ''), nrZahl: m[2], plz };   // „30/1" und „30/2" sind verschiedene Häuser
 }
 function _liAbstand(a, b) {
   if (a === b) return 0;
@@ -74241,7 +74263,7 @@ function _liAehnlich(a, b) {
   if ((a.indexOf(b) === 0 || b.indexOf(a) === 0) && Math.min(a.length, b.length) >= 5) return true;
   return _liAbstand(a, b) <= (n >= 10 ? 2 : 1);
 }
-function _liFabKey(s) { const k = _lmNorm(s); return k.length >= 3 && !/^0+$/.test(k) ? k : ''; }
+function _liFabKey(s) { let k = _lmNorm(s); if (/^\d+$/.test(k)) k = k.replace(/^0+/, ''); return k.length >= 3 ? k : ''; }
 function _liIndex(anlagen, akteMap) {
   const id = new Map(), fab = new Map(), adr = [];
   const add = (k, a) => { if (!k) return; if (!fab.has(k)) fab.set(k, []); if (fab.get(k).indexOf(a) < 0) fab.get(k).push(a); };
@@ -74275,25 +74297,37 @@ function _liZuordnen(s, idx) {
   let fab = fk && idx.fab.has(fk) ? idx.fab.get(fk).slice() : [];
   if (fab.length > 1) { const aktiv = fab.filter(a => !a.archived); if (aktiv.length) fab = aktiv; }
   if (fab.length === 1) { const a = fab[0]; if (!adrPasst(a)) hinweise.push('Adresse ' + wo + ': ' + s.adresse); return fertig('fab', [a], !adrPasst(a)); }
-  if (fab.length > 1) return { art: 'mehrere', ids: [], kand: fab.map(a => String(a.id)), pruefen: true, hinweis: 'Die Fabrik-Nr. gibt es in Maxise mehrfach' };
+  if (fab.length > 1) return { art: 'mehrere', ids: [], kand: fab.map(a => String(a.id)), pruefen: true, hinweis: 'Die Fabrik-Nr. gibt es mehrfach' };
   // 2. Anlagen-Nr. (Maxise-ID)
   const nr = String(s.anlage_nr || '').trim().replace(/^#/, '');
+  let nrA = null;
   if (/^\d+$/.test(nr) && idx.id.has(nr)) {
-    const a = idx.id.get(nr), passt = adrPasst(a);
-    if (!passt) hinweise.push('Adresse ' + wo + ': ' + s.adresse);
-    if (fk) hinweise.push('Fabrik-Nr. ' + wo + ': ' + s.fabriknummer + (a.fabriknummer ? ', in Maxise: ' + a.fabriknummer : ''));
-    return fertig('nr', [a], !passt || !!fk);
+    const a = idx.id.get(nr);
+    if (adrPasst(a)) {
+      if (fk) hinweise.push('Fabrik-Nr. ' + wo + ': ' + s.fabriknummer + (a.fabriknummer ? ', in Maxise: ' + a.fabriknummer : ''));
+      return fertig('nr', [a], !!fk);
+    }
+    nrA = a;   // die Nummer gibt es in Maxise, aber an einer anderen Adresse → nur als Vorschlag
   }
+  const mitNr = r => {
+    if (!nrA) return r;
+    const id = String(nrA.id), h = 'Anlagen-Nr. ' + nr + ' ist in Maxise ' + name(nrA) + ' – passt nicht zur Adresse';
+    if (r.ids.length) { if (r.ids.indexOf(id) < 0) { r.pruefen = true; r.hinweis = [r.hinweis, h].filter(Boolean).join(' · '); } return r; }
+    if (r.kand.indexOf(id) < 0) r.kand = r.art === 'keine' ? [id].concat(r.kand) : r.kand.concat(id);   // Treffer über die Adresse zuerst
+    if (r.art === 'keine') r.art = 'aehnlich';
+    r.pruefen = true; r.hinweis = [r.hinweis, h].filter(Boolean).join(' · ');
+    return r;
+  };
   // 3. Adresse
   if (!t.str || !t.nr) {
     const gleicheStr = t.str ? idx.adr.filter(x => _liAehnlich(x.t.str, t.str) && !(t.plz && x.t.plz && t.plz !== x.t.plz)).slice(0, 6).map(x => String(x.a.id)) : [];
-    return { art: 'keine', ids: [], kand: gleicheStr, pruefen: true, hinweis: !s.adresse ? (fk ? 'Fabrik-Nr. ' + s.fabriknummer + ' gibt es in Maxise nicht, keine Adresse' : 'keine Adresse und keine Fabrik-Nr.') : (t.str ? 'Adresse ohne Hausnummer' : 'Adresse nicht lesbar') };
+    return mitNr({ art: 'keine', ids: [], kand: gleicheStr, pruefen: true, hinweis: !s.adresse ? (fk ? 'Fabrik-Nr. ' + s.fabriknummer + ' nicht gefunden, keine Adresse' : 'keine Adresse und keine Fabrik-Nr.') : (t.str ? 'Adresse ohne Hausnummer' : 'Adresse nicht lesbar') });
   }
   const genau = [], aehnlich = [], strasse = [];
   for (const x of idx.adr) {
     if (t.plz && x.t.plz && t.plz !== x.t.plz) continue;
     const gleichStr = x.t.str === t.str, nahStr = gleichStr || _liAehnlich(x.t.str, t.str);
-    const nrGleich = x.t.nr === t.nr, nrNah = !nrGleich && x.t.nrZahl === t.nrZahl && (!/[a-z]$/.test(x.t.nr) || !/[a-z]$/.test(t.nr));
+    const nrGleich = x.t.nr === t.nr, nrNah = !nrGleich && x.t.nrZahl === t.nrZahl && (!/[a-z/]/.test(x.t.nr.slice(x.t.nrZahl.length)) || !/[a-z/]/.test(t.nr.slice(t.nrZahl.length)));
     if (gleichStr && nrGleich) genau.push(x.a);
     else if ((gleichStr && nrNah) || (nahStr && nrGleich)) aehnlich.push(x.a);
     else if (nahStr) strasse.push(x.a);
@@ -74302,7 +74336,7 @@ function _liZuordnen(s, idx) {
   if (genau.length === 1) {
     const a = genau[0];
     if (fabAnders(a)) hinweise.push('Fabrik-Nr. ' + wo + ': ' + s.fabriknummer + ', in Maxise: ' + a.fabriknummer);
-    return fertig('adresse', [a], fabAnders(a));
+    return mitNr(fertig('adresse', [a], fabAnders(a)));
   }
   if (genau.length > 1) {
     const tok = _liTokens(s.bezeichnung);
@@ -74312,13 +74346,13 @@ function _liZuordnen(s, idx) {
       if (best > 0 && score.filter(x => x === best).length === 1) {
         const a = genau[score.indexOf(best)];
         hinweise.push(genau.length + ' Aufzüge an dieser Adresse – über die Bezeichnung „' + s.bezeichnung + '" zugeordnet');
-        return fertig('adresse', [a], true);
+        return mitNr(fertig('adresse', [a], true));
       }
     }
-    return { art: 'mehrere', ids: [], kand: genau.map(a => String(a.id)), pruefen: true, hinweis: genau.length + ' Aufzüge an dieser Adresse – bitte wählen' };
+    return mitNr({ art: 'mehrere', ids: [], kand: genau.map(a => String(a.id)), pruefen: true, hinweis: genau.length + ' Aufzüge an dieser Adresse – bitte wählen' });
   }
-  if (aehnlich.length) return { art: 'aehnlich', ids: [], kand: aehnlich.slice(0, 6).map(a => String(a.id)), pruefen: true, hinweis: 'ähnliche Adresse in Maxise – bitte prüfen' };
-  return { art: 'keine', ids: [], kand: strasse.slice(0, 5).map(a => String(a.id)), pruefen: true, hinweis: strasse.length ? 'gleiche Straße, andere Hausnummer' : '' };
+  if (aehnlich.length) return mitNr({ art: 'aehnlich', ids: [], kand: aehnlich.slice(0, 6).map(a => String(a.id)), pruefen: true, hinweis: 'ähnliche Adresse gefunden – bitte prüfen' });
+  return mitNr({ art: 'keine', ids: [], kand: strasse.slice(0, 5).map(a => String(a.id)), pruefen: true, hinweis: strasse.length ? 'gleiche Straße, andere Hausnummer' : '' });
 }
 
 /* ── Plan je Anlage: welche Tätigkeiten aus den Excel-Angaben folgen (rein: alle Daten als Parameter) ── */
@@ -74396,6 +74430,16 @@ function _liPlanBauen(o) {
       akt.push({ k: 'tuev', typ: 'tuev', felder: tv, text: _liTuevText(tv), vorbei, an: true });
     }
   }
+  // 🆘 Befreiereinweisung laut Liste erledigt – nur „erledigt" + an welche Firma (wie „✓ Einweisung erledigt" in der Akte)
+  const be = werte.befreiereinweisung;
+  if (be && be.length && o.befreierAn) {
+    const ausListe = be.filter(w => w !== 'ja');
+    const firma = ausListe[0] || String(o.kundeFirma || '').trim() || saetze.map(s => s.kunde).filter(Boolean)[0] || '';
+    if (ausListe.length > 1) notiz.push('Befreiereinweisung laut Liste an: ' + ausListe.join(' / '));
+    if (o.befreier) akt.push({ k: '=befreiereinweisung', typ: 'gleich', feld: 'befreiereinweisung', alt: o.befreier.an || '' });
+    else if (firma) akt.push({ k: 'befreier', typ: 'befreier', firma, quelle: ausListe.length ? 'liste' : (o.kundeFirma ? 'maxise' : 'liste'), an: true });
+    else notiz.push('Befreiereinweisung laut Liste erledigt – an welche Firma, steht nicht dabei');
+  }
   const teile = notiz.filter((x, i) => x && notiz.indexOf(x) === i);
   if (teile.length) {
     const titel = _liNotizTitel(saetze);
@@ -74404,12 +74448,13 @@ function _liPlanBauen(o) {
   }
   return akt;
 }
+const LI_TAETIG = ['aufnehmen', 'feld', 'tuev', 'befreier', 'notiz'];
 function _liAn(kz, x) {
-  if (!x || ['aufnehmen', 'feld', 'tuev', 'notiz'].indexOf(x.typ) < 0) return false;
+  if (!x || LI_TAETIG.indexOf(x.typ) < 0) return false;
   if (x.typ === 'feld' && x.optionen && !x.neu) return false;   // noch kein Wert gewählt
   return kz && kz.an && kz.an[x.k] !== undefined ? !!kz.an[x.k] : !!x.an;
 }
-function _liTaetig(akt) { return (akt || []).filter(x => ['aufnehmen', 'feld', 'tuev', 'notiz'].indexOf(x.typ) >= 0); }
+function _liTaetig(akt) { return (akt || []).filter(x => LI_TAETIG.indexOf(x.typ) >= 0); }
 
 /* ── KI ── */
 function _liKiDa() { return typeof APP_KEYS !== 'undefined' && !!(APP_KEYS && APP_KEYS.anthropicKey); }
@@ -74450,7 +74495,7 @@ async function _liFrage(body, signal) {
 /* ── Zustand ── */
 function liAktiv() { return LI_FIRMEN.indexOf(_lmData && _lmData.firma) >= 0 && _lmCanEdit(); }
 function _liKz(kid) {
-  if (!_li.karten.has(kid)) _li.karten.set(kid, { status: 'offen', an: {}, wahl: {}, undos: [], laeuft: false, fehler: '', ergebnis: '', zeigen: false, kunde: null, suche: '' });
+  if (!_li.karten.has(kid)) _li.karten.set(kid, { status: 'offen', an: {}, wahl: {}, undos: [], laeuft: false, fehler: '', ergebnis: '', zeigen: false, suche: '' });
   return _li.karten.get(kid);
 }
 function _liSatz(id) { return (_li && _li.saetze || []).find(s => s.id === id) || null; }
@@ -74461,7 +74506,17 @@ function _liKartePlan(id) {
   const a = _lmFindAnlage(id); if (!a) return null;
   const akte = _lmAkteOf(id), kz = _liKz('a' + id), saetze = _liSaetzeVon(id);
   const titelDa = t => ((_lmData.eintragMap && _lmData.eintragMap.get(String(id))) || []).some(r => r.fields && r.fields.typ === 'notiz' && String(r.fields.titel || '') === t);
-  return { a, akte, saetze, mitglied: _lmIstMitglied(akte), akt: _liPlanBauen({ akte, saetze, mitglied: _lmIstMitglied(akte), wahl: kz.wahl, notizDa: titelDa }) };
+  const befreierAn = typeof _lmBefreierAn === 'function' && _lmBefreierAn(_lmData.firma);
+  return { a, akte, saetze, mitglied: _lmIstMitglied(akte), akt: _liPlanBauen({ akte, saetze, mitglied: _lmIstMitglied(akte), wahl: kz.wahl, notizDa: titelDa,
+    befreierAn, befreier: befreierAn ? _liBefreierDa(id) : null, kundeFirma: String((a.kunde && a.kunde.firmenname) || '') }) };
+}
+/* Gibt es an der Anlage schon eine Befreiereinweisung? Nach einem Kundenwechsel zählen nur neuere (wie im Liftmanager) */
+function _liBefreierDa(id) {
+  const akte = _lmAkteOf(id), neuAb = _lmParseDate(akte.befreier_neu_ab) ? _lmDate(akte.befreier_neu_ab) : '';
+  const liste = ((_lmData.eintragMap && _lmData.eintragMap.get(String(id))) || []).map(r => r.fields || {}).filter(f => f.typ === 'befreier')
+    .map(f => ({ datum: _lmDate(f.datum) || _lmDate(f.created) || '', an: typeof _lmBefreierFirma === 'function' ? _lmBefreierFirma(f) : String(f.eingewiesene_firma || '') }))
+    .filter(x => !neuAb || x.datum >= neuAb).sort((x, y) => y.datum.localeCompare(x.datum));
+  return liste[0] || null;
 }
 /* Karten: je Maxise-Anlage (zugeordnete Sätze) und je nicht zugeordnetem Satz – in der Reihenfolge der Excel */
 function _liKarten() {
@@ -74492,8 +74547,11 @@ function _liPasst(f, kat) {
   if (kat.st !== 'offen') return false;
   return f === 'offen' || (f === 'pruefen' && kat.pruefen) || (f === 'fehlt' && kat.fehlt) || (f === 'aufnehmen' && kat.aufnehmen);
 }
+/* Wählbare Anlagen: was „+ Anlage hinzufügen" vorschlägt (Maxise, nicht archiviert) und alles, was schon im Liftmanager ist.
+   Neue Anlagen legt der Import nicht an. */
+function _liPool() { return (_lmData.anlagen || []).filter(a => a && a.id != null && (!a.archived || !!LM_STATUS[_lmAkteOf(a.id).lm_status])); }
 function _liZuordnenAlle() {
-  const idx = _liIndex(_lmData.anlagen, _lmData.akteMap);
+  const idx = _liIndex(_liPool(), _lmData.akteMap);
   _li.saetze.forEach(s => { if (!s.manuell) s.zu = _liZuordnen(s, idx); });
 }
 /* Firma inzwischen gewechselt? Dann nichts anzeigen und nichts schreiben – Anlagen-IDs gelten nur je Maxise-Mandant */
@@ -74519,7 +74577,7 @@ function liOeffnen() {
   if (!_li) _li = _liNeu();
   _liRender();
 }
-function _liNeu() { return { firma: _lmData.firma, dateien: [], dateiFehler: [], doks: [], blaetter: [], schritt: 'datei', lh: null, lhLaeuft: false, lhFehler: '', hinweis: '', bloecke: [], saetze: [], karten: new Map(), filter: 'offen', limit: LI_SEITE, ab: _lmToday(), lauf: null, kunden: null }; }
+function _liNeu() { return { firma: _lmData.firma, dateien: [], dateiFehler: [], doks: [], blaetter: [], schritt: 'datei', lh: null, lhLaeuft: false, lhFehler: '', hinweis: '', bloecke: [], saetze: [], karten: new Map(), filter: 'offen', limit: LI_SEITE, ab: _lmToday(), lauf: null }; }
 function _liVerwerfen() {
   if (_li && _li.lauf) { try { _li.lauf.ac.abort(); } catch (_) {} }
   if (_li) (_li.doks || []).forEach(d => { if (d.url) { try { URL.revokeObjectURL(d.url); } catch (_) {} } });
@@ -74562,7 +74620,7 @@ function _liDateiHtml() {
   const body = _liSchritte('datei') +
     '<div class="li-intro">📥 <b>Excel-Listen, PDFs oder Fotos in die Anlagenakten übernehmen</b> – z. B. Zugänge, Schlüssel, Codes, Maschinenraum, Technik, TÜV. ' +
     'Die KI liest auch ungewöhnlich aufgebaute Tabellen und eingescannte Blätter. <b>Übernommen wird erst nach deinem OK – je Anlage.</b> Anlagen aus der Liste, die noch nicht im Liftmanagement sind, ' +
-    'kannst du dabei aufnehmen; fehlt eine in Maxise, kannst du sie dort anlegen.</div>' +
+    'kannst du dabei aufnehmen – zugeordnet wird nur zu Anlagen, die schon im Liftmanager sind oder die „+ Anlage hinzufügen" vorschlägt. Neue Anlagen werden nicht angelegt.</div>' +
     '<label class="li-datei"><span>📄 Dateien wählen – Excel/CSV, PDF oder Foto, auch mehrere auf einmal</span><input type="file" id="li-datei" multiple accept=".xlsx,.xls,.xlsm,.ods,.csv,.pdf,application/pdf,image/*,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" onchange="liDateiGewaehlt(this)"></label>' +
     '<div id="li-datei-info">' + (hat ? '<div class="li-ok">✓ ' + (nd === 1 ? '<b>' + escapeHtml(_li.dateien[0].name) + '</b> gelesen' : '<b>' + nd + ' Dateien</b> gelesen') +
         (b.length ? ' – ' + b.length + (b.length === 1 ? ' Blatt' : ' Blätter') : '') + (dk.length ? ' – ' + (dk.length === 1 ? (dk[0].typ === 'bild' ? '1 Foto' : '1 PDF') : dk.length + ' PDFs/Fotos') + ' mit ' + seiten + (seiten === 1 ? ' Seite' : ' Seiten') : '') + '</div>' +
@@ -74962,6 +75020,8 @@ function _liAkt(kid, x, kz, gesperrt) {
   }
   if (x.typ === 'tuev') return '<label class="li-a">' + cb + '<span class="li-a-l">🛡 TÜV-Termine</span><span class="li-a-w"><span class="neu">' + escapeHtml(x.text) + '</span> <span class="lm-pill gruen">neu</span>' +
     (x.vorbei ? ' <span class="lm-pill rot" title="Die Fälligkeit liegt in der Vergangenheit – die Anlage erscheint dann als TÜV überfällig">liegt zurück</span>' : '') + '</span></label>';
+  if (x.typ === 'befreier') return '<label class="li-a">' + cb + '<span class="li-a-l">🆘 Befreiereinweisung</span><span class="li-a-w"><span class="neu">erledigt – an ' + escapeHtml(x.firma) + '</span> <span class="lm-pill gruen">neu</span>' +
+    (x.quelle === 'maxise' ? ' <span class="lm-muted">(Firma: Kunde in Maxise)</span>' : '') + '</span></label>';
   if (x.typ === 'notiz') return '<label class="li-a">' + cb + '<span class="li-a-l">📝 Notiz anlegen</span><span class="li-a-w"><span class="neu li-notiz">' + e(x.text) + '</span>' +
     (x.schonDa ? ' <span class="lm-pill grau" title="Eine Notiz aus dieser Excel-Datei gibt es an der Anlage schon">schon vorhanden</span>' : '') + '</span></label>';
   if (x.typ === 'gesperrt') return '<div class="li-a info">🔒 <span class="li-a-l">🛡 TÜV-Termine</span><span class="li-a-w">' + escapeHtml(x.text) + ' <span class="lm-muted">– ' + escapeHtml(x.grund) + '</span></span></div>';
@@ -74974,7 +75034,7 @@ function _liAnlageKarteHtml(k, kz) {
   const ok = kz.status === 'ok', skip = kz.status === 'skip', gesperrt = kz.laeuft || skip;
   const wie = k.saetze.map(s => s.zu && s.zu.art).filter((x, i, l) => x && l.indexOf(x) === i);
   const wiePill = wie.map(w => ({ fab: '<span class="lm-pill gruen">✓ über Fabrik-Nr.</span>', nr: '<span class="lm-pill gruen">✓ über Anlagen-Nr.</span>', adresse: '<span class="lm-pill gruen">✓ über die Adresse</span>',
-    manuell: '<span class="lm-pill blau">von Hand zugeordnet</span>', neu: '<span class="lm-pill blau">in Maxise neu angelegt</span>' }[w] || '')).join('');
+    manuell: '<span class="lm-pill blau">von Hand zugeordnet</span>' }[w] || '')).join('');
   const pruefen = k.saetze.some(s => s.zu && s.zu.pruefen);
   return '<div class="li-karte' + (ok ? ' ok' : '') + (skip ? ' skip' : '') + (pruefen && !ok ? ' pruefen' : '') + '" id="li-k-' + k.kid + '">' +
     '<div class="li-k-kopf"><div class="li-k-titel"><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)) + '</b>' +
@@ -75000,9 +75060,8 @@ function _liAnlageKarteHtml(k, kz) {
 function _liSatzKarteHtml(k, kz) {
   const s = k.s, zu = s.zu || { art: 'keine', kand: [] }, skip = kz.status === 'skip';
   const kand = (zu.kand || []).map(id => _lmFindAnlage(id)).filter(Boolean);
-  const titel = { mehrere: '⚠ Mehrere Anlagen möglich – bitte wählen', aehnlich: '⚠ Ähnliche Anlage in Maxise – bitte prüfen', keine: '❓ In Maxise nicht gefunden' }[zu.art] || '❓ Nicht zugeordnet';
+  const titel = { mehrere: '⚠ Mehrere Anlagen möglich – bitte wählen', aehnlich: '⚠ Ähnliche Anlage gefunden – bitte prüfen', keine: '❓ Keine passende Anlage gefunden' }[zu.art] || '❓ Nicht zugeordnet';
   const daten = Object.keys(s.felder).map(f => _liLabel(f) + ': ' + s.felder[f]).concat(s.sonstiges ? ['Sonstiges: ' + s.sonstiges] : []).concat(s.extra || []);
-  const darfAnlegen = typeof _openCreateAnlageStandaloneForm === 'function' && (isAdmin() || hasPermission('auftraege_edit'));
   const zeile = a => { const st = LM_STATUS[_lmAkteOf(a.id).lm_status]; return '<label class="li-kand"><input type="checkbox" class="li-kand-cb" value="' + escapeHtml(String(a.id)) + '"' + (skip ? ' disabled' : '') + '> <span><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)) + '</b> <span class="lm-muted">' +
     escapeHtml([a.fabriknummer ? 'Fabrik-Nr. ' + a.fabriknummer : '', a.name && a.name !== a.anzeigeAdresse ? a.name : '', a.kennung || '', (a.kunde || {}).firmenname || '', a.archived ? 'archiviert' : ''].filter(Boolean).join(' · ')) + '</span></span>' +
     (st ? ' <span class="lm-pill ' + st.cls + '">' + escapeHtml(st.label) + '</span>' : '') + '</label>'; };
@@ -75014,15 +75073,12 @@ function _liSatzKarteHtml(k, kz) {
     (kz.zeigen ? '<div class="li-zeilen">' + _liZeilenHtml([s]) + '</div>' : '') +
     (skip ? '' : '<div class="li-zuo" id="li-zuo-' + k.kid + '">' +
       (kand.length ? '<div class="li-sub">' + (zu.art === 'mehrere' ? 'Welche Anlage(n)? Gilt die Zeile fürs ganze Gebäude, alle anhaken:' : (zu.art === 'aehnlich' ? 'Ist es eine dieser Anlagen?' : 'In der Nähe (gleiche Straße):')) + '</div>' + kand.map(zeile).join('') : '') +
-      '<div class="li-suche"><input type="search" placeholder="🔍 Maxise-Anlage suchen (Adresse, Fabrik-Nr., Kunde)" value="' + escapeHtml(kz.suche || '') + '" oninput="liSuche(' + _lmA(k.kid) + ',this.value)"></div>' +
+      '<div class="li-suche"><input type="search" placeholder="🔍 Anlage suchen (Adresse, Fabrik-Nr., Kunde)" value="' + escapeHtml(kz.suche || '') + '" oninput="liSuche(' + _lmA(k.kid) + ',this.value)"></div>' +
       '<div class="li-treffer" id="li-tr-' + k.kid + '">' + _liTrefferHtml(kz.suche) + '</div>' +
       '<div class="li-k-fuss"><button class="btn prim" onclick="liZuordnen(' + _lmA(k.kid) + ')">✓ Angehakte zuordnen</button>' +
         '<button class="btn" onclick="liSkip(' + _lmA(k.kid) + ',true)">Überspringen</button>' +
         '<button type="button" class="li-link" onclick="liZeilen(' + _lmA(k.kid) + ')">' + (kz.zeigen ? 'Quelle ausblenden' : '🔎 Quelle ansehen') + '</button></div>' +
-      (zu.art === 'keine' || zu.art === 'aehnlich' ? '<div class="li-neu"><b>🚀 Gibt es die Anlage in Maxise noch nicht?</b> ' +
-        (darfAnlegen ? 'Bitte erst oben suchen, damit keine Anlage doppelt angelegt wird. Dann Kunden wählen und anlegen – der Maxise-Dialog ist mit Adresse und Fabrik-Nr. vorbelegt.' +
-          '<div class="li-kunde" id="li-ku-' + k.kid + '">' + _liKundeHtml(k.kid, s, kz) + '</div>'
-          : '<span class="lm-muted">Zum Anlegen in Maxise fehlt die Berechtigung „Aufträge bearbeiten" – bitte im Büro anlegen lassen und dann hier zuordnen.</span>') + '</div>' : '') +
+      (zu.art === 'keine' || zu.art === 'aehnlich' ? '<div class="li-neu">Neue Anlagen legt der Import nicht an. Ist die Anlage weder im Liftmanager noch unter „+ Anlage hinzufügen" zu finden, bitte überspringen.</div>' : '') +
     '</div>') +
     (skip ? '<div class="li-k-fuss"><button class="btn" onclick="liSkip(' + _lmA(k.kid) + ',false)">↺ doch bearbeiten</button></div>' : '') +
   '</div>';
@@ -75030,12 +75086,11 @@ function _liSatzKarteHtml(k, kz) {
 function _liTrefferHtml(q) {
   const toks = String(q || '').toLowerCase().split(/\s+/).filter(Boolean);
   if (!toks.length) return '';
-  const liste = (_lmData.anlagen || []).filter(a => {
-    if (!a || a.id == null) return false;
+  const liste = _liPool().filter(a => {
     const k = a.kunde || {}, hay = [a.anzeigeAdresse, a.name, a.kennung, a.fabriknummer, k.firmenname, k.kundennummer, String(a.id)].join(' ').toLowerCase(), hn = _lmNorm(hay);
     return toks.every(t => hay.indexOf(t) >= 0 || (_lmNorm(t).length > 1 && hn.indexOf(_lmNorm(t)) >= 0));
   }).slice(0, 8);
-  if (!liste.length) return '<div class="lm-muted">Keine Maxise-Anlage gefunden.</div>';
+  if (!liste.length) return '<div class="lm-muted">Keine Anlage gefunden – gesucht wird im Liftmanager und unter „+ Anlage hinzufügen".</div>';
   return liste.map(a => { const st = LM_STATUS[_lmAkteOf(a.id).lm_status]; return '<label class="li-kand"><input type="checkbox" class="li-kand-cb" value="' + escapeHtml(String(a.id)) + '"> <span><b>' + escapeHtml(a.anzeigeAdresse || a.name || ('Anlage ' + a.id)) + '</b> <span class="lm-muted">' +
     escapeHtml([a.fabriknummer ? 'Fabrik-Nr. ' + a.fabriknummer : '', (a.kunde || {}).firmenname || '', a.archived ? 'archiviert' : ''].filter(Boolean).join(' · ')) + '</span></span>' + (st ? ' <span class="lm-pill ' + st.cls + '">' + escapeHtml(st.label) + '</span>' : '') + '</label>'; }).join('');
 }
@@ -75048,7 +75103,8 @@ function liZuordnen(kid) {
   if (!_li || !_liFirmaOk()) return;
   const k = _liKarten().find(x => x.kid === kid); if (!k || !k.s) return;
   const box = document.getElementById('li-k-' + kid);
-  const ids = [...new Set([...(box ? box.querySelectorAll('.li-kand-cb') : [])].filter(c => c.checked).map(c => String(c.value)))].filter(id => _lmFindAnlage(id));
+  const pool = new Set(_liPool().map(a => String(a.id)));
+  const ids = [...new Set([...(box ? box.querySelectorAll('.li-kand-cb') : [])].filter(c => c.checked).map(c => String(c.value)))].filter(id => pool.has(id));
   if (!ids.length) return toast('Bitte mindestens eine Anlage anhaken – oder „Überspringen".', 'err');
   k.s.zu = { art: 'manuell', ids, kand: [], pruefen: false, hinweis: '' };
   k.s.manuell = true;
@@ -75071,68 +75127,6 @@ function liZeilen(kid) { if (!_li) return; const kz = _liKz(kid); kz.zeigen = !k
 function liAn(kid, k, an) { if (!_li) return; _liKz(kid).an[k] = !!an; }
 function liWahl(kid, feld, v) { if (!_li) return; const kz = _liKz(kid); if (v === '') delete kz.wahl[feld]; else kz.wahl[feld] = +v; kz.an['f:' + feld] = v !== ''; _liKarteNeu(kid); }
 function liAkteOeffnen(id) { _lmCloseModal('li-modal'); lmOpenAkte(id); }
-
-/* Kunde für „🚀 In Maxise anlegen" (Maxise-Kundenliste) */
-async function _liKundenLaden() {
-  if (_li.kunden && _li.kunden.firma === _li.firma) return _li.kunden.liste;
-  const firma = _li.firma;
-  let liste = (typeof _kundenCache !== 'undefined' && _kundenCache && _kundenCache.firma === firma && Array.isArray(_kundenCache.items)) ? _kundenCache.items : null;
-  if (!liste && typeof _erpTryPaths === 'function') {
-    const res = await _erpTryPaths(firma, ['api/kunden', 'kunden']);
-    liste = Array.isArray(res) ? res : ((res && (res.content || res.items || res.data)) || []);
-  }
-  if (_li && _li.firma === firma) _li.kunden = { firma, liste: liste || [] };
-  return liste || [];
-}
-function _liKundeHtml(kid, s, kz) {
-  if (kz.kunde) return '<span class="li-ku-gew">✓ Kunde: <b>' + escapeHtml(kz.kunde.firmenname || '?') + '</b>' + (kz.kunde.kundennummer ? ' (Kd-Nr. ' + escapeHtml(String(kz.kunde.kundennummer)) + ')' : '') + '</span> ' +
-    '<button type="button" class="li-link" onclick="liKundeWeg(' + _lmA(kid) + ')">ändern</button> <button class="btn prim" onclick="liMaxiseAnlegen(' + _lmA(kid) + ')">🚀 In Maxise anlegen …</button>';
-  return '<input type="search" placeholder="🔍 Kunde in Maxise suchen' + (s.kunde ? ' (Excel: ' + escapeHtml(s.kunde) + ')' : '') + '" value="' + escapeHtml(kz.kuSuche != null ? kz.kuSuche : (s.kunde || '')) + '" onfocus="liKundeSuche(' + _lmA(kid) + ',this.value)" oninput="liKundeSuche(' + _lmA(kid) + ',this.value)">' +
-    '<div class="li-ku-tr" id="li-kutr-' + kid + '"></div>';
-}
-async function liKundeSuche(kid, q) {
-  if (!_li) return;
-  const kz = _liKz(kid); kz.kuSuche = String(q || '');
-  const el = document.getElementById('li-kutr-' + kid); if (!el) return;
-  let liste;
-  try { if (!_li.kunden) el.innerHTML = '<span class="lm-muted">lade Kunden aus Maxise …</span>'; liste = await _liKundenLaden(); }
-  catch (e) { el.innerHTML = '<span class="li-rot">Kunden nicht ladbar: ' + escapeHtml(String((e && e.message) || e).slice(0, 120)) + '</span>'; return; }
-  if (!_li || kz.kuSuche !== String(q || '')) return;
-  const toks = _liTokens(q);
-  const treffer = (liste || []).map(k => { const hay = _liTokens([k.firmenname, k.kundennummer, k.ort, k.strasse].join(' ')); return { k, n: toks.filter(t => hay.indexOf(t) >= 0).length }; })
-    .filter(x => !toks.length || x.n > 0).sort((x, y) => y.n - x.n || String(x.k.firmenname || '').localeCompare(String(y.k.firmenname || ''), 'de')).slice(0, 8);
-  el.innerHTML = treffer.length ? treffer.map(x => '<button type="button" class="li-ku" onclick="liKundeWahl(' + _lmA(kid) + ',' + _lmA(String(x.k.id != null ? x.k.id : x.k.kundennummer)) + ')"><b>' + escapeHtml(x.k.firmenname || '?') + '</b> <span class="lm-muted">' +
-    escapeHtml([x.k.kundennummer ? 'Kd-Nr. ' + x.k.kundennummer : '', x.k.ort || ''].filter(Boolean).join(' · ')) + '</span></button>').join('') : '<span class="lm-muted">Kein Kunde gefunden – neue Kunden bitte im CRM anlegen.</span>';
-}
-function liKundeWahl(kid, key) {
-  if (!_li || !_li.kunden) return;
-  const k = _li.kunden.liste.find(x => String(x.id != null ? x.id : x.kundennummer) === String(key)); if (!k) return;
-  _liKz(kid).kunde = k;
-  const s = (_liKarten().find(x => x.kid === kid) || {}).s, el = document.getElementById('li-ku-' + kid);
-  if (el && s) el.innerHTML = _liKundeHtml(kid, s, _liKz(kid));
-}
-function liKundeWeg(kid) { if (!_li) return; const kz = _liKz(kid); kz.kunde = null; const s = (_liKarten().find(x => x.kid === kid) || {}).s, el = document.getElementById('li-ku-' + kid); if (el && s) el.innerHTML = _liKundeHtml(kid, s, kz); }
-async function liMaxiseAnlegen(kid) {
-  if (!_li || !_liFirmaOk()) return;
-  if (!(isAdmin() || hasPermission('auftraege_edit'))) return toast('🔒 Zum Anlegen in Maxise fehlt die Berechtigung „Aufträge bearbeiten".', 'err');
-  const k = _liKarten().find(x => x.kid === kid), kz = _liKz(kid);
-  if (!k || !k.s) return;
-  if (!kz.kunde) return toast('Bitte zuerst den Kunden in Maxise wählen.', 'err');
-  if (typeof _openCreateAnlageStandaloneForm !== 'function') return toast('Der Maxise-Dialog ist hier nicht verfügbar.', 'err');
-  const s = k.s, firma = _li.firma, ich = _li;
-  await _openCreateAnlageStandaloneForm(kz.kunde, { preset: { adresse: s.adresse, fabriknummer: s.fabriknummer }, onCreated: async (created) => {
-    const id = created && created.id != null ? String(created.id) : '';
-    try { await _lmLoadFirma(firma, true); } catch (_) {}
-    if (_li !== ich || !_li || _lmData.firma !== firma) return;
-    if (id && _lmFindAnlage(id)) {
-      s.zu = { art: 'neu', ids: [id], kand: [], pruefen: false, hinweis: '' }; s.manuell = true;
-      _li.karten.delete(kid);
-      toast('✅ In Maxise angelegt – jetzt die Tätigkeiten für diese Anlage prüfen und mit OK übernehmen.', 'ok');
-    } else toast('⚠ Die neue Anlage ist in Maxise angelegt, aber noch nicht in der Liste – bitte gleich über die Suche zuordnen.', 'err');
-    if (document.getElementById('li-modal')) _liListeNeu();
-    _lmSoftRefresh();
-  } });
-}
 
 /* ── Übernehmen je Anlage (nur nach „✓ OK") ── */
 function _liFeldAusFehler(e) { const m = /unknown field name:?\s*"?([^"\s]+)"?/i.exec(String((e && e.message) || e)); return m ? m[1] : ''; }
@@ -75158,11 +75152,12 @@ async function liOk(id) {
     if (anders.length) { kz.fehler = 'Die Akte wurde inzwischen geändert – bitte die Anlage noch einmal prüfen (nichts gespeichert).'; return; }
     const jetzt = _lmNowIso(), quelle = 'aus ' + _liQuelle(plan.saetze);
     const fields = {};
-    let aufnehmen = false, notizX = null;
+    let aufnehmen = false, notizX = null, befreierX = null;
     for (const x of gewaehlt) {
       if (x.typ === 'aufnehmen') { aufnehmen = true; Object.assign(fields, _lmAufnahmeFelder(ich.ab, wer, jetzt)); }
       else if (x.typ === 'feld') fields[x.feld] = x.modus === 'ergaenzen' ? x.alt + '\n' + x.neu : x.neu;
       else if (x.typ === 'tuev') Object.assign(fields, x.felder);
+      else if (x.typ === 'befreier') befreierX = x;
       else if (x.typ === 'notiz') notizX = x;
     }
     const cur = _lmData.akteMap && _lmData.akteMap.get(id);
@@ -75189,12 +75184,19 @@ async function liOk(id) {
       const alt = String((cur && cur.fields && cur.fields.pruefstelle) || '').trim();
       eintraege.push({ typ: 'status', titel: _lmShort('🛡 ZÜS / Prüfstelle: ' + w.pruefstelle, 120), text: (alt ? 'vorher: ' + alt + '\n' : '') + quelle });
     }
+    if (befreierX) { eintraege.push({ typ: 'befreier', titel: 'Befreiereinweisung · ' + befreierX.firma, eingewiesene_firma: befreierX.firma }); ergebnis.push('Befreiereinweisung'); }
     if (notizX) { eintraege.push({ typ: 'notiz', titel: notizX.titel, text: notizX.text }); ergebnis.push('Notiz'); }
     if (aufnehmen) ergebnis.push('ins Liftmanagement aufgenommen');
     if (ohne.length) ergebnis.push('ohne ' + ohne.join(', ') + ' (Feld fehlt noch – ein Admin öffnet einmal das Liftmanagement)');
     if (eintraege.length) {
+      const senden = liste => _lmAtBatch('POST', LM_T_EINTRAG, liste.map(f => ({ fields: Object.assign({ firma, anlage_id: id, datum: _lmToday(), created: jetzt, created_by: wer }, f) })));
       try {
-        const recs = await _lmAtBatch('POST', LM_T_EINTRAG, eintraege.map(f => ({ fields: Object.assign({ firma, anlage_id: id, datum: _lmToday(), created: jetzt, created_by: wer }, f) })));
+        let recs;
+        try { recs = await senden(eintraege); }
+        catch (e) {   // Feld „eingewiesene_firma" fehlt noch (Admin hat das Liftmanagement seit dem Update nicht geöffnet) → die Firma steht im Titel
+          if (!/unknown field/i.test(String((e && e.message) || e)) || ((e && e.teil) || []).length || !eintraege.some(f => 'eingewiesene_firma' in f)) throw e;
+          recs = await senden(eintraege.map(f => { const g = Object.assign({}, f); delete g.eingewiesene_firma; return g; }));
+        }
         recs.forEach(r => { _lmUpsertLocal('eintrag', r); undo.eintraege.push(r.id); });
       } catch (e) {
         ((e && e.teil) || []).forEach(r => { _lmUpsertLocal('eintrag', r); undo.eintraege.push(r.id); });
