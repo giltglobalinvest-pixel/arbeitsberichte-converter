@@ -2647,6 +2647,11 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
   .rg-mu-feld{grid-template-columns:110px minmax(0,1fr) 28px}
 }
 .rg-chip.kk{background:#ECFDF5;border-color:#6EE7B7;color:#065F46}
+/* v10.36: 💰 Haken „Skonto gewähren" */
+.rz-chk.rg-skonto{display:flex;gap:8px;align-items:flex-start;margin:4px 0 8px;padding:8px 10px;border:1px solid #FCD34D;background:#FFFBEB;border-radius:8px;font-size:13px;line-height:1.45;cursor:pointer}
+.rz-chk.rg-skonto.an{border-color:#86EFAC;background:#F0FDF4}
+.rz-chk.rg-skonto input{margin-top:3px}
+.rg-sk-summe b i{font-style:normal;font-weight:500;color:#166534}
 /* v10.32: 💰 Kunden-Konditionen (kk-module.js) */
 .kk-chips{display:inline-flex;flex-wrap:wrap;gap:4px;align-items:center}
 .kk-chip{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;line-height:1.3;padding:2px 8px;border-radius:99px;background:#F1F5F9;border:1px solid #CBD5E1;color:#334155;white-space:nowrap}
@@ -4399,7 +4404,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.35';
+const APP_VERSION = 'v10.36';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -71579,6 +71584,9 @@ async function rgMusterKopieren(btn) {
  *   Recht „Rechnungen schreiben (Maxise)", Standard an, Häkchen weg = darf nicht).
  *   Vermerke: am Auftrag (invoice_id/_num/_date, invoice_sb_am, invoice_mail_am/_an) und in Rechnungen_Status (Verlauf).
  *   Maxise-Rechnungen lassen sich nicht löschen – deshalb wird vor dem Anlegen so gründlich geprüft.
+ * v10.36: 💰 Haken „Skonto gewähren" bei Kunden mit Skonto (CRM → Konditionen) – von Anfang an gesetzt: der Skonto-Satz steht unten
+ *   im Rechnungstext (Anmerkungen), neben der Summe der Zahlbetrag mit Skonto. Haken aus = diese Rechnung ohne Skonto (gelber Hinweis).
+ *   Beim Anlegen/Ändern in Maxise gilt der Haken – auch wenn die Anmerkungen von Hand geändert wurden.
  * ════════════════════════════════════════════════════════════════════ */
 const RG_ARTEN = {
   pauschal:       { label: 'Pauschal',         icon: '📦' },
@@ -71768,13 +71776,25 @@ function _rgWerte(ctx, fm) {
     zeitraum: String((fm && fm.zeitraum) || ''),
   };
 }
+/* v10.36: Skonto laut Konditionen des Kunden – der Satz auf der Rechnung (leer ohne Skonto) */
+function _rgSkontoZeile(ctx) { return ctx && ctx.kond && typeof kkSkontoZeile === 'function' ? kkSkontoZeile(ctx.kond) : ''; }
+const RG_SKONTO_SATZ = /^Bei Zahlung innerhalb von \d+ Tagen nach Rechnungsdatum gewähren wir [\d.,]+ % Skonto\.$/;
+/* Skonto-Satz in den Anmerkungen setzen (an) oder entfernen (aus); andere Zeilen bleiben, wie sie sind */
+function _rgSkontoText(text, zeile, an) {
+  const zeilen = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  if (!an) return zeilen.filter(z => { const t = z.trim(); return t !== zeile && !RG_SKONTO_SATZ.test(t); }).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!zeile || zeilen.some(z => /skonto/i.test(z))) return String(text || '');
+  const t = String(text || '').replace(/\s+$/, '');
+  return t ? t + '\n' + zeile : zeile;
+}
 /* Anmerkungen im Aufbau der bisherigen Rechnungen („Standort: … / Anlage: … / …") */
 function _rgAnmBauen(ctx, fm) {
   const a = _rgAnmAufbau(ctx, fm), recht = _rgRechtZeilen(ctx).filter(z => !a.text.includes(z));
   if (recht.length) { a.text = (a.text ? a.text + '\n' : '') + recht.join('\n'); a.quelle += ' · Steuer-Hinweis wie Rechnung ' + ctx.vorbild.naechste.r.id; }
   a.recht = recht;
   // v10.32: Konditionen des Kunden (Zahlungsziel, Skonto, Zusatz) – eine vereinbarte Entgeltminderung wie Skonto muss auf die Rechnung
-  const kond = ctx.kond && typeof kkRechnungsZeilen === 'function' ? kkRechnungsZeilen(ctx.kond).filter(z => !a.text.includes(z)) : [];
+  const ohneSkonto = fm && fm.skonto === false ? _rgSkontoZeile(ctx) : '';   // v10.36: Haken „Skonto gewähren" aus
+  const kond = ctx.kond && typeof kkRechnungsZeilen === 'function' ? kkRechnungsZeilen(ctx.kond).filter(z => !a.text.includes(z) && z !== ohneSkonto) : [];
   if (kond.length) { a.text = (a.text ? a.text + '\n' : '') + kond.join('\n'); a.quelle += ' · Konditionen des Kunden'; }
   a.kond = kond;
   return a;
@@ -71871,7 +71891,7 @@ function _rgEntwurf(ctx) {
   // Ohne Angebot immer nach Aufwand (Stundensatz × Stunden); ein Angebot, das sich nicht lesen lässt, nur mit Stunden aus den Berichten
   const art = RG_ARTEN[seg] ? seg : (!ctx.angebot || hatStunden ? 'aufwand' : 'frei');
   const fm = { art, empfaenger: '', empfQuelle: '', empfAlt: [], kontaktId: '', titel: '', zeitraum: '', zeitraumQuelle: '', posten: [],
-    lohn: '', lohnQuelle: '', lohnAuto: true, anmerkungen: '', anmQuelle: '', anmAuto: true, nurNetto: false, notiz: '',
+    lohn: '', lohnQuelle: '', lohnAuto: true, anmerkungen: '', anmQuelle: '', anmAuto: true, nurNetto: false, notiz: '', skonto: !!_rgSkontoZeile(ctx),
     trotzVorhanden: false, rundung: 0, berechnung: null, hinweise: [], vorschlaege: [], angebotNetto: 0 };
   const H = (t, typ) => fm.hinweise.push({ t, typ: typ || 'info' });
 
@@ -72003,7 +72023,7 @@ function _rgEntwurf(ctx) {
   fm.anmerkungen = a.text; fm.anmQuelle = a.quelle;
   if (a.recht && a.recht.length) H('Steuer-Hinweis wie in Rechnung ' + vb.naechste.r.id + ' an diesen Kunden übernommen: ' + a.recht.map(z => '„' + _lmShort(z, 120) + '"').join(', ') + '.');
   if (ctx.kond && typeof kkKurzText === 'function') {
-    H('💰 Konditionen des Kunden (CRM): ' + kkKurzText(ctx.kond) + (a.kond && a.kond.length ? ' – die Zahlungsbedingungen stehen in den Anmerkungen.' : '.'));
+    H('💰 Konditionen des Kunden (CRM): ' + kkKurzText(ctx.kond) + (a.kond && a.kond.length ? ' – die Zahlungsbedingungen stehen in den Anmerkungen' + (fm.skonto ? ' („Skonto gewähren" ist angehakt)' : '') + '.' : '.'));
     if (ctx.kond.notiz) H('📝 Notiz zum Kunden: ' + ctx.kond.notiz);
     if (ctx.kond.rabatt > 0) H(_kkProz(ctx.kond.rabatt) + ' % Rabatt laut Konditionen – sind die Preise schon rabattiert? Eine vereinbarte Minderung, die nicht im Preis steckt, muss auf die Rechnung (§ 14 Abs. 4 Nr. 7 UStG).', 'warn');
   } else if (vb.naechste && /skonto/i.test(String(vb.naechste.r.anmerkungen || ''))) {
@@ -72065,9 +72085,14 @@ function _rgPruefen(fm, ctx) {
   if (st && st !== 'abgeschlossen' && st !== 'abgerechnet') warn.push('Der Auftrag ist in der Servicebox noch nicht abgeschlossen (Status „' + ((ctx.f && ctx.f.status) || 'offen') + '").');
   if (fm.nurNetto) warn.push('„Nur netto": Die Rechnung wird ohne Mehrwertsteuer ausgestellt' + (RG_13B_RE.test(String(fm.anmerkungen || '') + '\n' + String(fm.notiz || '')) ? '.' :
     ' – der Grund muss auf der Rechnung stehen (z. B. § 13b UStG „Steuerschuldnerschaft des Leistungsempfängers"); bitte in die Anmerkungen schreiben oder im PDF prüfen.'));
-  const kd = ctx.kond;   // v10.32: vereinbartes Skonto muss auf die Rechnung (§ 14 Abs. 4 Nr. 7 UStG)
-  if (kd && kd.skonto > 0 && !/skonto/i.test(String(fm.anmerkungen || '')) && typeof kkKurz === 'function')
-    warn.push('Für diesen Kunden ist Skonto vereinbart (' + kkKurz(kd)[0] + ') – das muss auf der Rechnung stehen (§ 14 Abs. 4 Nr. 7 UStG). Die Zeile fehlt in den Anmerkungen.');
+  const kd = ctx.kond, skZ = _rgSkontoZeile(ctx);   // v10.32/v10.36: vereinbartes Skonto – Haken „Skonto gewähren"
+  if (skZ && fm.skonto && !/skonto/i.test(String(fm.anmerkungen || '')))
+    warn.push('„Skonto gewähren" ist angehakt, der Skonto-Satz fehlt aber in den Anmerkungen – er wird beim Anlegen unten angefügt.');
+  else if (skZ && !fm.skonto)
+    warn.push('Für diesen Kunden ist Skonto vereinbart (' + kkKurz(kd)[0] + ') – auf dieser Rechnung wird es nicht gewährt (Haken „Skonto gewähren" ist aus).' +
+      (/skonto/i.test(_rgSkontoText(fm.anmerkungen, skZ, false)) ? ' In den Anmerkungen steht trotzdem etwas zu Skonto – bitte prüfen.' : ''));
+  else if (kd && kd.skonto > 0 && !skZ && !/skonto/i.test(String(fm.anmerkungen || '')) && typeof kkKurz === 'function')
+    warn.push('Für diesen Kunden ist Skonto vereinbart (' + kkKurz(kd)[0] + '), aber ohne Frist – bitte im CRM die Frist eintragen oder den Satz selbst in die Anmerkungen schreiben.');
   const ko = (ctx.kontakte || []).find(k => String(k.id) === String(fm.kontaktId));
   if (ko && !ko.email) warn.push('Der Ansprechpartner hat keine E-Mail-Adresse.');
   const kk = ko && ko.kunde && ko.kunde.kundennummer, ak = ctx.kunde && ctx.kunde.kundennummer;
@@ -72085,7 +72110,7 @@ function _rgPayload(fm, ctx, id) {
     kontaktId: +fm.kontaktId,
     leistungszeitraum: String(fm.zeitraum || '').trim(),
     lohnanteilNetto: _rgRund(_rgZahl(String(fm.lohn || '').trim() || '0')),
-    anmerkungen: String(fm.anmerkungen || '').replace(/\r\n/g, '\n').trim(),
+    anmerkungen: _rgSkontoZeile(ctx) ? _rgSkontoText(fm.anmerkungen, _rgSkontoZeile(ctx), !!fm.skonto).trim() : String(fm.anmerkungen || '').replace(/\r\n/g, '\n').trim(),   // v10.36: der Haken gilt
     // Stunden und Einsatzpauschalen stehen als Positionen auf der Rechnung – die Zähler-Felder bleiben 0, damit nichts doppelt erscheint
     anzahlEinsatzpauschale: 0,
     geleisteteStunden: 0,
@@ -72194,9 +72219,16 @@ function _rgPruefHtml(w) {
 function _rgSummeHtml(w, fm) {
   const auto = _rgLohnAuto(fm), lp = (fm.posten || []).map((p, i) => _rgLq(p, fm) > 0 && _rgPosSumme(p) > 0 ? i + 1 : 0).filter(Boolean);
   return '<div><span>Netto</span><b>' + _rgGeld(w.netto) + '</b></div><div><span>' + (fm.nurNetto ? 'ohne MwSt' : 'zzgl. 19 % MwSt') + '</span><b>' + _rgGeld(w.ust) + '</b></div>' +
-    '<div class="gesamt"><span>Brutto</span><b>' + _rgGeld(w.brutto) + '</b></div>' +
+    '<div class="gesamt"><span>Brutto</span><b>' + _rgGeld(w.brutto) + '</b></div>' + _rgSkontoSummeHtml(w, fm) +
     (w.lohn > 0 || lp.length ? '<div class="klein" id="rg-lohn-summe"><span>davon Lohnanteil netto (§ 35a)' + (fm.lohnHand ? ' · von Hand' : fm.lohnAuto && lp.length ? ' · Pos. ' + lp.join(', ') : '') + '</span><b>' + _rgGeld(w.lohn) + '</b></div>' : '') +
     (!fm.lohnAuto && auto > 0 && Math.abs(w.lohn - auto) >= 0.01 ? '<div class="klein"><span></span><button type="button" class="lm-chip" onclick="rgLohnAutomatisch()">↺ Lohnanteil aus den Positionen: ' + _rgGeld(auto) + '</button></div>' : '');
+}
+/* v10.36: Zahlbetrag mit Skonto (nur zur Info – auf der Rechnung steht der Satz) */
+function _rgSkontoSummeHtml(w, fm) {
+  const kd = _rgS && _rgS.ctx && _rgS.ctx.kond;
+  if (!fm || !fm.skonto || !_rgSkontoZeile(_rgS && _rgS.ctx) || !(w.brutto > 0)) return '';
+  const abzug = _rgRund(w.brutto * kd.skonto / 100);
+  return '<div class="klein rg-sk-summe"><span>💰 mit ' + _kkProz(kd.skonto) + ' % Skonto (innerhalb von ' + kd.skontoTage + ' Tagen)</span><b>' + _rgGeld(_rgRund(w.brutto - abzug)) + ' <i>(− ' + _rgGeld(abzug) + ')</i></b></div>';
 }
 function _rgFormHtml(w) {
   const s = _rgS, c = s.ctx, fm = s.form, au = c.auftrag || {}, an = c.anlage || {}, ku = c.kunde || {};
@@ -72244,6 +72276,8 @@ function _rgFormHtml(w) {
       '<label class="rz-feld"><span>Titel (optional)</span><input id="rg-titel" data-f="titel" value="' + escapeHtml(fm.titel) + '" placeholder="leer = Standard" oninput="rgEingabe(this)"></label>' +
       '<label class="rz-chk rg-nn"><input type="checkbox" id="rg-nurnetto" data-f="nurNetto" onchange="rgEingabe(this)"' + (fm.nurNetto ? ' checked' : '') + '> Nur netto (ohne MwSt)</label>' +
     '</div>' +
+    (_rgSkontoZeile(c) ? '<label class="rz-chk rg-skonto' + (fm.skonto ? ' an' : '') + '" id="rg-skonto-l"><input type="checkbox" id="rg-skonto" data-f="skonto" onchange="rgSkonto(this)"' + (fm.skonto ? ' checked' : '') + '>' +
+      '<span>💰 <b>Skonto gewähren</b> – ' + escapeHtml(_kkProz(c.kond.skonto)) + ' % bei Zahlung innerhalb von ' + escapeHtml(String(c.kond.skontoTage)) + ' Tagen <i class="rg-q">laut Konditionen des Kunden (CRM) · der Satz steht unten auf der Rechnung</i></span></label>' : '') +
     '<label class="rz-feld voll"><span>Anmerkungen auf der Rechnung' + q(fm.anmQuelle) + '</span><textarea id="rg-anm" data-f="anmerkungen" rows="6" oninput="rgEingabe(this)">' + escapeHtml(fm.anmerkungen) + '</textarea></label>' +
     '<details class="rg-mehr"' + (fm.notiz ? ' open' : '') + '><summary>Notiz (Maxise-Feld „Notiz", optional)</summary><label class="rz-feld voll"><span>Notiz</span><textarea id="rg-notiz" data-f="notiz" rows="2" oninput="rgEingabe(this)">' + escapeHtml(fm.notiz) + '</textarea></label></details>');
   return kopf + vorhHtml + hinw + empf + posten + angaben +
@@ -72281,6 +72315,19 @@ function rgEingabe(el) {
     if (f === 'anmerkungen') fm.anmAuto = false;
     if (f === 'zeitraum' && fm.anmAuto) { const a = _rgAnmBauen(s.ctx, fm); fm.anmerkungen = a.text; const t = document.getElementById('rg-anm'); if (t) t.value = a.text; }
   }
+  s.dirty = true;
+  _rgPruefNeu();
+}
+/* v10.36: Haken „Skonto gewähren" – Satz in den Anmerkungen setzen bzw. entfernen */
+function rgSkonto(el) {
+  const s = _rgS; if (!s || !s.form || !el) return;
+  const fm = s.form, zeile = _rgSkontoZeile(s.ctx); if (!zeile) return;
+  _rgFormLesen();
+  fm.skonto = !!el.checked;
+  if (fm.anmAuto) { const a = _rgAnmBauen(s.ctx, fm); fm.anmerkungen = a.text; }
+  else fm.anmerkungen = _rgSkontoText(fm.anmerkungen, zeile, fm.skonto);
+  const t = document.getElementById('rg-anm'); if (t) t.value = fm.anmerkungen;
+  const l = document.getElementById('rg-skonto-l'); if (l) l.classList.toggle('an', fm.skonto);
   s.dirty = true;
   _rgPruefNeu();
 }
@@ -72854,12 +72901,14 @@ function kkChipsHtml(k) {
   return kkKurz(k).map(t => '<span class="kk-chip' + (/Skonto/.test(t) ? ' skonto' : '') + '">' +
     (/Skonto/.test(t) ? '💰 ' : /Zahlungsziel|sofort/.test(t) ? '⏱ ' : /Rabatt/.test(t) ? '🏷 ' : /Zusatz/.test(t) ? '🧾 ' : '📝 ') + escapeHtml(t) + '</span>').join('');
 }
+/* Der Skonto-Satz auf Rechnungen (leer ohne Skonto oder ohne Frist) – v10.36: in „🧾 Rechnung schreiben" mit Haken „Skonto gewähren" */
+function kkSkontoZeile(k) { return k && k.skonto > 0 && k.skontoTage > 0 ? 'Bei Zahlung innerhalb von ' + k.skontoTage + ' Tagen nach Rechnungsdatum gewähren wir ' + _kkProz(k.skonto) + ' % Skonto.' : ''; }
 /* So steht es auf Rechnungen aus der Servicebox (🧾 Rechnung schreiben → Anmerkungen) */
 function kkRechnungsZeilen(k) {
   if (!kkHat(k)) return [];
   const z = [];
   if (k.ziel != null && k.ziel >= 0 && k.ziel !== KK_ZIEL_STANDARD) z.push(k.ziel === 0 ? 'Zahlbar sofort ohne Abzug.' : 'Zahlbar innerhalb von ' + k.ziel + ' Tagen nach Rechnungsdatum ohne Abzug.');
-  if (k.skonto > 0 && k.skontoTage > 0) z.push('Bei Zahlung innerhalb von ' + k.skontoTage + ' Tagen nach Rechnungsdatum gewähren wir ' + _kkProz(k.skonto) + ' % Skonto.');
+  const sk = kkSkontoZeile(k); if (sk) z.push(sk);
   if (k.text) k.text.split(/\r?\n/).map(x => x.trim()).filter(Boolean).forEach(x => z.push(x));
   return z;
 }
