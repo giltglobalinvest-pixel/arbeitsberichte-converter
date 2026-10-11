@@ -4437,7 +4437,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.39';
+const APP_VERSION = 'v10.40';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -70309,6 +70309,7 @@ function _rzEffektiv(it, k) {
   const st = f ? String(f.status || '') : '';
   if (st === 'bezahlt') { o.status = 'bezahlt'; o.bezahltAm = _lmDate(f.bezahlt_am) || ''; o.quelle = String(f.quelle || 'buchhaltung'); return o; }
   if (st !== 'offen' && _lmDate(mx.bezahltAm)) { o.status = 'bezahlt'; o.bezahltAm = _lmDate(mx.bezahltAm); o.quelle = 'maxise'; return o; }
+  if (st !== 'offen' && _rzNullBetrag(it)) { o.status = 'bezahlt'; o.quelle = 'null'; return o; }   // v10.40: Rechnung über 0 € – nichts zu zahlen
   if (st !== 'offen' && k.stichtag && datum && datum <= k.stichtag) { o.status = 'bezahlt'; o.quelle = 'stichtag'; return o; }
   o.ausnahme = st === 'offen' && !!k.stichtag && !!datum && datum <= k.stichtag;
   if (faellig && k.heute > faellig) { o.status = 'ueberfaellig'; o.tage = _lmDaysBetween(faellig, k.heute); }
@@ -70333,9 +70334,15 @@ function _rzItem(id) { return (_rechnungenCache.items || []).find(r => String(r.
 function _rzDarf() { return isAdmin() && !!APP_KEYS.airtableWriteKey && !_rzStand.fehlt && !_rzStand.fehler && _rzStand.firma === _rzFirma(); }   // Lesefehler → nichts schreiben (sonst doppelte Datensätze)
 function _rzNrText(it) { return String((it && it.nummer) || (it && it.id) || ''); }
 function _rzBetragZahl(v) { const x = Number(v); return Number.isFinite(x) ? x : 0; }
+/* v10.40: Rechnung über 0 € (Positionen da, Summe 0) – ohne Positionen (Betrag unbekannt) zählt sie nicht als 0 € */
+function _rzNullBetrag(it) {
+  const raw = (it && it._raw) || {}, posten = Array.isArray(raw.rechnungPosten) ? raw.rechnungPosten.filter(Boolean) : [];
+  return posten.length > 0 && Math.abs(_rzBetragZahl(it.netto)) < 0.005 && Math.abs(_rzBetragZahl(it.brutto)) < 0.005;
+}
 function _rzGeld(v) { return _lmMoney(_rzBetragZahl(v)); }
 function _rzStatusLabel(it) {
   const o = it._rz || {}, s = RZ_STATUS[it.status] || RZ_STATUS.offen;
+  if (it.status === 'bezahlt' && o.quelle === 'null') return '✓ 0 € – nichts zu zahlen';   // v10.40
   if (it.status === 'bezahlt') return '✓ bezahlt' + (o.bezahltAm ? ' ' + _lmFmtDE(o.bezahltAm) : (o.quelle === 'stichtag' ? ' (Stichtag)' : o.quelle === 'creditreform' ? ' (Creditreform)' : ''));
   if (it.status === 'ueberfaellig') return 'überfällig' + (o.tage ? ' · ' + o.tage + (o.tage === 1 ? ' Tag' : ' Tage') : '');
   if (it.status === 'storniert') return 'storniert' + (o.stornoNr ? ' · Storno ' + o.stornoNr : '');
@@ -70431,10 +70438,10 @@ function _rzZeileHtml(it) {
   const darf = _rzDarf(), bez = it.status === 'bezahlt', aus = it.status === 'storniert' || it.status === 'gutschrift';
   const hakenTitel = aus ? (it.status === 'storniert' ? 'Storniert – kein Zahlungseingang nötig' : 'Gutschrift') :
     !darf ? (_rzStand.fehlt ? 'Tabelle „' + RZ_T + '" fehlt' : _rzStand.fehler ? 'Zahlungsstatus nicht geladen – bitte „↻ Neu laden"' : (!_rzStand.loadedAt || _rzStand.firma !== _rzFirma()) ? 'Zahlungsstatus wird geladen …' : 'Nur Admins können den Zahlungsstatus ändern') :
-    bez ? (o.quelle === 'stichtag' ? 'Gilt über den Stichtag als bezahlt – klicken: als Ausnahme wieder offen' : 'Bezahlt – klicken: wieder offen') : 'Als bezahlt markieren (Buchhaltung)';
+    bez ? (o.quelle === 'stichtag' ? 'Gilt über den Stichtag als bezahlt – klicken: als Ausnahme wieder offen' : o.quelle === 'null' ? 'Rechnung über 0 € – nichts zu zahlen; klicken: doch offen' : 'Bezahlt – klicken: wieder offen') : 'Als bezahlt markieren (Buchhaltung)';
   const info = [it.anlage_adresse ? '🛗 ' + it.anlage_adresse : '', it.auftrag_id ? 'Auftrag ' + it.auftrag_id : '', it.titel || '',
     it.prozent > 0 && it.prozent < 100 ? 'Teilrechnung ' + String(it.prozent).replace('.', ',') + ' %' : ''].filter(Boolean);
-  const faelligTxt = it.status === 'bezahlt' ? (o.quelle === 'stichtag' ? 'über den Stichtag' : o.quelle === 'creditreform' ? 'laut Creditreform' : (o.von ? 'von ' + o.von : '')) : (o.faellig && !aus ? 'fällig ' + _lmFmtDE(o.faellig) : '');
+  const faelligTxt = it.status === 'bezahlt' ? (o.quelle === 'stichtag' ? 'über den Stichtag' : o.quelle === 'null' ? 'Rechnung über 0 €' : o.quelle === 'creditreform' ? 'laut Creditreform' : (o.von ? 'von ' + o.von : '')) : (o.faellig && !aus ? 'fällig ' + _lmFmtDE(o.faellig) : '');
   const sel = _rzUi.auswahl, an = sel && _rzUi.sel.has(id), klick = sel ? 'rzAuswahlToggle(' + _lmA(id) + ')' : '_openRechnungDetail(' + _lmA(id) + ')';
   const badges = [o.mahnstufe && it.status !== 'bezahlt' ? '<span class="rz-b mahn" title="Mahnstufe laut Creditreform">' + escapeHtml(/mahn|inkasso/i.test(o.mahnstufe) ? o.mahnstufe : 'Mahnstufe ' + o.mahnstufe) + '</span>' : '',
     o.datevAm ? '<span class="rz-b" title="Sync DATEV über die Servicebox: ' + escapeHtml(_rzZeitDE(o.datevAm) + (o.datevVon ? ' · ' + o.datevVon : '')) + '">DATEV</span>' : '',
@@ -70634,7 +70641,7 @@ function _rzDetail(id, nurAktualisieren) {
     : '<div class="rz-zahl ' + (it.status === 'bezahlt' ? 'gruen' : it.status === 'ueberfaellig' ? 'rot' : 'gelb') + '">' +
         '<div class="rz-zahl-h">💳 Zahlung <span class="lm-muted">(Buchhaltung)</span></div>' +
         (it.status === 'bezahlt'
-          ? '<div class="rz-zahl-s">✓ <b>' + (o.quelle === 'stichtag' ? 'gilt als bezahlt</b> – Stichtag ' + _lmFmtDE(_rzStand.stichtag) : o.quelle === 'maxise' ? 'bezahlt am ' + _lmFmtDE(o.bezahltAm) + '</b> (laut Maxise)' : 'bezahlt' + (o.bezahltAm ? ' am ' + _lmFmtDE(o.bezahltAm) : '') + '</b>') +
+          ? '<div class="rz-zahl-s">✓ <b>' + (o.quelle === 'stichtag' ? 'gilt als bezahlt</b> – Stichtag ' + _lmFmtDE(_rzStand.stichtag) : o.quelle === 'null' ? 'nichts zu zahlen</b> – Rechnung über 0 €' : o.quelle === 'maxise' ? 'bezahlt am ' + _lmFmtDE(o.bezahltAm) + '</b> (laut Maxise)' : 'bezahlt' + (o.bezahltAm ? ' am ' + _lmFmtDE(o.bezahltAm) : '') + '</b>') +
               (o.quelle === 'buchhaltung' && o.von ? ' <span class="lm-muted">· markiert von ' + escapeHtml(o.von) + (o.am ? ' am ' + escapeHtml(new Date(o.am).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })) : '') + '</span>' : '') + '</div>' +
             (darf ? '<div class="rz-zahl-a"><button class="btn" onclick="rzDetailOffen(this,' + _lmA(id) + ')">↩ ' + (o.quelle === 'stichtag' ? 'Doch offen (Ausnahme)' : 'Wieder offen') + '</button></div>' : '')
           : '<div class="rz-zahl-s">' + (it.status === 'ueberfaellig' ? '🔴 <b>überfällig</b> seit ' + _lmFmtDE(o.faellig) + (o.tage ? ' (' + o.tage + (o.tage === 1 ? ' Tag)' : ' Tage)') : '') : '🟠 <b>offen</b>' + (o.faellig ? ' – fällig am ' + _lmFmtDE(o.faellig) : '')) +
@@ -70724,7 +70731,7 @@ function rzCsv() {
   items.sort(_rchSortNr);
   if (!items.length) return toast('Keine Rechnungen in dieser Auswahl.', 'err');
   const zahl = v => { const x = _rzBetragZahl(v); return x ? x.toFixed(2).replace('.', ',') : ''; };
-  const quelle = o => o.quelle === 'stichtag' ? 'Stichtag' : o.quelle === 'maxise' ? 'Maxise' : o.quelle ? 'Buchhaltung' : '';
+  const quelle = o => o.quelle === 'stichtag' ? 'Stichtag' : o.quelle === 'maxise' ? 'Maxise' : o.quelle === 'null' ? '0 €' : o.quelle ? 'Buchhaltung' : '';
   const head = ['Rechnungsnummer', 'Rechnungsdatum', 'Fällig', 'Status', 'Bezahlt am', 'Bezahlt laut', 'Tage überfällig', 'Kunde', 'Kd-Nr.', 'Standort', 'Auftrag', 'Vorgang', 'Titel', 'Netto', 'Brutto', 'Notiz'];
   const rows = items.map(it => { const o = it._rz || {};
     return [_rzNrText(it), it.datum ? _lmFmtDE(_lmDate(it.datum)) : '', o.faellig ? _lmFmtDE(o.faellig) : '', (RZ_STATUS[it.status] || {}).label || it.status, o.bezahltAm ? _lmFmtDE(o.bezahltAm) : '',
@@ -71653,6 +71660,7 @@ async function rgMusterKopieren(btn) {
  *   was der Maxise-E-Rechnung fehlte (Leistungszeitraum, Zahlungsziel/Fälligkeit, Skonto, Anmerkungen, Lohnanteil, Käufer wie auf dem PDF,
  *   § 13b). Gegenprobe gegen die E-Rechnung im Maxise-PDF; fehlt etwas Pflichtiges → Versand gesperrt. Verschickte Dateien und Ticket
  *   stehen an der Rechnung (Rechnungen_Status: versand_json, versand_dateien). Die Testrechnung bekommt eine Test-E-Rechnung mit.
+ * v10.40: Rechnungen über 0 € sind erlaubt (Rechnung schreiben, Testrechnung, E-Rechnung – bei 0 € spielt die Steuerart keine Rolle).
  * ════════════════════════════════════════════════════════════════════ */
 const RG_ARTEN = {
   pauschal:       { label: 'Pauschal',         icon: '📦' },
@@ -72130,8 +72138,7 @@ function _rgPruefen(fm, ctx) {
     if (Number.isFinite(a) && Number.isFinite(k)) netto += a * k;
   });
   netto = _rgRund(netto);
-  if (!posten.length) fehler.push('Keine Position.');
-  else if (netto <= 0 && !fehler.length) fehler.push('Der Rechnungsbetrag ist 0 €.');
+  if (!posten.length) fehler.push('Keine Position.');   // v10.40: Rechnungen über 0 € sind erlaubt (z. B. Kulanz, Gewährleistung)
   const empf = String(fm.empfaenger || '').trim();
   if (!empf) fehler.push('Rechnungsempfänger fehlt.');
   else if (empf.split('\n').filter(z => z.trim()).length < 2) warn.push('Der Rechnungsempfänger hat nur eine Zeile – fehlt die Anschrift?');
@@ -73434,6 +73441,7 @@ function _rgGegenprobe(x, r) {
   const pos = _rgRohPosten(r), zeilen = pos.map(p => _rgRund(_rgPosNetto(p)));
   const netto = _rgRohNetto(r), netto2 = _rgRund(zeilen.reduce((a, b) => a + b, 0));
   const ust = v => _rgRund(v * 0.19), passt = (a, ...soll) => Number.isFinite(a) && soll.some(b => Math.abs(a - b) < 0.015);
+  const nullBetrag = Math.abs(netto) < 0.005 && Math.abs(netto2) < 0.005;   // v10.40: Rechnung über 0 € – die Steuerart spielt keine Rolle
   if (x.positionen.length !== pos.length) fehler.push('Positionen: ' + x.positionen.length + ' im Maxise-PDF, ' + pos.length + ' in der Rechnung.');
   else x.positionen.forEach((p, i) => { if (!passt(p.netto, zeilen[i])) fehler.push('Position ' + (i + 1) + ': im Maxise-PDF ' + gx(p.netto) + ' statt ' + g(zeilen[i]) + '.'); });
   if (!passt(x.summen.basis, netto, netto2)) fehler.push('Netto im Maxise-PDF ' + gx(x.summen.basis) + ' statt ' + g(netto) + '.');
@@ -73444,7 +73452,7 @@ function _rgGegenprobe(x, r) {
     if (!passt(x.summen.brutto, netto + ust(netto), netto2 + ust(netto2))) fehler.push('Brutto im Maxise-PDF ' + gx(x.summen.brutto) + ' statt ' + g(_rgRund(netto + ust(netto))) + '.');
     else if (Number.isFinite(x.summen.zahlbar) && !passt(x.summen.zahlbar, x.summen.brutto)) fehler.push('Zahlbetrag im Maxise-PDF ' + g(x.summen.zahlbar) + ' statt ' + g(x.summen.brutto) + ' (Anzahlung?) – solche Rechnungen kann die Servicebox noch nicht als E-Rechnung verschicken.');
     const st = x.steuer.filter(s => s.kat || Number.isFinite(s.satz));
-    if (st.length !== 1 || st[0].kat !== 'S' || st[0].satz !== 19) fehler.push('Steuer im Maxise-PDF: ' + (st.map(s => (s.kat || '?') + ' ' + _rgZahlText(s.satz) + ' %').join(', ') || 'keine Angabe') + ' – erwartet 19 % USt.');
+    if (!nullBetrag && (st.length !== 1 || st[0].kat !== 'S' || st[0].satz !== 19)) fehler.push('Steuer im Maxise-PDF: ' + (st.map(s => (s.kat || '?') + ' ' + _rgZahlText(s.satz) + ' %').join(', ') || 'keine Angabe') + ' – erwartet 19 % USt.');
   }
   return { fehler, warn };
 }
