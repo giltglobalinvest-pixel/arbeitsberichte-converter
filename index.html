@@ -2548,6 +2548,42 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* v10.39: über die Servicebox verschickt (Freshdesk) + Ablage der Dateien */
 .rz-versand{border:1px solid var(--bdr);border-radius:10px;padding:8px 12px;font-size:12.5px;display:flex;flex-direction:column;gap:3px;background:var(--bg)}
 .rz-versand-d a{font-weight:600}
+/* v10.41: ↩ Storno / ➖ Gutschrift (rz-sg.js) */
+.rz-rest{color:#1D4ED8 !important;font-weight:700}
+.rz-gut{color:#1E3A8A}
+.rz-sg{border:1px solid var(--bdr);border-left:4px solid #2563EB;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px;background:var(--surf)}
+.rz-sg-dlg .rz-dlg-h{background:#1E3A8A}
+.rz-sg-dlg .rz-dlg-b > *{flex-shrink:0}   /* die Spalte scrollt – nichts stauchen (die Positionstabelle mit overflow:hidden fiele sonst auf 0 Höhe) */
+.rz-sg-dlg.storno .rz-dlg-h{background:#4B5563}
+.rz-sg-re{display:flex;justify-content:space-between;gap:6px 14px;flex-wrap:wrap;align-items:baseline;border:1px solid var(--bdr);border-radius:10px;padding:8px 12px;background:var(--bg);font-size:13px}
+.rz-sg-betrag{font-variant-numeric:tabular-nums}
+.rz-sg-pos{border:1px solid var(--bdr);border-radius:10px;padding:2px 12px;background:var(--surf)}
+.rz-sg-modus,.rz-sg-wahl{display:flex;flex-direction:column;gap:6px}
+.rz-sg-opt{display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px;line-height:1.4;padding:7px 10px;border:1px solid var(--bdr);border-radius:10px;background:var(--surf)}
+.rz-sg-opt input{margin:2px 0 0;flex:none;width:16px;height:16px}
+.rz-sg-opt:has(input:checked){border-color:#2563EB;background:#EFF6FF}
+.rz-sg-tab{display:flex;flex-direction:column;border:1px solid var(--bdr);border-radius:10px;overflow:hidden;background:var(--surf)}
+.rz-sg-z{display:grid;grid-template-columns:24px minmax(0,1fr) 80px 120px 110px;gap:8px;align-items:center;padding:6px 10px;border-bottom:1px dashed var(--bdr);font-size:12.5px}
+.rz-sg-z:last-child{border-bottom:none}
+.rz-sg-z.kopf{background:var(--bg);font-size:11px;font-weight:700;color:var(--txt2)}
+.rz-sg-z.aus{opacity:.55}
+.rz-sg-z input[type=checkbox]{width:17px;height:17px;margin:0;cursor:pointer}
+.rz-sg-z input:not([type]){border:1px solid var(--bdr);border-radius:7px;padding:5px 7px;font-size:13px;font-family:inherit;width:100%;box-sizing:border-box;text-align:right;background:#fff;color:#222}
+.rz-sg-z i{font-style:normal;font-size:11px}
+.rz-sg-z b{text-align:right;font-variant-numeric:tabular-nums}
+.rz-sg-betrag-f{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:flex-end}
+.rz-sg-betrag-f .rz-feld input{width:100%}
+.rz-sg-betrag-f .rz-feld:not(.voll) input{width:150px;text-align:right}
+.rz-sg-lohn{display:flex;gap:6px 14px;align-items:flex-end;flex-wrap:wrap;font-size:12px}
+.rz-sg-lohn input{width:150px;text-align:right}
+.rz-sg-summe{font-size:13.5px;padding:8px 12px;border-radius:10px;background:#EFF6FF;border:1px solid #BFDBFE;color:#1E3A8A;font-variant-numeric:tabular-nums}
+.rz-sg-summe.rot{background:#FEF2F2;border-color:#FECACA;color:#991B1B}
+.rz-sg-go{background:#1E3A8A !important;border-color:#1E3A8A !important}
+@media (max-width:760px){
+  .rz-sg-z{grid-template-columns:22px 70px minmax(0,1fr) 92px;grid-template-areas:"cb t t t" "cb a k s";row-gap:4px}
+  .rz-sg-z > :nth-child(1){grid-area:cb}.rz-sg-z > :nth-child(2){grid-area:t}.rz-sg-z > :nth-child(3){grid-area:a}.rz-sg-z > :nth-child(4){grid-area:k}.rz-sg-z > :nth-child(5){grid-area:s}
+  .rz-sg-z.kopf{display:none}
+}
 /* ═══ v10.31: 🧾 Rechnung schreiben (Maxise) + 🧠 Muster der letzten 50 Rechnungen ═══ */
 .rg-dlg{max-width:900px}
 .rg-dlg > .rz-dlg-h,.rg-dlg > .rg-schritte,.rg-dlg > .rz-dlg-f{flex:none}
@@ -3491,7 +3527,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
       <label class="rz-chk" title="Stornierte Rechnungen und Gutschriften in „Alle“ mit anzeigen"><input type="checkbox" id="rz-storno" onchange="_rzStorno(this.checked)"> Stornos &amp; Gutschriften</label>
       <button type="button" class="lm-chip" onclick="rzStichtagDialog()" title="Ältere Rechnungen bis zu einem Datum als bezahlt ansehen">📅 Stichtag</button>
       <button type="button" class="lm-chip" onclick="rzCsv()" title="Die angezeigte Auswahl als CSV (Excel)">⬇ CSV</button>
-      <button type="button" class="lm-chip" onclick="rzAuswahlModus()" title="Mehrere Rechnungen auswählen – bezahlt markieren oder an DATEV/Creditreform übergeben">☑ Auswählen</button>
+      <button type="button" class="lm-chip" onclick="rzAuswahlModus()" title="Mehrere Rechnungen auswählen – bezahlt markieren oder an DATEV/Creditreform übergeben; bei genau einer: ↩ Storno / ➖ Gutschrift">☑ Auswählen</button>
       <button type="button" class="lm-chip" onclick="rzCrDialog()" title="Export aus dem Creditreform-Portal (CSV/Excel) einlesen – setzt bezahlt und Mahnstufe">📥 Creditreform-Export</button>
       <button type="button" class="lm-chip" onclick="rgMusterDialog()" title="Die letzten 50 Rechnungen auswerten (nur lesend): so schreibt die App neue Rechnungen">🧠 Muster (letzte 50)</button>
     </div>
@@ -4437,7 +4473,7 @@ body.theme-playful .st-fuss .lm-muted{color:rgba(255,255,255,.92)}
 /* ════════════════════════════════════════════════════════════
    CONFIG & KEYS
    ════════════════════════════════════════════════════════════ */
-const APP_VERSION = 'v10.40';
+const APP_VERSION = 'v10.41';
 
 /* ════════════════════════════════════════════════════════════
    v7.43: DIAGNOSE-PROTOKOLL
@@ -65923,7 +65959,8 @@ function _stRechnung(r, heute) {
   const au = r.auftrag || r.bestellung || {}, an = au.anlage || {};
   const kr = an.kunde || (au.empfaenger && au.empfaenger.kunde) || (r.kontakt && r.kontakt.kunde) || r.kunde || r.empfaenger || r.debitor || r.auftraggeber || r.kundeRef || null;
   const kunde = kr && typeof kr === 'object' ? _stKunde(kr) : { kundennummer: n.kunde_nummer || undefined, firmenname: n.kunde_name || '' };
-  return { datum: _lmDate(n.datum), netto: Math.round((+n.netto || 0) * 100) / 100, kunde };
+  const netto = Math.round((+n.netto || 0) * 100) / 100;
+  return { datum: _lmDate(n.datum), netto: /storn|gutschrift/i.test(String(r.typ || '')) ? -Math.abs(netto) : netto, kunde };   // v10.41: Storno/Gutschrift mindern immer (auch wenn Maxise sie positiv führt)
 }
 async function _stLaden(firma, force) {
   const st = _stStand(firma);
@@ -70138,6 +70175,9 @@ function _kwGoListe(firma) {   // Dashboard → Liste mit Kachel „👤 Kundenw
  *   (POST /api/rechnungen/{id}/sync/datev|creditreform – die einzigen Schreibzugriffe auf Maxise, ausdrücklich gewünscht,
  *   jeweils mit Rückfrage). Creditreform-Export (CSV/Excel) einlesen → bezahlt / Mahnstufe (rz-cr.js).
  *   Zahlungsziel: steht es in der Rechnung (z. B. „zahlbar innerhalb von 30 Tagen"), gilt das, sonst 14 Tage.
+ * v10.41: ↩ Storno / ➖ Gutschrift (rz-sg.js). Ein Beleg mit Maxise-Typ Storno/Gutschrift oder negativem Betrag ist eine Gutschrift;
+ *   ihr Bezug: Vermerk der Servicebox (bezug_rechnung), sonst Text („Storno Rechnung 2141"), sonst wie bisher gleicher Auftrag + Betrag.
+ *   Storno → Rechnung storniert; Gutschriften über den ganzen Betrag → ausgeglichen; Teil-Gutschrift → offen bleibt der Rest.
  * ════════════════════════════════════════════════════════════════════ */
 const RZ_T = 'Rechnungen_Status';
 const RZ_FIELDS = [
@@ -70167,6 +70207,8 @@ const RZ_FIELDS = [
   { name:'cr_datei',         type:'singleLineText' },
   { name:'versand_json',     type:'multilineText' },        // v10.39: Versände über die Servicebox (Freshdesk) [{ am, an, cc, ticket, absender, von, dateien }]
   { name:'versand_dateien',  type:'multipleAttachments' },  // v10.39: die verschickten Dateien (PDF + E-Rechnung)
+  { name:'bezug_rechnung',   type:'singleLineText' },       // v10.41: an Storno/Gutschrift – die Rechnung, zu der sie gehört (Maxise-ID)
+  { name:'beleg_art',        type:'singleLineText' },       // v10.41: 'storno' | 'gutschrift' (in der Servicebox angelegt)
 ];
 const RZ_FELDER_V1030 = ['datev_am', 'datev_von', 'creditreform_am', 'creditreform_von', 'cr_status', 'cr_offen', 'cr_import_am', 'cr_datei'];
 const RZ_ZIEL_TAGE = 14, RZ_SEITE = 150;
@@ -70216,6 +70258,7 @@ async function _rzLaden(firma, force) {
         _rzFelderGeprueft = true;
         for (const n of RZ_FELDER_V1030) { try { await ensureField(RZ_T, n, 'singleLineText'); } catch (_) {} }
         try { await ensureField(RZ_T, 'versand_json', 'multilineText'); await ensureField(RZ_T, 'versand_dateien', 'multipleAttachments'); } catch (_) {}   // v10.39
+        for (const n of ['bezug_rechnung', 'beleg_art']) { try { await ensureField(RZ_T, n, 'singleLineText'); } catch (_) {} }   // v10.41
       }
     }
     catch (e) {
@@ -70238,7 +70281,7 @@ async function _rzLaden(firma, force) {
 
 /* ── Storno: Gutschrift über genau den Betrag einer früheren Rechnung desselben Auftrags ── */
 function _rzStornoPaare(items) {
-  const zu = new Map(), durch = new Map(), nachAuftrag = new Map();
+  const zu = new Map(), durch = new Map(), nachAuftrag = new Map(), paare = [];
   const betrag = x => (+x.netto || +x.brutto || 0);
   for (const it of items || []) {
     const a = String((it && it.auftrag_id) || ''); if (!a) continue;
@@ -70249,12 +70292,53 @@ function _rzStornoPaare(items) {
   for (const liste of nachAuftrag.values()) {
     const neg = liste.filter(x => betrag(x) < 0).sort((a, b) => _rzNrWert(a) - _rzNrWert(b));
     for (const n of neg) {
-      const p = liste.filter(x => betrag(x) > 0 && !durch.has(String(x.id)) && Math.abs(betrag(x) + betrag(n)) < 0.01 && _rzNrWert(x) < _rzNrWert(n))
+      const p = liste.filter(x => betrag(x) > 0 && !_rzIstGutschrift(x) && !durch.has(String(x.id)) && Math.abs(betrag(x) + betrag(n)) < 0.01 && _rzNrWert(x) < _rzNrWert(n))
         .sort((a, b) => _rzNrWert(b) - _rzNrWert(a))[0];
-      if (p) { durch.set(String(p.id), String(n.nummer || '')); zu.set(String(n.id), String(p.nummer || '')); }
+      if (p) { durch.set(String(p.id), String(n.nummer || '')); zu.set(String(n.id), String(p.nummer || '')); paare.push([n, p]); }
     }
   }
-  return { zu, durch };
+  return { zu, durch, paare };
+}
+/* v10.41: Storno/Gutschrift ↔ Rechnung – Gutschrift = Maxise-Typ Storno/Gutschrift oder negativer Betrag */
+function _rzIstGutschrift(it) { return !!it && (/storn|gutschrift|credit/i.test(String(it.typ || '')) || (+it.netto || +it.brutto || 0) < 0); }
+const RZ_BEZUG_RE = /\b(?:storno|stornorechnung|gutschrift)\b[^\n]{0,30}?\b(?:rechnung|rechnungsnummer|re|rg|nr)\b\.?\s*(?:nr\.?\s*|nummer\s*)?[:#]?\s*(\d{3,})/i;
+function _rzBezugText(it) {   // „Storno Rechnung 2141", „Gutschrift zu Rechnung Nr. 2141" (Titel oder erste Positionen)
+  const r = (it && it._raw) || {}, texte = [r.rechnungTitel].concat(Array.isArray(r.rechnungPosten) ? r.rechnungPosten.slice(0, 3).map(p => p && p.title) : []);
+  for (const t of texte) { const m = RZ_BEZUG_RE.exec(String(t || '')); if (m) return m[1]; }
+  return '';
+}
+/* → { zu: Gutschrift-ID → Nr. der Rechnung, bezugId: Gutschrift-ID → ID der Rechnung, art: Gutschrift-ID → 'storno'|'gutschrift',
+       durch: Rechnungs-ID → Nr. des Stornos, gut: Rechnungs-ID → [{ id, nr, art, netto, brutto, datum }] } */
+function _rzVerweise(items, map) {
+  const zu = new Map(), bezugId = new Map(), art = new Map(), durch = new Map(), gut = new Map();
+  const liste = (items || []).filter(Boolean), nachId = new Map(liste.map(it => [String(it.id), it]));
+  const fl = it => (((map && map.get(String(it.id))) || {}).fields) || {};
+  const belegArt = (k, o) => {
+    const a = String(fl(k).beleg_art || ''); if (a === 'storno' || a === 'gutschrift') return a;
+    const t = String(k.typ || ''); if (/storn/i.test(t)) return 'storno'; if (/gutschrift|credit/i.test(t)) return 'gutschrift';
+    return o && Math.abs(Math.abs(_rzBetragZahl(k.netto)) - Math.abs(_rzBetragZahl(o.netto))) < 0.01 ? 'storno' : 'gutschrift';
+  };
+  const verbinde = (k, o) => {
+    const a = belegArt(k, o), kid = String(k.id), oid = String(o.id);
+    zu.set(kid, String(o.nummer || o.id)); bezugId.set(kid, oid); art.set(kid, a);
+    if (!gut.has(oid)) gut.set(oid, []);
+    gut.get(oid).push({ id: kid, nr: String(k.nummer || k.id), art: a, netto: Math.abs(_rzBetragZahl(k.netto)), brutto: Math.abs(_rzBetragZahl(k.brutto)), datum: _lmDate(k.datum) || '' });
+    if (a === 'storno' && !durch.has(oid)) durch.set(oid, String(k.nummer || k.id));
+  };
+  const kredite = liste.filter(it => _rzIstGutschrift(it) && (it._mx ? it._mx.status : it.status) !== 'storniert'), rest = [];
+  for (const k of kredite) {
+    const b = String(fl(k).bezug_rechnung || '').trim(), o = b ? nachId.get(b) : null;   // 1) Vermerk der Servicebox
+    if (o && o !== k) { verbinde(k, o); continue; }
+    if (b) { zu.set(String(k.id), b); bezugId.set(String(k.id), b); art.set(String(k.id), belegArt(k, null)); continue; }   // Rechnung nicht (mehr) in der Liste
+    const nr = _rzBezugText(k), o2 = nr ? nachId.get(nr) : null;   // 2) Text („Storno Rechnung 2141")
+    if (o2 && o2 !== k && !_rzIstGutschrift(o2) && _rzNrWert(o2) < _rzNrWert(k) && (!o2.kunde_nummer || !k.kunde_nummer || String(o2.kunde_nummer) === String(k.kunde_nummer))) { verbinde(k, o2); continue; }
+    rest.push(k);
+  }
+  // 3) wie bisher: gleicher Auftrag, genau der Betrag einer früheren Rechnung (die nicht schon storniert ist)
+  const restSet = new Set(rest), p = _rzStornoPaare(liste.filter(it => _rzIstGutschrift(it) ? restSet.has(it) : !durch.has(String(it.id))));
+  for (const [k, o] of p.paare) verbinde(k, o);
+  for (const l of gut.values()) l.sort((a, b) => String(a.nr).localeCompare(String(b.nr), 'de', { numeric: true }));   // feste Reihenfolge: 2150 vor 2151
+  return { zu, bezugId, art, durch, gut };
 }
 
 /* ── Zahlungsziel: steht es in der Rechnung, gilt das – sonst 14 Tage (Aufzugshandwerk und Aszendio) ── */
@@ -70289,8 +70373,8 @@ function _rzKkChip(it) {
 
 /* ── Wirksamer Status einer Rechnung ── */
 function _rzKontext(items, stand, heute) {
-  const p = _rzStornoPaare(items);
-  return { map: (stand && stand.map) || new Map(), stichtag: (stand && stand.stichtag) || '', heute, zu: p.zu, durch: p.durch };
+  const map = (stand && stand.map) || new Map(), v = _rzVerweise(items, map);   // v10.41: Storno/Gutschrift ↔ Rechnung
+  return { map, stichtag: (stand && stand.stichtag) || '', heute, zu: v.zu, bezugId: v.bezugId, art: v.art, durch: v.durch, gut: v.gut };
 }
 function _rzEffektiv(it, k) {
   if (!it._mx) it._mx = { status: it.status, bezahltAm: it.bezahltAm || '', faellig: it.faellig || '' };   // so kam sie aus Maxise
@@ -70303,9 +70387,21 @@ function _rzEffektiv(it, k) {
     mahnstufe: f ? String(f.mahnstufe || '') : '', crStatus: f ? String(f.cr_status || '') : '', crOffen: f ? String(f.cr_offen || '') : '', crImportAm: f ? String(f.cr_import_am || '') : '',
     datevAm: f ? String(f.datev_am || '') : '', datevVon: f ? String(f.datev_von || '') : '', crSyncAm: f ? String(f.creditreform_am || '') : '', crSyncVon: f ? String(f.creditreform_von || '') : '' };
   if (mx.status === 'storniert') { o.status = 'storniert'; return o; }
-  if (k.zu.has(id)) { o.status = 'gutschrift'; o.stornoNr = k.zu.get(id); return o; }
-  if (k.durch.has(id)) { o.status = 'storniert'; o.stornoNr = k.durch.get(id); return o; }
-  if ((+it.netto || +it.brutto || 0) < 0) { o.status = 'gutschrift'; return o; }
+  // v10.41: Storno/Gutschrift (o.stornoNr = Nr. der Rechnung, o.bezugId, o.belegArt) bzw. die Rechnung dazu
+  if (k.zu.has(id) || _rzIstGutschrift(it)) {
+    o.status = 'gutschrift'; o.stornoNr = k.zu.get(id) || ''; o.bezugId = (k.bezugId && k.bezugId.get(id)) || '';
+    o.belegArt = (k.art && k.art.get(id)) || (/storn/i.test(String(it.typ || '')) ? 'storno' : 'gutschrift');
+    return o;
+  }
+  const gl = (k.gut && k.gut.get(id)) || [];
+  if (gl.length) {
+    o.gutschriften = gl;
+    const sto = gl.find(g => g.art === 'storno');
+    if (sto) { o.status = 'storniert'; o.stornoNr = sto.nr; o.stornoId = sto.id; return o; }
+    const summe = Math.round(gl.reduce((a, g) => a + g.brutto, 0) * 100) / 100, b = Math.abs(_rzBetragZahl(it.brutto));
+    if (summe >= b - 0.005) { o.status = 'storniert'; o.ausgeglichen = true; o.stornoNr = gl.map(g => g.nr).join(', '); o.stornoId = gl[0].id; return o; }
+    o.gutBrutto = summe; o.rest = Math.round((b - summe) * 100) / 100;   // Teil-Gutschrift: offen bleibt der Rest
+  }
   const st = f ? String(f.status || '') : '';
   if (st === 'bezahlt') { o.status = 'bezahlt'; o.bezahltAm = _lmDate(f.bezahlt_am) || ''; o.quelle = String(f.quelle || 'buchhaltung'); return o; }
   if (st !== 'offen' && _lmDate(mx.bezahltAm)) { o.status = 'bezahlt'; o.bezahltAm = _lmDate(mx.bezahltAm); o.quelle = 'maxise'; return o; }
@@ -70345,16 +70441,23 @@ function _rzStatusLabel(it) {
   if (it.status === 'bezahlt' && o.quelle === 'null') return '✓ 0 € – nichts zu zahlen';   // v10.40
   if (it.status === 'bezahlt') return '✓ bezahlt' + (o.bezahltAm ? ' ' + _lmFmtDE(o.bezahltAm) : (o.quelle === 'stichtag' ? ' (Stichtag)' : o.quelle === 'creditreform' ? ' (Creditreform)' : ''));
   if (it.status === 'ueberfaellig') return 'überfällig' + (o.tage ? ' · ' + o.tage + (o.tage === 1 ? ' Tag' : ' Tage') : '');
-  if (it.status === 'storniert') return 'storniert' + (o.stornoNr ? ' · Storno ' + o.stornoNr : '');
-  if (it.status === 'gutschrift') return o.stornoNr ? 'Storno zu ' + o.stornoNr : 'Gutschrift';
+  if (it.status === 'storniert') return o.ausgeglichen ? 'ausgeglichen · Gutschrift ' + o.stornoNr : 'storniert' + (o.stornoNr ? ' · Storno ' + o.stornoNr : '');
+  if (it.status === 'gutschrift') return (o.belegArt === 'storno' ? 'Storno' : 'Gutschrift') + (o.stornoNr ? ' zu ' + o.stornoNr : '');   // v10.41
   return s.label + (o.tage != null && o.tage >= 0 ? (o.tage === 0 ? ' · fällig heute' : ' · noch ' + o.tage + (o.tage === 1 ? ' Tag' : ' Tage')) : '');
 }
 function _rzSuchtext(it) {
   const b = [it.brutto, it.netto].map(v => _rzBetragZahl(v)).filter(Boolean)
     .map(v => [v.toFixed(2), v.toFixed(2).replace('.', ','), v.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })].join(' ')).join(' ');
   return [it.nummer, it.id, it.vorgang_nr, it.nr_alt, it.auftrag_id, it.kunde_name, it.kunde_nummer, it.anlage_adresse, it.fabriknummer, it.titel, it.typ,
-    it.datum ? _lmFmtDE(_lmDate(it.datum)) : '', (it._rz && it._rz.notiz) || '', (it._rz && it._rz.mahnstufe) || '', (it._rz && it._rz.crStatus) || '', b].join(' ').toLowerCase();
+    it.datum ? _lmFmtDE(_lmDate(it.datum)) : '', (it._rz && it._rz.notiz) || '', (it._rz && it._rz.mahnstufe) || '', (it._rz && it._rz.crStatus) || '', b,
+    (it._rz && it._rz.stornoNr) || '', ((it._rz && it._rz.gutschriften) || []).map(g => g.nr).join(' '), it.status === 'gutschrift' ? ((it._rz && it._rz.belegArt) === 'storno' ? 'storno' : 'gutschrift') : ''].join(' ').toLowerCase();   // v10.41
 }
+/* v10.41: Betrag zum Anzeigen – Storno/Gutschrift immer negativ (Maxise führt Gutschriften evtl. mit positiven Beträgen) */
+function _rzAnzeige(it, feld) { const v = _rzBetragZahl(it && it[feld]); return it && it.status === 'gutschrift' ? -Math.abs(v) : v; }
+/* v10.41: Betrag für den Zahlungsstatus-Datensatz – Storno/Gutschrift immer negativ */
+function _rzBruttoVermerk(it) { const b = _rzBetragZahl(it && it.brutto); return Math.round((_rzIstGutschrift(it) ? -Math.abs(b) : b) * 100) / 100; }
+/* v10.41: was die Rechnung wirklich ausmacht – nach Teil-Gutschriften der Rest */
+function _rzWirksam(it) { const o = (it && it._rz) || {}; return o.rest != null ? o.rest : _rzBetragZahl(it && it.brutto); }
 function _rzJahre(items) { return [...new Set((items || []).map(it => String(_lmDate(it.datum) || '').slice(0, 4)).filter(Boolean))].sort().reverse(); }
 
 /* ── Liste (ersetzt _renderRechnungenList, Andockstelle dort) ── */
@@ -70398,7 +70501,7 @@ function _rzRenderListe() {
 function _rzKennzahlen(items) {
   const k = { alle: { n: 0, s: 0 }, offen: { n: 0, s: 0 }, ueberfaellig: { n: 0, s: 0 }, bezahlt: { n: 0, s: 0 }, storno: 0 };
   for (const it of items) {
-    const b = _rzBetragZahl(it.brutto);
+    const b = _rzWirksam(it);   // v10.41: nach Teil-Gutschriften der Rest
     if (it.status === 'storniert' || it.status === 'gutschrift') { k.storno++; continue; }
     k.alle.n++; k.alle.s += b;
     if (k[it.status]) { k[it.status].n++; k[it.status].s += b; }
@@ -70436,7 +70539,7 @@ function _rzHinweisHtml(alle) {
 function _rzZeileHtml(it) {
   const o = it._rz || {}, s = RZ_STATUS[it.status] || RZ_STATUS.offen, id = String(it.id || ''), nr = _rzNrText(it);
   const darf = _rzDarf(), bez = it.status === 'bezahlt', aus = it.status === 'storniert' || it.status === 'gutschrift';
-  const hakenTitel = aus ? (it.status === 'storniert' ? 'Storniert – kein Zahlungseingang nötig' : 'Gutschrift') :
+  const hakenTitel = aus ? (it.status === 'storniert' ? (o.ausgeglichen ? 'Durch Gutschrift ausgeglichen' : 'Storniert') + ' – kein Zahlungseingang nötig' : o.belegArt === 'storno' ? 'Stornorechnung' : 'Gutschrift') :
     !darf ? (_rzStand.fehlt ? 'Tabelle „' + RZ_T + '" fehlt' : _rzStand.fehler ? 'Zahlungsstatus nicht geladen – bitte „↻ Neu laden"' : (!_rzStand.loadedAt || _rzStand.firma !== _rzFirma()) ? 'Zahlungsstatus wird geladen …' : 'Nur Admins können den Zahlungsstatus ändern') :
     bez ? (o.quelle === 'stichtag' ? 'Gilt über den Stichtag als bezahlt – klicken: als Ausnahme wieder offen' : o.quelle === 'null' ? 'Rechnung über 0 € – nichts zu zahlen; klicken: doch offen' : 'Bezahlt – klicken: wieder offen') : 'Als bezahlt markieren (Buchhaltung)';
   const info = [it.anlage_adresse ? '🛗 ' + it.anlage_adresse : '', it.auftrag_id ? 'Auftrag ' + it.auftrag_id : '', it.titel || '',
@@ -70454,7 +70557,8 @@ function _rzZeileHtml(it) {
     '<div class="rz-mitte"><div class="rz-kunde">' + escapeHtml(it.kunde_name || '(ohne Kunde)') + (it.kunde_nummer ? '<span class="rz-mut"> · Kd-Nr. ' + escapeHtml(it.kunde_nummer) + '</span>' : '') + _rzKkChip(it) + '</div>' +
       (info.length ? '<div class="rz-info">' + escapeHtml(info.join(' · ')) + '</div>' : '') +
       (o.notiz ? '<div class="rz-notiz">📝 ' + escapeHtml(_lmShort(o.notiz, 90)) + '</div>' : '') + '</div>' +
-    '<div class="rz-betrag"><b>' + _rzGeld(it.brutto) + '</b>' + (it.netto ? '<span>netto ' + _rzGeld(it.netto) + '</span>' : '') + '</div>' +
+    '<div class="rz-betrag"><b>' + _rzGeld(_rzAnzeige(it, 'brutto')) + '</b>' + (it.netto ? '<span>netto ' + _rzGeld(_rzAnzeige(it, 'netto')) + '</span>' : '') +
+      (o.rest != null ? '<span class="rz-rest" title="' + escapeHtml('Gutschrift ' + (o.gutschriften || []).map(g => g.nr + ': −' + _rzGeld(g.brutto)).join(', ')) + '">➖ nach Gutschrift ' + _rzGeld(o.rest) + '</span>' : '') + '</div>' +   // v10.41
     '<div class="rz-stat"><span class="lm-pill ' + s.pill + '">' + escapeHtml(_rzStatusLabel(it)) + '</span>' + (faelligTxt ? '<span class="rz-mut">' + escapeHtml(faelligTxt) + '</span>' : '') + (badges ? '<span class="rz-badges">' + badges + '</span>' : '') + '</div>' +
   '</div>';
 }
@@ -70500,7 +70604,7 @@ async function _rzSetzen(id, aenderung, aktion) {
   if (rec) { await _lmUpdate(RZ_T, rec.id, felder); neu = { id: rec.id, fields: Object.assign({}, alt, felder) }; }
   else {
     Object.assign(felder, { rechnung_id: String(id), firma: _rzFirma(), art: 'status', rechnung_nr: _rzNrText(it), rechnung_datum: _lmDate(it.datum) || '',
-      betrag_brutto: Math.round(_rzBetragZahl(it.brutto) * 100) / 100, kunde_name: String(it.kunde_name || '').slice(0, 200), quelle: 'buchhaltung' });
+      betrag_brutto: _rzBruttoVermerk(it), kunde_name: String(it.kunde_name || '').slice(0, 200), quelle: 'buchhaltung' });
     const d = await _lmCreate(RZ_T, felder);
     neu = { id: (d && d.id) || '', fields: Object.assign({}, felder, (d && d.fields) || {}) };
   }
@@ -70636,10 +70740,17 @@ function _rzDetail(id, nurAktualisieren) {
   let verlauf = []; try { const r = _rzStand.map.get(String(id)); verlauf = JSON.parse(((r && r.fields) || {}).verlauf_json || '[]'); if (!Array.isArray(verlauf)) verlauf = []; } catch (_) { verlauf = []; }
   const versandHtml = _rzVersandHtml(id);   // v10.39
   const aus = it.status === 'storniert' || it.status === 'gutschrift';
+  // v10.41: Storno/Gutschrift ↔ Rechnung – mit Sprung zur jeweils anderen
+  const zu = (rid, txt) => rid && _rzItem(rid) ? '<a href="#" onclick="event.preventDefault();_rzDetail(' + _lmA(rid) + ')">' + escapeHtml(txt) + '</a>' : escapeHtml(txt);
+  const gutListe = (o.gutschriften || []).map(g => (g.art === 'storno' ? 'Stornorechnung ' : 'Gutschrift ') + zu(g.id, g.nr) + (g.datum ? ' vom ' + escapeHtml(_lmFmtDE(g.datum)) : '') + ' über −' + _rzGeld(g.brutto)).join(' · ');
+  const _rzVerlaufHtml = l => l.length ? '<details class="rz-verlauf"><summary>Verlauf (' + l.length + ')</summary>' + l.slice().reverse().map(v => '<div>' + escapeHtml(v && v.ts ? new Date(v.ts).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '') + ' · ' + escapeHtml((v && v.by) || '') + ' · ' + escapeHtml((v && v.aktion) || '') + '</div>').join('') + '</details>' : '';
   const zahlung = aus
-    ? '<div class="rz-zahl grau">' + (it.status === 'storniert' ? '⚫ Storniert' + (o.stornoNr ? ' durch Rechnung ' + escapeHtml(o.stornoNr) : '') + ' – kein Zahlungseingang nötig.' : '🔵 ' + (o.stornoNr ? 'Storno zu Rechnung ' + escapeHtml(o.stornoNr) : 'Gutschrift') + ' – kein Zahlungseingang.') + '</div>'
+    ? '<div class="rz-zahl grau"><div class="rz-zahl-s">' + (it.status === 'storniert'
+        ? (o.ausgeglichen ? '⚫ Durch ' + gutListe + ' ausgeglichen' : '⚫ Storniert' + (o.stornoNr ? ' durch ' + (gutListe || 'Rechnung ' + escapeHtml(o.stornoNr)) : '')) + ' – kein Zahlungseingang nötig.'
+        : '🔵 ' + (o.belegArt === 'storno' ? 'Stornorechnung' : 'Gutschrift') + (o.stornoNr ? ' zu Rechnung ' + zu(o.bezugId || o.stornoNr, o.stornoNr) : '') + ' – kein Zahlungseingang' + (o.belegArt === 'storno' ? '.' : ' (wird verrechnet bzw. erstattet).')) + '</div>' + _rzVerlaufHtml(verlauf) + '</div>'
     : '<div class="rz-zahl ' + (it.status === 'bezahlt' ? 'gruen' : it.status === 'ueberfaellig' ? 'rot' : 'gelb') + '">' +
         '<div class="rz-zahl-h">💳 Zahlung <span class="lm-muted">(Buchhaltung)</span></div>' +
+        (o.rest != null ? '<div class="rz-zahl-s rz-gut">➖ ' + gutListe + ' – ' + (it.status === 'bezahlt' ? 'der Kunde bekommt ' + _rzGeld(o.gutBrutto) + ' zurück bzw. verrechnet.' : 'zu zahlen bleiben <b>' + _rzGeld(o.rest) + '</b>.') + '</div>' : '') +   // v10.41
         (it.status === 'bezahlt'
           ? '<div class="rz-zahl-s">✓ <b>' + (o.quelle === 'stichtag' ? 'gilt als bezahlt</b> – Stichtag ' + _lmFmtDE(_rzStand.stichtag) : o.quelle === 'null' ? 'nichts zu zahlen</b> – Rechnung über 0 €' : o.quelle === 'maxise' ? 'bezahlt am ' + _lmFmtDE(o.bezahltAm) + '</b> (laut Maxise)' : 'bezahlt' + (o.bezahltAm ? ' am ' + _lmFmtDE(o.bezahltAm) : '') + '</b>') +
               (o.quelle === 'buchhaltung' && o.von ? ' <span class="lm-muted">· markiert von ' + escapeHtml(o.von) + (o.am ? ' am ' + escapeHtml(new Date(o.am).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' })) : '') + '</span>' : '') + '</div>' +
@@ -70651,7 +70762,7 @@ function _rzDetail(id, nurAktualisieren) {
         (darf ? '<label class="rz-feld voll"><span>Notiz (z. B. Teilzahlung, Mahnung, Creditreform)</span><textarea id="rz-d-notiz" rows="2">' + escapeHtml(o.notiz || '') + '</textarea></label>' +
             '<div class="rz-zahl-a"><button class="btn" onclick="rzNotizSpeichern(this,' + _lmA(id) + ')">📝 Notiz speichern</button></div>'
           : (o.notiz ? '<div class="rz-notiz">📝 ' + escapeHtml(o.notiz) + '</div>' : '')) +
-        (verlauf.length ? '<details class="rz-verlauf"><summary>Verlauf (' + verlauf.length + ')</summary>' + verlauf.slice().reverse().map(v => '<div>' + escapeHtml(v && v.ts ? new Date(v.ts).toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' }) : '') + ' · ' + escapeHtml((v && v.by) || '') + ' · ' + escapeHtml((v && v.aktion) || '') + '</div>').join('') + '</details>' : '') +
+        _rzVerlaufHtml(verlauf) +
       '</div>';
   const posHtml = posten.length
     ? '<div class="rz-d-sek"><h4>Positionen</h4><div class="rz-pos">' + posten.map((p, i) => {
@@ -70660,19 +70771,19 @@ function _rzDetail(id, nurAktualisieren) {
       }).join('') + '</div>' + (it.lohnanteil ? '<div class="rz-mut" style="margin-top:4px">Lohnanteil netto ' + _rzGeld(it.lohnanteil) + '</div>' : '') + '</div>'
     : '';
   m.innerHTML = '<div class="rz-dlg breit" role="dialog" aria-modal="true" aria-labelledby="rz-d-h">' +
-    '<div class="rz-dlg-h" style="background:' + s.farbe + '"><span id="rz-d-h">💶 Rechnung <b>' + escapeHtml(nr) + '</b>' + (it.kunde_name ? ' · ' + escapeHtml(it.kunde_name) : '') + '</span><button class="rz-x" onclick="document.getElementById(\'rch-detail-modal\').remove()" aria-label="Schließen">×</button></div>' +
+    '<div class="rz-dlg-h" style="background:' + s.farbe + '"><span id="rz-d-h">' + (it.status === 'gutschrift' ? (o.belegArt === 'storno' ? '↩ Stornorechnung' : '➖ Gutschrift') : '💶 Rechnung') + ' <b>' + escapeHtml(nr) + '</b>' + (it.kunde_name ? ' · ' + escapeHtml(it.kunde_name) : '') + '</span><button class="rz-x" onclick="document.getElementById(\'rch-detail-modal\').remove()" aria-label="Schließen">×</button></div>' +
     '<div class="rz-dlg-b">' +
-      '<div class="rz-d-top"><div class="rz-d-betrag"><b>' + _rzGeld(it.brutto) + '</b><span>brutto' + (it._bruttoCalc ? (it.nurNetto ? ' (ohne MwSt)' : ' (netto + 19 % MwSt)') : '') + (it.netto ? ' · netto ' + _rzGeld(it.netto) : '') + '</span></div>' +
-        '<div class="rz-d-st"><span class="lm-pill ' + s.pill + '">' + escapeHtml(_rzStatusLabel(it)) + '</span><span class="rz-mut">Rechnung vom ' + escapeHtml(it.datum ? _lmFmtDE(_lmDate(it.datum)) : '?') + '</span></div></div>' +
-      zahlung + _rzUebergabeHtml(it, o, darf) + versandHtml +
+      '<div class="rz-d-top"><div class="rz-d-betrag"><b>' + _rzGeld(_rzAnzeige(it, 'brutto')) + '</b><span>brutto' + (it._bruttoCalc ? (it.nurNetto ? ' (ohne MwSt)' : ' (netto + 19 % MwSt)') : '') + (it.netto ? ' · netto ' + _rzGeld(_rzAnzeige(it, 'netto')) : '') + '</span></div>' +
+        '<div class="rz-d-st"><span class="lm-pill ' + s.pill + '">' + escapeHtml(_rzStatusLabel(it)) + '</span><span class="rz-mut">' + (it.status === 'gutschrift' ? (o.belegArt === 'storno' ? 'Stornorechnung' : 'Gutschrift') : 'Rechnung') + ' vom ' + escapeHtml(it.datum ? _lmFmtDE(_lmDate(it.datum)) : '?') + '</span></div></div>' +
+      zahlung + (typeof _rzSgAktionenHtml === 'function' ? _rzSgAktionenHtml(it) : '') + _rzUebergabeHtml(it, o, darf) + versandHtml +   // v10.41: ↩ Storno / ➖ Gutschrift
       '<div class="rz-d-grid">' +
         '<div class="rz-d-sek"><h4>Rechnung</h4>' + zeile('Rechnungsnummer', nr, true) + zeile('Datum', it.datum ? _lmFmtDE(_lmDate(it.datum)) : '') + zeile('Fällig', o.faellig && !aus ? _lmFmtDE(o.faellig) : '') +
           zeile('Titel', it.titel) + zeile('Typ', it.typ) + zeile('Leistungszeitraum', it.leistungszeitraum) + zeile('Teilrechnung', it.prozent > 0 && it.prozent < 100 ? String(it.prozent).replace('.', ',') + ' %' : '') + '</div>' +
         '<div class="rz-d-sek"><h4>Kunde & Anlage</h4>' + zeile('Kunde', it.kunde_name) + zeile('Kunden-Nr.', it.kunde_nummer, true) + zeile('Konditionen', _rzKk(it) ? kkKurzText(_rzKk(it)) : '') + zeile('Standort', it.anlage_adresse) + zeile('Fabrik-Nr.', it.fabriknummer, true) +
           zeile('Auftrag', it.auftrag_id, true) + zeile('Vorgang', it.vorgang_nr, true) + '</div>' +
       '</div>' + posHtml +
-      '<div class="rz-d-links"><button class="btn prim" onclick="rzPdf(this,' + _lmA(id) + ')">📄 Rechnung (PDF)</button>' +
-        (isAdmin() && !aus && typeof rgVersandOeffnen === 'function' ? '<button class="btn" onclick="rgVersandOeffnen(' + _lmA(_rzFirma()) + ',' + _lmA(id) + ')" title="Über euer Freshdesk an den Kunden senden – PDF + E-Rechnung (XRechnung), Vorlage aus den bisherigen Mails, Probe an mich">📧 An Kunden senden</button>' : '') +
+      '<div class="rz-d-links"><button class="btn prim" onclick="rzPdf(this,' + _lmA(id) + ')">📄 ' + (it.status === 'gutschrift' ? (o.belegArt === 'storno' ? 'Stornorechnung' : 'Gutschrift') : 'Rechnung') + ' (PDF)</button>' +
+        (isAdmin() && it.status !== 'storniert' && typeof rgVersandOeffnen === 'function' ? '<button class="btn" onclick="rgVersandOeffnen(' + _lmA(_rzFirma()) + ',' + _lmA(id) + ')" title="' + (it.status === 'gutschrift' ? 'Über euer Freshdesk an den Kunden senden – PDF + E-Rechnung (XRechnung als Gutschrift mit Bezug auf die Rechnung), Probe an mich' : 'Über euer Freshdesk an den Kunden senden – PDF + E-Rechnung (XRechnung), Vorlage aus den bisherigen Mails, Probe an mich') + '">📧 An Kunden senden</button>' : '') +   // v10.41: auch Storno/Gutschrift
         link(it._erpUrl, '💶 In Maxise') + link(it._erpAuftragUrl, '🛠 Auftrag') + link(it._erpAnlageUrl, '🛗 Anlage') + '</div>' +
       '<details class="rz-roh"><summary>🔍 Rohe ERP-Daten</summary><pre>' + escapeHtml(JSON.stringify(it._raw || {}, null, 2)) + '</pre></details>' +
     '</div></div>';
@@ -70732,11 +70843,13 @@ function rzCsv() {
   if (!items.length) return toast('Keine Rechnungen in dieser Auswahl.', 'err');
   const zahl = v => { const x = _rzBetragZahl(v); return x ? x.toFixed(2).replace('.', ',') : ''; };
   const quelle = o => o.quelle === 'stichtag' ? 'Stichtag' : o.quelle === 'maxise' ? 'Maxise' : o.quelle === 'null' ? '0 €' : o.quelle ? 'Buchhaltung' : '';
-  const head = ['Rechnungsnummer', 'Rechnungsdatum', 'Fällig', 'Status', 'Bezahlt am', 'Bezahlt laut', 'Tage überfällig', 'Kunde', 'Kd-Nr.', 'Standort', 'Auftrag', 'Vorgang', 'Titel', 'Netto', 'Brutto', 'Notiz'];
+  // v10.41: Storno/Gutschrift negativ; „Bezug" (Rechnung ↔ Storno/Gutschrift) und der offene Rest nach Teil-Gutschriften
+  const bezug = (it, o) => it.status === 'gutschrift' ? (o.stornoNr ? (o.belegArt === 'storno' ? 'Storno zu ' : 'Gutschrift zu ') + o.stornoNr : '') : (o.gutschriften || []).map(g => (g.art === 'storno' ? 'Storno ' : 'Gutschrift ') + g.nr).join(', ');
+  const head = ['Rechnungsnummer', 'Rechnungsdatum', 'Fällig', 'Status', 'Bezahlt am', 'Bezahlt laut', 'Tage überfällig', 'Kunde', 'Kd-Nr.', 'Standort', 'Auftrag', 'Vorgang', 'Titel', 'Netto', 'Brutto', 'Notiz', 'Bezug', 'Offen nach Gutschrift'];
   const rows = items.map(it => { const o = it._rz || {};
-    return [_rzNrText(it), it.datum ? _lmFmtDE(_lmDate(it.datum)) : '', o.faellig ? _lmFmtDE(o.faellig) : '', (RZ_STATUS[it.status] || {}).label || it.status, o.bezahltAm ? _lmFmtDE(o.bezahltAm) : '',
+    return [_rzNrText(it), it.datum ? _lmFmtDE(_lmDate(it.datum)) : '', o.faellig && it.status !== 'gutschrift' && it.status !== 'storniert' ? _lmFmtDE(o.faellig) : '', (RZ_STATUS[it.status] || {}).label || it.status, o.bezahltAm ? _lmFmtDE(o.bezahltAm) : '',
       it.status === 'bezahlt' ? quelle(o) : '', it.status === 'ueberfaellig' ? o.tage : '', it.kunde_name || '', it.kunde_nummer || '', it.anlage_adresse || '', it.auftrag_id || '', it.vorgang_nr || '',
-      it.titel || '', zahl(it.netto), zahl(it.brutto), o.notiz || '']; });
+      it.titel || '', zahl(_rzAnzeige(it, 'netto')), zahl(_rzAnzeige(it, 'brutto')), o.notiz || '', bezug(it, o), o.rest != null && it.status !== 'bezahlt' ? zahl(o.rest) || '0,00' : '']; });
   const esc = x => { let t = String(x == null ? '' : x); if (/^[=+\-@]/.test(t) && !/^-?\d+(,\d+)?$/.test(t)) t = "'" + t; return /[";\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; };
   const csv = String.fromCharCode(0xFEFF) + [head].concat(rows).map(r => r.map(esc).join(';')).join('\r\n');
   const link = document.createElement('a');
@@ -70795,7 +70908,7 @@ async function _rzSetzenViele(liste) {
     const felder = Object.assign({ geaendert_am: jetzt, geaendert_von: wer, verlauf_json: JSON.stringify(verlauf.slice(-40)) }, x.aenderung);
     if (rec) upd.push({ rid: String(x.id), id: rec.id, alt, felder });
     else neu.push({ rid: String(x.id), felder: Object.assign({ rechnung_id: String(x.id), firma: _rzFirma(), art: 'status', rechnung_nr: _rzNrText(it), rechnung_datum: _lmDate(it.datum) || '',
-      betrag_brutto: Math.round(_rzBetragZahl(it.brutto) * 100) / 100, kunde_name: String(it.kunde_name || '').slice(0, 200), quelle: 'buchhaltung' }, felder) });
+      betrag_brutto: _rzBruttoVermerk(it), kunde_name: String(it.kunde_name || '').slice(0, 200), quelle: 'buchhaltung' }, felder) });
   }
   if (upd.length) {
     await _rzBatch('PATCH', upd.map(u => ({ id: u.id, fields: u.felder })));
@@ -70822,6 +70935,7 @@ function _rzSyncFrage(it, art) {
     ? _rzKurz(it) + ' in Maxise an Creditreform übergeben – wie „Sync Creditreform" in Maxise?\n\nCreditreform übernimmt dann das Mahnwesen für diese Rechnung.'
     : _rzKurz(it) + ' in Maxise an DATEV übertragen – wie „Sync Datev" in Maxise?';
   if (art === 'creditreform' && ['bezahlt', 'storniert', 'gutschrift'].includes(it.status)) t += '\n\nACHTUNG: Die Rechnung ist ' + ((RZ_STATUS[it.status] || {}).label || it.status) + ' – trotzdem ins Mahnwesen geben?';
+  else if (art === 'creditreform' && o.rest != null) t += '\n\nACHTUNG: Zu dieser Rechnung gibt es ' + (o.gutschriften || []).map(g => 'Gutschrift ' + g.nr + ' (−' + _rzGeld(g.brutto) + ')').join(', ') + ' – offen sind nur noch ' + _rzGeld(o.rest) + '. Bitte bei Creditreform den Rest angeben.';   // v10.41
   if (schon) t += '\n\nSchon über die Servicebox übergeben am ' + _rzZeitDE(schon) + ' – nochmal?';
   return t;
 }
@@ -70871,8 +70985,20 @@ function _rzAuswahlLeiste() {
     '<button type="button" class="btn" onclick="rzAuswahlBezahlt(this)"' + dis + '>✓ bezahlt</button>' +
     '<button type="button" class="btn" onclick="rzAuswahlSync(this,\'datev\')"' + dis + '>⇄ Sync DATEV</button>' +
     '<button type="button" class="btn" onclick="rzAuswahlSync(this,\'creditreform\')"' + dis + '>⇄ Sync Creditreform</button>' +
+    (typeof rzStornoDialog === 'function' ? _rzAuswahlSgKnoepfe(n) : '') +   // v10.41: ↩ Storno / ➖ Gutschrift – genau eine Rechnung
     '<button type="button" class="btn prim" onclick="rzAuswahlModus()">Fertig</button>' +
   '</div>';
+}
+/* v10.41: Storno/Gutschrift aus der Auswahl – nur für genau eine Rechnung (jede bekommt in Maxise eine eigene neue Rechnung) */
+function _rzAuswahlSgKnoepfe(n) {
+  const grund = !_rzDarf() ? _rzKeinRecht() : n !== 1 ? 'Storno/Gutschrift: bitte genau eine Rechnung auswählen' : '';
+  const t = grund ? ' disabled title="' + escapeHtml(grund) + '"' : '';
+  return '<button type="button" class="btn" onclick="rzAuswahlSg(\'storno\')"' + t + '>↩ Storno</button><button type="button" class="btn" onclick="rzAuswahlSg(\'gutschrift\')"' + t + '>➖ Gutschrift</button>';
+}
+function rzAuswahlSg(art) {
+  if (_rzUi.sel.size !== 1) return toast('Storno/Gutschrift: bitte genau eine Rechnung auswählen.', 'err');
+  const id = [..._rzUi.sel][0];
+  return art === 'storno' ? rzStornoDialog(id) : rzGutschriftDialog(id);
 }
 async function rzAuswahlSync(btn, art) {
   const s = RZ_SYNC[art]; if (!s) return;
@@ -71661,6 +71787,10 @@ async function rgMusterKopieren(btn) {
  *   § 13b). Gegenprobe gegen die E-Rechnung im Maxise-PDF; fehlt etwas Pflichtiges → Versand gesperrt. Verschickte Dateien und Ticket
  *   stehen an der Rechnung (Rechnungen_Status: versand_json, versand_dateien). Die Testrechnung bekommt eine Test-E-Rechnung mit.
  * v10.40: Rechnungen über 0 € sind erlaubt (Rechnung schreiben, Testrechnung, E-Rechnung – bei 0 € spielt die Steuerart keine Rolle).
+ * v10.41: ↩ Storno / ➖ Gutschrift (rz/rz-sg.js) an den Kunden – derselbe Versand: Maxise-PDF + E-Rechnung als Gutschrift (XRechnung Typ 381,
+ *   Beträge positiv = gutgeschrieben, Bezug auf die Rechnung, Zahlungsart Verrechnung), Gegenprobe mit dem Maxise-PDF (Vorzeichen egal),
+ *   Betreff/Text „Stornorechnung … zu Rechnung …", Empfänger wie bei der Rechnung. Eine stornierte Rechnung wird nicht mehr verschickt;
+ *   beim Schreiben einer neuen Rechnung zählt sie nicht mehr als vorhanden (auch nicht für „Berichte seit der letzten Rechnung").
  * ════════════════════════════════════════════════════════════════════ */
 const RG_ARTEN = {
   pauschal:       { label: 'Pauschal',         icon: '📦' },
@@ -71785,7 +71915,7 @@ function _rgStdTitel(mu) { return _rgGelernterTitel(mu, 'aufwand', x => RG_STD_R
 function _rgEpTitel(mu) { return _rgGelernterTitel(mu, 'aufwand', x => RG_EP_RE.test(x)) || 'Einsatzpauschale'; }
 function _rgSeit(ctx) {
   if (ctx && ctx.test) return '';   // v10.37 Testrechnung: so, als gäbe es zum Auftrag noch keine Rechnung – alle Berichte zählen
-  return (ctx.vorhandene || []).filter(x => !['storno', 'gutschrift'].includes(_rgRechnungArt(x.r)))
+  return (ctx.vorhandene || []).filter(x => !['storno', 'gutschrift'].includes(_rgRechnungArt(x.r)) && !x.aufgehoben)   // v10.41: stornierte zählen nicht
     .reduce((mx, x) => { const d = _lmDate(x.r.createdDate || (x.n && x.n.datum)); return d > mx ? d : mx; }, '');
 }
 /* Einzelpositionen aus dem Servicebox-Angebot – nur, wenn ihre Summe genau den Angebotspreis ergibt */
@@ -71952,10 +72082,11 @@ async function _rgKontext(rec, firma, info) {
   const mc = _rgMusterCache[firma];
   const muster = (mc && mc.data && Date.now() - mc.at < RG_TTL) ? mc.data : _rgMusterBerechnen(roh, null, { n: RG_N });
   const heute = _lmToday();
-  const vorhandene = (roh || []).filter(r => _rgRohAuftragId(r) === String(auftrag.id)).map(r => ({ r, n: _normalizeRechnung(r, '', heute) }))
+  const aufgehoben = await _rgAufgehobenMap(firma, roh);   // v10.41: stornierte bzw. ganz gutgeschriebene Rechnungen zählen nicht mehr
+  const vorhandene = (roh || []).filter(r => _rgRohAuftragId(r) === String(auftrag.id)).map(r => ({ r, n: _normalizeRechnung(r, '', heute), aufgehoben: aufgehoben.get(String(r.id)) || '' }))
     .sort((a, b) => (+b.r.id || 0) - (+a.r.id || 0));
   return { firma, rec, f, auftrag, anlage, kunde, kontakte: alleKontakte, angebot, kond: kond || null, berichte: berichte || [], berichteFehler: berichte === null, sb, tenant,
-    roh: roh || [], muster, vorhandene, vorbild: _rgVorbilder(roh, auftrag, anlage, kunde), heute };
+    roh: roh || [], muster, vorhandene, vorbild: _rgVorbilder((roh || []).filter(r => !aufgehoben.has(String(r.id))), auftrag, anlage, kunde), heute };
 }
 
 /* ═══ Entwurf: so würde die Rechnung aussehen ═══ */
@@ -72106,7 +72237,7 @@ function _rgEntwurf(ctx) {
   }
   if (a.fehlt.length) H('In den bisherigen Anmerkungen stand auch ' + a.fehlt.map(x => '„' + x + ':"').join(', ') + ' – dafür gibt es hier keinen Wert, die Zeile fehlt.');
   if (ctx.auftrag && ctx.auftrag.hauptAuftragId) H('Dieser Auftrag ist ein Teilvorgang von Auftrag ' + ctx.auftrag.hauptAuftragId + ' – bitte prüfen, ob die Rechnung hier oder am Hauptauftrag geschrieben wird.', 'warn');
-  const teil = ctx.test ? [] : (ctx.vorhandene || []).filter(x => _rechnungIstTeil(x.r));   // Testrechnung: vorhandene Rechnungen zählen nicht
+  const teil = ctx.test ? [] : (ctx.vorhandene || []).filter(x => _rechnungIstTeil(x.r) && !x.aufgehoben);   // Testrechnung: vorhandene Rechnungen zählen nicht
   if (teil.length) {
     const bisLohn = _rgRund(teil.reduce((x, t) => x + (+t.r.lohnanteilNetto || 0), 0));
     H('Zu diesem Auftrag gibt es Teilrechnungen (' + teil.map(t => t.r.id + (+t.r.prozentualeAbrechnung > 0 && +t.r.prozentualeAbrechnung < 100 ? ' · ' + _rgZahlText(+t.r.prozentualeAbrechnung) + ' %' : '') +
@@ -72134,7 +72265,7 @@ function _rgPruefen(fm, ctx) {
     if (!String(p.title || '').trim()) fehler.push(nr + ': Bezeichnung fehlt.');
     if (!Number.isFinite(a) || a <= 0) fehler.push(nr + ': Anzahl fehlt.');
     if (!Number.isFinite(k)) fehler.push(nr + ': Preis fehlt.');
-    else if (k < 0) fehler.push(nr + ': negativer Preis – Gutschriften bitte in Maxise.');
+    else if (k < 0) fehler.push(nr + ': negativer Preis – Gutschriften und Stornos legt ein Admin in der Rechnungsliste an (CRM → 💶 Rechnungen → Rechnung → ➖ Gutschrift).');
     if (Number.isFinite(a) && Number.isFinite(k)) netto += a * k;
   });
   netto = _rgRund(netto);
@@ -72155,7 +72286,7 @@ function _rgPruefen(fm, ctx) {
     else if (lohn === 0 && netto > 0 && mu.nNormal && mu.lohn && mu.lohn.gesetzt / mu.nNormal >= 0.5) warn.push('Kein Lohnanteil (§ 35a) – bei den bisherigen Rechnungen meist angegeben. Bei der Arbeitszeit „Lohn" anhaken oder den Betrag eintragen.');
     if (!fm.lohnAuto && auto > 0 && Math.abs(lohn - auto) >= 0.01) warn.push('Lohnanteil von Hand gesetzt (' + _rgGeld(lohn) + ') – aus den „Lohn"-Positionen ergäben sich ' + _rgGeld(auto) + '.');
   }
-  const vorh = test ? [] : (ctx.vorhandene || []).filter(x => !['storno', 'gutschrift'].includes(_rgRechnungArt(x.r)));   // Testrechnung: steht oben als Hinweis
+  const vorh = test ? [] : (ctx.vorhandene || []).filter(x => !['storno', 'gutschrift'].includes(_rgRechnungArt(x.r)) && !x.aufgehoben);   // Testrechnung: steht oben als Hinweis; v10.41: stornierte zählen nicht
   if (vorh.length && !fm.trotzVorhanden) fehler.push('Zu diesem Auftrag gibt es schon ' + (vorh.length === 1 ? 'die Rechnung ' : 'die Rechnungen ') + vorh.map(x => x.r.id).join(', ') + ' – eine weitere nur mit Häkchen „weitere Rechnung".');
   if (ctx.auftrag && /storn/i.test(String(ctx.auftrag.status || ''))) stopp.push(ECHT + 'Der Auftrag ist in Maxise storniert.');
   const det = (ctx.angebot && ctx.angebot.detail) || {};
@@ -72250,7 +72381,16 @@ async function rgVersandOeffnen(firma, rid, recId) {
     ]);
     if (_rgS !== s) return;
     if (!r || r.id == null) throw new Error('Maxise liefert die Rechnung ' + rid + ' nicht.');
-    if (['storno', 'gutschrift'].includes(_rgRechnungArt(r))) throw new Error('Rechnung ' + rid + ' ist ein Storno bzw. eine Gutschrift – Versand bitte direkt in Maxise.');
+    if (['storno', 'gutschrift'].includes(_rgRechnungArt(r))) {   // v10.41: Storno/Gutschrift – mit Bezug auf die Rechnung
+      const k = await _rgKreditBezug(firma, r);
+      if (_rgS !== s) return;
+      if (k.fehler) throw new Error(k.fehler);
+      s.kredit = k;
+    } else {
+      const auf = await _rgAufgehoben(firma, rid);
+      if (_rgS !== s) return;
+      if (auf) throw new Error('Rechnung ' + rid + ' ist ' + auf + ' – sie wird nicht mehr verschickt.');
+    }
     s.rechnung = r; s.mailLog = log; s.versand = versand; s.kundeName = String(((_rgRohAnlage(r).kunde || (r.kontakt || {}).kunde) || {}).firmenname || '');
     s.schritt = 'pdf';
   } catch (e) { if (_rgS !== s) return; s.schritt = 'fehler'; s.fehler = _rgFehler(e); }
@@ -72284,7 +72424,7 @@ function _rgRender() {
   }
   if (m.classList) m.classList.toggle('rg-test', !!s.test);   // v10.37: Testrechnung sieht man dem Dialog an
   const f = (s.rec && s.rec.fields) || {};
-  const titel = s.nurVersand ? '📧 Rechnung ' + escapeHtml(s.rid) + ' senden' : (s.test ? '🧪 Testrechnung · Auftrag ' : '🧾 Rechnung schreiben · Auftrag ') + escapeHtml(String(_rgAufNr(f)));
+  const titel = s.nurVersand ? '📧 ' + _rgBeleg(s) + ' ' + escapeHtml(s.rid) + ' senden' : (s.test ? '🧪 Testrechnung · Auftrag ' : '🧾 Rechnung schreiben · Auftrag ') + escapeHtml(String(_rgAufNr(f)));
   let body = '', fuss = '';
   if (s.schritt === 'laden') body = '<div class="rg-laden"><div class="spinner"></div><div id="rg-lade-text">' + escapeHtml(s.ladeText || '') + '</div></div>';
   else if (s.schritt === 'fehler') { body = '<div class="rz-hinweis rot">❌ ' + escapeHtml(s.fehler || 'Fehler') + '</div>'; fuss = '<span class="rz-aktion-sp"></span><button class="btn" onclick="rgSchliessen(true)">Schließen</button>'; }
@@ -72332,10 +72472,12 @@ function _rgFormHtml(w) {
     (an.id != null ? chip('🛗 ' + escapeHtml(_lmShort(an.anzeigeAdresse || an.name || '', 60)) + ' · Anlage ' + escapeHtml(String(an.id))) : '') +
     (c.vorbild && c.vorbild.naechste ? chip('🧠 Vorbild: Rechnung ' + escapeHtml(String(c.vorbild.naechste.r.id)) + ' (' + escapeHtml(c.vorbild.wie) + ')', 'vb') : chip('🧠 gelernt aus ' + (c.muster.nNormal || 0) + ' Rechnungen', 'vb')) +
     (s.rid ? chip('✏ Korrektur von Rechnung ' + escapeHtml(s.rid), 'warn') : '') + '</div>';
-  const vorh = s.rid || c.test ? [] : (c.vorhandene || []);
-  const vorhHtml = c.test ? _rgTestVorhHtml(c, fm) : vorh.length ? '<div class="rz-hinweis rot"><b>⚠ Zu diesem Auftrag gibt es schon ' + (vorh.length === 1 ? 'eine Rechnung' : vorh.length + ' Rechnungen') + ':</b> ' +
+  const vorh = s.rid || c.test ? [] : (c.vorhandene || []).filter(x => !['storno', 'gutschrift'].includes(_rgRechnungArt(x.r)) && !x.aufgehoben);
+  const aufg = s.rid || c.test ? [] : (c.vorhandene || []).filter(x => x.aufgehoben);   // v10.41: storniert / ganz gutgeschrieben – nur zur Info
+  const vorhHtml = (aufg.length ? '<div class="rz-hinweis">ℹ Zu diesem Auftrag gab es ' + aufg.map(x => 'Rechnung ' + escapeHtml(String(x.r.id)) + ' (' + escapeHtml(x.aufgehoben) + ')').join(', ') + ' – zählt hier nicht mehr.</div>' : '') +
+    (c.test ? _rgTestVorhHtml(c, fm) : vorh.length ? '<div class="rz-hinweis rot"><b>⚠ Zu diesem Auftrag gibt es schon ' + (vorh.length === 1 ? 'eine Rechnung' : vorh.length + ' Rechnungen') + ':</b> ' +
       vorh.map(x => escapeHtml(String(x.r.id)) + ' vom ' + escapeHtml(_rgDatumDE(x.r.createdDate || x.n.datum) || '?') + ' (' + escapeHtml(_rgGeld(x.n.brutto)) + ', ' + escapeHtml(x.n.status) + ')').join(' · ') +
-      '<label class="rz-chk rg-trotz"><input type="checkbox" id="rg-trotz" data-f="trotzVorhanden" onchange="rgEingabe(this)"' + (fm.trotzVorhanden ? ' checked' : '') + '><span>Ja, ich schreibe bewusst eine <b>weitere</b> Rechnung (z. B. Nachtrag oder Schlussrechnung)</span></label></div>' : '';
+      '<label class="rz-chk rg-trotz"><input type="checkbox" id="rg-trotz" data-f="trotzVorhanden" onchange="rgEingabe(this)"' + (fm.trotzVorhanden ? ' checked' : '') + '><span>Ja, ich schreibe bewusst eine <b>weitere</b> Rechnung (z. B. Nachtrag oder Schlussrechnung)</span></label></div>' : '');
   const hinw = fm.hinweise.length ? '<div class="rg-hinweise">' + fm.hinweise.map(h => '<div class="' + (h.typ === 'warn' ? 'warn' : '') + '">' + (h.typ === 'warn' ? '⚠ ' : 'ℹ ') + escapeHtml(h.t) + '</div>').join('') + '</div>' : '';
   const sek = (titel, inhalt) => '<div class="rg-sek"><h4>' + titel + '</h4>' + inhalt + '</div>';
   const kontaktOpts = (c.kontakte || []).map(k => '<option value="' + escapeHtml(String(k.id)) + '"' + (String(k.id) === String(fm.kontaktId) ? ' selected' : '') + '>' + escapeHtml(_rgKontaktText(k)) + '</option>').join('');
@@ -72600,9 +72742,9 @@ async function _rgPdfLaden() {
 function _rgPdfInhalt() {
   const s = _rgS;
   if (s.test) return _rgTestPdfInhalt(s);
-  if (s.pdfUrl) return '<div class="rg-alt"><a class="btn" href="' + s.pdfUrl + '" target="_blank" rel="noopener">📄 PDF in neuem Fenster</a><a class="btn" href="' + s.pdfUrl + '" download="Rechnung_' + escapeHtml(s.rid) + '.pdf">⬇ Herunterladen</a>' +
-    '<span class="rz-mut">So geht die Rechnung an den Kunden.</span></div>' +
-    '<iframe class="rg-pdf-frame" src="' + s.pdfUrl + '#view=FitH" title="Rechnung ' + escapeHtml(s.rid) + ' (PDF)"></iframe>';
+  if (s.pdfUrl) return '<div class="rg-alt"><a class="btn" href="' + s.pdfUrl + '" target="_blank" rel="noopener">📄 PDF in neuem Fenster</a><a class="btn" href="' + s.pdfUrl + '" download="' + escapeHtml(_rgXrDateinamen(s.rid, false, s.kredit && s.kredit.art).pdf) + '">⬇ Herunterladen</a>' +
+    '<span class="rz-mut">So geht die ' + _rgBeleg(s) + ' an den Kunden.</span></div>' +
+    '<iframe class="rg-pdf-frame" src="' + s.pdfUrl + '#view=FitH" title="' + _rgBeleg(s) + ' ' + escapeHtml(s.rid) + ' (PDF)"></iframe>';
   if (s.pdfFehler) return '<div class="rz-hinweis rot">PDF nicht geladen: ' + escapeHtml(s.pdfFehler) + ' <button class="btn" onclick="_rgPdfNochmal()">↻ Nochmal</button></div>';
   return '<div class="rg-laden"><div class="spinner"></div>PDF wird von Maxise geholt …</div>';
 }
@@ -72615,8 +72757,10 @@ function _rgPdfHtml() {
   const kHtml = s.nurVersand || !k ? '' : k.fehler ? '<div class="rz-hinweis rg-gelb">Kontrolle nicht möglich: ' + escapeHtml(k.fehler) + ' – bitte im PDF prüfen.</div>'
     : k.abw.length ? '<div class="rz-hinweis rot"><b>⚠ Maxise hat die Rechnung anders gespeichert als eingegeben:</b><ul class="rg-ul">' + k.abw.map(x => '<li>' + escapeHtml(x) + '</li>').join('') + '</ul>Bitte im PDF prüfen und ggf. korrigieren.</div>'
     : '<div class="rz-hinweis gruen">✓ Kontrolle: Positionen, Beträge, Empfänger und Ansprechpartner stehen in Maxise genau so wie eingegeben.</div>';
+  const kb = s.kredit && s.kredit.bezug;   // v10.41: Storno/Gutschrift
   const kopf = s.nurVersand
-    ? '<div class="rz-hinweis">Rechnung <b>' + escapeHtml(s.rid) + '</b>' + (s.kundeName ? ' · ' + escapeHtml(s.kundeName) : '') + ' – bitte das PDF prüfen, dann an den Kunden senden.</div>'
+    ? '<div class="rz-hinweis">' + _rgBeleg(s) + ' <b>' + escapeHtml(s.rid) + '</b>' + (kb ? ' zu Rechnung <b>' + escapeHtml(kb.id) + '</b>' + (kb.datum ? ' vom ' + escapeHtml(_lmFmtDE(kb.datum)) : '') : '') +
+        (s.kundeName ? ' · ' + escapeHtml(s.kundeName) : '') + ' – bitte das PDF prüfen, dann an den Kunden senden.</div>'
     : '<div class="rz-hinweis gruen">✓ Rechnung <b>' + escapeHtml(s.rid) + '</b> ist in Maxise ' + (s.korrigiert ? 'geändert' : 'angelegt') + ' – <b>noch nicht verschickt</b>. Bitte das PDF prüfen.</div>';
   const schon = _rgSchonVerschickt(s);   // v10.39: über Maxise und über Freshdesk
   return kopf + (s.warnAnlage ? '<div class="rz-hinweis rg-gelb">' + escapeHtml(s.warnAnlage) + '</div>' : '') + kHtml +
@@ -72691,6 +72835,87 @@ async function _rgVersandListe(firma, rid) {
   let l = []; try { l = JSON.parse(((rec && rec.fields) || {}).versand_json || '[]'); } catch (_) { l = []; }
   return Array.isArray(l) ? l.filter(v => v && v.an) : [];
 }
+/* ── v10.41: ↩ Storno / ➖ Gutschrift – Bezug auf die Rechnung; stornierte Rechnungen ── */
+function _rgBeleg(s) { return s && s.kredit ? (s.kredit.art === 'storno' ? 'Stornorechnung' : 'Gutschrift') : 'Rechnung'; }
+async function _rgStatusRec(firma, rid) {   // Zahlungsstatus-Datensatz (Rechnungen_Status) – aus der Rechnungsliste, sonst aus Airtable
+  if (typeof _rzStand !== 'undefined' && _rzStand && _rzStand.firma === firma && _rzStand.map && _rzStand.loadedAt) return _rzStand.map.get(String(rid)) || null;
+  if (typeof atRead !== 'function') return null;
+  return (await atRead(RZ_T, 'AND({firma}=' + _lmQ(firma) + ',{rechnung_id}=' + _lmQ(String(rid)) + ',{art}=\'status\')'))[0] || null;
+}
+let _rgBezugFehltBis = 0;   // Feld „bezug_rechnung" gibt es (noch) nicht – Airtable lehnt die Formel ab; bis dahin nicht nochmal fragen
+async function _rgBezugMap(firma) {   // alle Vermerke „bezug_rechnung" (Storno/Gutschrift aus der Servicebox)
+  if (typeof _rzStand !== 'undefined' && _rzStand && _rzStand.firma === firma && _rzStand.loadedAt && _rzStand.map) return _rzStand.map;
+  const map = new Map();
+  if (typeof atRead !== 'function' || Date.now() < _rgBezugFehltBis) return map;
+  try { for (const rec of await atRead(RZ_T, 'AND({firma}=' + _lmQ(firma) + ',{art}=\'status\',{bezug_rechnung}!=\'\')')) map.set(String((rec.fields || {}).rechnung_id || ''), rec); }
+  catch (e) { if (/unknown field|bezug_rechnung|formula/i.test(String((e && e.message) || e))) _rgBezugFehltBis = Date.now() + 10 * 60000; }   // legt ein Admin an (Rechnungsliste öffnen)
+  return map;
+}
+/* Zu welcher Rechnung gehört die Storno/Gutschrift? Vermerk der Servicebox, sonst Text („Storno Rechnung 2141"), sonst gleicher Auftrag + Betrag */
+async function _rgKreditBezug(firma, r) {
+  let rec = null; try { rec = await _rgStatusRec(firma, r.id); } catch (_) { rec = null; }
+  const f = (rec && rec.fields) || {};
+  let art = f.beleg_art === 'storno' || f.beleg_art === 'gutschrift' ? f.beleg_art : (_rgRechnungArt(r) === 'storno' ? 'storno' : 'gutschrift');
+  let bid = String(f.bezug_rechnung || '').trim();
+  if (!bid && typeof _rzVerweise === 'function') {
+    try {
+      const heute = _lmToday(), items = _rchDedupe(((await _fetchErpRechnungen(firma)) || []).map(x => _normalizeRechnung(x, '', heute)));
+      if (!items.some(x => String(x.id) === String(r.id))) items.push(_normalizeRechnung(r, '', heute));
+      const map = await _rgBezugMap(firma), v = _rzVerweise(items, map);
+      bid = v.bezugId.get(String(r.id)) || '';
+      if (bid && !f.beleg_art && v.art.get(String(r.id))) art = v.art.get(String(r.id));
+    } catch (_) { bid = ''; }
+  }
+  const name = art === 'storno' ? 'die Stornorechnung' : 'die Gutschrift';
+  if (!bid) return { art, fehler: 'Zu welcher Rechnung gehört ' + name + ' ' + r.id + '? Das erkennt die Servicebox nicht (nicht in der Servicebox angelegt, kein Bezug im Text) – bitte direkt in Maxise versenden.' };
+  let o = null; try { o = await erpFetch('/aufzug/' + firma + '/api/rechnungen/' + encodeURIComponent(bid)); } catch (_) { o = null; }
+  if (!o || o.id == null) return { art, fehler: 'Maxise liefert die Rechnung ' + bid + ' nicht, zu der ' + name + ' ' + r.id + ' gehört.' };
+  return { art, bezug: { id: String(o.id), datum: _lmDate(o.createdDate) || '', r: o } };
+}
+/* Rechnungen, die storniert oder ganz gutgeschrieben sind → Map ID → „storniert (Stornorechnung 2150)" */
+async function _rgAufgehobenMap(firma, roh) {
+  const out = new Map(); if (typeof _rzVerweise !== 'function') return out;
+  try {
+    const heute = _lmToday(), items = _rchDedupe((roh || []).map(x => _normalizeRechnung(x, '', heute)));
+    const v = _rzVerweise(items, await _rgBezugMap(firma));
+    for (const it of items) {
+      const gl = v.gut.get(String(it.id)) || []; if (!gl.length) continue;
+      const sto = gl.find(g => g.art === 'storno');
+      if (sto) out.set(String(it.id), 'storniert (Stornorechnung ' + sto.nr + ')');
+      else if (gl.reduce((a, g) => a + g.brutto, 0) >= Math.abs(_rzBetragZahl(it.brutto)) - 0.005) out.set(String(it.id), 'durch Gutschrift ' + gl.map(g => g.nr).join(', ') + ' ausgeglichen');
+    }
+  } catch (_) {}
+  return out;
+}
+async function _rgAufgehoben(firma, rid) {   // frisch aus Maxise
+  try { return (await _rgAufgehobenMap(firma, await _fetchErpRechnungen(firma))).get(String(rid)) || ''; } catch (_) { return ''; }
+}
+/* Wohin ging die Rechnung? (Maxise-Mail-Log ohne Proben + Versände über die Servicebox) – die Gutschrift geht dorthin */
+async function _rgKreditEmpfaenger(s) {
+  const oid = s.kredit.bezug.id;
+  let log = []; try { log = _rgListe(await erpFetch('/aufzug/' + s.firma + '/api/rechnungen/' + encodeURIComponent(oid) + '/mail-log')); } catch (_) { log = []; }
+  const sb = (await _rgVersandListe(s.firma, oid)).map(v => ({ to: v.an, cc: v.cc, sentAt: v.am }));
+  const ok = (log || []).filter(m => m && m.to && !_rgIstProbe(m)).concat(sb.filter(m => m.to)).sort((a, b) => String(b.sentAt || '').localeCompare(String(a.sentAt || '')));
+  return ok.length ? { to: String(ok[0].to), cc: String(ok[0].cc || ''), am: ok[0].sentAt } : null;
+}
+/* Gruß + Signatur wie in den bisherigen Rechnungs-Mails (gelernte Vorlage) – sonst „Mit freundlichen Grüßen" + Firma */
+function _rgSignatur(mu, w) {
+  const z = String(_rgMailVorlage(mu, w).text || '').split('\n');
+  let i = -1; z.forEach((l, j) => { if (/^\s*(?:mit\s+)?(?:freundlich|best|viel|herzlich|lieb|sonnig)\w*\s+gr(?:ü|ue)(?:ß|ss)\w*|^\s*mfg\b/i.test(l)) i = j; });
+  const sig = i < 0 ? '' : z.slice(i).join('\n').trim();
+  return sig && sig.length <= 600 && z.length - i <= 12 ? sig : 'Mit freundlichen Grüßen\n' + w.FIRMA;
+}
+function _rgKreditVorlage(s, r, mu) {
+  const w = _rgPlatzhalterWerte(s, r), b = s.kredit.bezug, storno = s.kredit.art === 'storno';
+  const netto = Math.abs(_rgRohNetto(r)), betrag = r.onlyNetto ? netto : _rgRund(netto * 1.19);
+  const bez = 'Rechnung Nr. ' + b.id + (b.datum ? ' vom ' + _lmFmtDE(b.datum) : ''), fuer = w.STANDORT ? ' für die Aufzugsanlage ' + w.STANDORT : '';
+  return {
+    betreff: (storno ? 'Stornorechnung ' : 'Gutschrift ') + w.NR + ' zu Rechnung ' + b.id + (w.STANDORT ? ' – ' + w.STANDORT : ''),
+    text: w.BRIEFANREDE + ',\n\nanbei erhalten Sie unsere ' + (storno ? 'Stornorechnung Nr. ' + w.NR + ' zu unserer ' + bez + fuer + '. Die Rechnung ' + b.id + ' ist damit aufgehoben.'
+      : 'Gutschrift Nr. ' + w.NR + ' über ' + _rgGeld(betrag) + ' zu unserer ' + bez + fuer + '.') + '\n\nBei Fragen sind wir gerne für Sie da.\n\n' + _rgSignatur(mu, w),
+    quelle: 'der Vorlage für ' + (storno ? 'Stornorechnungen' : 'Gutschriften'),
+  };
+}
 async function _rgMailEntwurf(s) {
   let mu = null; try { mu = await _rgMusterLaden(s.firma, { mails: true }); } catch (_) { mu = null; }
   // v10.37 Testrechnung: die Rechnung gibt es nur in der Servicebox (_rgTestRechnung) – Maxise wird dazu nichts gefragt
@@ -72706,6 +72931,8 @@ async function _rgMailEntwurf(s) {
   const vorher = await _rgLetzteMail(s.firma, r);
   const kand = [];
   const add = (label, wert) => { const w = _rgMails(wert).map(_rgMail).join(', '); if (w && _rgMailOk(w) && !kand.some(k => k.wert === w)) kand.push({ label, wert: w }); };
+  const kredit = s.kredit && !s.test ? await _rgKreditEmpfaenger(s) : null;   // v10.41: die Gutschrift geht dorthin, wohin die Rechnung ging
+  if (kredit) add('dorthin ging Rechnung ' + s.kredit.bezug.id, kredit.to);
   const ml = mu && mu.mail, rechnungMeist = !ml || ml.gesendet < 3 || ml.an.rechnung >= Math.max(ml.an.kontakt, ml.an.auftrag, ml.an.andere);
   if (rechnungMeist) { add('Rechnungs-E-Mail des Kunden in Maxise', reE.email); if (vorher) add('zuletzt verwendet (Rechnung ' + vorher.rid + ')', vorher.to); }
   else { if (vorher) add('zuletzt verwendet (Rechnung ' + vorher.rid + ')', vorher.to); add('Rechnungs-E-Mail des Kunden in Maxise', reE.email); }
@@ -72717,8 +72944,11 @@ async function _rgMailEntwurf(s) {
     const oft = (ml.cc || []).filter(([k, n]) => k && k !== '{EMAIL}' && n / ml.ccMails >= 0.4).map(x => x[0]);
     if (oft.length) { cc = oft.join(', '); ccQuelle = 'wie bei den meisten bisherigen Mails'; }
   }
-  const vorlage = _rgMailVorlage(mu, _rgPlatzhalterWerte(s, r));
+  if (!cc && kredit && kredit.cc && _rgMailOk(kredit.cc)) { cc = _rgMails(kredit.cc).map(_rgMail).join(', '); ccQuelle = 'wie bei Rechnung ' + s.kredit.bezug.id; }
+  const vorlage = s.kredit ? _rgKreditVorlage(s, r, mu) : _rgMailVorlage(mu, _rgPlatzhalterWerte(s, r));   // v10.41
   const hinweise = [];
+  if (kredit) hinweise.push('Rechnung ' + s.kredit.bezug.id + ' ging ' + (kredit.am ? 'am ' + _rgZeit(kredit.am) + ' ' : '') + 'an ' + kredit.to + '.');
+  else if (s.kredit) hinweise.push('Rechnung ' + s.kredit.bezug.id + ' ist laut Maxise und Servicebox nicht per Mail an den Kunden gegangen – bitte die Adresse prüfen.');
   if (vorher && wahl && _rgMails(vorher.to).map(_rgMail).join(', ') !== wahl.wert) hinweise.push('Die letzte Rechnung an diesen Kunden (' + vorher.rid + ') ging an ' + vorher.to + '.');
   return { an: wahl ? wahl.wert : '', anQuelle: wahl ? wahl.label : '', anAlt: kand.slice(1), cc, ccQuelle, betreff: vorlage.betreff, text: vorlage.text, vorlageQuelle: vorlage.quelle,
     post: /post|brief/i.test(versand) && !/mail/i.test(versand) ? versand : '', schon: _rgSchonVerschickt(s), hinweise, absender, absenderFehler };
@@ -72861,7 +73091,7 @@ async function rgSenden(btn, probe) {
     try { localStorage.setItem('rg_probe_an', an); } catch (_) {}
   } else {
     const schon = s.mail.schon || [], nm = s.eRechnung.namen;
-    if (!confirm('Rechnung ' + s.rid + ' jetzt über Freshdesk an den KUNDEN senden?\n\nAn: ' + an + (cc ? '\nKopie: ' + cc : '') + '\nBetreff: ' + betreff + '\nAnhang: ' + nm.pdf + ' + ' + nm.xml + ' (E-Rechnung)' +
+    if (!confirm(_rgBeleg(s) + ' ' + s.rid + ' jetzt über Freshdesk an den KUNDEN senden?\n\nAn: ' + an + (cc ? '\nKopie: ' + cc : '') + '\nBetreff: ' + betreff + '\nAnhang: ' + nm.pdf + ' + ' + nm.xml + ' (E-Rechnung)' +
       (schon.length ? '\n\nACHTUNG – schon verschickt: ' + schon.map(x => _rgZeit(x.sentAt) + ' an ' + x.to).join(', ') : '') + '\n\nEine verschickte Mail lässt sich nicht zurückholen.')) return;
   }
   s.busy = true;
@@ -72887,19 +73117,20 @@ async function rgSenden(btn, probe) {
   s.gesendet = true; s.gesendetAn = an + (cc ? ' (Kopie: ' + cc + ')' : ''); s.ticket = tk;
   await _rgVermerkMail(s, an, cc, tk, dateien);
   s.schritt = 'fertig'; _rgRender();
-  toast('📧 Rechnung ' + s.rid + ' an ' + an + ' verschickt (Freshdesk #' + tk.id + ')', 'ok');
+  toast('📧 ' + _rgBeleg(s) + ' ' + s.rid + ' an ' + an + ' verschickt (Freshdesk #' + tk.id + ')', 'ok');
 }
 function _rgFertigHtml() {
   const s = _rgS;
   if (s.test) return _rgTestFertigHtml(s);   // v10.37
   const tk = s.ticket || {}, nm = (s.eRechnung && s.eRechnung.namen) || {};
-  return '<div class="rz-hinweis gruen">✅ Rechnung <b>' + escapeHtml(s.rid) + '</b> ist verschickt an <b>' + escapeHtml(s.gesendetAn || '') + '</b> – über euer Freshdesk' +
+  return '<div class="rz-hinweis gruen">✅ ' + _rgBeleg(s) + ' <b>' + escapeHtml(s.rid) + '</b> ist verschickt an <b>' + escapeHtml(s.gesendetAn || '') + '</b> – über euer Freshdesk' +
       (tk.id != null ? ', Ticket ' + (tk.url ? '<a href="' + escapeHtml(tk.url) + '" target="_blank" rel="noopener"><b>#' + escapeHtml(String(tk.id)) + '</b></a>' : '<b>#' + escapeHtml(String(tk.id)) + '</b>') : '') +
       '. Im Anhang: 📄 ' + escapeHtml(nm.pdf || 'PDF') + ' + 🧾 ' + escapeHtml(nm.xml || 'E-Rechnung') + '.</div>' +
     (s.ablageFelderFehlen ? '<div class="rz-hinweis rg-gelb">📎 PDF und E-Rechnung liegen im Freshdesk-Ticket. An der Rechnung in der Servicebox konnten sie noch nicht abgelegt werden – dafür muss ein Admin einmal die Rechnungsliste öffnen (CRM → 💶 Rechnungen), das richtet die Ablage ein.</div>'
       : s.ablageFehler ? '<div class="rz-hinweis rg-gelb">PDF und E-Rechnung konnten nicht an der Rechnung in der Servicebox gespeichert werden (' + escapeHtml(s.ablageFehler) + ') – sie liegen im Freshdesk-Ticket.</div>'
       : '<div class="rz-mut">📎 PDF und E-Rechnung liegen an der Rechnung in der Servicebox' + (isAdmin() ? ' (💶 Rechnungsliste → Rechnung ' + escapeHtml(s.rid) + ')' : '') + ' und im Freshdesk-Ticket.</div>') +
-    '<div class="rz-mut">Als Nächstes (optional): ' + (isAdmin() ? 'in der Rechnungsliste an DATEV übergeben („⇄ Sync DATEV") und ' : '') + 'den Auftrag als abgerechnet markieren.</div>';
+    (s.kredit ? (isAdmin() ? '<div class="rz-mut">Als Nächstes (optional): in der Rechnungsliste an DATEV übergeben („⇄ Sync DATEV").</div>' : '')   // v10.41
+      : '<div class="rz-mut">Als Nächstes (optional): ' + (isAdmin() ? 'in der Rechnungsliste an DATEV übergeben („⇄ Sync DATEV") und ' : '') + 'den Auftrag als abgerechnet markieren.</div>');
 }
 function _rgFertigFuss() {
   const s = _rgS;
@@ -73009,6 +73240,7 @@ async function _rgVermerkMail(s, an, cc, tk, dateien) {
   // v10.39: Versand an der Rechnung (Verlauf + versand_json) und die verschickten Dateien als Ablage (versand_dateien)
   const eintrag = { am: _lmNowIso(), an, cc: cc || '', ticket: tk && tk.id != null ? String(tk.id) : '', absender: (tk && tk.absender) || '', von: _lmUserName(), dateien: (dateien || []).map(d => d.name) };
   s.versand = (s.versand || []).concat([eintrag]);
+  if (s.kredit && s.kredit.bezug) { try { await _rgStatusVermerk(s.firma, s.kredit.bezug.id, '📧 ' + _rgBeleg(s) + ' ' + s.rid + ' an ' + an + ' verschickt' + (eintrag.ticket ? ' – Ticket #' + eintrag.ticket : '')); } catch (_) {} }   // v10.41
   let rec = null;
   try {
     await _rgRzFelder();
@@ -73428,10 +73660,11 @@ function _rgERechnungLesen(xml) {
       text: ztText, faellig: _rgXmlDatum(zt, 'DueDateDateTime', 'DateTimeString'), skonto: !!_rgXml1(zt, 'ApplicableTradePaymentDiscountTerms') || skontoZeilen.length > 0, skontoZeilen,
       verwendung: _rgXmlWert(set, 'PaymentReference') },
     summen: { positionen: _rgXmlZahl(su, 'LineTotalAmount'), basis: _rgXmlZahl(su, 'TaxBasisTotalAmount'), ust: _rgXmlZahl(su, 'TaxTotalAmount'), brutto: _rgXmlZahl(su, 'GrandTotalAmount'), zahlbar: _rgXmlZahl(su, 'DuePayableAmount') },
+    bezug: { nr: _rgXmlWert(set, 'InvoiceReferencedDocument', 'IssuerAssignedID'), datum: _rgXmlDatum(set, 'InvoiceReferencedDocument', 'FormattedIssueDateTime', 'DateTimeString') },   // v10.41: Gutschrift → Rechnung
   };
 }
 /* Gegenprobe: die E-Rechnung im Maxise-PDF (= was das PDF zeigt) gegen die Rechnung in Maxise → { fehler (= Versand gesperrt), warn } */
-function _rgGegenprobe(x, r) {
+function _rgGegenprobe(x, r, kredit) {
   const fehler = [], warn = [], g = v => _rgGeld(v), gx = v => Number.isFinite(v) ? g(v) : '–';
   if (!x) { fehler.push('Im Maxise-PDF steckt keine E-Rechnung (factur-x.xml) – ohne sie kann die Servicebox ihre Werte nicht gegen das PDF prüfen.'); return { fehler, warn }; }
   if (x.format !== 'CII') { fehler.push('Die E-Rechnung im Maxise-PDF ist nicht lesbar (Format: ' + x.format + ').'); return { fehler, warn }; }
@@ -73442,14 +73675,17 @@ function _rgGegenprobe(x, r) {
   const netto = _rgRohNetto(r), netto2 = _rgRund(zeilen.reduce((a, b) => a + b, 0));
   const ust = v => _rgRund(v * 0.19), passt = (a, ...soll) => Number.isFinite(a) && soll.some(b => Math.abs(a - b) < 0.015);
   const nullBetrag = Math.abs(netto) < 0.005 && Math.abs(netto2) < 0.005;   // v10.40: Rechnung über 0 € – die Steuerart spielt keine Rolle
+  // v10.41: Storno/Gutschrift – die E-Rechnung im Maxise-PDF darf die Beträge mit umgekehrtem Vorzeichen führen (Gutschrift, Typ 381)
+  const vz = kredit && Number.isFinite(x.summen.basis) && !passt(x.summen.basis, netto, netto2) && passt(-x.summen.basis, netto, netto2) ? -1 : 1;
+  const xv = v => Number.isFinite(v) ? vz * v : v;
   if (x.positionen.length !== pos.length) fehler.push('Positionen: ' + x.positionen.length + ' im Maxise-PDF, ' + pos.length + ' in der Rechnung.');
-  else x.positionen.forEach((p, i) => { if (!passt(p.netto, zeilen[i])) fehler.push('Position ' + (i + 1) + ': im Maxise-PDF ' + gx(p.netto) + ' statt ' + g(zeilen[i]) + '.'); });
-  if (!passt(x.summen.basis, netto, netto2)) fehler.push('Netto im Maxise-PDF ' + gx(x.summen.basis) + ' statt ' + g(netto) + '.');
+  else x.positionen.forEach((p, i) => { if (!passt(xv(p.netto), zeilen[i])) fehler.push('Position ' + (i + 1) + ': im Maxise-PDF ' + gx(xv(p.netto)) + ' statt ' + g(zeilen[i]) + '.'); });
+  if (!passt(xv(x.summen.basis), netto, netto2)) fehler.push('Netto im Maxise-PDF ' + gx(xv(x.summen.basis)) + ' statt ' + g(netto) + '.');
   if (r.onlyNetto) {
-    if (Number.isFinite(x.summen.ust) && x.summen.ust > 0) warn.push('Die Rechnung ist „nur netto", die E-Rechnung im Maxise-PDF hat aber ' + g(x.summen.ust) + ' USt – bitte im PDF prüfen, dass dort keine USt steht. Die E-Rechnung der Servicebox weist § 13b aus (0 % USt).');
+    if (Number.isFinite(x.summen.ust) && Math.abs(x.summen.ust) > 0.005) warn.push('Die Rechnung ist „nur netto", die E-Rechnung im Maxise-PDF hat aber ' + g(Math.abs(x.summen.ust)) + ' USt – bitte im PDF prüfen, dass dort keine USt steht. Die E-Rechnung der Servicebox weist § 13b aus (0 % USt).');
   } else {
-    if (!passt(x.summen.ust, ust(netto), ust(netto2))) fehler.push('USt im Maxise-PDF ' + gx(x.summen.ust) + ' statt ' + g(ust(netto)) + '.');
-    if (!passt(x.summen.brutto, netto + ust(netto), netto2 + ust(netto2))) fehler.push('Brutto im Maxise-PDF ' + gx(x.summen.brutto) + ' statt ' + g(_rgRund(netto + ust(netto))) + '.');
+    if (!passt(xv(x.summen.ust), ust(netto), ust(netto2))) fehler.push('USt im Maxise-PDF ' + gx(xv(x.summen.ust)) + ' statt ' + g(ust(netto)) + '.');
+    if (!passt(xv(x.summen.brutto), netto + ust(netto), netto2 + ust(netto2))) fehler.push('Brutto im Maxise-PDF ' + gx(xv(x.summen.brutto)) + ' statt ' + g(_rgRund(netto + ust(netto))) + '.');
     else if (Number.isFinite(x.summen.zahlbar) && !passt(x.summen.zahlbar, x.summen.brutto)) fehler.push('Zahlbetrag im Maxise-PDF ' + g(x.summen.zahlbar) + ' statt ' + g(x.summen.brutto) + ' (Anzahlung?) – solche Rechnungen kann die Servicebox noch nicht als E-Rechnung verschicken.');
     const st = x.steuer.filter(s => s.kat || Number.isFinite(s.satz));
     if (!nullBetrag && (st.length !== 1 || st[0].kat !== 'S' || st[0].satz !== 19)) fehler.push('Steuer im Maxise-PDF: ' + (st.map(s => (s.kat || '?') + ' ' + _rgZahlText(s.satz) + ' %').join(', ') || 'keine Angabe') + ' – erwartet 19 % USt.');
@@ -73617,7 +73853,10 @@ function _rgXrIbanOk(iban) {
   let rest = 0; for (const ch of z) rest = (rest * 10 + +ch) % 97;
   return rest === 1;
 }
-function _rgXrDateinamen(nr, test) { const n = String(nr || '').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'Rechnung'; return test ? { pdf: _rgTestDatei(nr), xml: 'TESTRECHNUNG_' + n + '_XRechnung.xml' } : { pdf: 'Rechnung_' + n + '.pdf', xml: 'Rechnung_' + n + '_XRechnung.xml' }; }
+function _rgXrDateinamen(nr, test, art) {   // v10.41: Storno/Gutschrift → „Stornorechnung_…" / „Gutschrift_…"
+  const n = String(nr || '').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'Rechnung', p = art === 'storno' ? 'Stornorechnung_' : art === 'gutschrift' ? 'Gutschrift_' : 'Rechnung_';
+  return test ? { pdf: _rgTestDatei(nr), xml: 'TESTRECHNUNG_' + n + '_XRechnung.xml' } : { pdf: p + n + '.pdf', xml: p + n + '_XRechnung.xml' };
+}
 /* USt-IdNr. und Käuferreferenz/Leitweg-ID des Kunden (CRM → Kunde → 💰 Konditionen) */
 async function _rgXrKond(firma, r, frisch) {
   const nr = _rgRohKundeNr(r);
@@ -73625,10 +73864,14 @@ async function _rgXrKond(firma, r, frisch) {
   try { await kkLaden(firma, !!frisch); return kkEDaten(firma, nr); } catch (_) { return null; }
 }
 /* Alle Angaben für die XRechnung. mx = E-Rechnung aus dem Maxise-PDF (gelesen) – ohne mx (Testrechnung) rechnet die Servicebox selbst.
-   o: { an (E-Mail des Käufers), kond: { ustid, referenz }, bearbeiter } → Daten + { fehler, warn } */
+   o: { an (E-Mail des Käufers), kond: { ustid, referenz }, bearbeiter, kredit: { art, bezug: { id, datum, r } } } → Daten + { fehler, warn }
+   v10.41 kredit (Storno/Gutschrift): Typ 381 (Gutschrift), Beträge positiv (= gutgeschrieben), Bezug auf die Rechnung (BT-25/26),
+   Zahlungsart 97 (Verrechnung) ohne Fälligkeit; der Leistungszeitraum darf fehlen (dann der der Rechnung bzw. nur der Bezug). */
 function _rgXrDaten(s, r, mx, o) {
   o = o || {};
   const fehler = [], warn = [], f = _rgTestFirma(s), v = (mx && mx.verkaeufer) || {}, kd = o.kond || {};
+  const kr = o.kredit && o.kredit.bezug ? o.kredit : null, krName = kr ? (kr.art === 'storno' ? 'Stornorechnung' : 'Gutschrift') : '';
+  const krText = kr ? krName + ' zu Rechnung ' + kr.bezug.id + (kr.bezug.datum ? ' vom ' + _lmFmtDE(kr.bezug.datum) : '') : '';
   const w = (...xs) => { for (const x of xs) { const y = String(x == null ? '' : x).trim(); if (y) return y; } return ''; };
   const nr = String(mx ? mx.nr : (r.id != null ? r.id : '')).trim(), datum = mx ? mx.datum : (_lmDate(r.createdDate) || _lmToday());
   // Verkäufer: wie im Maxise-PDF, Lücken aus den Firmendaten in Maxise (Mandant); Ansprechpartner = wer sendet
@@ -73665,34 +73908,44 @@ function _rgXrDaten(s, r, mx, o) {
     if (nettoC !== summeC) fehler.push('Im Maxise-PDF ergeben die Positionen ' + _rgGeld(summeC / 100) + ', die Summe netto ist ' + _rgGeld(nettoC / 100) + '.');
     if (!r.onlyNetto && _rgXrCent(mx.summen.brutto) !== nettoC + ustC) fehler.push('Im Maxise-PDF ist brutto ' + _rgGeld(mx.summen.brutto) + ' nicht netto + USt (' + _rgGeld((nettoC + ustC) / 100) + ').');
   }
-  // Leistungsdatum/-zeitraum, Leistungsort
-  const lz = _rgXrZeitraum(r.leistungszeitraum);
-  if (lz.fehler) fehler.push(lz.fehler);
+  if (kr && nettoC < 0) {   // v10.41: Gutschrift (381) – gutgeschriebene Beträge positiv (Abzüge darin negativ)
+    for (const p of positionen) { p.menge = -p.menge; p.nettoC = -p.nettoC; }
+    nettoC = -nettoC; ustC = -ustC;
+  }
+  // Leistungsdatum/-zeitraum, Leistungsort – Storno/Gutschrift: sonst der Zeitraum der Rechnung, notfalls nur der Bezug
+  const lzText = String(r.leistungszeitraum == null ? '' : r.leistungszeitraum).trim() || (kr ? String((kr.bezug.r || {}).leistungszeitraum || '').trim() : '');
+  const lz = _rgXrZeitraum(kr ? lzText : r.leistungszeitraum);
+  if (lz.fehler && !kr) fehler.push(lz.fehler);
+  else if (lz.fehler && lzText) warn.push('Leistungszeitraum „' + lzText + '" ist kein Datum – in der E-Rechnung steht dafür nur der Bezug auf Rechnung ' + kr.bezug.id + '.');
   const ort = _rgXrLeistungsort(r);
-  // Zahlung: Zahlungsziel/Skonto wie im Rechnungstext, Fälligkeit, Bankverbindung
-  const zb = _rgXrZahlung(r.anmerkungen, typeof KK_ZIEL_STANDARD !== 'undefined' ? KK_ZIEL_STANDARD : 14);
+  // Zahlung: Zahlungsziel/Skonto wie im Rechnungstext, Fälligkeit, Bankverbindung – Storno/Gutschrift: Verrechnung, keine Fälligkeit
+  const zb = kr ? { tage: null, text: krText + ' – der Betrag wird verrechnet bzw. erstattet.', skonto: null, unlesbar: '', ausText: false, fehler: '' }
+    : _rgXrZahlung(r.anmerkungen, typeof KK_ZIEL_STANDARD !== 'undefined' ? KK_ZIEL_STANDARD : 14);
   if (zb.fehler) fehler.push(zb.fehler);
   if (zb.unlesbar) warn.push('Skonto steht im Rechnungstext („' + zb.unlesbar + '"), aber nicht als „Bei Zahlung innerhalb von … Tagen … % Skonto" – in der E-Rechnung steht es nur als Text, nicht maschinenlesbar.');
   if (zb.ausText && zb.tage !== (typeof KK_ZIEL_STANDARD !== 'undefined' ? KK_ZIEL_STANDARD : 14))
     warn.push('Auf dem PDF steht zusätzlich der feste Maxise-Satz „Zahlbar innerhalb von 14 Tagen nach Rechnungsdatum." – in der E-Rechnung (maßgeblich) steht das Zahlungsziel aus dem Rechnungstext: ' + (zb.tage === 0 ? 'sofort' : zb.tage + ' Tage') + '.');
-  const iban = w(mx && mx.zahlung.iban, f.iban).replace(/\s+/g, '').toUpperCase(), bic = w(mx && mx.zahlung.bic, f.bic).replace(/\s+/g, '').toUpperCase();
-  if (!iban) fehler.push('Für die E-Rechnung fehlt die IBAN der Firma in Maxise.');
-  else if (!_rgXrIbanOk(iban)) fehler.push('Die IBAN der Firma („' + iban + '") ist ungültig – bitte in Maxise prüfen.');
+  const iban = kr ? '' : w(mx && mx.zahlung.iban, f.iban).replace(/\s+/g, '').toUpperCase(), bic = kr ? '' : w(mx && mx.zahlung.bic, f.bic).replace(/\s+/g, '').toUpperCase();
+  if (!kr && !iban) fehler.push('Für die E-Rechnung fehlt die IBAN der Firma in Maxise.');
+  else if (!kr && !_rgXrIbanOk(iban)) fehler.push('Die IBAN der Firma („' + iban + '") ist ungültig – bitte in Maxise prüfen.');
   // § 13b („nur netto"): USt-IdNr. (oder Register-Nr.) des Kunden ist Pflicht
   if (r.onlyNetto && !kf.ustid && !kf.regId) fehler.push('„nur netto" (§ 13b): In der E-Rechnung muss die USt-IdNr. des Kunden stehen – bitte im CRM beim Kunden unter „💰 Konditionen" eintragen (Admins).');
   // Bemerkungen: Rechnungstitel, Anmerkungen (Standort, Anlage …), Lohnanteil (§ 35a EStG), § 13b, Testrechnung
   const notizen = [];
   if (r.test) notizen.push('TESTRECHNUNG – nur zum Testen, nicht gültig, bitte nicht buchen.');
+  if (kr) notizen.push(krText + '.');   // v10.41
   if (String(r.rechnungTitel || '').trim()) notizen.push(String(r.rechnungTitel).trim());
-  const anm = String(r.anmerkungen || '').replace(/\r\n/g, '\n').trim(); if (anm) notizen.push(anm);
-  const lohn = _rgRund(+r.lohnanteilNetto || 0);
-  if (lohn > 0) notizen.push(r.onlyNetto ? 'Im Rechnungsbetrag sind ' + _rgGeld(lohn) + ' Lohnkosten enthalten.' : 'Im Bruttobetrag sind ' + _rgGeld(lohn) + ' Lohnkosten enthalten. Die darin enthaltene Mehrwertsteuer 19 % beträgt ' + _rgGeld(_rgRund(lohn * 0.19)) + '.');
+  // Storno/Gutschrift: ohne Zahlungsziel/Skonto aus dem kopierten Rechnungstext (es ist nichts zu zahlen)
+  const anm = String(r.anmerkungen || '').replace(/\r\n/g, '\n').split('\n').filter(z => !kr || !/zahlbar|zahlungsziel|zahlungsfrist|skonto|ohne\s+abzug|zahlung\s+innerhalb/i.test(z)).join('\n').trim(); if (anm) notizen.push(anm);
+  const lohn = _rgRund(Math.abs(+r.lohnanteilNetto || 0)), inDer = kr ? 'In der ' + krName : '';
+  if (lohn > 0) notizen.push(r.onlyNetto ? (kr ? inDer : 'Im Rechnungsbetrag') + ' sind ' + _rgGeld(lohn) + ' Lohnkosten enthalten.' : (kr ? inDer : 'Im Bruttobetrag') + ' sind ' + _rgGeld(lohn) + ' Lohnkosten enthalten. Die darin enthaltene Mehrwertsteuer 19 % beträgt ' + _rgGeld(_rgRund(lohn * 0.19)) + '.');
   if (r.onlyNetto) notizen.push(RG_XR_13B + '.');
   return {
-    nr, datum, notizen, referenz, verkaeufer: vk, kaeufer: kf, lieferung: lz.fehler ? {} : lz, lieferort: ort, positionen,
+    nr, datum, typ: kr ? '381' : '380', bezug: kr ? { nr: String(kr.bezug.id), datum: kr.bezug.datum || '' } : null,
+    notizen, referenz, verkaeufer: vk, kaeufer: kf, lieferung: lz.fehler ? {} : lz, lieferort: ort, positionen,
     steuer: r.onlyNetto ? { kat: 'AE', satz: 0, grund: RG_XR_13B, code: 'VATEX-EU-AE' } : { kat: 'S', satz: 19 },
     summen: { nettoC, ustC, bruttoC: nettoC + ustC },
-    zahlung: { text: zb.text, tage: zb.tage, faellig: _rgXrPlusTage(datum, zb.tage), skonto: zb.skonto, iban, bic, inhaber: vk.name, verwendung: 'Rechnung ' + nr },
+    zahlung: { art: kr ? '97' : '58', text: zb.text, tage: zb.tage, faellig: kr ? '' : _rgXrPlusTage(datum, zb.tage), skonto: zb.skonto, iban, bic, inhaber: vk.name, verwendung: (kr ? krName : 'Rechnung') + ' ' + nr },
     fehler, warn,
   };
 }
@@ -73709,7 +73962,7 @@ function _rgXrXml(d) {
     '<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100" xmlns:qdt="urn:un:unece:uncefact:data:standard:QualifiedDataType:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">\n' +
     '<rsm:ExchangedDocumentContext><ram:BusinessProcessSpecifiedDocumentContextParameter><ram:ID>' + RG_XR_PROZESS + '</ram:ID></ram:BusinessProcessSpecifiedDocumentContextParameter>' +
       '<ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>' + RG_XR_ID + '</ram:ID></ram:GuidelineSpecifiedDocumentContextParameter></rsm:ExchangedDocumentContext>\n' +
-    '<rsm:ExchangedDocument><ram:ID>' + e(d.nr) + '</ram:ID><ram:TypeCode>380</ram:TypeCode><ram:IssueDateTime>' + tag(d.datum) + '</ram:IssueDateTime>' +
+    '<rsm:ExchangedDocument><ram:ID>' + e(d.nr) + '</ram:ID><ram:TypeCode>' + (d.typ || '380') + '</ram:TypeCode><ram:IssueDateTime>' + tag(d.datum) + '</ram:IssueDateTime>' +
       d.notizen.map(n => '<ram:IncludedNote><ram:Content>' + e(n) + '</ram:Content></ram:IncludedNote>').join('') + '</rsm:ExchangedDocument>\n' +
     '<rsm:SupplyChainTradeTransaction>\n' +
     d.positionen.map((p, i) => '<ram:IncludedSupplyChainTradeLineItem><ram:AssociatedDocumentLineDocument><ram:LineID>' + (i + 1) + '</ram:LineID></ram:AssociatedDocumentLineDocument>' +
@@ -73728,28 +73981,32 @@ function _rgXrXml(d) {
     '<ram:ApplicableHeaderTradeDelivery>' + (d.lieferort ? '<ram:ShipToTradeParty>' + adr(d.lieferort) + '</ram:ShipToTradeParty>' : '') +
       (d.lieferung.datum ? '<ram:ActualDeliverySupplyChainEvent><ram:OccurrenceDateTime>' + tag(d.lieferung.datum) + '</ram:OccurrenceDateTime></ram:ActualDeliverySupplyChainEvent>' : '') + '</ram:ApplicableHeaderTradeDelivery>\n' +
     '<ram:ApplicableHeaderTradeSettlement><ram:PaymentReference>' + e(z.verwendung) + '</ram:PaymentReference><ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>' +
-      '<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>58</ram:TypeCode><ram:PayeePartyCreditorFinancialAccount><ram:IBANID>' + e(z.iban) + '</ram:IBANID><ram:AccountName>' + e(z.inhaber) + '</ram:AccountName></ram:PayeePartyCreditorFinancialAccount>' +
-        (z.bic ? '<ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>' + e(z.bic) + '</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>' : '') + '</ram:SpecifiedTradeSettlementPaymentMeans>' +
+      (z.art === '97' ? '<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>97</ram:TypeCode></ram:SpecifiedTradeSettlementPaymentMeans>'   // v10.41: Gutschrift – Verrechnung
+        : '<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>58</ram:TypeCode><ram:PayeePartyCreditorFinancialAccount><ram:IBANID>' + e(z.iban) + '</ram:IBANID><ram:AccountName>' + e(z.inhaber) + '</ram:AccountName></ram:PayeePartyCreditorFinancialAccount>' +
+        (z.bic ? '<ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>' + e(z.bic) + '</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>' : '') + '</ram:SpecifiedTradeSettlementPaymentMeans>') +
       '<ram:ApplicableTradeTax><ram:CalculatedAmount>' + b(s.ustC) + '</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode>' + (st.grund ? '<ram:ExemptionReason>' + e(st.grund) + '</ram:ExemptionReason>' : '') +
         '<ram:BasisAmount>' + b(s.nettoC) + '</ram:BasisAmount><ram:CategoryCode>' + st.kat + '</ram:CategoryCode>' + (st.code ? '<ram:ExemptionReasonCode>' + st.code + '</ram:ExemptionReasonCode>' : '') +
         '<ram:RateApplicablePercent>' + satz + '</ram:RateApplicablePercent></ram:ApplicableTradeTax>' +
       (d.lieferung.von ? '<ram:BillingSpecifiedPeriod><ram:StartDateTime>' + tag(d.lieferung.von) + '</ram:StartDateTime><ram:EndDateTime>' + tag(d.lieferung.bis) + '</ram:EndDateTime></ram:BillingSpecifiedPeriod>' : '') +
-      '<ram:SpecifiedTradePaymentTerms><ram:Description>' + e(z.text) + '</ram:Description><ram:DueDateDateTime>' + tag(z.faellig) + '</ram:DueDateDateTime></ram:SpecifiedTradePaymentTerms>' +
+      '<ram:SpecifiedTradePaymentTerms><ram:Description>' + e(z.text) + '</ram:Description>' + (z.faellig ? '<ram:DueDateDateTime>' + tag(z.faellig) + '</ram:DueDateDateTime>' : '') + '</ram:SpecifiedTradePaymentTerms>' +
       '<ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:LineTotalAmount>' + b(d.positionen.reduce((a, p) => a + p.nettoC, 0)) + '</ram:LineTotalAmount><ram:TaxBasisTotalAmount>' + b(s.nettoC) + '</ram:TaxBasisTotalAmount>' +
         '<ram:TaxTotalAmount currencyID="EUR">' + b(s.ustC) + '</ram:TaxTotalAmount><ram:GrandTotalAmount>' + b(s.bruttoC) + '</ram:GrandTotalAmount><ram:DuePayableAmount>' + b(s.bruttoC) + '</ram:DuePayableAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>' +
+      (d.bezug ? '<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>' + e(d.bezug.nr) + '</ram:IssuerAssignedID>' +   // v10.41: Gutschrift → Rechnung (BT-25/26)
+        (d.bezug.datum ? '<ram:FormattedIssueDateTime><qdt:DateTimeString format="102">' + _rgXrTag(d.bezug.datum) + '</qdt:DateTimeString></ram:FormattedIssueDateTime>' : '') + '</ram:InvoiceReferencedDocument>' : '') +
     '</ram:ApplicableHeaderTradeSettlement>\n</rsm:SupplyChainTradeTransaction>\n</rsm:CrossIndustryInvoice>\n';
 }
 /* Gegenprobe der fertigen XRechnung (neu gelesen) – Format, Nummer, Beträge, Pflichtangaben; mitMail: E-Mail des Käufers (BT-49) muss drin sein */
 function _rgXrPruefen(xml, d, mitMail) {
   const x = _rgERechnungLesen(xml), f = [], c = v => Number.isFinite(v) ? _rgXrCent(v) : NaN, s = d.summen;
   if (x.format !== 'CII' || x.profil !== RG_XR_ID || x.prozess !== RG_XR_PROZESS) f.push('Format');
-  if (x.nr !== d.nr || x.datum !== d.datum || x.typ !== '380') f.push('Nummer/Datum');
+  const kredit = (d.typ || '380') === '381';   // v10.41: Storno/Gutschrift
+  if (x.nr !== d.nr || x.datum !== d.datum || x.typ !== (d.typ || '380') || (kredit && (!d.bezug || x.bezug.nr !== d.bezug.nr))) f.push('Nummer/Datum');
   if (x.positionen.length !== d.positionen.length || x.positionen.some((p, i) => c(p.netto) !== d.positionen[i].nettoC || p.kat !== d.steuer.kat)) f.push('Positionen');
   if (c(x.summen.positionen) !== d.positionen.reduce((a, p) => a + p.nettoC, 0) || c(x.summen.basis) !== s.nettoC || c(x.summen.ust) !== s.ustC || c(x.summen.brutto) !== s.bruttoC || c(x.summen.zahlbar) !== s.bruttoC || s.bruttoC !== s.nettoC + s.ustC) f.push('Summen');
   const vk = x.verkaeufer, kf = x.kaeufer;
   if (!vk.name || !vk.plz || !vk.ort || !(vk.ustid || vk.steuernr) || !vk.email || !vk.kontakt.name || !vk.kontakt.tel || !vk.kontakt.email) f.push('Verkäufer');
   if (!kf.name || !kf.plz || !kf.ort || (mitMail && !kf.email) || (d.steuer.kat === 'AE' && !kf.ustid && !kf.regId)) f.push('Käufer');
-  if (!x.kaeuferRef || (!x.lieferung.datum && !(x.lieferung.von && x.lieferung.bis)) || !x.zahlung.iban || !x.zahlung.faellig || !x.zahlung.text) f.push('Pflichtangaben');
+  if (kredit ? (!x.kaeuferRef || !x.zahlung.text || x.zahlung.art !== '97') : (!x.kaeuferRef || (!x.lieferung.datum && !(x.lieferung.von && x.lieferung.bis)) || !x.zahlung.iban || !x.zahlung.faellig || !x.zahlung.text)) f.push('Pflichtangaben');
   return f.length ? ['Die erzeugte E-Rechnung ist nicht in Ordnung (' + f.join(', ') + ') – es wurde nichts verschickt. Bitte melden.'] : [];
 }
 
@@ -73764,16 +74021,16 @@ async function _rgERechnungVorbereiten(s, rid, blob) {
     const e = await _rgERechnungAusPdf(blob);
     const r = s.rechnung && String(s.rechnung.id) === String(rid) ? s.rechnung : (s.rechnung = await erpFetch('/aufzug/' + s.firma + '/api/rechnungen/' + encodeURIComponent(rid)));
     if (!s.tenant) { try { s.tenant = await erpFetch('/aufzug/' + s.firma + '/api/tenants/me'); } catch (_) { s.tenant = null; } }
-    const mx = e ? _rgERechnungLesen(e.xml) : null, gp = _rgGegenprobe(mx, r);
+    const mx = e ? _rgERechnungLesen(e.xml) : null, gp = _rgGegenprobe(mx, r, s.kredit);   // v10.41: Storno/Gutschrift – Vorzeichen egal
     const fehler = gp.fehler.slice(), warn = gp.warn.slice();
     let d = null, xml = '', pdfOhne = null;
     if (!fehler.length) {
-      d = _rgXrDaten(s, r, mx, { kond: await _rgXrKond(s.firma, r, kkFrisch) });
+      d = _rgXrDaten(s, r, mx, { kond: await _rgXrKond(s.firma, r, kkFrisch), kredit: s.kredit });
       fehler.push(...d.fehler); warn.push(...d.warn);
       if (!fehler.length) { xml = _rgXrXml(d); fehler.push(..._rgXrPruefen(xml, d, false)); }
       if (!fehler.length) pdfOhne = await _rgPdfOhneXml(blob);
     }
-    const nm = _rgXrDateinamen(rid), urls = [];
+    const nm = _rgXrDateinamen(rid, false, s.kredit && s.kredit.art), urls = [];
     if (xml && pdfOhne) { urls.push(URL.createObjectURL(new Blob([xml], { type: 'application/xml' })), URL.createObjectURL(pdfOhne)); }
     er = { rid, maxise: e ? e.datei : '', d, xml: fehler.length ? '' : xml, x: xml ? _rgERechnungLesen(xml) : null, pdfOhne: fehler.length ? null : pdfOhne, namen: nm, urls, pruefung: { fehler, warn } };
   } catch (err) { er = { rid, pruefung: { fehler: ['E-Rechnung nicht erstellt: ' + _rgFehler(err)], warn: [] } }; }
@@ -73800,6 +74057,10 @@ const RG_EINHEITEN = { C62: '', H87: 'Stk.', XPP: 'Stk.', HUR: 'Std.', MIN: 'Min
 function _rgEinheit(c) { c = String(c || ''); return Object.prototype.hasOwnProperty.call(RG_EINHEITEN, c) ? RG_EINHEITEN[c] : c; }
 function _rgXrKurz(x) {   // was die E-Rechnung über die Beträge hinaus mitbringt (für den grünen Kasten)
   const dd = v => _rgDatumDE(v) || v, l = x.lieferung, z = x.zahlung, sk = z.skontoZeilen[0];
+  if (x.typ === '381') return [x.bezug && x.bezug.nr ? 'Bezug auf Rechnung ' + x.bezug.nr + (x.bezug.datum ? ' vom ' + dd(x.bezug.datum) : '') : '',   // v10.41: Gutschrift
+    l.datum ? 'Leistungsdatum ' + dd(l.datum) : l.von ? 'Leistungszeitraum ' + dd(l.von) + ' – ' + dd(l.bis) : '', 'Zahlungsart Verrechnung (nichts fällig)',
+    x.notizen.length ? 'Anmerkungen' + (x.notizen.some(n => /Lohnkosten/.test(n)) ? ' und Lohnanteil' : '') : '',
+    x.steuer[0] && x.steuer[0].kat === 'AE' ? '§ 13b (Steuerschuldnerschaft des Leistungsempfängers)' : ''].filter(Boolean).join(', ');
   return [l.datum ? 'Leistungsdatum ' + dd(l.datum) : 'Leistungszeitraum ' + dd(l.von) + ' – ' + dd(l.bis),
     'fällig ' + dd(z.faellig) + (sk ? ', ' + _rgZahlText(sk.prozent) + ' % Skonto bei Zahlung innerhalb von ' + sk.tage + ' Tagen' : ''),
     x.notizen.length ? 'Anmerkungen' + (x.notizen.some(n => /Lohnkosten/.test(n)) ? ' und Lohnanteil' : '') : '',
@@ -73810,9 +74071,11 @@ function _rgERechnungHtml(s) {
   if (!e || e.laeuft || e.rid !== s.rid) return '<div class="rz-hinweis rg-er">🧾 Die E-Rechnung wird erstellt und geprüft …</div>';
   const p = e.pruefung || { fehler: [], warn: [] }, x = e.x, li = a => '<ul class="rg-ul">' + a.map(t => '<li>' + escapeHtml(t) + '</li>').join('') + '</ul>';
   const ok = !p.fehler.length && x;
+  const gut = ok && x.typ === '381';   // v10.41: Storno/Gutschrift
   const kopf = ok
-    ? '<div class="rz-hinweis gruen rg-er"><b>📄 PDF + 🧾 E-Rechnung bereit ✓</b> – an den Kunden gehen zwei Dateien: das PDF aus Maxise (zum Ansehen, ohne eingebettete E-Rechnung) und die E-Rechnung als eigene XML-Datei (XRechnung 3.0). ' +
-      'Rechnungsnummer, ' + x.positionen.length + (x.positionen.length === 1 ? ' Position' : ' Positionen') + ' und Beträge (netto ' + _rgGeld(x.summen.basis) + ' · USt ' + _rgGeld(x.summen.ust) + ' · brutto ' + _rgGeld(x.summen.brutto) +
+    ? '<div class="rz-hinweis gruen rg-er"><b>📄 PDF + 🧾 E-Rechnung bereit ✓</b> – an den Kunden gehen zwei Dateien: das PDF aus Maxise (zum Ansehen, ohne eingebettete E-Rechnung) und die E-Rechnung als eigene XML-Datei (XRechnung 3.0' +
+      (gut ? ', als Gutschrift mit Bezug auf Rechnung ' + escapeHtml(x.bezug.nr) : '') + '). ' +
+      (gut ? 'Nummer' : 'Rechnungsnummer') + ', ' + x.positionen.length + (x.positionen.length === 1 ? ' Position' : ' Positionen') + ' und Beträge (' + (gut ? 'gutgeschrieben ' : '') + 'netto ' + _rgGeld(x.summen.basis) + ' · USt ' + _rgGeld(x.summen.ust) + ' · brutto ' + _rgGeld(x.summen.brutto) +
       ') stimmen mit dem Maxise-PDF überein. Dazu in der E-Rechnung: ' + escapeHtml(_rgXrKurz(x)) + '.' +
       '<div class="rg-alt rg-er-dl"><a class="btn" href="' + e.urls[0] + '" download="' + escapeHtml(e.namen.xml) + '">⬇ E-Rechnung (XML)</a><a class="btn" href="' + e.urls[1] + '" download="' + escapeHtml(e.namen.pdf) + '">⬇ PDF, wie es rausgeht</a></div></div>'
     : '<div class="rz-hinweis rot rg-er"><b>🧾 E-Rechnung: Versand gesperrt</b>' + li(p.fehler) + 'Verschickt wird erst, wenn die E-Rechnung vollständig ist und zum PDF passt.' +
@@ -73842,17 +74105,19 @@ function _rgXrDetailHtml(x) {
   const zeile = (k, v) => '<div><span>' + escapeHtml(k) + '</span><b>' + escapeHtml(v || '–') + '</b></div>', vk = x.verkaeufer, kf = x.kaeufer, dd = v => _rgDatumDE(v) || v;
   const adr = q => [q.name, q.zusatz, q.strasse, [q.plz, q.ort].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const st = x.steuer[0] || {}, sk = x.zahlung.skontoZeilen[0];
+  const gut = x.typ === '381', lf = x.lieferung;   // v10.41: Gutschrift
   return '<details class="rg-mehr rg-er-det"><summary>Was in der E-Rechnung steht</summary><div class="rg-er-tab">' +
-    zeile('Rechnung', x.nr + ' vom ' + dd(x.datum)) + zeile('Format', (x.profilName || '?') + ' (eigene XML-Datei)') +
+    (gut ? zeile('Gutschrift', x.nr + ' vom ' + dd(x.datum) + ' (Typ 381)' + (x.bezug.nr ? ' – zu Rechnung ' + x.bezug.nr + (x.bezug.datum ? ' vom ' + dd(x.bezug.datum) : '') : '')) : zeile('Rechnung', x.nr + ' vom ' + dd(x.datum))) +
+    zeile('Format', (x.profilName || '?') + ' (eigene XML-Datei)') +
     zeile('Verkäufer', adr(vk) + (vk.ustid ? ' · USt-IdNr. ' + vk.ustid : '') + (vk.steuernr ? ' · St.-Nr. ' + vk.steuernr : '')) +
     zeile('Ansprechpartner', [vk.kontakt.name, vk.kontakt.tel, vk.kontakt.email].filter(Boolean).join(' · ')) +
     zeile('Käufer', adr(kf) + (kf.ustid ? ' · USt-IdNr. ' + kf.ustid : '') + (kf.regId ? ' · Reg.-Nr. ' + kf.regId : '') + (kf.email ? ' · ' + kf.email : ' · E-Mail kommt aus „An"')) +
     zeile('Käuferreferenz', x.kaeuferRef) +
-    zeile('Leistung', (x.lieferung.datum ? dd(x.lieferung.datum) : dd(x.lieferung.von) + ' – ' + dd(x.lieferung.bis)) + (x.lieferort ? ' · Ort: ' + adr(x.lieferort) : '')) +
+    zeile('Leistung', (lf.datum ? dd(lf.datum) : lf.von ? dd(lf.von) + ' – ' + dd(lf.bis) : gut ? 'wie Rechnung ' + x.bezug.nr : '') + (x.lieferort ? ' · Ort: ' + adr(x.lieferort) : '')) +
     x.positionen.map((q, i) => zeile('Position ' + (i + 1), q.name + ' · ' + _rgZahlText(q.menge) + (_rgEinheit(q.einheit) ? ' ' + _rgEinheit(q.einheit) : '') + ' × ' + _rgGeld(q.preis) + ' = ' + _rgGeld(q.netto))).join('') +
     zeile('Steuer', st.kat === 'AE' ? '0 % – ' + (st.grund || '§ 13b') : 'USt ' + _rgZahlText(st.satz) + ' %') +
     zeile('Summen', 'netto ' + _rgGeld(x.summen.basis) + ' · USt ' + _rgGeld(x.summen.ust) + ' · brutto ' + _rgGeld(x.summen.brutto) + ' · zahlbar ' + _rgGeld(x.summen.zahlbar)) +
-    zeile('Zahlung', [x.zahlung.text.replace(/#SKONTO#[^ ]*/g, '').trim(), 'fällig ' + dd(x.zahlung.faellig), sk ? 'Skonto ' + _rgZahlText(sk.prozent) + ' % / ' + sk.tage + ' Tage (maschinenlesbar)' : '', x.zahlung.iban ? 'IBAN ' + x.zahlung.iban : ''].filter(Boolean).join(' · ')) +
+    zeile('Zahlung', [x.zahlung.text.replace(/#SKONTO#[^ ]*/g, '').trim(), x.zahlung.faellig ? 'fällig ' + dd(x.zahlung.faellig) : '', x.zahlung.art === '97' ? 'Zahlungsart Verrechnung' : '', sk ? 'Skonto ' + _rgZahlText(sk.prozent) + ' % / ' + sk.tage + ' Tage (maschinenlesbar)' : '', x.zahlung.iban ? 'IBAN ' + x.zahlung.iban : ''].filter(Boolean).join(' · ')) +
     zeile('Bemerkungen', x.notizen.join(' / ')) + '</div></details>';
 }
 /* Die beiden Dateien für den Versand – die XML mit der E-Mail des Kunden aus „An" (BT-49) */
@@ -76371,6 +76636,466 @@ async function liRueckgaengig(id) {
     kz.ergebnis = '↩ Rückgängig gemacht' + (bleibt.length ? ' – inzwischen anders geändert und deshalb geblieben: ' + bleibt.join(', ') : '');
   } catch (e) { kz.fehler = 'Rückgängig nicht vollständig: ' + String((e && e.message) || e).slice(0, 160); }
   finally { kz.laeuft = false; if (_li === ich) { _liKarteNeu(kid); _lmAbrNachAenderung(); } }
+}
+
+
+/* ════════════════════════════════════════════════════════════════════
+ * v10.41: ↩ STORNO und ➖ GUTSCHRIFT zu einer Rechnung – CRM → 💶 Rechnungen, nur Admins
+ *   Wie die Knöpfe „Stornorechnung" und „Gutschrift" in Maxise: POST /api/rechnungen/{id}/storno bzw. /gutschrift legt die neue
+ *   Rechnung in Maxise an (ausdrücklich gewünscht; immer mit Rückfrage, vorher frisch geprüft, was es zur Rechnung schon gibt).
+ *   ↩ Storno: hebt die ganze Rechnung auf – Maxise übernimmt die Positionen mit umgekehrtem Vorzeichen.
+ *   ➖ Gutschrift: Teilbetrag wählbar – einzelne Positionen (Anzahl/Preis änderbar) oder ein fester Betrag (netto oder brutto).
+ *     Maxise legt die Gutschrift an; weicht sie von der Wahl ab, trägt die Servicebox genau die gewählten Positionen ein
+ *     (PUT /api/rechnungen – wie „Bearbeiten" in Maxise) und liest sie zur Kontrolle zurück. Mehr als noch offen ist, geht nicht.
+ *   Danach wählbar: 📧 an den Kunden (rg-module.js: über das Freshdesk der Firma – PDF + E-Rechnung als Gutschrift mit Bezug auf die
+ *     Rechnung, vorher prüfen, Probe an mich) oder 🔒 nur intern (nichts geht raus; senden geht später in der Rechnungsliste).
+ *   Vermerke (Rechnungen_Status): an der neuen Rechnung bezug_rechnung + beleg_art + Verlauf, an der Rechnung ein Verlauf-Eintrag.
+ *   Die Liste zeigt die Rechnung danach als storniert / ausgeglichen bzw. mit dem Rest nach der Teil-Gutschrift (rz-module.js).
+ * ════════════════════════════════════════════════════════════════════ */
+const RZ_SG = {
+  storno:     { beleg: 'Stornorechnung', icon: '↩', knopf: '↩ Stornorechnung in Maxise anlegen', pfad: 'storno' },
+  gutschrift: { beleg: 'Gutschrift',     icon: '➖', knopf: '➖ Gutschrift in Maxise anlegen',     pfad: 'gutschrift' },
+};
+let _rzSg = null;   // { art, id, firma, schritt: laden|form|laeuft|fertig|fehler, r, gesendet, versand, form, g, busy, neuId, neu, ... }
+
+/* ── Wer und wann ── */
+function _rzSgSperre(it, art) {   // Grund, warum nicht – sonst ''
+  if (!it) return 'Rechnung nicht gefunden.';
+  const o = it._rz || {}, nr = _rzNrText(it);
+  if (it.status === 'gutschrift') return 'Rechnung ' + nr + ' ist selbst ' + (o.belegArt === 'storno' ? 'eine Stornorechnung.' : 'eine Gutschrift.');
+  if (it.status === 'storniert') return 'Rechnung ' + nr + ' ist schon ' + (o.ausgeglichen ? 'durch Gutschrift ' + o.stornoNr + ' ausgeglichen.' : 'storniert' + (o.stornoNr ? ' (Stornorechnung ' + o.stornoNr + ').' : ' (in Maxise).'));
+  if (!(Math.abs(_rzBetragZahl(it.netto)) > 0.005)) return 'Rechnung ' + nr + ' ist über 0 € – da gibt es nichts zu stornieren oder gutzuschreiben.';
+  if (art === 'storno' && (o.gutschriften || []).length) return 'Zu Rechnung ' + nr + ' gibt es schon ' + o.gutschriften.map(g => 'Gutschrift ' + g.nr).join(', ') +
+    ' – eine Stornorechnung schriebe zusammen mehr gut als die Rechnung. Den Rest bitte per „➖ Gutschrift".';
+  return '';
+}
+/* Abschnitt in der Rechnung (Detail) */
+function _rzSgAktionenHtml(it) {
+  if (!isAdmin() || !it || it.status === 'gutschrift' || it.status === 'storniert') return '';
+  const id = String(it.id), recht = _rzDarf() ? '' : _rzKeinRecht();
+  const knopf = (art, label, tipp) => {
+    const grund = recht || _rzSgSperre(it, art);
+    return '<button class="btn" onclick="' + (art === 'storno' ? 'rzStornoDialog' : 'rzGutschriftDialog') + '(' + _lmA(id) + ')"' + (grund ? ' disabled' : '') + ' title="' + escapeHtml(grund || tipp) + '">' + label + '</button>';
+  };
+  return '<div class="rz-sg"><div class="rz-zahl-h">↩ Storno · ➖ Gutschrift <span class="lm-muted">(legt in Maxise eine neue Rechnung an – wie „Stornorechnung" / „Gutschrift" dort)</span></div>' +
+    '<div class="rz-zahl-a">' + knopf('storno', '↩ Stornieren …', 'Die ganze Rechnung aufheben – Maxise legt eine Stornorechnung an') +
+      knopf('gutschrift', '➖ Gutschrift …', 'Einen Teil (Positionen oder Betrag) oder alles gutschreiben') + '</div></div>';
+}
+
+/* ── Dialog öffnen: Rechnung, Mail-Log und Versände frisch lesen ── */
+function rzStornoDialog(id) { return _rzSgOeffnen(id, 'storno'); }
+function rzGutschriftDialog(id) { return _rzSgOeffnen(id, 'gutschrift'); }
+async function _rzSgOeffnen(id, art) {
+  if (!isAdmin()) return toast('🔒 Storno und Gutschrift legen nur Admins an.', 'err');
+  if (_rzSg && _rzSg.busy) return toast('Es läuft gerade schon ein Storno bzw. eine Gutschrift – bitte kurz warten.', 'err');
+  _rzAnwenden(_rechnungenCache.items || [], _rzStand);
+  if (!_rzDarf()) return toast(_rzKeinRecht(), 'err');
+  const it = _rzItem(id), grund = _rzSgSperre(it, art);
+  if (grund) return toast(grund, 'err');
+  const firma = _rzFirma(), s = _rzSg = { art, id: String(id), firma, schritt: 'laden', busy: false, versand: '', kontrolle: [] };
+  _rzSgRender();
+  try {
+    const pfad = '/aufzug/' + firma + '/api/rechnungen/' + encodeURIComponent(String(id));
+    const [r, log, versand] = await Promise.all([
+      erpFetch(pfad),
+      erpFetch(pfad + '/mail-log').then(_rgListe).catch(() => []),
+      typeof _rgVersandListe === 'function' ? _rgVersandListe(firma, id).catch(() => []) : Promise.resolve([]),
+    ]);
+    if (_rzSg !== s) return;
+    if (!r || r.id == null) throw new Error('Maxise liefert die Rechnung ' + id + ' nicht.');
+    if (['storno', 'gutschrift'].includes(_rgRechnungArt(r))) throw new Error('Rechnung ' + id + ' ist in Maxise selbst ein Storno bzw. eine Gutschrift.');
+    if (_rgRohPosten(r).length === 0) throw new Error('Rechnung ' + id + ' hat in Maxise keine Positionen – bitte direkt in Maxise klären.');
+    s.r = r;
+    s.gesendet = (log || []).filter(m => m && m.to && !_rgIstProbe(m)).map(m => ({ am: m.sentAt, an: m.to, wie: 'Maxise' }))
+      .concat((versand || []).map(v => ({ am: v.am, an: v.an, wie: 'Freshdesk' })));
+    s.versand = s.gesendet.length ? 'kunde' : 'intern';   // ging die Rechnung an den Kunden, soll er auch das Storno bekommen
+    if (art === 'gutschrift') s.form = _rzSgFormStart(s, it);
+    s.schritt = 'form';
+  } catch (e) { if (_rzSg !== s) return; s.schritt = 'fehler'; s.fehler = _rzFehlerText(e); }
+  _rzSgRender();
+}
+function rzSgSchliessen(ohneFrage) {
+  const s = _rzSg;
+  if (s && s.busy && !ohneFrage) return toast('Bitte kurz warten – Maxise arbeitet noch.', 'err');
+  const m = document.getElementById('rz-sg-modal'); if (m) m.remove();
+  _rzSg = null;
+}
+
+/* ── Gutschrift: Wahl (Positionen oder Betrag) ── */
+function _rzSgFormStart(s, it) {
+  const o = (it && it._rz) || {}, r = s.r;
+  const schon = _rgRund((o.gutschriften || []).reduce((a, g) => a + g.netto, 0)), netto = Math.abs(_rgRohNetto(r));
+  const pos = _rgRohPosten(r).map(p => {
+    const a = p.anzahl == null || p.anzahl === '' ? 1 : _rgZahl(p.anzahl), k = _rgZahl(p.kosten);
+    return { an: !schon, title: String(p.title || '').trim() || 'Position', anzahl: _rzSgZahl(a), preis: _rzSgPreis(k), a0: a, k0: k };
+  });
+  return { modus: schon ? 'betrag' : 'pos', pos, text: 'Gutschrift zu Rechnung ' + s.id, betrag: '', brutto: false, lohn: '0', lohnHand: false,
+    schonNetto: schon, maxNetto: _rgRund(netto - schon), lohn0: Math.abs(+r.lohnanteilNetto || 0) };
+}
+function _rzSgZahl(x) { return Number.isFinite(x) ? String(Math.round(x * 10000) / 10000).replace('.', ',') : ''; }   // ohne Rundung auf 2 Stellen
+function _rzSgPreis(x) { return !Number.isFinite(x) ? '' : Math.abs(x * 100 - Math.round(x * 100)) < 1e-6 ? _rgPreisText(x) : _rzSgZahl(x); }
+function _rzSgFormLesen() {
+  const s = _rzSg; if (!s) return;
+  const el = id => document.getElementById(id);
+  const vs = ['kunde', 'intern'].find(v => { const x = el('rz-sg-v-' + v); return x && x.checked; }); if (vs) s.versand = vs;
+  const fm = s.form; if (!fm) return;
+  const mo = ['pos', 'betrag'].find(v => { const x = el('rz-sg-m-' + v); return x && x.checked; }); if (mo) fm.modus = mo;
+  fm.pos.forEach((p, i) => { const c = el('rz-sg-p' + i), a = el('rz-sg-a' + i), k = el('rz-sg-k' + i); if (c) p.an = !!c.checked; if (a) p.anzahl = a.value; if (k) p.preis = k.value; });
+  const t = el('rz-sg-text'), b = el('rz-sg-betrag'), br = el('rz-sg-brutto'), l = el('rz-sg-lohn');
+  if (t) fm.text = t.value; if (b) fm.betrag = b.value; if (br) fm.brutto = !!br.checked;
+  if (l && !l.disabled) { if (String(l.value) !== String(fm.lohn)) fm.lohnHand = true; fm.lohn = l.value; }
+}
+/* Was gutgeschrieben wird → { posten: [{ title, anzahl, kosten, i }] (positiv = gutgeschrieben), netto, ust, brutto, ganz, lohn, fehler, warn } */
+function _rzSgBerechnen(s) {
+  const fm = s.form, r = s.r, nurNetto = !!r.onlyNetto, fehler = [], warn = [];
+  let posten = [];
+  if (fm.modus === 'betrag') {
+    const x = _rgZahl(fm.betrag), text = String(fm.text || '').trim();
+    if (!text) fehler.push('Text der Gutschrift fehlt.');
+    if (!Number.isFinite(x) || x <= 0) fehler.push('Bitte einen Betrag über 0 € eintragen.');
+    else {
+      const n = fm.brutto && !nurNetto ? _rgRund(x / 1.19) : _rgRund(x);
+      if (fm.brutto && !nurNetto && _rgRund(n * 1.19) !== _rgRund(x)) warn.push(_rgGeld(x) + ' brutto lassen sich nicht genau auf netto + 19 % aufteilen – es werden ' + _rgGeld(n) + ' netto = ' + _rgGeld(_rgRund(n * 1.19)) + ' brutto.');
+      posten = [{ title: text, anzahl: 1, kosten: n }];
+    }
+  } else {
+    fm.pos.forEach((p, i) => {
+      if (!p.an) return;
+      const a = _rgZahl(p.anzahl), k = _rgZahl(p.preis), nr = 'Position ' + (i + 1);
+      if (!Number.isFinite(a) || a <= 0) fehler.push(nr + ': Anzahl fehlt oder ist nicht größer als 0.');
+      else if (a > p.a0 + 1e-9) fehler.push(nr + ': höchstens ' + _rzSgZahl(p.a0) + ' (wie in der Rechnung).');
+      if (!Number.isFinite(k)) fehler.push(nr + ': Preis fehlt.');
+      else if (Math.abs(k) > Math.abs(p.k0) + 0.005 || (p.k0 >= 0 ? k < 0 : k > 0)) fehler.push(nr + ': Preis höchstens ' + _rgGeld(p.k0) + ' (wie in der Rechnung).');
+      posten.push({ title: p.title, anzahl: Number.isFinite(a) ? a : 0, kosten: Number.isFinite(k) ? k : 0, i });
+    });
+    if (!posten.length) fehler.push('Bitte mindestens eine Position anhaken.');
+  }
+  const netto = _rgRund(posten.reduce((x, p) => x + p.anzahl * p.kosten, 0)), ust = nurNetto ? 0 : _rgRund(netto * 0.19), brutto = _rgRund(netto + ust);
+  if (posten.length && !(netto > 0.005)) fehler.push('Die Gutschrift muss über 0 € sein.');
+  if (netto > fm.maxNetto + 0.005) fehler.push('Höchstens ' + _rgGeld(fm.maxNetto) + ' netto' + (fm.schonNetto > 0 ? ' – ' + _rgGeld(fm.schonNetto) + ' sind schon gutgeschrieben.' : ' (der Rechnungsbetrag).'));
+  const ganz = fm.modus === 'pos' && fm.schonNetto < 0.005 && fm.pos.every(p => p.an) &&
+    posten.every(p => Math.abs(p.anzahl - fm.pos[p.i].a0) < 1e-9 && Math.abs(p.kosten - fm.pos[p.i].k0) < 0.0005);
+  // Lohnanteil (§ 35a): ganze Rechnung = wie in der Rechnung; sonst, was hier steht (Standard 0 – nur Material/Kulanz)
+  let lohn = 0;
+  if (fm.lohn0 > 0) {
+    if (ganz) lohn = fm.lohn0;
+    else {
+      lohn = String(fm.lohn || '').trim() === '' ? 0 : _rgZahl(fm.lohn);
+      if (!Number.isFinite(lohn) || lohn < 0) { fehler.push('Lohnanteil: bitte einen Betrag (0 oder mehr) eintragen.'); lohn = 0; }
+      else if (lohn > Math.min(fm.lohn0, netto) + 0.005) fehler.push('Lohnanteil höchstens ' + _rgGeld(Math.min(fm.lohn0, netto)) + ' (Lohnanteil der Rechnung bzw. Betrag der Gutschrift).');
+      lohn = _rgRund(lohn);
+    }
+  }
+  return { posten, netto, ust, brutto, ganz, lohn, fehler, warn, modus: fm.modus };
+}
+
+/* ── Darstellung ── */
+function _rzSgRender() {
+  const s = _rzSg; if (!s) return;
+  let m = document.getElementById('rz-sg-modal');
+  if (!m) {
+    m = document.createElement('div'); m.id = 'rz-sg-modal'; m.className = 'rz-modal rz-sg-modal';
+    m.addEventListener('click', e => { if (e.target === m) rzSgSchliessen(); });
+    document.body.appendChild(m);
+  }
+  const titel = s.art === 'storno' ? '↩ Rechnung ' + escapeHtml(s.id) + ' stornieren' : '➖ Gutschrift zu Rechnung ' + escapeHtml(s.id);
+  let body = '', fuss = '';
+  if (s.schritt === 'laden') body = '<div class="rg-laden"><div class="spinner"></div>Lese Rechnung ' + escapeHtml(s.id) + ' aus Maxise …</div>';
+  else if (s.schritt === 'fehler') { body = '<div class="rz-hinweis rot">❌ ' + escapeHtml(s.fehler || 'Fehler') + '</div>'; fuss = '<span class="rz-aktion-sp"></span><button class="btn" onclick="rzSgSchliessen(true)">Schließen</button>'; }
+  else if (s.schritt === 'form') { body = _rzSgFormHtml(s); fuss = _rzSgFormFuss(s); }
+  else if (s.schritt === 'laeuft') body = '<div class="rg-laden"><div class="spinner"></div><div id="rz-sg-lauf">' + escapeHtml(s.laufText || '') + '</div></div>';
+  else if (s.schritt === 'fertig') { body = _rzSgFertigHtml(s); fuss = _rzSgFertigFuss(s); }
+  m.innerHTML = '<div class="rz-dlg breit rz-sg-dlg ' + s.art + '" role="dialog" aria-modal="true" aria-labelledby="rz-sg-h">' +
+    '<div class="rz-dlg-h"><span id="rz-sg-h">' + titel + '</span><button class="rz-x" onclick="rzSgSchliessen()" aria-label="Schließen">×</button></div>' +
+    '<div class="rz-dlg-b" id="rz-sg-body">' + body + '</div>' + (fuss ? '<div class="rz-dlg-f" id="rz-sg-fuss">' + fuss + '</div>' : '') + '</div>';
+}
+function _rzSgKunde(r) { const an = _rgRohAnlage(r), ku = an.kunde || (r.kontakt || {}).kunde || {}; return String(ku.firmenname || ''); }
+function _rzSgKopfHtml(s) {
+  const r = s.r, netto = _rgRohNetto(r), brutto = r.onlyNetto ? netto : _rgRund(netto * 1.19), it = _rzItem(s.id) || {};
+  return '<div class="rz-sg-re"><div><b>Rechnung ' + escapeHtml(s.id) + '</b> vom ' + escapeHtml(_lmFmtDE(_lmDate(r.createdDate) || _lmDate(it.datum) || '') || '?') +
+      (_rzSgKunde(r) ? ' · ' + escapeHtml(_rzSgKunde(r)) : '') + '</div>' +
+    '<div class="rz-sg-betrag">netto <b>' + _rgGeld(netto) + '</b>' + (r.onlyNetto ? ' <span class="lm-muted">(nur netto)</span>' : ' · brutto <b>' + _rgGeld(brutto) + '</b>') +
+      (it.status ? ' · <span class="lm-pill ' + ((RZ_STATUS[it.status] || {}).pill || 'grau') + '">' + escapeHtml(_rzStatusLabel(it)) + '</span>' : '') + '</div></div>';
+}
+function _rzSgHinweise(s) {
+  const it = _rzItem(s.id) || {}, o = it._rz || {}, def = RZ_SG[s.art], out = [];
+  if (it.status === 'bezahlt') out.push('💳 Die Rechnung ist als bezahlt markiert – den gutgeschriebenen Betrag bekommt der Kunde zurück (oder er wird verrechnet).');
+  if (o.datevAm) out.push('⇄ Die Rechnung ist an DATEV übergeben (' + _rzZeitDE(o.datevAm) + ') – die ' + def.beleg + ' danach bitte auch („⇄ Sync DATEV").');
+  if (o.crSyncAm || o.crImportAm) out.push('⇄ Die Rechnung ist bei Creditreform – dort bitte ' + (s.art === 'storno' ? 'zurückziehen' : 'den neuen offenen Betrag angeben') + '.');
+  if ((s.gesendet || []).length) out.push('📧 Die Rechnung ging ' + s.gesendet.slice(-2).map(g => (g.am ? 'am ' + _rzZeitDE(g.am) + ' ' : '') + 'an ' + g.an + ' (' + g.wie + ')').join(' und ') + ' – der Kunde sollte die ' + def.beleg + ' auch bekommen.');
+  else out.push('📭 Die Rechnung ist laut Maxise und Servicebox noch nicht an den Kunden gegangen.');
+  return out.map(t => '<div class="rz-hinweis rg-gelb">' + escapeHtml(t) + '</div>').join('');
+}
+function _rzSgVersandHtml(s) {
+  const def = RZ_SG[s.art], an = v => s.versand === v ? ' checked' : '';
+  return '<div class="rz-sg-wahl"><div class="rz-zahl-h">Danach</div>' +
+    '<label class="rz-sg-opt"><input type="radio" name="rz-sg-versand" id="rz-sg-v-kunde" value="kunde"' + an('kunde') + ' onchange="rzSgEingabe()"><span>📧 <b>An den Kunden senden</b> – über euer Freshdesk, ' + def.beleg + ' als PDF + E-Rechnung (vorher prüfen, Probe an mich möglich)</span></label>' +
+    '<label class="rz-sg-opt"><input type="radio" name="rz-sg-versand" id="rz-sg-v-intern" value="intern"' + an('intern') + ' onchange="rzSgEingabe()"><span>🔒 <b>Nur intern</b> – an den Kunden geht nichts (senden geht später jederzeit über die Rechnungsliste)</span></label></div>';
+}
+function _rzSgFormHtml(s) {
+  const r = s.r, posten = _rgRohPosten(r);
+  if (s.art === 'storno') {
+    const netto = _rgRohNetto(r), brutto = r.onlyNetto ? netto : _rgRund(netto * 1.19);
+    return _rzSgKopfHtml(s) +
+      '<div class="rz-hinweis">↩ Maxise legt eine <b>Stornorechnung</b> an – dieselben Positionen mit umgekehrtem Vorzeichen (<b>−' + _rgGeld(brutto) + '</b>' + (r.onlyNetto ? ' netto' : ' brutto') +
+        '). Sie hebt die Rechnung ganz auf; beide zählen danach nicht mehr als offen. Eine Stornorechnung lässt sich nicht löschen.</div>' +
+      '<div class="rz-pos rz-sg-pos">' + posten.map((p, i) => { const a = p.anzahl == null || p.anzahl === '' ? 1 : _rgZahl(p.anzahl), k = _rgZahl(p.kosten);
+        return '<div class="rz-pos-z"><span class="rz-mut">' + (i + 1) + '</span><span>' + escapeHtml(String(p.title || '')) + '</span><span class="rz-mono">' + _rgZahlText(a) + ' ×</span><span class="rz-mono">' + _rgGeld(k) + '</span><b class="rz-mono">−' + _rgGeld(_rgRund(a * k)) + '</b></div>'; }).join('') + '</div>' +
+      _rzSgHinweise(s) + _rzSgVersandHtml(s);
+  }
+  const fm = s.form, mo = v => fm.modus === v ? ' checked' : '';
+  const tab = fm.modus === 'pos'
+    ? '<div class="rz-sg-tab"><div class="rz-sg-z kopf"><span></span><span>Position</span><span>Anzahl</span><span>Einzelpreis netto</span><span>Gutschrift</span></div>' +
+        fm.pos.map((p, i) => '<div class="rz-sg-z' + (p.an ? '' : ' aus') + '"><input type="checkbox" id="rz-sg-p' + i + '"' + (p.an ? ' checked' : '') + ' onchange="rzSgEingabe(true)" aria-label="Position ' + (i + 1) + ' gutschreiben">' +
+          '<span>' + escapeHtml(p.title) + '<i class="rz-mut"> · in der Rechnung ' + _rzSgZahl(p.a0) + ' × ' + _rgGeld(p.k0) + '</i></span>' +
+          '<input id="rz-sg-a' + i + '" inputmode="decimal" value="' + escapeHtml(p.anzahl) + '" oninput="rzSgEingabe()"' + (p.an ? '' : ' disabled') + ' aria-label="Anzahl Position ' + (i + 1) + '">' +
+          '<input id="rz-sg-k' + i + '" inputmode="decimal" value="' + escapeHtml(p.preis) + '" oninput="rzSgEingabe()"' + (p.an ? '' : ' disabled') + ' aria-label="Einzelpreis Position ' + (i + 1) + '">' +
+          '<b class="rz-mono" id="rz-sg-s' + i + '">' + (p.an ? _rzSgPosSumme(p) : '–') + '</b></div>').join('') + '</div>'
+    : '<div class="rz-sg-betrag-f"><label class="rz-feld voll"><span>Text auf der Gutschrift</span><input id="rz-sg-text" value="' + escapeHtml(fm.text) + '" oninput="rzSgEingabe()"></label>' +
+        '<label class="rz-feld"><span>Betrag</span><input id="rz-sg-betrag" inputmode="decimal" placeholder="z. B. 150,00" value="' + escapeHtml(fm.betrag) + '" oninput="rzSgEingabe()"></label>' +
+        (r.onlyNetto ? '<span class="rz-mut">netto (die Rechnung ist „nur netto")</span>' : '<label class="rz-chk"><input type="checkbox" id="rz-sg-brutto"' + (fm.brutto ? ' checked' : '') + ' onchange="rzSgEingabe()"><span>Betrag ist <b>brutto</b> (sonst netto)</span></label>') + '</div>';
+  const lohn = fm.lohn0 > 0 ? '<div class="rz-sg-lohn" id="rz-sg-lohn-f">' + _rzSgLohnHtml(s) + '</div>' : '';
+  const schon = ((((_rzItem(s.id) || {})._rz) || {}).gutschriften || []).map(g => 'Gutschrift ' + g.nr + ' (−' + _rgGeld(g.netto) + ' netto)').join(', ');
+  return _rzSgKopfHtml(s) +
+    (fm.schonNetto > 0 ? '<div class="rz-hinweis rg-gelb">Schon gutgeschrieben: ' + escapeHtml(schon || _rgGeld(fm.schonNetto)) + ' – höchstens noch <b>' + _rgGeld(fm.maxNetto) + '</b> netto.</div>' : '') +
+    '<div class="rz-sg-modus"><label class="rz-sg-opt"><input type="radio" name="rz-sg-modus" id="rz-sg-m-pos" value="pos"' + mo('pos') + ' onchange="rzSgModus()"><span><b>Positionen</b> aus der Rechnung – ganz oder teilweise (Anzahl/Preis änderbar)</span></label>' +
+      '<label class="rz-sg-opt"><input type="radio" name="rz-sg-modus" id="rz-sg-m-betrag" value="betrag"' + mo('betrag') + ' onchange="rzSgModus()"><span><b>Fester Betrag</b> – z. B. Kulanz, Preisnachlass</span></label></div>' +
+    tab + lohn + '<div id="rz-sg-summe">' + _rzSgSummeHtml(s) + '</div>' + _rzSgHinweise(s) + _rzSgVersandHtml(s);
+}
+function _rzSgPosSumme(p) { const a = _rgZahl(p.anzahl), k = _rgZahl(p.preis); return Number.isFinite(a) && Number.isFinite(k) ? _rgGeld(_rgRund(a * k)) : '–'; }
+function _rzSgLohnHtml(s) {
+  const fm = s.form, g = _rzSgBerechnen(s);
+  return '<label class="rz-feld"><span>Lohnanteil der Gutschrift netto (§ 35a)</span><input id="rz-sg-lohn" inputmode="decimal" value="' + escapeHtml(g.ganz ? _rgPreisText(fm.lohn0) : fm.lohn) + '"' + (g.ganz ? ' disabled' : '') + ' oninput="rzSgEingabe()"></label>' +
+    '<span class="rz-mut">In der Rechnung: Lohnanteil ' + _rgGeld(fm.lohn0) + '. ' + (g.ganz ? 'Ganze Rechnung – der Lohnanteil wird ganz gutgeschrieben.' : 'Werden Arbeitsstunden gutgeschrieben, hier deren Lohnanteil eintragen – sonst 0 (nur Material, Kulanz).') + '</span>';
+}
+function _rzSgSummeHtml(s) {
+  const g = s.g = _rzSgBerechnen(s), r = s.r;
+  return '<div class="rz-sg-summe' + (g.fehler.length ? ' rot' : '') + '"><span>Gutschrift' + (g.ganz ? ' <b>über die ganze Rechnung</b>' : '') + ':</span> netto <b>' + _rgGeld(g.netto) + '</b>' +
+      (r.onlyNetto ? '' : ' · USt ' + _rgGeld(g.ust) + ' · brutto <b>' + _rgGeld(g.brutto) + '</b>') + (g.lohn > 0 ? ' · Lohnanteil ' + _rgGeld(g.lohn) : '') + '</div>' +
+    (g.fehler.length ? '<div class="rz-hinweis rot">' + g.fehler.map(escapeHtml).join('<br>') + '</div>' : '') +
+    (g.warn.length ? '<div class="rz-hinweis rg-gelb">' + g.warn.map(escapeHtml).join('<br>') + '</div>' : '');
+}
+function _rzSgFormFuss(s) {
+  const def = RZ_SG[s.art], g = s.art === 'gutschrift' ? (s.g || _rzSgBerechnen(s)) : null, gesperrt = !!(g && g.fehler.length);
+  return '<span class="rz-aktion-sp"></span><button class="btn" onclick="rzSgSchliessen()">Abbrechen</button>' +
+    '<button class="btn prim rz-sg-go" id="rz-sg-go" onclick="rzSgAusfuehren(this)"' + (gesperrt ? ' disabled' : '') + '>' + def.knopf + '</button>';
+}
+function rzSgEingabe(neuZeichnen) {
+  const s = _rzSg; if (!s || s.schritt !== 'form') return;
+  _rzSgFormLesen();
+  if (neuZeichnen) return _rzSgRender();   // Haken an/aus: Felder frei/gesperrt
+  if (!s.form) return;
+  s.form.pos.forEach((p, i) => { const el = document.getElementById('rz-sg-s' + i); if (el) el.textContent = p.an ? _rzSgPosSumme(p) : '–'; });
+  const su = document.getElementById('rz-sg-summe'); if (su) su.innerHTML = _rzSgSummeHtml(s);
+  const lo = document.getElementById('rz-sg-lohn'), lf = document.getElementById('rz-sg-lohn-f');
+  if (lf && lo && lo.disabled !== !!(s.g && s.g.ganz)) lf.innerHTML = _rzSgLohnHtml(s);   // ganz ↔ teilweise
+  const go = document.getElementById('rz-sg-go'); if (go) go.disabled = !!(s.g && s.g.fehler.length);
+}
+function rzSgModus() { const s = _rzSg; if (!s || !s.form) return; _rzSgFormLesen(); _rzSgRender(); }
+
+/* ═══ Anlegen ═══ */
+async function rzSgAusfuehren(btn) {
+  const s = _rzSg; if (!s || s.busy || s.schritt !== 'form') return;
+  if (!isAdmin() || !_rzDarf()) return toast(_rzKeinRecht(), 'err');
+  _rzSgFormLesen();
+  const def = RZ_SG[s.art], r = s.r, kunde = _rzSgKunde(r);
+  const g = s.art === 'gutschrift' ? (s.g = _rzSgBerechnen(s)) : null;
+  if (g && g.fehler.length) { _rzSgRender(); return toast(g.fehler[0], 'err'); }
+  if (s.versand !== 'kunde' && s.versand !== 'intern') return toast('Bitte wählen: an den Kunden senden oder nur intern.', 'err');
+  const netto = Math.abs(_rgRohNetto(r)), brutto = r.onlyNetto ? netto : _rgRund(netto * 1.19);
+  const danach = '\n\nDanach: ' + (s.versand === 'kunde' ? 'an den Kunden senden – du prüfst vorher PDF und E-Rechnung.' : 'nur intern – es geht nichts an den Kunden.');
+  const frage = s.art === 'storno'
+    ? 'Rechnung ' + s.id + (kunde ? ' (' + kunde + ', ' + _rgGeld(brutto) + ')' : '') + ' in Maxise STORNIEREN?\n\nMaxise legt eine Stornorechnung über −' + _rgGeld(brutto) + ' an. Sie hebt die Rechnung ganz auf und lässt sich nicht löschen.' + danach
+    : 'Gutschrift zu Rechnung ' + s.id + (kunde ? ' (' + kunde + ')' : '') + ' in Maxise ANLEGEN?\n\n' +
+      (g.ganz ? 'Ganze Rechnung' : g.posten.map(p => '• ' + p.title + ': ' + _rgZahlText(p.anzahl) + ' × ' + _rgGeld(p.kosten)).join('\n')) +
+      '\n\nGutschrift: netto ' + _rgGeld(g.netto) + (r.onlyNetto ? '' : ' · brutto ' + _rgGeld(g.brutto)) + (g.lohn > 0 ? '\nLohnanteil: ' + _rgGeld(g.lohn) : '') +
+      '\n\nSie lässt sich nicht löschen.' + danach;
+  if (!confirm(frage)) return;
+  s.busy = true; s.schritt = 'laeuft'; s.laufText = 'Prüfe frisch in Maxise, was es zu Rechnung ' + s.id + ' schon gibt …'; _rzSgRender();
+  const lauf = t => { s.laufText = t; const el = document.getElementById('rz-sg-lauf'); if (el) el.textContent = t; };
+  let phase = 'pruefen', lage = null;
+  try {
+    // 1) Doppel-Schutz: frisch lesen – gibt es inzwischen ein Storno, wie viel ist schon gutgeschrieben?
+    lage = _rzSgLage(s, await _fetchErpRechnungen(s.firma));
+    if (!lage.da) throw new Error('Rechnung ' + s.id + ' ist in Maxise nicht (mehr) zu finden.');
+    if (lage.storno) throw new Error(lage.storno === 'in Maxise' ? 'Rechnung ' + s.id + ' ist in Maxise schon storniert.' : 'Zu Rechnung ' + s.id + ' gibt es in Maxise schon die Stornorechnung ' + lage.storno + '.');
+    if (Math.abs(lage.netto - netto) > 0.009) throw new Error('Rechnung ' + s.id + ' wurde inzwischen in Maxise geändert (netto ' + _rgGeld(lage.netto) + ' statt ' + _rgGeld(netto) + ') – bitte den Dialog neu öffnen.');
+    if (s.art === 'storno' && lage.schonNetto > 0.005) throw new Error('Zu Rechnung ' + s.id + ' gibt es inzwischen schon Gutschriften über ' + _rgGeld(lage.schonNetto) + ' netto – den Rest bitte per Gutschrift.');
+    if (g && g.netto > _rgRund(netto - lage.schonNetto) + 0.005) throw new Error('Inzwischen sind schon ' + _rgGeld(lage.schonNetto) + ' netto gutgeschrieben – höchstens noch ' + _rgGeld(_rgRund(netto - lage.schonNetto)) + '.');
+    // 2) Maxise: wie „Stornorechnung" bzw. „Gutschrift" in Maxise
+    phase = 'anlegen'; lauf('Maxise legt die ' + def.beleg + ' an …');
+    let antwort = null, hinweis = '';
+    try { antwort = await erpFetch('/aufzug/' + s.firma + '/api/rechnungen/' + encodeURIComponent(s.id) + '/' + def.pfad, { method: 'POST' }); }
+    catch (e) {
+      const nid = await _rzSgNachsehen(s, lage.ids);   // unklarer Ausgang – vielleicht hat Maxise sie trotzdem angelegt
+      if (!nid) throw e;
+      antwort = { id: nid }; hinweis = 'Maxise meldete einen Fehler („' + _rzFehlerText(e).slice(0, 120) + '"), die ' + def.beleg + ' ' + nid + ' ist aber angelegt.';
+    }
+    let nid = antwort && antwort.id != null ? String(antwort.id) : '';
+    if (!nid) {
+      nid = await _rzSgNachsehen(s, lage.ids);
+      if (!nid) throw new Error('Maxise hat keine Nummer zurückgegeben und es ist keine neue ' + def.beleg + ' zu sehen – bitte in Maxise nachsehen, bevor du es nochmal versuchst.');
+      hinweis = 'Maxise hat keine Nummer zurückgegeben – gefunden: ' + def.beleg + ' ' + nid + '.';
+    }
+    if (nid === String(s.id)) throw new Error('Maxise hat keine neue Rechnung angelegt (gleiche Nummer ' + nid + ') – bitte in Maxise nachsehen.');
+    s.neuId = nid; s.hinweis = hinweis; phase = 'angelegt';
+  } catch (e) {
+    s.busy = false; s.schritt = 'form'; _rzSgRender();
+    return toast('❌ ' + (phase === 'pruefen' ? 'Nichts angelegt: ' : 'Nicht angelegt: ') + _rzFehlerText(e).slice(0, 260), 'err');
+  }
+  // ab hier gibt es die neue Rechnung in Maxise – alles Weitere ist Kontrolle, Teilbetrag und Vermerk
+  s.kontrolle = []; s.teilFehler = '';
+  let neu = null;
+  lauf('Lese die ' + def.beleg + ' ' + s.neuId + ' zur Kontrolle …');
+  try { neu = await erpFetch('/aufzug/' + s.firma + '/api/rechnungen/' + encodeURIComponent(s.neuId)); } catch (e) { s.kontrolle.push('Die ' + def.beleg + ' ließ sich nicht zurücklesen (' + _rzFehlerText(e).slice(0, 120) + ') – bitte in Maxise prüfen.'); }
+  if (g && neu && !_rzSgPasst(neu, g)) {   // Teilbetrag (oder Maxise hat nicht die ganze Rechnung übernommen): die gewählten Positionen eintragen
+    lauf('Trage die gewählten Positionen in die Gutschrift ' + s.neuId + ' ein …');
+    try { neu = await _rzSgTeilbetrag(s, neu, g); }
+    catch (e) { s.teilFehler = _rzFehlerText(e); if (e && e.zurueck) neu = e.zurueck; }
+  } else if (g && !neu) s.teilFehler = 'die Gutschrift ließ sich nicht lesen – der Teilbetrag ist nicht eingetragen.';
+  s.neu = neu;
+  if (neu) s.kontrolle = s.kontrolle.concat(_rzSgKontrolle(s, neu, g));
+  lauf('Vermerke in der Servicebox …');
+  await _rzSgVermerke(s, neu, g);
+  s.busy = false; s.schritt = 'fertig';
+  try { _rzRenderListe(); if (document.getElementById('rch-detail-modal')) _rzDetail(s.id, true); } catch (_) {}
+  const glatt = !s.hinweis && !s.teilFehler && !s.kontrolle.length && !s.vermerkFehler;
+  toast((glatt ? '✓ ' : '⚠ ') + def.beleg + ' ' + s.neuId + ' zu Rechnung ' + s.id + ' in Maxise angelegt' + (glatt ? '' : ' – bitte die Hinweise ansehen'), glatt ? 'ok' : 'err');
+  if (glatt && s.versand === 'kunde') return rzSgSenden();   // gleich weiter zum Versand (PDF + E-Rechnung prüfen, Probe, Senden)
+  _rzSgRender();
+}
+/* frisch aus Maxise: Storno/Gutschriften zu dieser Rechnung, die Nummern davor (um eine neue zu erkennen) */
+function _rzSgLage(s, roh) {
+  const heute = _lmToday(), items = _rchDedupe((roh || []).map(x => _normalizeRechnung(x, '', heute)));
+  const v = _rzVerweise(items, _rzStand.map), gl = v.gut.get(String(s.id)) || [], sto = gl.find(g => g.art === 'storno'), it = items.find(x => String(x.id) === String(s.id));
+  return { storno: sto ? sto.nr : (it && it.status === 'storniert' ? 'in Maxise' : ''), schonNetto: _rgRund(gl.reduce((a, g) => a + g.netto, 0)), ids: new Set(items.map(x => String(x.id))),
+    da: !!it, netto: it ? Math.abs(_rzBetragZahl(it.netto)) : NaN };
+}
+/* nach einem Fehler: hat Maxise die neue Rechnung trotzdem angelegt? (genau eine neue Gutschrift zu dieser Rechnung) */
+async function _rzSgNachsehen(s, vorher) {
+  await new Promise(res => setTimeout(res, 1500));
+  try {
+    const heute = _lmToday(), items = _rchDedupe((await _fetchErpRechnungen(s.firma) || []).map(x => _normalizeRechnung(x, '', heute)));
+    const v = _rzVerweise(items, _rzStand.map), aid = _rgRohAuftragId(s.r), kd = _rgRohKundeNr(s.r);
+    const neu = items.filter(it => !vorher.has(String(it.id)) && _rzIstGutschrift(it));
+    const treffer = [neu.filter(it => v.bezugId.get(String(it.id)) === String(s.id)), neu.filter(it => aid && String(it.auftrag_id || '') === aid), neu.filter(it => kd && String(it.kunde_nummer || '') === kd)].find(l => l.length);
+    return treffer && treffer.length === 1 ? String(treffer[0].id) : '';
+  } catch (_) { return ''; }
+}
+/* Hat Maxise schon genau das angelegt, was gewählt ist? (ganze Rechnung: Positionen + Betrag wie in der Rechnung) */
+function _rzSgPasst(neu, g) {
+  const pos = _rgRohPosten(neu);
+  return pos.length === g.posten.length && Math.abs(Math.abs(_rgRohNetto(neu)) - g.netto) < 0.009 &&
+    (g.ganz || pos.every((p, i) => Math.abs(Math.abs(_rgPosNetto(p)) - Math.abs(_rgRund(g.posten[i].anzahl * g.posten[i].kosten))) < 0.009)) &&
+    (g.modus !== 'betrag' || String((pos[0] || {}).title || '').trim() === g.posten[0].title);   // fester Betrag: auch der Text
+}
+/* Teilbetrag eintragen: PUT /api/rechnungen wie „Bearbeiten" in Maxise (alle übrigen Felder wie Maxise sie angelegt hat), dann zurücklesen */
+async function _rzSgTeilbetrag(s, g0, g) {
+  const n0 = _rgRohNetto(g0), vz = n0 > 0.005 ? 1 : -1;   // Vorzeichen wie Maxise die Gutschrift führt (negativ wie ein Storno – oder positiv)
+  const mp = _rgRohPosten(g0), gleich = mp.length === _rgRohPosten(s.r).length;
+  const posten = g.posten.map(p => ({ title: (s.form.modus === 'pos' && gleich && p.i != null && String((mp[p.i] || {}).title || '').trim()) || p.title, anzahl: p.anzahl, kosten: vz * p.kosten }));
+  const l0 = +g0.lohnanteilNetto || 0, lohn = g.ganz && l0 !== 0 ? l0 : _rgRund((l0 < 0 ? -1 : 1) * (g.lohn || 0));   // Lohnanteil mit dem Vorzeichen, das Maxise ihm gab
+  const kontakt = g0.kontakt || {}, anlage = _rgRohAnlage(g0), au = _rgRohAuftrag(g0);
+  if (kontakt.id == null) throw new Error('Die Gutschrift hat in Maxise keinen Ansprechpartner – der Teilbetrag lässt sich nicht eintragen. Bitte in Maxise bearbeiten.');
+  const payload = {
+    id: +g0.id, rechnungPosten: posten, auftragid: au.id != null ? +au.id : null, rechnungsEmpfaenger: g0.rechnungsEmpfaenger, kontaktId: +kontakt.id,
+    geleisteteStunden: g0.geleisteteStunden != null ? g0.geleisteteStunden : 0, notiz: g0.notiz != null ? g0.notiz : '', anzahlEinsatzpauschale: +g0.anzahlEinsatzpauschale || 0,
+    prozentualeAbrechnung: g0.prozentualeAbrechnung != null ? g0.prozentualeAbrechnung : null, leistungszeitraum: g0.leistungszeitraum != null ? g0.leistungszeitraum : '',
+    lohnanteilNetto: lohn, anmerkungen: g0.anmerkungen != null ? g0.anmerkungen : '', rechnungTitel: g0.rechnungTitel || null, anhang: [], onlyNetto: !!g0.onlyNetto,
+    anlageId: anlage.id != null ? +anlage.id : null,
+  };
+  await erpFetch('/aufzug/' + s.firma + '/api/rechnungen', { method: 'PUT', body: payload });
+  const zurueck = await erpFetch('/aufzug/' + s.firma + '/api/rechnungen/' + encodeURIComponent(String(g0.id)));
+  const ist = _rgRohPosten(zurueck), soll = _rgRund(posten.reduce((a, p) => a + p.anzahl * p.kosten, 0)), abw = [];
+  if (!zurueck || String(zurueck.id) !== String(g0.id)) abw.push('andere Nummer');
+  if (ist.length !== posten.length) abw.push('Positionen ' + ist.length + ' statt ' + posten.length);
+  if (Math.abs(_rgRohNetto(zurueck) - soll) > 0.009) abw.push('netto ' + _rgGeld(_rgRohNetto(zurueck)) + ' statt ' + _rgGeld(soll));
+  if (Math.abs((+zurueck.lohnanteilNetto || 0) - lohn) > 0.009) abw.push('Lohnanteil ' + _rgGeld(+zurueck.lohnanteilNetto || 0) + ' statt ' + _rgGeld(lohn));
+  if (!['storno', 'gutschrift'].includes(_rgRechnungArt(zurueck))) abw.push('Maxise führt sie nicht mehr als Gutschrift (Typ „' + String(zurueck.typ || '') + '")');
+  if (abw.length) { const e = new Error('Maxise hat die Gutschrift anders gespeichert: ' + abw.join(', ') + ' – bitte in Maxise prüfen.'); e.zurueck = zurueck; throw e; }
+  s.teilEingetragen = true;
+  return zurueck;
+}
+/* Kontrolle der neuen Rechnung → Hinweise (leer = alles wie erwartet) */
+function _rzSgKontrolle(s, neu, g) {
+  const out = [], def = RZ_SG[s.art], netto = Math.abs(_rgRohNetto(s.r)), n = _rgRohNetto(neu);
+  if (!['storno', 'gutschrift'].includes(_rgRechnungArt(neu))) out.push('Maxise führt die ' + def.beleg + ' ' + s.neuId + ' nicht als Storno/Gutschrift (Typ „' + String(neu.typ || '') + '", netto ' + _rgGeld(n) + ') – bitte in Maxise prüfen.');
+  if (s.art === 'storno' && Math.abs(Math.abs(n) - netto) > 0.009) out.push('Die Stornorechnung hat netto ' + _rgGeld(n) + ', die Rechnung ' + _rgGeld(netto) + ' – bitte in Maxise prüfen.');
+  if (g && !s.teilFehler && Math.abs(Math.abs(n) - g.netto) > 0.009) out.push('Die Gutschrift hat netto ' + _rgGeld(n) + ' statt ' + _rgGeld(g.netto) + ' – bitte in Maxise prüfen.');
+  return out;
+}
+/* Vermerke: neue Rechnung in die Liste, Bezug + Verlauf in Rechnungen_Status; „angelegt – noch nicht verschickt" im Auftrag erledigt */
+async function _rzSgVermerke(s, neu, g) {
+  s.vermerkFehler = '';
+  const def = RZ_SG[s.art], heute = _lmToday();
+  const roh = neu && neu.id != null ? neu : { id: s.neuId, typ: s.art === 'storno' ? 'STORNO' : 'GUTSCHRIFT', createdDate: heute, rechnungPosten: [], auftrag: s.r.auftrag, anlage: s.r.anlage, kontakt: s.r.kontakt };
+  try { if (typeof _rgInListen === 'function') _rgInListen({ test: false, rechnung: roh, firma: s.firma }); } catch (_) {}
+  const n = Math.abs(_rgRohNetto(roh)), betrag = '−' + _rgGeld(s.r.onlyNetto ? n : _rgRund(n * 1.19)) + (s.r.onlyNetto ? ' netto' : '');
+  try {
+    for (const f of ['bezug_rechnung', 'beleg_art']) { try { await ensureField(RZ_T, f, 'singleLineText'); } catch (_) {} }
+    await _rzSetzen(s.neuId, { bezug_rechnung: String(s.id), beleg_art: s.art },
+      def.icon + ' ' + def.beleg + ' zu Rechnung ' + s.id + ' in der Servicebox angelegt (' + betrag + ')' + (s.teilFehler ? ' – Teilbetrag NICHT eingetragen' : '') + (s.versand === 'intern' ? ' – nur intern' : ''));
+    await _rzSetzen(s.id, {}, (s.art === 'storno' ? '↩ storniert durch Stornorechnung ' : '➖ Gutschrift ') + s.neuId + ' (' + betrag + ', in der Servicebox angelegt' + (s.teilFehler ? ' – Teilbetrag noch NICHT eingetragen' : '') + ')');
+  } catch (e) { s.vermerkFehler = String((e && e.message) || e).slice(0, 160); }
+  try { await _rzSgAuftragVermerk(s); } catch (_) {}
+}
+async function _rzSgAuftragVermerk(s) {
+  _rzAnwenden(_rechnungenCache.items || [], _rzStand);
+  const it = _rzItem(s.id), aid = _rgRohAuftragId(s.r);
+  if (!it || it.status !== 'storniert' || !aid || typeof _auftragCache === 'undefined' || !Array.isArray(_auftragCache) || typeof _patchAuftragFields !== 'function') return;
+  const rec = _auftragCache.find(x => x && x.fields && String(x.fields.ext_id || '') === aid && String(x.fields.invoice_id || '') === String(s.id) && (!x.fields.firma || x.fields.firma === s.firma));
+  if (!rec || !rec.fields.invoice_sb_am || rec.fields.invoice_mail_am) return;
+  await _patchAuftragFields(rec.id, { invoice_sb_am: '' });
+  rec.fields.invoice_sb_am = '';
+}
+
+/* ── Ergebnis ── */
+function _rzSgFertigHtml(s) {
+  const def = RZ_SG[s.art], neu = s.neu, n = neu ? _rgRohNetto(neu) : NaN;
+  const betrag = Number.isFinite(n) ? ' – netto −' + _rgGeld(Math.abs(n)) + (s.r.onlyNetto ? '' : ', brutto −' + _rgGeld(_rgRund(Math.abs(n) * 1.19))) : '';
+  return '<div class="rz-hinweis gruen">✓ ' + def.beleg + ' <b>' + escapeHtml(s.neuId) + '</b> ist in Maxise angelegt' + betrag + ' (zu Rechnung ' + escapeHtml(s.id) + ').</div>' +
+    (s.hinweis ? '<div class="rz-hinweis rg-gelb">' + escapeHtml(s.hinweis) + '</div>' : '') +
+    (s.teilFehler ? '<div class="rz-hinweis rot"><b>⚠ Der gewählte Teilbetrag ist nicht (sicher) eingetragen:</b> ' + escapeHtml(s.teilFehler) +
+      '<div class="rz-zahl-a"><button class="btn" onclick="rzSgTeilNochmal(this)">↻ Teilbetrag nochmal eintragen</button></div>Solange das nicht stimmt, bitte nichts an den Kunden senden.</div>' : '') +
+    (s.kontrolle.length ? '<div class="rz-hinweis rg-gelb"><b>Bitte prüfen:</b><ul class="rg-ul">' + s.kontrolle.map(t => '<li>' + escapeHtml(t) + '</li>').join('') + '</ul></div>'
+      : !s.teilFehler && neu ? '<div class="rz-hinweis gruen">✓ Kontrolle: ' + (s.art === 'storno' ? 'die Stornorechnung hebt die Rechnung genau auf' : 'die Gutschrift steht in Maxise so wie gewählt' + (s.teilEingetragen ? ' (Positionen eingetragen und zurückgelesen)' : '')) + '.</div>' : '') +
+    (s.vermerkFehler ? '<div class="rz-hinweis rg-gelb">Der Vermerk in der Servicebox fehlt (' + escapeHtml(s.vermerkFehler) + ') – die ' + def.beleg + ' ist trotzdem in Maxise.</div>' : '') +
+    (s.versand === 'intern' ? '<div class="rz-hinweis">🔒 Nur intern – an den Kunden ging nichts. Senden geht jederzeit über die Rechnungsliste (📧 An Kunden senden).</div>'
+      : '<div class="rz-hinweis">📧 Als Nächstes: PDF und E-Rechnung prüfen und an den Kunden senden.</div>');
+}
+function _rzSgFertigFuss(s) {
+  const frei = !s.teilFehler && s.neu;
+  return '<button class="btn" onclick="rzSgPdf(this)">📄 PDF ansehen</button><span class="rz-aktion-sp"></span>' +
+    (frei && typeof rgVersandOeffnen === 'function' ? '<button class="btn' + (s.versand === 'kunde' ? ' prim' : '') + '" onclick="rzSgSenden()">📧 ' + (s.versand === 'kunde' ? 'Weiter: an den Kunden senden …' : 'Doch an den Kunden senden …') + '</button>' : '') +
+    '<button class="btn' + (s.versand === 'kunde' && frei ? '' : ' prim') + '" onclick="rzSgSchliessen()">Fertig</button>';
+}
+function rzSgPdf(btn) { const s = _rzSg; if (s && s.neuId && typeof rzPdf === 'function') rzPdf(btn, s.neuId); }
+function rzSgSenden() {
+  const s = _rzSg; if (!s || s.busy || !s.neuId) return;
+  if (s.teilFehler) return toast('Erst muss der Teilbetrag stimmen.', 'err');
+  if (typeof rgVersandOeffnen !== 'function') return toast('Versand nicht verfügbar.', 'err');
+  const firma = s.firma, nid = s.neuId;
+  rzSgSchliessen(true);
+  return rgVersandOeffnen(firma, nid);
+}
+async function rzSgTeilNochmal(btn) {
+  const s = _rzSg; if (!s || s.busy || !s.neuId || !s.g) return;
+  s.busy = true;
+  const alt = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ trage ein …'; }
+  try {
+    const g0 = await erpFetch('/aufzug/' + s.firma + '/api/rechnungen/' + encodeURIComponent(s.neuId));
+    s.neu = _rzSgPasst(g0, s.g) ? g0 : await _rzSgTeilbetrag(s, g0, s.g);
+    s.teilFehler = ''; s.kontrolle = _rzSgKontrolle(s, s.neu, s.g);
+    try { if (typeof _rgInListen === 'function') _rgInListen({ test: false, rechnung: s.neu, firma: s.firma }); } catch (_) {}
+    const n = Math.abs(_rgRohNetto(s.neu)), betrag = '−' + _rgGeld(s.r.onlyNetto ? n : _rgRund(n * 1.19)) + (s.r.onlyNetto ? ' netto' : '');
+    try { await _rzSetzen(s.neuId, {}, '➖ Teilbetrag eingetragen (' + betrag + ')'); } catch (_) {}
+    try { await _rzSetzen(s.id, {}, '➖ Gutschrift ' + s.neuId + ': Teilbetrag eingetragen (' + betrag + ')'); } catch (_) {}
+    toast('✓ Teilbetrag in Gutschrift ' + s.neuId + ' eingetragen', 'ok');
+  } catch (e) { s.teilFehler = _rzFehlerText(e); toast('❌ ' + s.teilFehler.slice(0, 200), 'err'); }
+  s.busy = false;
+  try { _rzRenderListe(); if (document.getElementById('rch-detail-modal')) _rzDetail(s.id, true); } catch (_) {}
+  if (_rzSg === s) _rzSgRender();
 }
 
 </script>
